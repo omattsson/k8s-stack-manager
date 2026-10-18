@@ -37,6 +37,7 @@ import {
   authService,
   oidcService,
   templateService,
+  WORKING_COPY_VERSION_ID,
   definitionService,
   instanceService,
   clusterService,
@@ -51,9 +52,13 @@ import {
   sharedValuesService,
   cleanupPolicyService,
   notificationService,
+  clearBranchCache,
+  BRANCH_CACHE_TTL_MS,
+  BRANCH_MAX_CONCURRENT,
 } from '../client';
 
 beforeEach(() => {
+  clearBranchCache();
   mockApi.get.mockReset();
   mockApi.post.mockReset();
   mockApi.put.mockReset();
@@ -206,7 +211,27 @@ describe('templateService', () => {
     const result = await templateService.publish('1');
 
     expect(api.post).toHaveBeenCalledWith('/api/v1/templates/1/publish');
-    expect(result).toEqual(published);
+    expect(result).toEqual({ template: published, snapshotCreated: true });
+  });
+
+  it('publish sends the version and change summary in the body', async () => {
+    const api = mockApi;
+    api.post.mockResolvedValueOnce(mockResponse({ id: '1', published_version: '1.1.0', snapshot_created: true }));
+
+    const result = await templateService.publish('1', { version: '1.1.0', change_summary: 'New values' });
+
+    expect(api.post).toHaveBeenCalledWith('/api/v1/templates/1/publish', { version: '1.1.0', change_summary: 'New values' });
+    expect(result).toEqual({ template: { id: '1', published_version: '1.1.0' }, snapshotCreated: true });
+  });
+
+  it('publish reports snapshotCreated false when the API created no snapshot', async () => {
+    const api = mockApi;
+    api.post.mockResolvedValueOnce(mockResponse({ id: '1', published_version: '1.0.0', snapshot_created: false }));
+
+    const result = await templateService.publish('1', { version: '1.0.0' });
+
+    expect(result.snapshotCreated).toBe(false);
+    expect(result.template.published_version).toBe('1.0.0');
   });
 
   it('unpublish sends POST to unpublish endpoint', async () => {
@@ -239,8 +264,17 @@ describe('templateService', () => {
 
     const result = await templateService.clone('1');
 
-    expect(api.post).toHaveBeenCalledWith('/api/v1/templates/1/clone');
+    expect(api.post).toHaveBeenCalledWith('/api/v1/templates/1/clone', {});
     expect(result).toEqual(cloned);
+  });
+
+  it('clone sends the name of the copy in the body', async () => {
+    const api = mockApi;
+    api.post.mockResolvedValueOnce(mockResponse({ id: '4', name: 'My copy' }));
+
+    await templateService.clone('1', { name: 'My copy' });
+
+    expect(api.post).toHaveBeenCalledWith('/api/v1/templates/1/clone', { name: 'My copy' });
   });
 
   it('addChart sends POST to charts sub-resource', async () => {
@@ -293,6 +327,33 @@ describe('templateService', () => {
 // definitionService
 // ---------------------------------------------------------------------------
 describe('definitionService', () => {
+  it('templateService.listAll reads all pages of templates', async () => {
+    const api = mockApi;
+    const page1 = Array.from({ length: 100 }, (_, i) => ({ id: `t${i}`, name: `tmpl-${i}` }));
+    api.get
+      .mockResolvedValueOnce(mockResponse({ data: page1, total: 102, page: 1, pageSize: 100 }))
+      .mockResolvedValueOnce(mockResponse({ data: [{ id: 't100' }, { id: 't101' }], total: 102, page: 2, pageSize: 100 }));
+
+    const result = await templateService.listAll();
+
+    expect(api.get).toHaveBeenNthCalledWith(1, '/api/v1/templates', { params: { page: 1, pageSize: 100 } });
+    expect(api.get).toHaveBeenNthCalledWith(2, '/api/v1/templates', { params: { page: 2, pageSize: 100 } });
+    expect(result).toHaveLength(102);
+  });
+
+  it('listAll reads all pages of definitions', async () => {
+    const api = mockApi;
+    const page1 = Array.from({ length: 100 }, (_, i) => ({ id: `d${i}`, name: `def-${i}` }));
+    api.get
+      .mockResolvedValueOnce(mockResponse({ data: page1, total: 101, page: 1, pageSize: 100 }))
+      .mockResolvedValueOnce(mockResponse({ data: [{ id: 'd100', name: 'def-100' }], total: 101, page: 2, pageSize: 100 }));
+
+    const result = await definitionService.listAll();
+
+    expect(api.get).toHaveBeenNthCalledWith(2, '/api/v1/stack-definitions', { params: { page: 2, pageSize: 100 } });
+    expect(result).toHaveLength(101);
+  });
+
   it('list sends GET to /api/v1/stack-definitions and unwraps envelope', async () => {
     const api = mockApi;
     const defs = [{ id: '1', name: 'def-1' }];
@@ -435,6 +496,105 @@ describe('definitionService', () => {
 // instanceService
 // ---------------------------------------------------------------------------
 describe('instanceService', () => {
+  /** Build `count` instances with IDs starting at `start`. */
+  const rows = (start: number, count: number) =>
+    Array.from({ length: count }, (_, i) => ({ id: `i${start + i}`, name: `inst-${start + i}` }));
+
+  it('listAll reads all pages with pageSize 100', async () => {
+    const api = mockApi;
+    api.get
+      .mockResolvedValueOnce(mockResponse({ data: rows(0, 100), total: 230, page: 1, pageSize: 100 }))
+      .mockResolvedValueOnce(mockResponse({ data: rows(100, 100), total: 230, page: 2, pageSize: 100 }))
+      .mockResolvedValueOnce(mockResponse({ data: rows(200, 30), total: 230, page: 3, pageSize: 100 }));
+
+    const result = await instanceService.listAll();
+
+    expect(api.get).toHaveBeenCalledTimes(3);
+    expect(api.get).toHaveBeenNthCalledWith(1, '/api/v1/stack-instances', { params: { page: 1, pageSize: 100 } });
+    expect(api.get).toHaveBeenNthCalledWith(3, '/api/v1/stack-instances', { params: { page: 3, pageSize: 100 } });
+    expect(result).toHaveLength(230);
+    expect(result[229].id).toBe('i229');
+  });
+
+  it('listAll stops after one request when the first page has all rows', async () => {
+    const api = mockApi;
+    api.get.mockResolvedValueOnce(mockResponse({ data: rows(0, 3), total: 3, page: 1, pageSize: 100 }));
+
+    const result = await instanceService.listAll();
+
+    expect(api.get).toHaveBeenCalledTimes(1);
+    expect(result).toHaveLength(3);
+  });
+
+  it('listAll stops on a full last page and drops rows that show twice', async () => {
+    const api = mockApi;
+    api.get
+      .mockResolvedValueOnce(mockResponse({ data: rows(0, 100), total: 200, page: 1, pageSize: 100 }))
+      // A new instance moved the rows: i99 shows again on page 2.
+      .mockResolvedValueOnce(mockResponse({ data: rows(99, 100), total: 200, page: 2, pageSize: 100 }));
+
+    const result = await instanceService.listAll();
+
+    expect(api.get).toHaveBeenCalledTimes(2);
+    expect(result).toHaveLength(199);
+    expect(new Set(result.map((r) => r.id)).size).toBe(199);
+  });
+
+  it('listAll stops when the server ignores the page parameter', async () => {
+    const api = mockApi;
+    // Every request returns the same first page.
+    api.get.mockResolvedValue(mockResponse({ data: rows(0, 100), total: 500, page: 1, pageSize: 100 }));
+
+    const result = await instanceService.listAll();
+
+    // Page 1, then one batch of 4 pages that adds no new ID.
+    expect(api.get).toHaveBeenCalledTimes(5);
+    expect(result).toHaveLength(100);
+    api.get.mockReset();
+  });
+
+  it('listAll stops when a page is bigger than pageSize and has all rows', async () => {
+    const api = mockApi;
+    api.get.mockResolvedValueOnce(mockResponse({ data: rows(0, 150), total: 150, page: 1, pageSize: 150 }));
+
+    const result = await instanceService.listAll();
+
+    expect(api.get).toHaveBeenCalledTimes(1);
+    expect(result).toHaveLength(150);
+  });
+
+  it('listAll loads the remaining pages in parallel, at most 4 at a time', async () => {
+    const api = mockApi;
+    let inFlight = 0;
+    let maxInFlight = 0;
+    api.get.mockImplementation(async (_url: string, config: { params: { page: number } }) => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      inFlight -= 1;
+      const page = config.params.page;
+      const count = page === 10 ? 50 : 100;
+      return mockResponse({ data: rows((page - 1) * 100, count), total: 950, page, pageSize: 100 });
+    });
+
+    const result = await instanceService.listAll();
+
+    expect(api.get).toHaveBeenCalledTimes(10);
+    expect(maxInFlight).toBe(4);
+    expect(result).toHaveLength(950);
+    expect(result.map((r) => r.id)).toEqual(rows(0, 950).map((r) => r.id));
+    api.get.mockReset();
+  });
+
+  it('listAll throws when a page request fails', async () => {
+    const api = mockApi;
+    api.get
+      .mockResolvedValueOnce(mockResponse({ data: rows(0, 100), total: 150, page: 1, pageSize: 100 }))
+      .mockRejectedValueOnce(new Error('Network Error'));
+
+    await expect(instanceService.listAll()).rejects.toThrow('Network Error');
+  });
+
   it('list sends GET to /api/v1/stack-instances', async () => {
     const api = mockApi;
     const instances = [{ id: 'i1', name: 'inst-1' }];
@@ -497,14 +657,16 @@ describe('instanceService', () => {
     expect(api.delete).toHaveBeenCalledWith('/api/v1/stack-instances/i1');
   });
 
-  it('clone sends POST to clone endpoint', async () => {
+  it('clone sends POST with name, branch and TTL to clone endpoint', async () => {
     const api = mockApi;
     const cloned = { id: 'i3', name: 'inst-1-copy' };
     api.post.mockResolvedValueOnce(mockResponse(cloned));
 
-    const result = await instanceService.clone('i1');
+    const result = await instanceService.clone('i1', { name: 'inst-1-copy', branch: 'main', ttl_minutes: 240 });
 
-    expect(api.post).toHaveBeenCalledWith('/api/v1/stack-instances/i1/clone');
+    expect(api.post).toHaveBeenCalledWith('/api/v1/stack-instances/i1/clone', {
+      name: 'inst-1-copy', branch: 'main', ttl_minutes: 240,
+    });
     expect(result).toEqual(cloned);
   });
 
@@ -531,15 +693,72 @@ describe('instanceService', () => {
     expect(result).toEqual(override);
   });
 
-  it('exportValues sends GET to export endpoint', async () => {
-    const api = mockApi;
-    const yaml = 'key: value\nreplicas: 2';
-    api.get.mockResolvedValueOnce(mockResponse(yaml));
+  it('deleteOverride sends DELETE to specific chart override', async () => {
+    mockApi.delete.mockResolvedValueOnce(mockResponse(null));
+
+    await instanceService.deleteOverride('i1', 'c1');
+
+    expect(mockApi.delete).toHaveBeenCalledWith('/api/v1/stack-instances/i1/overrides/c1');
+  });
+
+  it('exportValues requests the values ZIP as a blob and returns it unchanged', async () => {
+    const blob = new Blob(['PK\u0003\u0004'], { type: 'application/zip' });
+    mockApi.get.mockResolvedValueOnce({
+      ...mockResponse(blob),
+      headers: { 'content-disposition': 'attachment; filename=demo-values.zip' },
+    });
+
+    const result = await instanceService.exportValues('i1', 'demo');
+
+    expect(mockApi.get).toHaveBeenCalledWith('/api/v1/stack-instances/i1/values', { responseType: 'blob' });
+    expect(result.blob).toBe(blob);
+    expect(result.filename).toBe('demo-values.zip');
+  });
+
+  it.each([
+    ['attachment; filename="quoted name-values.zip"', 'quoted name-values.zip'],
+    ["attachment; filename*=UTF-8''caf%C3%A9-values.zip; filename=cafe-values.zip", 'café-values.zip'],
+  ])('exportValues reads the file name from %s', async (header, expected) => {
+    mockApi.get.mockResolvedValueOnce({ ...mockResponse(new Blob(['x'])), headers: { 'content-disposition': header } });
+
+    const result = await instanceService.exportValues('i1', 'demo');
+
+    expect(result.filename).toBe(expected);
+  });
+
+  it('exportValues falls back to <instance-name>-values.zip without Content-Disposition', async () => {
+    mockApi.get.mockResolvedValueOnce(mockResponse(new Blob(['x'])));
+
+    const result = await instanceService.exportValues('i1', 'demo');
+
+    expect(result.filename).toBe('demo-values.zip');
+  });
+
+  it('exportValues falls back to the instance ID when no name is given', async () => {
+    mockApi.get.mockResolvedValueOnce(mockResponse(new Blob(['x'])));
 
     const result = await instanceService.exportValues('i1');
 
-    expect(api.get).toHaveBeenCalledWith('/api/v1/stack-instances/i1/export');
-    expect(result).toBe(yaml);
+    expect(result.filename).toBe('i1-values.zip');
+  });
+
+  it('exportChartValues requests one chart as a blob with a fallback file name', async () => {
+    const blob = new Blob(['replicaCount: 2\n'], { type: 'application/x-yaml' });
+    mockApi.get.mockResolvedValueOnce(mockResponse(blob));
+
+    const result = await instanceService.exportChartValues('i1', 'c1', 'demo-api-values.yaml');
+
+    expect(mockApi.get).toHaveBeenCalledWith('/api/v1/stack-instances/i1/values/c1', { responseType: 'blob' });
+    expect(result.blob).toBe(blob);
+    expect(result.filename).toBe('demo-api-values.yaml');
+  });
+
+  it('exportChartValues defaults the file name to the chart ID', async () => {
+    mockApi.get.mockResolvedValueOnce(mockResponse(new Blob(['a: 1'])));
+
+    const result = await instanceService.exportChartValues('i1', 'c1');
+
+    expect(result.filename).toBe('c1-values.yaml');
   });
 
   it('deploy sends POST to deploy endpoint', async () => {
@@ -608,25 +827,34 @@ describe('instanceService', () => {
     expect(result).toEqual(podStatus);
   });
 
-  it('extend sends POST with ttl_minutes when provided', async () => {
+  it('extend sends POST with the minutes to add', async () => {
     const api = mockApi;
-    const extended = { id: 'i1', ttl_minutes: 120 };
+    const extended = { id: 'i1', expires_at: '2030-01-01T12:00:00Z' };
     api.post.mockResolvedValueOnce(mockResponse(extended));
 
-    const result = await instanceService.extend('i1', 120);
+    const result = await instanceService.extend('i1', 240);
 
-    expect(api.post).toHaveBeenCalledWith('/api/v1/stack-instances/i1/extend', { ttl_minutes: 120 });
+    expect(api.post).toHaveBeenCalledWith('/api/v1/stack-instances/i1/extend', { minutes: 240 });
     expect(result).toEqual(extended);
   });
 
-  it('extend sends POST with empty body when ttl not provided', async () => {
+  it('rollback sends POST with target_log_id when given', async () => {
     const api = mockApi;
-    const extended = { id: 'i1' };
-    api.post.mockResolvedValueOnce(mockResponse(extended));
+    api.post.mockResolvedValueOnce(mockResponse({ log_id: 'l9', message: 'ok' }));
 
-    await instanceService.extend('i1');
+    const result = await instanceService.rollback('i1', 'l2');
 
-    expect(api.post).toHaveBeenCalledWith('/api/v1/stack-instances/i1/extend', {});
+    expect(api.post).toHaveBeenCalledWith('/api/v1/stack-instances/i1/rollback', { target_log_id: 'l2' });
+    expect(result).toEqual({ log_id: 'l9', message: 'ok' });
+  });
+
+  it('rollback sends POST with empty body without a target', async () => {
+    const api = mockApi;
+    api.post.mockResolvedValueOnce(mockResponse({ log_id: 'l9', message: 'ok' }));
+
+    await instanceService.rollback('i1');
+
+    expect(api.post).toHaveBeenCalledWith('/api/v1/stack-instances/i1/rollback', {});
   });
 
   it('recent sends GET to /api/v1/stack-instances/recent', async () => {
@@ -776,21 +1004,130 @@ describe('gitService', () => {
 
     expect(api.get).toHaveBeenCalledWith('/api/v1/git/branches', {
       params: { repo: 'https://dev.azure.com/org/proj/_git/repo' },
+      signal: expect.any(AbortSignal),
     });
     expect(result).toEqual(['main', 'develop', 'feature/x']);
   });
 
-  it('branches forwards an optional abort signal', async () => {
+  it('branches resolves for a caller with a signal that is not aborted', async () => {
     const api = mockApi;
     const controller = new AbortController();
     api.get.mockResolvedValueOnce(mockResponse([{ name: 'main' }]));
 
-    await gitService.branches('https://github.com/org/repo', { signal: controller.signal });
+    await expect(
+      gitService.branches('https://github.com/org/repo', { signal: controller.signal }),
+    ).resolves.toEqual(['main']);
 
-    expect(api.get).toHaveBeenCalledWith('/api/v1/git/branches', {
-      signal: controller.signal,
-      params: { repo: 'https://github.com/org/repo' },
-    });
+    // The shared request uses its own signal, not the signal of one caller.
+    const config = api.get.mock.calls[0][1] as { signal: AbortSignal };
+    expect(config.signal).toBeInstanceOf(AbortSignal);
+    expect(config.signal).not.toBe(controller.signal);
+  });
+
+  it('branches rejects at once for an already aborted signal', async () => {
+    const api = mockApi;
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      gitService.branches('repo-pre-aborted', { signal: controller.signal }),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(api.get).not.toHaveBeenCalled();
+  });
+
+  it('branches: a cancelled caller does not affect another caller of the same URL', async () => {
+    const api = mockApi;
+    let resolveRequest!: (value: AxiosResponse) => void;
+    api.get.mockImplementationOnce(() => new Promise((resolve) => { resolveRequest = resolve; }));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      const first = new AbortController();
+      const cancelled = gitService.branches('repo-shared', { signal: first.signal });
+      const kept = gitService.branches('repo-shared');
+      expect(api.get).toHaveBeenCalledTimes(1);
+
+      first.abort();
+      await expect(cancelled).rejects.toMatchObject({ name: 'AbortError' });
+
+      // The shared request goes on for the other caller.
+      const sharedSignal = (api.get.mock.calls[0][1] as { signal: AbortSignal }).signal;
+      expect(sharedSignal.aborted).toBe(false);
+      resolveRequest(mockResponse([{ name: 'main' }]));
+      await expect(kept).resolves.toEqual(['main']);
+
+      // The loaded list is cached for later callers.
+      await expect(gitService.branches('repo-shared')).resolves.toEqual(['main']);
+      expect(api.get).toHaveBeenCalledTimes(1);
+      expect(errorSpy).not.toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('branches: an aborted request does not leave a rejected cache entry', async () => {
+    const api = mockApi;
+    api.get
+      .mockImplementationOnce((_url: string, config: { signal: AbortSignal }) => new Promise((_resolve, reject) => {
+        config.signal.addEventListener('abort', () => reject(new Error('canceled')));
+      }))
+      .mockResolvedValueOnce(mockResponse([{ name: 'develop' }]));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      const controller = new AbortController();
+      const cancelled = gitService.branches('repo-aborted', { signal: controller.signal });
+      controller.abort();
+      await expect(cancelled).rejects.toMatchObject({ name: 'AbortError' });
+
+      // The only caller left, so the request itself was aborted.
+      const firstSignal = (api.get.mock.calls[0][1] as { signal: AbortSignal }).signal;
+      expect(firstSignal.aborted).toBe(true);
+
+      // The next call starts a new request instead of reusing the aborted one.
+      await expect(gitService.branches('repo-aborted')).resolves.toEqual(['develop']);
+      expect(api.get).toHaveBeenCalledTimes(2);
+      // A cancellation is not logged as a failure.
+      expect(errorSpy).not.toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('branches: an abort after the list loaded keeps the cached list', async () => {
+    const api = mockApi;
+    api.get.mockResolvedValueOnce(mockResponse([{ name: 'main' }]));
+    const controller = new AbortController();
+
+    await expect(
+      gitService.branches('repo-loaded', { signal: controller.signal }),
+    ).resolves.toEqual(['main']);
+    controller.abort();
+
+    await expect(gitService.branches('repo-loaded')).resolves.toEqual(['main']);
+    expect(api.get).toHaveBeenCalledTimes(1);
+  });
+
+  it('branches does not send a request queued for a slot when every caller cancelled', async () => {
+    const api = mockApi;
+    const pending: Array<() => void> = [];
+    api.get.mockImplementation(
+      () => new Promise((resolve) => pending.push(() => resolve(mockResponse([{ name: 'main' }])))),
+    );
+    const busy = Array.from({ length: BRANCH_MAX_CONCURRENT }, (_, i) => gitService.branches(`repo-busy-${i}`));
+    await vi.waitFor(() => expect(api.get).toHaveBeenCalledTimes(BRANCH_MAX_CONCURRENT));
+
+    const controller = new AbortController();
+    const queued = gitService.branches('repo-queued', { signal: controller.signal });
+    controller.abort();
+    await expect(queued).rejects.toMatchObject({ name: 'AbortError' });
+
+    pending.splice(0).forEach((p) => p());
+    await Promise.all(busy);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(api.get).toHaveBeenCalledTimes(BRANCH_MAX_CONCURRENT);
+    expect(api.get.mock.calls.map((call) => (call[1] as { params: { repo: string } }).params.repo))
+      .not.toContain('repo-queued');
   });
 
   it('branches throws on error', async () => {
@@ -798,6 +1135,60 @@ describe('gitService', () => {
     api.get.mockRejectedValueOnce(new Error('Not Found'));
 
     await expect(gitService.branches('bad-url')).rejects.toThrow('Not Found');
+  });
+
+  it('branches shares one request per URL and caches the list for the TTL', async () => {
+    const api = mockApi;
+    api.get.mockResolvedValue(mockResponse([{ name: 'main' }]));
+    const now = vi.spyOn(Date, 'now');
+    try {
+      now.mockReturnValue(1000);
+      const [a, b] = await Promise.all([gitService.branches('repo-a'), gitService.branches('repo-a')]);
+      expect(a).toEqual(['main']);
+      expect(b).toEqual(['main']);
+      expect(api.get).toHaveBeenCalledTimes(1);
+
+      now.mockReturnValue(1000 + BRANCH_CACHE_TTL_MS - 1);
+      await gitService.branches('repo-a');
+      expect(api.get).toHaveBeenCalledTimes(1);
+
+      now.mockReturnValue(1000 + BRANCH_CACHE_TTL_MS + 1);
+      await gitService.branches('repo-a');
+      expect(api.get).toHaveBeenCalledTimes(2);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it('branches does not cache a failed request', async () => {
+    const api = mockApi;
+    api.get.mockRejectedValueOnce(new Error('boom')).mockResolvedValueOnce(mockResponse([{ name: 'dev' }]));
+
+    await expect(gitService.branches('repo-f')).rejects.toThrow('boom');
+    await expect(gitService.branches('repo-f')).resolves.toEqual(['dev']);
+    expect(api.get).toHaveBeenCalledTimes(2);
+  });
+
+  it('branches runs at most BRANCH_MAX_CONCURRENT requests at the same time', async () => {
+    const api = mockApi;
+    const pending: Array<() => void> = [];
+    api.get.mockImplementation(
+      () => new Promise((resolve) => pending.push(() => resolve(mockResponse([{ name: 'main' }])))),
+    );
+    const urls = Array.from({ length: BRANCH_MAX_CONCURRENT + 2 }, (_, i) => `repo-${i}`);
+    const all = Promise.all(urls.map((u) => gitService.branches(u)));
+
+    await vi.waitFor(() => expect(api.get).toHaveBeenCalledTimes(BRANCH_MAX_CONCURRENT));
+    pending.shift()?.();
+    await vi.waitFor(() => expect(api.get).toHaveBeenCalledTimes(BRANCH_MAX_CONCURRENT + 1));
+    while (pending.length > 0 || (api.get.mock.calls.length < urls.length)) {
+      pending.shift()?.();
+      await Promise.resolve();
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    pending.forEach((p) => p());
+    await expect(all).resolves.toHaveLength(urls.length);
+    expect(api.get).toHaveBeenCalledTimes(urls.length);
   });
 
   it('validateBranch sends GET with repo and branch params', async () => {
@@ -907,6 +1298,23 @@ describe('userService', () => {
 
     expect(api.delete).toHaveBeenCalledWith('/api/v1/users/2');
   });
+
+  it('disable sends PUT to /api/v1/users/:id/disable', async () => {
+    mockApi.put.mockResolvedValueOnce(mockResponse(undefined));
+    await userService.disable('u1');
+    expect(mockApi.put).toHaveBeenCalledWith('/api/v1/users/u1/disable');
+  });
+
+  it('enable sends PUT to /api/v1/users/:id/enable', async () => {
+    mockApi.put.mockResolvedValueOnce(mockResponse(undefined));
+    await userService.enable('u1');
+    expect(mockApi.put).toHaveBeenCalledWith('/api/v1/users/u1/enable');
+  });
+
+  it('disable throws on error', async () => {
+    mockApi.put.mockRejectedValueOnce(new Error('Cannot change your own account status'));
+    await expect(userService.disable('me')).rejects.toThrow('Cannot change your own account status');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -957,8 +1365,17 @@ describe('adminService', () => {
 
     const result = await adminService.listOrphanedNamespaces();
 
-    expect(api.get).toHaveBeenCalledWith('/api/v1/admin/orphaned-namespaces');
+    expect(api.get).toHaveBeenCalledWith('/api/v1/admin/orphaned-namespaces', { params: { details: 'true' } });
     expect(result).toEqual(orphans);
+  });
+
+  it('listOrphanedNamespaces can skip the details', async () => {
+    const api = mockApi;
+    api.get.mockResolvedValueOnce(mockResponse([]));
+
+    await adminService.listOrphanedNamespaces(false);
+
+    expect(api.get).toHaveBeenCalledWith('/api/v1/admin/orphaned-namespaces', { params: undefined });
   });
 
   it('deleteOrphanedNamespace sends DELETE with namespace', async () => {
@@ -967,7 +1384,18 @@ describe('adminService', () => {
 
     await adminService.deleteOrphanedNamespace('stack-old-user1');
 
-    expect(api.delete).toHaveBeenCalledWith('/api/v1/admin/orphaned-namespaces/stack-old-user1');
+    expect(api.delete).toHaveBeenCalledWith('/api/v1/admin/orphaned-namespaces/stack-old-user1', { params: undefined });
+  });
+
+  it('deleteOrphanedNamespace sends the confirm name for an unmanaged namespace', async () => {
+    const api = mockApi;
+    api.delete.mockResolvedValueOnce(mockResponse(undefined));
+
+    await adminService.deleteOrphanedNamespace('stack-foreign', 'stack-foreign');
+
+    expect(api.delete).toHaveBeenCalledWith('/api/v1/admin/orphaned-namespaces/stack-foreign', {
+      params: { confirm: 'stack-foreign' },
+    });
   });
 
   it('listOrphanedNamespaces throws on error', async () => {
@@ -1349,6 +1777,17 @@ describe('templateService — bulk & versioning', () => {
     expect(api.get).toHaveBeenCalledWith('/api/v1/templates/t1/versions/diff', { params: { left: 'v1', right: 'v2' } });
     expect(result).toEqual(data);
   });
+
+  it('diffVersions compares with the working copy by default', async () => {
+    const api = mockApi;
+    api.get.mockResolvedValueOnce(mockResponse({ left: {}, right: {}, chart_diffs: [] }));
+
+    await templateService.diffVersions('t1', 'v1');
+    expect(api.get).toHaveBeenCalledWith('/api/v1/templates/t1/versions/diff', {
+      params: { left: 'v1', right: WORKING_COPY_VERSION_ID },
+    });
+    expect(WORKING_COPY_VERSION_ID).toBe('working');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1571,6 +2010,24 @@ describe('auditService — export', () => {
     expect(mockLink.setAttribute).toHaveBeenCalledWith('download', 'audit-logs.csv');
     expect(mockLink.click).toHaveBeenCalled();
     expect(mockRevokeObjectURL).toHaveBeenCalledWith('blob:url');
+  });
+
+  it('export sends the entity type and entity ID filters', async () => {
+    const api = mockApi;
+    api.get.mockResolvedValueOnce({ ...mockResponse(new Blob(['data'])), headers: {} });
+    const mockLink = { href: '', setAttribute: vi.fn(), click: vi.fn(), remove: vi.fn() };
+    vi.spyOn(document, 'createElement').mockReturnValue(mockLink as unknown as HTMLElement);
+    vi.spyOn(document.body, 'appendChild').mockReturnValue(document.body);
+    globalThis.URL.createObjectURL = vi.fn().mockReturnValue('blob:url');
+    globalThis.URL.revokeObjectURL = vi.fn();
+
+    await auditService.export({ entity_type: 'stack_instance', entity_id: 'inst-1', action: 'deploy' }, 'json');
+
+    const params = api.get.mock.calls[api.get.mock.calls.length - 1][1].params as URLSearchParams;
+    expect(params.get('entity_type')).toBe('stack_instance');
+    expect(params.get('entity_id')).toBe('inst-1');
+    expect(params.get('action')).toBe('deploy');
+    expect(params.get('format')).toBe('json');
   });
 });
 
@@ -1837,7 +2294,7 @@ describe('instanceService — error paths', () => {
 
   it('clone throws on error', async () => {
     mockApi.post.mockRejectedValueOnce(new Error('Not Found'));
-    await expect(instanceService.clone('i1')).rejects.toThrow('Not Found');
+    await expect(instanceService.clone('i1', { name: 'x' })).rejects.toThrow('Not Found');
   });
 
   it('getOverrides throws on error', async () => {
@@ -1853,6 +2310,16 @@ describe('instanceService — error paths', () => {
   it('exportValues throws on error', async () => {
     mockApi.get.mockRejectedValueOnce(new Error('Not Found'));
     await expect(instanceService.exportValues('i1')).rejects.toThrow('Not Found');
+  });
+
+  it('exportChartValues throws on error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Not Found'));
+    await expect(instanceService.exportChartValues('i1', 'c1')).rejects.toThrow('Not Found');
+  });
+
+  it('deleteOverride throws on error', async () => {
+    mockApi.delete.mockRejectedValueOnce(new Error('Forbidden'));
+    await expect(instanceService.deleteOverride('i1', 'c1')).rejects.toThrow('Forbidden');
   });
 
   it('deploy throws on error', async () => {

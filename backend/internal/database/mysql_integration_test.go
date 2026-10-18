@@ -57,11 +57,12 @@ func setupMySQLTestDB(t *testing.T) *gorm.DB {
 		&models.SharedValues{},
 		&models.CleanupPolicy{},
 		&models.UserFavorite{},
+		&models.InstanceFollower{},
 	))
 
 	// Clean all tables before each test
 	tables := []string{
-		"user_favorites", "chart_branch_overrides", "value_overrides",
+		"instance_followers", "user_favorites", "chart_branch_overrides", "value_overrides",
 		"template_chart_configs", "chart_configs", "deployment_logs",
 		"stack_instances", "stack_templates", "stack_definitions",
 		"shared_values", "cleanup_policies", "api_keys", "audit_logs",
@@ -183,7 +184,7 @@ func TestMySQLIntegration_StackInstanceRepository(t *testing.T) {
 	assert.Equal(t, instance.ID, found.ID)
 
 	// ListPaged
-	instances, total, err := repo.ListPaged(10, 0)
+	instances, total, err := repo.ListPaged(models.StackInstanceFilter{}, 10, 0)
 	require.NoError(t, err)
 	assert.Equal(t, 1, total)
 	assert.Len(t, instances, 1)
@@ -197,6 +198,26 @@ func TestMySQLIntegration_StackInstanceRepository(t *testing.T) {
 	count, err := repo.CountByClusterAndOwner("cluster1", "user1")
 	require.NoError(t, err)
 	assert.Equal(t, 1, count)
+
+	// FindByNameOnCluster and DuplicateInstanceNames (UNIQUE_INSTANCE_NAMES)
+	second := &models.StackInstance{
+		Name:              "Test-Instance",
+		Namespace:         "stack-test-instance-user2",
+		StackDefinitionID: "def1",
+		OwnerID:           "user2",
+		Status:            "pending",
+	}
+	require.NoError(t, repo.Create(second))
+	instances, err = repo.FindByNameOnCluster("TEST-instance", "cluster1", true)
+	require.NoError(t, err)
+	assert.Len(t, instances, 2)
+	instances, err = repo.FindByNameOnCluster("test-instance", "cluster1", false)
+	require.NoError(t, err)
+	assert.Len(t, instances, 1)
+	dups, err := repo.DuplicateInstanceNames("cluster1")
+	require.NoError(t, err)
+	assert.Equal(t, []models.DuplicateInstanceName{{ClusterID: "cluster1", Name: "test-instance", Count: 2}}, dups)
+	require.NoError(t, repo.Delete(second.ID))
 
 	// Update
 	instance.Status = "running"
@@ -294,6 +315,29 @@ func TestMySQLIntegration_DeploymentLogRepository(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, summary.DeployCount)
 	assert.Equal(t, 1, summary.SuccessCount)
+
+	// A partial deploy counts as an error in all summaries.
+	require.NoError(t, repo.Create(ctx, &models.DeploymentLog{
+		StackInstanceID: "inst1",
+		Action:          models.DeployActionDeploy,
+		Status:          models.DeployLogPartial,
+		StartedAt:       time.Now().Add(-time.Minute),
+		CompletedAt:     ptrTime(time.Now()),
+		UserID:          "user-partial",
+	}))
+	summary, err = repo.SummarizeByInstance(ctx, "inst1")
+	require.NoError(t, err)
+	assert.Equal(t, 2, summary.DeployCount)
+	assert.Equal(t, 1, summary.SuccessCount)
+	assert.Equal(t, 1, summary.ErrorCount)
+	batch, err := repo.SummarizeBatch(ctx, []string{"inst1"})
+	require.NoError(t, err)
+	require.Contains(t, batch, "inst1")
+	assert.Equal(t, 1, batch["inst1"].ErrorCount)
+	byUser, err := repo.SummarizeByUsers(ctx, []string{"user-partial"})
+	require.NoError(t, err)
+	require.Contains(t, byUser, "user-partial")
+	assert.Equal(t, 1, byUser["user-partial"].ErrorCount)
 }
 
 func TestMySQLIntegration_AuditLogRepository(t *testing.T) {
@@ -499,6 +543,11 @@ func TestMySQLIntegration_APIKeyRepository(t *testing.T) {
 	err := repo.Create(key)
 	require.NoError(t, err)
 	assert.NotEmpty(t, key.ID)
+
+	byIDs, err := repo.FindByIDs([]string{key.ID, "missing-id"})
+	require.NoError(t, err)
+	require.Len(t, byIDs, 1)
+	assert.Equal(t, key.ID, byIDs[0].ID)
 
 	found, err := repo.FindByPrefix("sk_test_abcdef12")
 	require.NoError(t, err)

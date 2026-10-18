@@ -22,6 +22,10 @@ type OverviewStats struct {
 	RunningInstances int `json:"running_instances"`
 	TotalDeploys     int `json:"total_deploys"`
 	TotalUsers       int `json:"total_users"`
+	// DeployLogRetentionDays is DEPLOY_LOG_RETENTION_DAYS. The deploy counts
+	// (here, per template and per user) cover only the kept deploy logs:
+	// about the last N days. 0 means all deploy logs are kept.
+	DeployLogRetentionDays int `json:"deploy_log_retention_days"`
 }
 
 // TemplateStats provides usage analytics for a single stack template.
@@ -67,6 +71,15 @@ type AnalyticsHandler struct {
 	userRepo       models.UserRepository
 	overviewCache  *cache.TTLCache[*OverviewStats]
 	templateCache  *cache.TTLCache[[]TemplateStats]
+	// deployLogRetentionDays is reported in the overview.
+	deployLogRetentionDays int
+}
+
+// WithDeployLogRetention sets the deploy log retention in days that the
+// overview reports (0: no retention). Returns h for chaining.
+func (h *AnalyticsHandler) WithDeployLogRetention(days int) *AnalyticsHandler {
+	h.deployLogRetentionDays = days
+	return h
 }
 
 // NewAnalyticsHandler creates a new AnalyticsHandler.
@@ -90,7 +103,8 @@ func NewAnalyticsHandler(
 
 // GetOverview godoc
 // @Summary     Get platform overview statistics
-// @Description Returns high-level aggregate counts (templates, definitions, instances, deploys, users)
+// @Description Returns high-level aggregate counts (templates, definitions, instances, deploys, users).
+// @Description deploy_log_retention_days is DEPLOY_LOG_RETENTION_DAYS: the deploy counts of all analytics endpoints cover only the kept deploy logs (about the last N days). 0 means all deploy logs are kept.
 // @Tags        analytics
 // @Produce     json
 // @Success     200 {object} OverviewStats
@@ -151,6 +165,8 @@ func (h *AnalyticsHandler) GetOverview(c *gin.Context) {
 		RunningInstances: runningInstances,
 		TotalDeploys:     totalDeploys,
 		TotalUsers:       int(userCount),
+
+		DeployLogRetentionDays: h.deployLogRetentionDays,
 	}
 	h.overviewCache.Set("overview", stats)
 	c.JSON(http.StatusOK, stats)
@@ -319,47 +335,30 @@ func (h *AnalyticsHandler) computeUserStats(ctx context.Context, users []models.
 	return h.computeUserStatsOptimized(ctx, users, ownerIDs)
 }
 
-// computeUserStatsOptimized uses batch aggregation queries.
+// computeUserStatsOptimized uses batch aggregation queries. The instance
+// count is the number of instances the user owns now. The deploy count and
+// the last activity come from the deploy logs the user started, so they stay
+// after an instance is deleted and a deploy on another user's instance counts
+// for the user who started it.
 func (h *AnalyticsHandler) computeUserStatsOptimized(ctx context.Context, users []models.User, ownerIDs []string) ([]UserStats, error) {
 	instanceCountsByOwner, err := h.instanceRepo.CountByOwnerIDs(ownerIDs)
 	if err != nil {
 		return nil, err
 	}
 
-	instanceIDsByOwner, err := h.instanceRepo.ListIDsByOwnerIDs(ownerIDs)
+	summaries, err := h.deployLogRepo.SummarizeByUsers(ctx, ownerIDs)
 	if err != nil {
 		return nil, err
 	}
 
-	var allInstanceIDs []string
-	for _, ids := range instanceIDsByOwner {
-		allInstanceIDs = append(allInstanceIDs, ids...)
-	}
-
-	summaries, err := h.collectDeploySummariesOrError(ctx, allInstanceIDs)
-	if err != nil {
-		return nil, err
-	}
-
-	userLogs := make(map[string]*userLogInfo)
-
-	for ownerID, instIDs := range instanceIDsByOwner {
-		for _, instID := range instIDs {
-			s, ok := summaries[instID]
-			if !ok {
-				continue
-			}
-			info := userLogs[ownerID]
-			if info == nil {
-				info = &userLogInfo{}
-				userLogs[ownerID] = info
-			}
-			info.deployCount += s.DeployCount
-			if s.LastDeployAt != nil && (info.lastActive == nil || s.LastDeployAt.After(*info.lastActive)) {
-				cp := *s.LastDeployAt
-				info.lastActive = &cp
-			}
+	userLogs := make(map[string]*userLogInfo, len(summaries))
+	for userID, s := range summaries {
+		info := &userLogInfo{deployCount: s.DeployCount}
+		if s.LastDeployAt != nil {
+			cp := *s.LastDeployAt
+			info.lastActive = &cp
 		}
+		userLogs[userID] = info
 	}
 
 	return h.buildUserStatsResult(users, instanceCountsByOwner, userLogs), nil

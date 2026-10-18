@@ -1,5 +1,6 @@
 import { Box, Card, CardContent, Chip, Typography } from '@mui/material';
 import type { DashboardCluster } from '../../../types';
+import { formatCpuCores, formatMemoryQuantity } from '../../../utils/quantity';
 
 const healthColor: Record<string, 'success' | 'warning' | 'error' | 'default'> = {
   healthy: 'success',
@@ -39,10 +40,10 @@ const ClusterHealthWidget = ({ clusters }: Props) => {
                   Nodes: {cl.ready_node_count ?? '?'}/{cl.node_count}
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
-                  CPU: {cl.allocatable_cpu ?? '?'} allocatable / {cl.total_cpu ?? '?'} total
+                  CPU: {cl.allocatable_cpu ? formatCpuCores(cl.allocatable_cpu) : '?'} allocatable / {cl.total_cpu ? formatCpuCores(cl.total_cpu) : '?'} cores
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
-                  Memory: {cl.allocatable_memory ?? '?'} / {cl.total_memory ?? '?'}
+                  Memory: {cl.allocatable_memory ? formatMemoryQuantity(cl.allocatable_memory) : '?'} allocatable / {cl.total_memory ? formatMemoryQuantity(cl.total_memory) : '?'}
                 </Typography>
                 {cl.namespace_count != null && (
                   <Typography variant="caption" color="text.secondary">

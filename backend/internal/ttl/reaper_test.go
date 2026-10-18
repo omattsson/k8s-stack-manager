@@ -1,6 +1,7 @@
 package ttl
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
@@ -69,7 +70,7 @@ func (m *mockInstanceRepo) CountByClusterAndOwner(string, string) (int, error) {
 	return 0, nil
 }
 
-func (m *mockInstanceRepo) ListPaged(_, _ int) ([]models.StackInstance, int, error) {
+func (m *mockInstanceRepo) ListPaged(_ models.StackInstanceFilter, _, _ int) ([]models.StackInstance, int, error) {
 	return nil, 0, nil
 }
 func (m *mockInstanceRepo) CountAll() (int, error)                                  { return 0, nil }
@@ -105,6 +106,9 @@ func (m *mockInstanceRepo) ListExpired() ([]*models.StackInstance, error) {
 
 func (m *mockInstanceRepo) ListExpiringSoon(_ time.Duration) ([]*models.StackInstance, error) {
 	return nil, nil
+}
+func (*mockInstanceRepo) MarkExpiryWarned(_ string, _, _ time.Time) (bool, error) {
+	return false, nil
 }
 func (m *mockInstanceRepo) ListByStatus(_ string, _ int) ([]*models.StackInstance, error) {
 	return nil, nil
@@ -200,6 +204,10 @@ func TestReaper_ExpiredInstancesGetStopped(t *testing.T) {
 	got := repo.get("expired-1")
 	assert.Equal(t, models.StackStatusStopped, got.Status)
 	assert.Equal(t, "Expired (TTL)", got.ErrorMessage)
+	// The cleanup condition stopped_days measures from StoppedAt.
+	if assert.NotNil(t, got.StoppedAt) {
+		assert.WithinDuration(t, time.Now(), *got.StoppedAt, 5*time.Second)
+	}
 
 	gotActive := repo.get("active-1")
 	assert.Equal(t, models.StackStatusRunning, gotActive.Status)
@@ -339,3 +347,88 @@ func TestReaper_InitialCheckOnStart(t *testing.T) {
 }
 
 func (*mockInstanceRepo) CountByStatuses(statuses []string) (int, error) { return 0, nil }
+
+// fakeStopper is an InstanceStopper that returns err.
+type fakeStopper struct{ err error }
+
+func (f fakeStopper) StopInstance(context.Context, *models.StackInstance) error { return f.err }
+
+func TestReaper_NotifiesStackExpired(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		stopper     InstanceStopper
+		noNotifier  bool
+		fixedStop   bool
+		wantCalls   int
+		wantMessage string
+	}{
+		{
+			name:        "stop through the deployer",
+			stopper:     fakeStopper{},
+			wantCalls:   1,
+			wantMessage: `Stack "exp" expired after its TTL and is being stopped`,
+		},
+		{
+			name:        "no stopper marks the instance stopped",
+			stopper:     nil,
+			wantCalls:   1,
+			wantMessage: `Stack "exp" expired after its TTL and was stopped`,
+		},
+		{
+			name:        "failed stop marks the instance stopped",
+			stopper:     fakeStopper{err: assert.AnError},
+			wantCalls:   1,
+			wantMessage: `Stack "exp" expired after its TTL and was stopped`,
+		},
+		{
+			name:        "a fixed stop time (no TTL) has its own text",
+			stopper:     fakeStopper{},
+			fixedStop:   true,
+			wantCalls:   1,
+			wantMessage: `Stack "exp" reached its stop time and is being stopped`,
+		},
+		{
+			name:       "no notifier sends nothing",
+			stopper:    nil,
+			noNotifier: true,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			repo := newMockInstanceRepo()
+			past := time.Now().Add(-time.Minute)
+			ttl := 30
+			if tt.fixedStop {
+				ttl = 0
+			}
+			require.NoError(t, repo.Create(&models.StackInstance{
+				ID: "exp-1", Name: "exp", OwnerID: "owner-1",
+				Status: models.StackStatusRunning, TTLMinutes: ttl, ExpiresAt: &past,
+			}))
+
+			notifier := &mockExpiryNotifier{}
+			reaper := NewReaper(repo, nil, nil, tt.stopper, time.Hour)
+			if !tt.noNotifier {
+				reaper.WithNotifier(notifier)
+			}
+			reaper.processExpired()
+
+			calls := notifier.getCalls()
+			require.Len(t, calls, tt.wantCalls)
+			if tt.wantCalls == 0 {
+				return
+			}
+			assert.Equal(t, "stack.expired", calls[0].notifType)
+			assert.Equal(t, "Stack expired", calls[0].title)
+			assert.Equal(t, tt.wantMessage, calls[0].message)
+			assert.Equal(t, "owner-1", calls[0].userID)
+			assert.Equal(t, "exp-1", calls[0].entityID)
+		})
+	}
+}

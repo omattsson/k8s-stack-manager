@@ -7,22 +7,22 @@ assignees: ""
 ---
 
 ## Feature Description
-<!-- A clear and concise description of the feature you'd like to see -->
+<!-- Describe the feature that you want in a few short sentences. -->
 
 ## Problem Statement
-<!-- Describe the problem this feature would solve -->
+<!-- Describe the problem that the feature solves. -->
 
 ## Proposed Solution
-<!-- Describe how you envision this feature working -->
+<!-- Describe how you think the feature can work. -->
 
 ## Alternatives Considered
-<!-- Describe any alternative solutions or features you've considered -->
+<!-- Describe alternative solutions or features that you considered. -->
 
 ## User Impact
-<!-- How would this feature benefit users of the application? -->
+<!-- Describe how the feature helps the users of the application. -->
 
 ## Implementation Ideas
-<!-- If you have ideas about how to implement this feature, share them here -->
+<!-- If you have ideas for the implementation, describe them here. -->
 
 ## Additional Context
-<!-- Add any other context, screenshots, or mockups about the feature request here -->
+<!-- Add other information, screenshots, or mockups. -->

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { StrictMode } from 'react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import Detail from '../Detail';
 import { NotificationProvider } from '../../../context/NotificationContext';
@@ -14,8 +15,37 @@ vi.mock('react-router-dom', async () => {
   };
 });
 
+// Current user for the auth mock. Default: the owner of mockInstance (owner_id 'user1').
+const authState = vi.hoisted(() => ({
+  user: { id: 'user1', username: 'alice', role: 'user', display_name: 'Alice' } as
+    { id: string; username: string; role: string; display_name: string },
+}));
+
+vi.mock('../../../context/AuthContext', () => ({
+  useAuth: () => ({
+    user: authState.user,
+    isAuthenticated: true,
+    isLoading: false,
+    login: vi.fn(),
+    logout: vi.fn(),
+  }),
+}));
+
+// Keeps the last WebSocket message handler so tests can push messages.
+const wsState = vi.hoisted(() => {
+  const unsubscribeInstance = vi.fn();
+  return {
+    handler: null as null | ((msg: { type: string; payload: unknown }) => void),
+    unsubscribeInstance,
+    subscribeInstance: vi.fn((_instanceId: string) => unsubscribeInstance),
+  };
+});
+
 vi.mock('../../../hooks/useWebSocket', () => ({
-  useWebSocket: () => ({ send: vi.fn() }),
+  useWebSocket: (handler: (msg: { type: string; payload: unknown }) => void) => {
+    wsState.handler = handler;
+    return { send: vi.fn(), subscribeInstance: wsState.subscribeInstance };
+  },
 }));
 
 vi.mock('../../../hooks/useUnsavedChanges', () => ({
@@ -41,9 +71,11 @@ vi.mock('../../../api/client', () => ({
     getOverrides: vi.fn(),
     update: vi.fn(),
     setOverride: vi.fn(),
+    deleteOverride: vi.fn(),
     clone: vi.fn(),
     delete: vi.fn(),
     exportValues: vi.fn(),
+    exportChartValues: vi.fn(),
     deploy: vi.fn(),
     stop: vi.fn(),
     clean: vi.fn(),
@@ -51,6 +83,12 @@ vi.mock('../../../api/client', () => ({
     getStatus: vi.fn(),
     getPods: vi.fn(),
     extend: vi.fn(),
+    rollback: vi.fn(),
+    follow: vi.fn(),
+    unfollow: vi.fn(),
+    listActions: vi.fn().mockResolvedValue({ instance_id: '123', can_invoke: true, actions: [] }),
+    invokeAction: vi.fn(),
+    getActionJobLog: vi.fn(),
   },
   definitionService: {
     get: vi.fn(),
@@ -71,18 +109,39 @@ vi.mock('../../../api/client', () => ({
 }));
 
 vi.mock('../../../components/YamlEditor', () => ({
-  default: (props: { label?: string; value: string }) => (
+  default: (props: { label?: string; value: string; readOnly?: boolean; onChange?: (v: string) => void }) => (
     <div data-testid="yaml-editor">
       <span>{props.label}</span>
       <pre>{props.value}</pre>
+      {!props.readOnly && (
+        <>
+          <button onClick={() => props.onChange?.('')}>clear {props.label}</button>
+          <button onClick={() => props.onChange?.('replicaCount: 5')}>edit {props.label}</button>
+          <button onClick={() => props.onChange?.('replicaCount: 7')}>edit again {props.label}</button>
+        </>
+      )}
     </div>
   ),
 }));
 
+vi.mock('../../../utils/download', () => ({
+  downloadBlob: vi.fn(),
+}));
+
 vi.mock('../../../components/DeploymentLogViewer', () => ({
-  default: ({ logs }: { logs: unknown[] }) => (
+  default: ({ logs, currentDeployLogId, onRollbackTo }: {
+    logs: { id: string; action: string; status: string }[];
+    currentDeployLogId?: string;
+    onRollbackTo?: (log: { id: string }) => void;
+  }) => (
     <div data-testid="deployment-log-viewer">
       {logs.length} log entries
+      <span data-testid="log-actions">{logs.map((l) => l.action).join(',')}</span>
+      {onRollbackTo && logs
+        .filter((l) => l.action === 'deploy' && l.status === 'success' && l.id !== currentDeployLogId)
+        .map((l) => (
+          <button key={l.id} onClick={() => onRollbackTo(l)}>Roll back to {l.id}</button>
+        ))}
     </div>
   ),
 }));
@@ -112,8 +171,8 @@ vi.mock('../../../components/StatusBadge', () => ({
 }));
 
 vi.mock('../../../components/BranchSelector', () => ({
-  default: ({ value, onChange }: { value: string; repoUrl: string; onChange: (v: string) => void; label?: string }) => (
-    <div data-testid="branch-selector">
+  default: ({ value, onChange, repoUrl, label }: { value: string; repoUrl: string | string[]; onChange: (v: string) => void; label?: string }) => (
+    <div data-testid="branch-selector" data-label={label ?? 'Branch'} data-repo={JSON.stringify(repoUrl)}>
       <span>{value}</span>
       <button onClick={() => onChange('feature/new-branch')}>change-branch</button>
       <button onClick={() => onChange('')}>clear-branch</button>
@@ -126,7 +185,7 @@ vi.mock('../../../components/ConfirmDialog', () => ({
     open: boolean; title: string; message: string;
     onConfirm: () => void; onCancel: () => void; confirmText: string;
   }) => open ? (
-    <div data-testid="confirm-dialog">
+    <div data-testid="confirm-dialog" role="dialog" aria-label={title}>
       <div>{title}</div>
       <div>{message}</div>
       <button onClick={onConfirm}>{confirmText}</button>
@@ -150,6 +209,8 @@ vi.mock('../../../components/DeployPreviewDialog', () => ({
 
 import { instanceService, definitionService, branchOverrideService } from '../../../api/client';
 import useCountdown from '../../../hooks/useCountdown';
+import { downloadBlob } from '../../../utils/download';
+import { useUnsavedChanges } from '../../../hooks/useUnsavedChanges';
 
 type MockFn = ReturnType<typeof vi.fn>;
 
@@ -185,6 +246,24 @@ const renderDetail = () =>
     </MemoryRouter>
   );
 
+type User = ReturnType<typeof userEvent.setup>;
+
+/** Open the header "Actions" menu and return it. */
+const openActionsMenu = async (user: User) => {
+  await user.click(await screen.findByRole('button', { name: 'Actions' }));
+  return screen.findByRole('menu', { name: 'Actions' });
+};
+
+/**
+ * Open the header "Actions" menu, click an item and wait until the menu is
+ * gone (while it closes, the rest of the page is hidden from role queries).
+ */
+const clickMenuAction = async (user: User, name: string | RegExp) => {
+  const menu = await openActionsMenu(user);
+  await user.click(within(menu).getByRole('menuitem', { name }));
+  await waitFor(() => expect(menu).not.toBeInTheDocument());
+};
+
 const mockInstance = {
   id: '123',
   name: 'Test Instance',
@@ -198,6 +277,10 @@ const mockInstance = {
   ttl_minutes: 0,
   expires_at: undefined as string | undefined,
   error_message: undefined as string | undefined,
+  values_drift: undefined as boolean | undefined,
+  owner_username: undefined as string | undefined,
+  following: undefined as boolean | undefined,
+  follower_count: undefined as number | undefined,
 };
 
 const mockDefinition = {
@@ -224,6 +307,58 @@ const mockDefinition = {
 describe('StackInstances Detail', () => {
   afterEach(() => {
     vi.clearAllMocks();
+    authState.user = { id: 'user1', username: 'alice', role: 'user', display_name: 'Alice' };
+  });
+
+  it('passes the source repositories of all charts to the instance-level branch picker', async () => {
+    setupMocks({ status: 'draft' }, { deployLogReject: true });
+    (definitionService.get as MockFn).mockResolvedValue({
+      ...mockDefinition,
+      charts: [
+        { ...mockDefinition.charts[0], id: 'oci', chart_name: 'redis', source_repo_url: '' },
+        { ...mockDefinition.charts[0], id: 'app', chart_name: 'app', source_repo_url: 'https://git.example.com/app' },
+      ],
+    });
+
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+    const pickers = await screen.findAllByTestId('branch-selector');
+    const instancePicker = pickers.find((p) => p.dataset.label === 'Branch');
+    expect(JSON.parse(instancePicker?.dataset.repo ?? 'null')).toEqual(['', 'https://git.example.com/app']);
+    // A chart without a source repository falls back to the first chart that has one
+    const chartPickers = pickers.filter((p) => p.dataset.label === 'Chart Branch');
+    expect(chartPickers.map((p) => JSON.parse(p.dataset.repo ?? 'null'))).toEqual([
+      'https://git.example.com/app',
+      'https://git.example.com/app',
+    ]);
+  });
+
+  it('shows "This stack was deleted." on an instance.deleted message for this instance', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'running' });
+    renderDetail();
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    // A message for another instance changes nothing.
+    act(() => {
+      wsState.handler?.({ type: 'instance.deleted', payload: { instance_id: 'other' } });
+    });
+    expect(screen.queryByTestId('instance-deleted')).not.toBeInTheDocument();
+
+    act(() => {
+      wsState.handler?.({ type: 'instance.deleted', payload: { instance_id: '123', log_id: 'l1' } });
+    });
+    const alert = await screen.findByTestId('instance-deleted');
+    expect(alert).toHaveTextContent('This stack was deleted.');
+    expect(screen.queryByText('Test Instance')).not.toBeInTheDocument();
+
+    await user.click(within(alert).getByRole('button', { name: 'Back to Dashboard' }));
+    expect(mockNavigate).toHaveBeenCalledWith('/');
   });
 
   it('shows loading spinner while fetching', () => {
@@ -248,7 +383,60 @@ describe('StackInstances Detail', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
     expect(screen.getByText(/stack-test/)).toBeInTheDocument();
-    expect(screen.getByText(/user1/)).toBeInTheDocument();
+    // Without owner_username the owner ID is shown.
+    expect(screen.getByText('Owner: user1')).toBeInTheDocument();
+  });
+
+  it('loads the custom actions of the instance for the Actions menu', async () => {
+    setupMocks();
+    renderDetail();
+    expect(await screen.findByRole('button', { name: 'Actions' })).toHaveAttribute('aria-haspopup', 'menu');
+    expect(instanceService.listActions).toHaveBeenCalledWith('123');
+  });
+
+  it('shows the owner username instead of the owner ID', async () => {
+    setupMocks({ owner_username: 'owner-name' });
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Owner: owner-name')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Owner: user1')).not.toBeInTheDocument();
+  });
+
+  it('hides the Follow toggle when following is not available', async () => {
+    setupMocks();
+    renderDetail();
+    await screen.findByText('Test Instance');
+    expect(screen.queryByRole('button', { name: 'Follow stack' })).not.toBeInTheDocument();
+  });
+
+  it('lets a user who is not the owner follow the instance', async () => {
+    authState.user = { id: 'other', username: 'bob', role: 'user', display_name: 'Bob' };
+    setupMocks({ following: false, follower_count: 1 });
+    (instanceService.follow as MockFn).mockResolvedValue({ following: true, follower_count: 2 });
+    renderDetail();
+
+    const button = await screen.findByRole('button', { name: 'Follow stack' });
+    expect(button).toHaveTextContent('Follow (1)');
+    await userEvent.setup().click(button);
+
+    await waitFor(() => {
+      expect(instanceService.follow).toHaveBeenCalledWith('123');
+      expect(screen.getByRole('button', { name: 'Unfollow stack' })).toHaveTextContent('Following (2)');
+    });
+  });
+
+  it('subscribes to the instance messages and unsubscribes on unmount', async () => {
+    setupMocks();
+    const { unmount } = renderDetail();
+
+    await waitFor(() => {
+      expect(wsState.subscribeInstance).toHaveBeenCalledWith('123');
+    });
+    expect(wsState.unsubscribeInstance).not.toHaveBeenCalled();
+    unmount();
+    expect(wsState.unsubscribeInstance).toHaveBeenCalledTimes(1);
   });
 
   it('shows error alert when fetch fails', async () => {
@@ -288,7 +476,7 @@ describe('StackInstances Detail', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: /delete/i }));
+    await clickMenuAction(user, 'Delete');
 
     await waitFor(() => {
       expect(screen.getByText('Delete Instance')).toBeInTheDocument();
@@ -339,14 +527,15 @@ describe('StackInstances Detail', () => {
     expect(screen.getByRole('button', { name: /stop/i })).toBeInTheDocument();
   });
 
-  it('does NOT show Deploy button for running instance', async () => {
+  it('shows Redeploy instead of Deploy for running instance', async () => {
     setupMocks({ status: 'running' });
     renderDetail();
 
     await waitFor(() => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
-    expect(screen.queryByRole('button', { name: /deploy/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Deploy' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Redeploy' })).toBeInTheDocument();
   });
 
   it('shows Deploy button for stopped instance', async () => {
@@ -359,14 +548,14 @@ describe('StackInstances Detail', () => {
     expect(screen.getByRole('button', { name: /deploy/i })).toBeInTheDocument();
   });
 
-  it('shows Deploy button for error instance', async () => {
+  it('shows Redeploy button for error instance', async () => {
     setupMocks({ status: 'error' }, { deployLogReject: true });
     renderDetail();
 
     await waitFor(() => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
-    expect(screen.getByRole('button', { name: /deploy/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Redeploy' })).toBeInTheDocument();
   });
 
   it('calls instanceService.deploy when Deploy button is clicked', async () => {
@@ -418,9 +607,35 @@ describe('StackInstances Detail', () => {
 
     await user.click(screen.getByRole('button', { name: /stop/i }));
 
+    // Confirm in the stop dialog
+    const dialog = await screen.findByRole('dialog', { name: /stop instance/i });
+    expect(instanceService.stop).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole('button', { name: /^stop$/i }));
+
     await waitFor(() => {
       expect(instanceService.stop).toHaveBeenCalledWith('123');
     });
+  });
+
+  it('does not stop the instance when the stop dialog is cancelled', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'running' });
+
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /stop/i }));
+    const dialog = await screen.findByRole('dialog', { name: /stop instance/i });
+    expect(within(dialog).getByText(/namespace stays/i)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: /cancel/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: /stop instance/i })).not.toBeInTheDocument();
+    });
+    expect(instanceService.stop).not.toHaveBeenCalled();
   });
 
   it('shows error alert on deploy failure', async () => {
@@ -458,6 +673,8 @@ describe('StackInstances Detail', () => {
     });
 
     await user.click(screen.getByRole('button', { name: /stop/i }));
+    const dialog = await screen.findByRole('dialog', { name: /stop instance/i });
+    await user.click(within(dialog).getByRole('button', { name: /^stop$/i }));
 
     await waitFor(() => {
       expect(screen.getByText('Failed to stop instance')).toBeInTheDocument();
@@ -617,34 +834,38 @@ describe('StackInstances Detail', () => {
     expect(screen.getByText('Instance is stopped')).toBeInTheDocument();
   });
 
-  it('shows Clean Namespace button for running instance', async () => {
+  it('shows Clean namespace in the Actions menu for running instance', async () => {
     setupMocks({ status: 'running' });
     renderDetail();
 
     await waitFor(() => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
-    expect(screen.getByRole('button', { name: /clean namespace/i })).toBeInTheDocument();
+    const menu = await openActionsMenu(userEvent.setup());
+    expect(within(menu).getByRole('menuitem', { name: 'Clean namespace' })).toBeInTheDocument();
   });
 
-  it('shows Clean Namespace button for error instance', async () => {
+  it('shows Clean namespace in the Actions menu for error instance', async () => {
     setupMocks({ status: 'error' }, { deployLogReject: true });
     renderDetail();
 
     await waitFor(() => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
-    expect(screen.getByRole('button', { name: /clean namespace/i })).toBeInTheDocument();
+    const menu = await openActionsMenu(userEvent.setup());
+    expect(within(menu).getByRole('menuitem', { name: 'Clean namespace' })).toBeInTheDocument();
   });
 
-  it('does not show Clean Namespace button for draft instance', async () => {
+  it('does not show Clean namespace in the Actions menu for draft instance', async () => {
     setupMocks({ status: 'draft' }, { deployLogReject: true });
     renderDetail();
 
     await waitFor(() => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
-    expect(screen.queryByRole('button', { name: /clean namespace/i })).not.toBeInTheDocument();
+    const menu = await openActionsMenu(userEvent.setup());
+    expect(within(menu).getByRole('menuitem', { name: 'Delete' })).toBeInTheDocument();
+    expect(within(menu).queryByRole('menuitem', { name: 'Clean namespace' })).not.toBeInTheDocument();
   });
 
   it('opens confirmation dialog when Clean Namespace is clicked', async () => {
@@ -656,7 +877,7 @@ describe('StackInstances Detail', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: /clean namespace/i }));
+    await clickMenuAction(user, 'Clean namespace');
 
     await waitFor(() => {
       expect(screen.getByText('Clean Namespace?')).toBeInTheDocument();
@@ -681,7 +902,7 @@ describe('StackInstances Detail', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: /clean namespace/i }));
+    await clickMenuAction(user, 'Clean namespace');
 
     await waitFor(() => {
       expect(screen.getByText('Clean Namespace?')).toBeInTheDocument();
@@ -705,7 +926,7 @@ describe('StackInstances Detail', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: /clean namespace/i }));
+    await clickMenuAction(user, 'Clean namespace');
 
     await waitFor(() => {
       expect(screen.getByText('Clean Namespace?')).toBeInTheDocument();
@@ -741,14 +962,15 @@ describe('StackInstances Detail', () => {
     expect(screen.getByText('Instance is cleaning')).toBeInTheDocument();
   });
 
-  it('shows Clean Namespace button for stopped instance', async () => {
+  it('shows Clean namespace in the Actions menu for stopped instance', async () => {
     setupMocks({ status: 'stopped' }, { deployLogReject: true });
     renderDetail();
 
     await waitFor(() => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
-    expect(screen.getByRole('button', { name: /clean namespace/i })).toBeInTheDocument();
+    const menu = await openActionsMenu(userEvent.setup());
+    expect(within(menu).getByRole('menuitem', { name: 'Clean namespace' })).toBeInTheDocument();
   });
 
   it('shows "Using instance branch" chip when no branch override exists', async () => {
@@ -839,7 +1061,7 @@ describe('StackInstances Detail', () => {
       isCritical: false,
       isExpired: false,
     });
-    setupMocks({ status: 'running', expires_at: '2026-01-01T12:00:00Z' });
+    setupMocks({ status: 'running', ttl_minutes: 60, expires_at: '2026-01-01T12:00:00Z' });
     renderDetail();
 
     await waitFor(() => {
@@ -856,7 +1078,7 @@ describe('StackInstances Detail', () => {
       isCritical: false,
       isExpired: false,
     });
-    setupMocks({ status: 'running', expires_at: '2026-01-01T12:00:00Z' });
+    setupMocks({ status: 'running', ttl_minutes: 60, expires_at: '2026-01-01T12:00:00Z' });
     renderDetail();
 
     await waitFor(() => {
@@ -874,7 +1096,7 @@ describe('StackInstances Detail', () => {
       isCritical: false,
       isExpired: false,
     });
-    const inst = setupMocks({ status: 'running', expires_at: '2026-01-01T12:00:00Z' });
+    const inst = setupMocks({ status: 'running', ttl_minutes: 60, expires_at: '2026-01-01T12:00:00Z' });
     (instanceService.extend as MockFn).mockResolvedValue({ ...inst, expires_at: '2026-01-01T16:00:00Z' });
 
     renderDetail();
@@ -884,9 +1106,75 @@ describe('StackInstances Detail', () => {
     });
 
     await user.click(screen.getByRole('button', { name: /extend/i }));
+    await user.click(screen.getByRole('menuitem', { name: '+4 h' }));
 
     await waitFor(() => {
-      expect(instanceService.extend).toHaveBeenCalledWith('123');
+      expect(instanceService.extend).toHaveBeenCalledWith('123', 240);
+    });
+    expect(await screen.findByText(/^Extended by 4 h\. Expires .+ \(in .+\)$/)).toBeInTheDocument();
+  });
+
+  it('keeps the Follow toggle and the owner name after Extend (issue #497)', async () => {
+    const user = userEvent.setup();
+    (useCountdown as unknown as MockFn).mockReturnValue({
+      remaining: '1h 0m',
+      isWarning: false,
+      isCritical: false,
+      isExpired: false,
+    });
+    const inst = setupMocks({
+      status: 'running',
+      expires_at: '2026-01-01T12:00:00Z',
+      following: true,
+      follower_count: 2,
+      owner_username: 'owner-name',
+    });
+    // A response without the follow state.
+    (instanceService.extend as MockFn).mockResolvedValue({
+      ...inst,
+      expires_at: '2026-01-01T16:00:00Z',
+      following: undefined,
+      follower_count: undefined,
+    });
+
+    renderDetail();
+
+    expect(await screen.findByRole('button', { name: 'Unfollow stack' })).toHaveTextContent('Following (2)');
+    await user.click(screen.getByRole('button', { name: /^extend/i }));
+    await user.click(screen.getByRole('menuitem', { name: '+4 h' }));
+
+    await waitFor(() => {
+      expect(instanceService.extend).toHaveBeenCalledWith('123', 240);
+    });
+    expect(await screen.findByText(/^Extended by 4 h\./)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Unfollow stack' })).toHaveTextContent('Following (2)');
+    expect(screen.getByText('Owner: owner-name')).toBeInTheDocument();
+  });
+
+  it('clears the values drift warning when the extend response has no values_drift', async () => {
+    const user = userEvent.setup();
+    (useCountdown as unknown as MockFn).mockReturnValue({
+      remaining: '1h 0m',
+      isWarning: false,
+      isCritical: false,
+      isExpired: false,
+    });
+    const inst = setupMocks({ status: 'running', expires_at: '2026-01-01T12:00:00Z', values_drift: true });
+    // The JSON omits a false values_drift.
+    (instanceService.extend as MockFn).mockResolvedValue({
+      ...inst,
+      expires_at: '2026-01-01T16:00:00Z',
+      values_drift: undefined,
+    });
+
+    renderDetail();
+
+    expect(await screen.findByText(/The running values differ from the stored overrides/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /^extend/i }));
+    await user.click(screen.getByRole('menuitem', { name: '+4 h' }));
+
+    await waitFor(() => {
+      expect(screen.queryByText(/The running values differ from the stored overrides/)).not.toBeInTheDocument();
     });
   });
 
@@ -932,11 +1220,11 @@ describe('StackInstances Detail', () => {
     expect(screen.getByTestId('ttl-value')).toHaveTextContent('240');
   });
 
-  it('calls instanceService.extend when TTL is changed', async () => {
+  it('sets the TTL through update when TTL is changed', async () => {
     const user = userEvent.setup();
     (useCountdown as unknown as MockFn).mockReturnValue(null);
     const inst = setupMocks({ status: 'draft', ttl_minutes: 0 }, { deployLogReject: true });
-    (instanceService.extend as MockFn).mockResolvedValue({ ...inst, ttl_minutes: 240 });
+    (instanceService.update as MockFn).mockResolvedValue({ ...inst, ttl_minutes: 240 });
 
     renderDetail();
 
@@ -947,8 +1235,9 @@ describe('StackInstances Detail', () => {
     await user.click(screen.getByTestId('ttl-change'));
 
     await waitFor(() => {
-      expect(instanceService.extend).toHaveBeenCalledWith('123', 240);
+      expect(instanceService.update).toHaveBeenCalledWith('123', { ttl_minutes: 240 });
     });
+    expect(instanceService.extend).not.toHaveBeenCalled();
   });
 
   it('confirms delete and navigates to dashboard', async () => {
@@ -961,7 +1250,7 @@ describe('StackInstances Detail', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: /delete/i }));
+    await clickMenuAction(user, 'Delete');
 
     await waitFor(() => {
       expect(screen.getByText('Delete Instance')).toBeInTheDocument();
@@ -987,7 +1276,7 @@ describe('StackInstances Detail', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: /delete/i }));
+    await clickMenuAction(user, 'Delete');
     await waitFor(() => {
       expect(screen.getByText('Delete Instance')).toBeInTheDocument();
     });
@@ -1000,82 +1289,193 @@ describe('StackInstances Detail', () => {
     });
   });
 
-  it('clones instance and navigates to new instance', async () => {
+  it('opens the clone dialog with a valid suggested name and the source branch', async () => {
     const user = userEvent.setup();
-    setupMocks();
-    (instanceService.clone as MockFn).mockResolvedValue({ id: 'cloned-123' });
+    setupMocks({ status: 'draft', ttl_minutes: 240 }, { deployLogReject: true });
     renderDetail();
-
     await waitFor(() => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: /clone/i }));
+    await clickMenuAction(user, 'Clone');
+    const dialog = await screen.findByRole('dialog', { name: 'Clone Instance' });
+    expect(within(dialog).getByRole('textbox', { name: /name/i })).toHaveValue('test-instance-copy');
+    expect(within(dialog).getByRole('textbox', { name: /branch/i })).toHaveValue('main');
+    expect(within(dialog).getByTestId('ttl-value')).toHaveTextContent('240');
+    expect(instanceService.clone).not.toHaveBeenCalled();
+  });
+
+  it('validates the clone name live', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'draft' }, { deployLogReject: true });
+    renderDetail();
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    await clickMenuAction(user, 'Clone');
+    const dialog = await screen.findByRole('dialog', { name: 'Clone Instance' });
+    const nameInput = within(dialog).getByRole('textbox', { name: /name/i });
+
+    await user.clear(nameInput);
+    await user.type(nameInput, 'Test Instance (Copy)');
+    expect(within(dialog).getByText('Use lowercase letters only')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Create Clone' })).toBeDisabled();
+
+    await user.clear(nameInput);
+    await user.type(nameInput, 'x'.repeat(51));
+    expect(within(dialog).getByText('Use 50 characters or fewer')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Create Clone' })).toBeDisabled();
+
+    await user.clear(nameInput);
+    expect(within(dialog).getByText('Instance name is required')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Create Clone' })).toBeDisabled();
+  });
+
+  it('clones with name, branch and TTL and navigates to the new instance', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'draft', ttl_minutes: 240 }, { deployLogReject: true });
+    (instanceService.clone as MockFn).mockResolvedValue({ id: 'cloned-123' });
+    renderDetail();
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    await clickMenuAction(user, 'Clone');
+    const dialog = await screen.findByRole('dialog', { name: 'Clone Instance' });
+    const nameInput = within(dialog).getByRole('textbox', { name: /name/i });
+    await user.clear(nameInput);
+    await user.type(nameInput, 'my-copy');
+    const branchInput = within(dialog).getByRole('textbox', { name: /branch/i });
+    await user.clear(branchInput);
+    await user.type(branchInput, 'feature-x');
+    await user.click(within(dialog).getByRole('button', { name: 'Create Clone' }));
 
     await waitFor(() => {
-      expect(instanceService.clone).toHaveBeenCalledWith('123');
+      expect(instanceService.clone).toHaveBeenCalledWith('123', { name: 'my-copy', branch: 'feature-x', ttl_minutes: 240 });
     });
     expect(mockNavigate).toHaveBeenCalledWith('/stack-instances/cloned-123');
   });
 
-  it('shows error when clone fails', async () => {
+  it('sends no name when the suggested clone name is kept', async () => {
     const user = userEvent.setup();
-    setupMocks();
-    (instanceService.clone as MockFn).mockRejectedValue(new Error('Server error'));
+    setupMocks({ status: 'draft', ttl_minutes: 240 }, { deployLogReject: true });
+    (instanceService.clone as MockFn).mockResolvedValue({ id: 'cloned-123' });
     renderDetail();
-
     await waitFor(() => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: /clone/i }));
+    await clickMenuAction(user, 'Clone');
+    const dialog = await screen.findByRole('dialog', { name: 'Clone Instance' });
+    await user.click(within(dialog).getByRole('button', { name: 'Create Clone' }));
 
     await waitFor(() => {
-      expect(screen.getByText('Failed to clone instance')).toBeInTheDocument();
+      expect(instanceService.clone).toHaveBeenCalledWith('123', { branch: 'main', ttl_minutes: 240 });
     });
   });
 
-  it('calls instanceService.exportValues when Export Values is clicked', async () => {
+  it('shows the API error in the clone dialog when clone fails', async () => {
     const user = userEvent.setup();
-    setupMocks();
-    (instanceService.exportValues as MockFn).mockResolvedValue('replicaCount: 2');
-
-    // Mock URL methods
-    const origCreateObjectURL = URL.createObjectURL;
-    const origRevokeObjectURL = URL.revokeObjectURL;
-    URL.createObjectURL = vi.fn().mockReturnValue('blob:test');
-    URL.revokeObjectURL = vi.fn();
-
+    setupMocks({ status: 'draft' }, { deployLogReject: true });
+    (instanceService.clone as MockFn).mockRejectedValue({ response: { status: 400, data: { error: 'invalid name' } } });
     renderDetail();
-
     await waitFor(() => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: /export values/i }));
+    await clickMenuAction(user, 'Clone');
+    const dialog = await screen.findByRole('dialog', { name: 'Clone Instance' });
+    await user.click(within(dialog).getByRole('button', { name: 'Create Clone' }));
 
-    await waitFor(() => {
-      expect(instanceService.exportValues).toHaveBeenCalledWith('123');
-    });
-
-    URL.createObjectURL = origCreateObjectURL;
-    URL.revokeObjectURL = origRevokeObjectURL;
+    expect(await within(dialog).findByText(/invalid name/)).toBeInTheDocument();
+    expect(mockNavigate).not.toHaveBeenCalled();
   });
 
-  it('shows error when export fails', async () => {
+  it('downloads the values ZIP unchanged when All charts (ZIP) is chosen', async () => {
     const user = userEvent.setup();
     setupMocks();
-    (instanceService.exportValues as MockFn).mockRejectedValue(new Error('Not found'));
+    const blob = new Blob(['PK\u0003\u0004'], { type: 'application/zip' });
+    (instanceService.exportValues as MockFn).mockResolvedValue({ blob, filename: 'Test Instance-values.zip' });
+
     renderDetail();
 
     await waitFor(() => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: /export values/i }));
+    await clickMenuAction(user, /export values/i);
+    await user.click(await screen.findByRole('menuitem', { name: 'All charts (ZIP)' }));
+
+    await waitFor(() => {
+      expect(instanceService.exportValues).toHaveBeenCalledWith('123', 'Test Instance');
+    });
+    expect(downloadBlob).toHaveBeenCalledWith(blob, 'Test Instance-values.zip');
+    expect((downloadBlob as MockFn).mock.calls[0][0]).toBe(blob);
+  });
+
+  it('downloads one chart as YAML when a chart is chosen', async () => {
+    const user = userEvent.setup();
+    setupMocks();
+    const blob = new Blob(['replicaCount: 1\n'], { type: 'application/x-yaml' });
+    (instanceService.exportChartValues as MockFn).mockResolvedValue({ blob, filename: 'Test Instance-frontend-values.yaml' });
+
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    await clickMenuAction(user, /export values/i);
+    await user.click(await screen.findByRole('menuitem', { name: 'frontend (YAML)' }));
+
+    await waitFor(() => {
+      expect(instanceService.exportChartValues).toHaveBeenCalledWith('123', 'chart1', 'Test Instance-frontend-values.yaml');
+    });
+    expect(downloadBlob).toHaveBeenCalledWith(blob, 'Test Instance-frontend-values.yaml');
+    expect(instanceService.exportValues).not.toHaveBeenCalled();
+  });
+
+  it('shows the generic error when export fails without an HTTP response', async () => {
+    const user = userEvent.setup();
+    setupMocks();
+    (instanceService.exportValues as MockFn).mockRejectedValue(new Error('Network Error'));
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    await clickMenuAction(user, /export values/i);
+    await user.click(await screen.findByRole('menuitem', { name: 'All charts (ZIP)' }));
 
     await waitFor(() => {
       expect(screen.getByText('Failed to export values')).toBeInTheDocument();
+    });
+    expect(downloadBlob).not.toHaveBeenCalled();
+  });
+
+  it('shows the HTTP status and server message when export fails', async () => {
+    const user = userEvent.setup();
+    setupMocks();
+    (instanceService.exportValues as MockFn).mockRejectedValue({
+      response: {
+        status: 403,
+        statusText: 'Forbidden',
+        data: new Blob([JSON.stringify({ error: 'Access denied' })], { type: 'application/json' }),
+      },
+    });
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    await clickMenuAction(user, /export values/i);
+    await user.click(await screen.findByRole('menuitem', { name: 'All charts (ZIP)' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Failed to export values (HTTP 403: Access denied)')).toBeInTheDocument();
     });
   });
 
@@ -1136,7 +1536,7 @@ describe('StackInstances Detail', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: /clean namespace/i }));
+    await clickMenuAction(user, 'Clean namespace');
 
     await waitFor(() => {
       expect(screen.getByText('Clean Namespace?')).toBeInTheDocument();
@@ -1199,6 +1599,7 @@ describe('StackInstances Detail', () => {
     });
 
     await user.click(screen.getByRole('button', { name: /stop/i }));
+    await user.click(within(await screen.findByRole('dialog', { name: /stop instance/i })).getByRole('button', { name: /^stop$/i }));
 
     await waitFor(() => {
       expect(instanceService.stop).toHaveBeenCalledWith('123');
@@ -1216,9 +1617,10 @@ describe('StackInstances Detail', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    // Click the Extend button (shown next to countdown)
+    // Click the Extend button (shown next to countdown) and pick an option
     const extendBtn = await screen.findByRole('button', { name: /extend/i });
     await user.click(extendBtn);
+    await user.click(screen.getByRole('menuitem', { name: '+1 h' }));
 
     await waitFor(() => {
       expect(screen.getByText('Failed to extend TTL')).toBeInTheDocument();
@@ -1228,7 +1630,7 @@ describe('StackInstances Detail', () => {
   it('shows error when TTL change fails', async () => {
     const user = userEvent.setup();
     setupMocks({ status: 'draft', ttl_minutes: 60 }, { deployLogReject: true });
-    (instanceService.extend as MockFn).mockRejectedValue(new Error('Server error'));
+    (instanceService.update as MockFn).mockRejectedValue(new Error('Server error'));
     renderDetail();
 
     await waitFor(() => {
@@ -1279,7 +1681,7 @@ describe('StackInstances Detail', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: /delete/i }));
+    await clickMenuAction(user, 'Delete');
 
     await waitFor(() => {
       expect(screen.getByText('Delete Instance')).toBeInTheDocument();
@@ -1304,7 +1706,7 @@ describe('StackInstances Detail', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: /clean namespace/i }));
+    await clickMenuAction(user, 'Clean namespace');
 
     await waitFor(() => {
       expect(screen.getByText('Clean Namespace?')).toBeInTheDocument();
@@ -1344,7 +1746,7 @@ describe('StackInstances Detail', () => {
     expect(screen.getByText('replicaCount: 1')).toBeInTheDocument();
   });
 
-  it('sets branch override when BranchSelector onChange is called', async () => {
+  it('saves a chart branch override only with Save Changes', async () => {
     const user = userEvent.setup();
     setupMocks();
     (branchOverrideService.set as MockFn).mockResolvedValue({});
@@ -1358,33 +1760,77 @@ describe('StackInstances Detail', () => {
     const changeBtns = screen.getAllByText('change-branch');
     await user.click(changeBtns[1]);
 
+    expect(screen.getByText('Override: feature/new-branch')).toBeInTheDocument();
+    expect(branchOverrideService.set).not.toHaveBeenCalled();
+    expect(useUnsavedChanges).toHaveBeenLastCalledWith(true);
+
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
     await waitFor(() => {
       expect(branchOverrideService.set).toHaveBeenCalledWith('123', 'chart1', 'feature/new-branch');
     });
+    expect(branchOverrideService.set).toHaveBeenCalledTimes(1);
+    expect(instanceService.update).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(useUnsavedChanges).toHaveBeenLastCalledWith(false);
+    });
+
+    // A second save sends nothing.
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => {
+      expect(screen.getAllByText('Changes saved successfully').length).toBeGreaterThan(0);
+    });
+    expect(branchOverrideService.set).toHaveBeenCalledTimes(1);
   });
 
-  it('removes branch override when branch is cleared', async () => {
+  it('removes a branch override with Save Changes after a reset to the instance branch', async () => {
     const user = userEvent.setup();
     setupMocks({}, { branchOverrides: [{ chart_config_id: 'chart1', branch: 'old-branch' }] });
-    (branchOverrideService.delete as MockFn).mockResolvedValue({});
+    (branchOverrideService.delete as MockFn).mockResolvedValue(undefined);
     renderDetail();
 
     await waitFor(() => {
-      expect(screen.getByRole('tab', { name: 'frontend' })).toBeInTheDocument();
+      expect(screen.getByText('Override: old-branch')).toBeInTheDocument();
     });
 
     // Second "clear-branch" button is the chart-level BranchSelector
     const clearBtns = screen.getAllByText('clear-branch');
     await user.click(clearBtns[1]);
 
+    expect(screen.getByText('Using instance branch')).toBeInTheDocument();
+    expect(branchOverrideService.delete).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
     await waitFor(() => {
       expect(branchOverrideService.delete).toHaveBeenCalledWith('123', 'chart1');
     });
+    expect(branchOverrideService.set).not.toHaveBeenCalled();
   });
 
-  it('shows error when setting branch override fails', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+  it('does not save a branch override when the override is set back before the save', async () => {
+    const user = userEvent.setup();
+    setupMocks();
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: 'frontend' })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getAllByText('change-branch')[1]);
+    await user.click(screen.getAllByText('clear-branch')[1]);
+    expect(useUnsavedChanges).toHaveBeenLastCalledWith(false);
+
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => {
+      expect(screen.getByText('Changes saved successfully')).toBeInTheDocument();
+    });
+    expect(branchOverrideService.set).not.toHaveBeenCalled();
+    expect(branchOverrideService.delete).not.toHaveBeenCalled();
+  });
+
+  it('shows an error when saving a branch override fails', async () => {
+    const user = userEvent.setup();
     setupMocks();
     (branchOverrideService.set as MockFn).mockRejectedValue(new Error('fail'));
     renderDetail();
@@ -1393,37 +1839,33 @@ describe('StackInstances Detail', () => {
       expect(screen.getByRole('tab', { name: 'frontend' })).toBeInTheDocument();
     });
 
-    const changeBtns = screen.getAllByText('change-branch');
-    await user.click(changeBtns[1]);
-
-    await vi.advanceTimersByTimeAsync(900);
+    await user.click(screen.getAllByText('change-branch')[1]);
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
 
     await waitFor(() => {
-      expect(screen.getByRole('alert')).toHaveTextContent('Failed to update branch override');
+      expect(screen.getByText(/Failed to save changes/)).toBeInTheDocument();
     });
-    vi.useRealTimers();
+    expect(useUnsavedChanges).toHaveBeenLastCalledWith(true);
   });
 
-  it('shows error when removing branch override fails', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    setupMocks({}, { branchOverrides: [{ chart_config_id: 'chart1', branch: 'old-branch' }] });
-    (branchOverrideService.delete as MockFn).mockRejectedValue(new Error('fail'));
+  it('clears the unsaved-changes flag after a successful save of an override', async () => {
+    const user = userEvent.setup();
+    setupMocks();
+    (instanceService.setOverride as MockFn).mockResolvedValue({});
     renderDetail();
 
     await waitFor(() => {
-      expect(screen.getByRole('tab', { name: 'frontend' })).toBeInTheDocument();
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    const clearBtns = screen.getAllByText('clear-branch');
-    await user.click(clearBtns[1]);
-
-    await vi.advanceTimersByTimeAsync(900);
+    await user.click(screen.getByRole('button', { name: 'edit Your Overrides' }));
+    expect(useUnsavedChanges).toHaveBeenLastCalledWith(true);
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
 
     await waitFor(() => {
-      expect(screen.getByRole('alert')).toHaveTextContent('Failed to update branch override');
+      expect(screen.getByText('Changes saved successfully')).toBeInTheDocument();
     });
-    vi.useRealTimers();
+    expect(useUnsavedChanges).toHaveBeenLastCalledWith(false);
   });
 
   it('saves override values when Save Changes is clicked with edited overrides', async () => {
@@ -1444,6 +1886,202 @@ describe('StackInstances Detail', () => {
     // Save should complete without error (no overrides to save, no branch change)
     await waitFor(() => {
       expect(screen.queryByText('Failed to save changes')).not.toBeInTheDocument();
+    });
+  });
+
+  it('deletes an existing override when its editor is cleared and saved', async () => {
+    const user = userEvent.setup();
+    setupMocks();
+    (instanceService.getOverrides as MockFn).mockResolvedValue([
+      { id: 'ov1', stack_instance_id: '123', chart_config_id: 'chart1', values: 'replicaCount: 3' },
+    ]);
+    (instanceService.deleteOverride as MockFn).mockResolvedValue(undefined);
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('replicaCount: 3')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: 'clear Your Overrides' }));
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => {
+      expect(instanceService.deleteOverride).toHaveBeenCalledWith('123', 'chart1');
+    });
+    expect(instanceService.setOverride).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(screen.getByText('Changes saved successfully')).toBeInTheDocument();
+    });
+
+    // A second save does not send the DELETE again.
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => {
+      expect(instanceService.deleteOverride).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('does not send DELETE or PUT for an empty override that never existed', async () => {
+    const user = userEvent.setup();
+    setupMocks();
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: 'clear Your Overrides' }));
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Changes saved successfully')).toBeInTheDocument();
+    });
+    expect(instanceService.deleteOverride).not.toHaveBeenCalled();
+    expect(instanceService.setOverride).not.toHaveBeenCalled();
+  });
+
+  it('sends PUT for a changed non-empty override', async () => {
+    const user = userEvent.setup();
+    setupMocks();
+    (instanceService.setOverride as MockFn).mockResolvedValue({});
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: 'edit Your Overrides' }));
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => {
+      expect(instanceService.setOverride).toHaveBeenCalledWith('123', 'chart1', { values: 'replicaCount: 5' });
+    });
+    expect(instanceService.deleteOverride).not.toHaveBeenCalled();
+  });
+
+  it('does not repeat a successful DELETE when a later PUT fails', async () => {
+    const user = userEvent.setup();
+    setupMocks();
+    (definitionService.get as MockFn).mockResolvedValue({
+      ...mockDefinition,
+      charts: [
+        mockDefinition.charts[0],
+        { ...mockDefinition.charts[0], id: 'chart2', chart_name: 'backend', deploy_order: 2 },
+      ],
+    });
+    (instanceService.getOverrides as MockFn).mockResolvedValue([
+      { id: 'ov1', stack_instance_id: '123', chart_config_id: 'chart1', values: 'replicaCount: 3' },
+    ]);
+    (instanceService.deleteOverride as MockFn).mockResolvedValue(undefined);
+    (instanceService.setOverride as MockFn)
+      .mockRejectedValueOnce({ response: { status: 500, statusText: 'Internal Server Error', data: { error: 'Internal server error' } } })
+      .mockResolvedValueOnce({});
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('replicaCount: 3')).toBeInTheDocument();
+    });
+
+    // Chart A (chart1): clear the existing override. Chart B (chart2): add a new one.
+    const clearButtons = screen.getAllByRole('button', { name: 'clear Your Overrides', hidden: true });
+    const editButtons = screen.getAllByRole('button', { name: 'edit Your Overrides', hidden: true });
+    await user.click(clearButtons[0]);
+    await user.click(editButtons[1]);
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Failed to save changes (HTTP 500: Internal server error)')).toBeInTheDocument();
+    });
+    expect(instanceService.deleteOverride).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => {
+      expect(instanceService.setOverride).toHaveBeenCalledTimes(2);
+    });
+    expect(instanceService.setOverride).toHaveBeenLastCalledWith('123', 'chart2', { values: 'replicaCount: 5' });
+    expect(instanceService.deleteOverride).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps an override edit typed while the save request runs', async () => {
+    const user = userEvent.setup();
+    setupMocks();
+    let resolvePut: (value: unknown) => void = () => {};
+    (instanceService.setOverride as MockFn)
+      .mockImplementationOnce(() => new Promise((resolve) => { resolvePut = resolve; }))
+      .mockResolvedValueOnce({});
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: 'edit Your Overrides' }));
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => {
+      expect(instanceService.setOverride).toHaveBeenCalledWith('123', 'chart1', { values: 'replicaCount: 5' });
+    });
+
+    // Edit again while the PUT is still pending, then let the PUT finish.
+    await user.click(screen.getByRole('button', { name: 'edit again Your Overrides' }));
+    resolvePut({});
+
+    await waitFor(() => {
+      expect(screen.getByText('Changes saved successfully')).toBeInTheDocument();
+    });
+    expect(screen.getByText('replicaCount: 7')).toBeInTheDocument();
+
+    // The newer edit is still unsaved, so the next save sends it.
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => {
+      expect(instanceService.setOverride).toHaveBeenLastCalledWith('123', 'chart1', { values: 'replicaCount: 7' });
+    });
+    expect(instanceService.setOverride).toHaveBeenCalledTimes(2);
+  });
+
+  it('treats a 404 on DELETE as success', async () => {
+    const user = userEvent.setup();
+    setupMocks();
+    (instanceService.getOverrides as MockFn).mockResolvedValue([
+      { id: 'ov1', stack_instance_id: '123', chart_config_id: 'chart1', values: 'replicaCount: 3' },
+    ]);
+    (instanceService.deleteOverride as MockFn).mockRejectedValue({
+      response: { status: 404, statusText: 'Not Found', data: { error: 'Override not found' } },
+    });
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('replicaCount: 3')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: 'clear Your Overrides' }));
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Changes saved successfully')).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/Failed to save changes/)).not.toBeInTheDocument();
+  });
+
+  it('shows the HTTP reason when deleting an override fails', async () => {
+    const user = userEvent.setup();
+    setupMocks();
+    (instanceService.getOverrides as MockFn).mockResolvedValue([
+      { id: 'ov1', stack_instance_id: '123', chart_config_id: 'chart1', values: 'replicaCount: 3' },
+    ]);
+    (instanceService.deleteOverride as MockFn).mockRejectedValue({
+      response: { status: 403, statusText: 'Forbidden', data: { error: 'Access denied' } },
+    });
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('replicaCount: 3')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: 'clear Your Overrides' }));
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Failed to save changes (HTTP 403: Access denied)')).toBeInTheDocument();
     });
   });
 
@@ -1487,5 +2125,813 @@ describe('StackInstances Detail', () => {
       expect(screen.getByTestId('deployment-log-viewer')).toBeInTheDocument();
     });
     expect(screen.getByText('2 log entries')).toBeInTheDocument();
+  });
+});
+
+describe('StackInstances Detail permissions', () => {
+  const setUser = (id: string, role: string) => {
+    authState.user = { id, username: id, role, display_name: id };
+  };
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    authState.user = { id: 'user1', username: 'alice', role: 'user', display_name: 'Alice' };
+  });
+
+  const expectModifyControls = async () => {
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save Changes' })).toBeInTheDocument();
+    expect(screen.getByText('Your Overrides')).toBeInTheDocument();
+    expect(screen.queryByText(/Overrides are visible to the owner/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Read-only: you are not the owner/)).not.toBeInTheDocument();
+    expect(instanceService.getOverrides).toHaveBeenCalledWith('123');
+    expect(branchOverrideService.list).toHaveBeenCalledWith('123');
+    // Clean namespace and Delete are in the Actions menu.
+    const menu = await openActionsMenu(userEvent.setup());
+    expect(within(menu).getByRole('menuitem', { name: 'Clean namespace' })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem', { name: 'Delete' })).toBeInTheDocument();
+  };
+
+  it.each([
+    ['owner with role user', 'user1', 'user'],
+    ['admin who is not the owner', 'u-admin', 'admin'],
+    ['devops user who is not the owner', 'u-devops', 'devops'],
+  ])('shows lifecycle actions for the %s', async (_label, userId, role) => {
+    setUser(userId, role);
+    setupMocks();
+    renderDetail();
+    await expectModifyControls();
+  });
+
+  it('shows Deploy for the owner when the instance is stopped', async () => {
+    setupMocks({ status: 'stopped' });
+    renderDetail();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Deploy' })).toBeInTheDocument();
+    });
+  });
+
+  it('hides lifecycle actions and shows read-only info for another user', async () => {
+    setUser('u-bob', 'user');
+    setupMocks();
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Read-only: you are not the owner of this stack.')).toBeInTheDocument();
+    for (const name of ['Deploy', 'Stop', 'Save Changes', 'Extend']) {
+      expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
+    }
+    expect(screen.getByRole('button', { name: 'Back to Dashboard' })).toBeInTheDocument();
+    expect(screen.getByTestId('status-badge')).toHaveTextContent('running');
+    expect(screen.getByText('Overrides are visible to the owner, admins and devops users.')).toBeInTheDocument();
+    expect(screen.queryByText('Your Overrides')).not.toBeInTheDocument();
+    expect(screen.getByText('Default Values')).toBeInTheDocument();
+    // Viewing and copying stay available in the Actions menu; Clean namespace and Delete do not.
+    const menu = await openActionsMenu(userEvent.setup());
+    expect(within(menu).getByRole('menuitem', { name: /export values/i })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem', { name: 'Clone' })).toBeInTheDocument();
+    expect(within(menu).queryByRole('menuitem', { name: 'Clean namespace' })).not.toBeInTheDocument();
+    expect(within(menu).queryByRole('menuitem', { name: 'Delete' })).not.toBeInTheDocument();
+    expect(within(menu).queryByRole('separator')).not.toBeInTheDocument();
+  });
+
+  it('shows the TTL countdown but hides Extend for another user', async () => {
+    setUser('u-bob', 'user');
+    (useCountdown as unknown as MockFn).mockReturnValue({
+      remaining: '3h 42m',
+      isWarning: false,
+      isCritical: false,
+      isExpired: false,
+    });
+    setupMocks({ status: 'running', ttl_minutes: 60, expires_at: '2026-01-01T12:00:00Z' });
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText(/Expires in 3h 42m/)).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('button', { name: 'Extend' })).not.toBeInTheDocument();
+    (useCountdown as unknown as MockFn).mockReturnValue(null);
+  });
+
+  it('shows Extend for the owner when the TTL countdown runs', async () => {
+    (useCountdown as unknown as MockFn).mockReturnValue({
+      remaining: '3h 42m',
+      isWarning: false,
+      isCritical: false,
+      isExpired: false,
+    });
+    setupMocks({ status: 'running', ttl_minutes: 60, expires_at: '2026-01-01T12:00:00Z' });
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Extend' })).toBeInTheDocument();
+    });
+    (useCountdown as unknown as MockFn).mockReturnValue(null);
+  });
+
+  it('hides Deploy for another user when the instance is stopped', async () => {
+    setUser('u-bob', 'user');
+    setupMocks({ status: 'stopped' });
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('button', { name: 'Deploy' })).not.toBeInTheDocument();
+  });
+
+  it('does not fetch value or branch overrides for another user', async () => {
+    setUser('u-bob', 'user');
+    setupMocks();
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+    expect(instanceService.getOverrides).not.toHaveBeenCalled();
+    expect(branchOverrideService.list).not.toHaveBeenCalled();
+    expect(instanceService.getDeployLog).toHaveBeenCalledWith('123');
+    expect(instanceService.getPods).toHaveBeenCalledWith('123');
+    expect(screen.queryByText('Failed to load instance details')).not.toBeInTheDocument();
+  });
+
+  it('keeps pods, access URLs and deployment history visible for another user', async () => {
+    setUser('u-bob', 'user');
+    const podsStatus = {
+      namespace: 'stack-test',
+      status: 'healthy',
+      charts: [],
+      ingresses: [{ url: 'https://my-stack.example.com' }],
+      last_checked: '2025-01-01',
+    };
+    setupMocks({}, {
+      podsStatus,
+      logs: [{ id: 'log1', stack_instance_id: '123', action: 'deploy', status: 'success', output: '', started_at: '2025-01-01' }],
+    });
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('access-urls')).toBeInTheDocument();
+    });
+    expect(screen.getByText('https://my-stack.example.com')).toBeInTheDocument();
+    expect(screen.getByTestId('pod-status-display')).toBeInTheDocument();
+    expect(screen.getByTestId('deployment-log-viewer')).toBeInTheDocument();
+  });
+});
+
+describe('StackInstances Detail redeploy, rollback and drift', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+    authState.user = { id: 'user1', username: 'alice', role: 'user', display_name: 'Alice' };
+  });
+
+  const deployLog = (id: string, hour: number, overrides: Record<string, unknown> = {}) => ({
+    id,
+    stack_instance_id: '123',
+    action: 'deploy',
+    status: 'success',
+    output: '',
+    started_at: new Date(Date.UTC(2030, 0, 1, hour, 0)).toISOString(),
+    ...overrides,
+  });
+  // Newest first, as the API returns them. d3 is the current deploy.
+  const threeDeploys = [
+    deployLog('d3', 12),
+    deployLog('stop1', 11, { action: 'stop' }),
+    deployLog('d2', 10, { branch: 'feature-x' }),
+    deployLog('failed', 9, { status: 'error' }),
+    deployLog('d1', 8),
+  ];
+  const timeOf = (hour: number) => new Date(Date.UTC(2030, 0, 1, hour, 0)).toLocaleString();
+
+  const waitForPage = async () => {
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+  };
+
+  it.each(['running', 'partial', 'error'])('shows Redeploy and not Deploy for a %s instance', async (status) => {
+    setupMocks({ status });
+    renderDetail();
+    await waitForPage();
+    expect(screen.getByRole('button', { name: 'Redeploy' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Deploy' })).not.toBeInTheDocument();
+  });
+
+  it.each(['draft', 'stopped'])('shows Deploy and not Redeploy for a %s instance', async (status) => {
+    setupMocks({ status });
+    renderDetail();
+    await waitForPage();
+    expect(screen.getByRole('button', { name: 'Deploy' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Redeploy' })).not.toBeInTheDocument();
+  });
+
+  it('opens the Deploy Preview dialog from Redeploy and deploys on confirm', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'running' });
+    (instanceService.deploy as MockFn).mockResolvedValue({ log_id: 'l1', message: 'ok' });
+    renderDetail();
+    await waitForPage();
+
+    await user.click(screen.getByRole('button', { name: 'Redeploy' }));
+    const dialog = screen.getByTestId('deploy-preview-dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Deploy' }));
+
+    await waitFor(() => expect(instanceService.deploy).toHaveBeenCalledWith('123'));
+  });
+
+  it('shows "Saved. Redeploy to apply." after saving changes on a running instance', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'running' });
+    (instanceService.setOverride as MockFn).mockResolvedValue({});
+    renderDetail();
+    await waitForPage();
+
+    await user.click(screen.getByRole('button', { name: 'edit Your Overrides' }));
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }));
+
+    const hint = await screen.findByText('Saved. Redeploy to apply.');
+    const alert = hint.closest('[role="alert"]') as HTMLElement;
+    await user.click(within(alert).getByRole('button', { name: 'Redeploy' }));
+    expect(screen.getByTestId('deploy-preview-dialog')).toBeInTheDocument();
+  });
+
+  it('does not show the redeploy hint after a save without changes', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'running' });
+    renderDetail();
+    await waitForPage();
+
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }));
+    await waitFor(() => expect(screen.getByText('Changes saved successfully')).toBeInTheDocument());
+    expect(screen.queryByText('Saved. Redeploy to apply.')).not.toBeInTheDocument();
+  });
+
+  it('does not show the redeploy hint for a draft instance', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'draft' });
+    (instanceService.setOverride as MockFn).mockResolvedValue({});
+    renderDetail();
+    await waitForPage();
+
+    await user.click(screen.getByRole('button', { name: 'edit Your Overrides' }));
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }));
+    await waitFor(() => expect(screen.getByText('Changes saved successfully')).toBeInTheDocument());
+    expect(screen.queryByText('Saved. Redeploy to apply.')).not.toBeInTheDocument();
+  });
+
+  it('shows Rollback for a running instance with two or more successful deploys', async () => {
+    setupMocks({ status: 'running' }, { logs: threeDeploys });
+    renderDetail();
+    await waitForPage();
+    expect(await screen.findByRole('button', { name: 'Rollback' })).toBeInTheDocument();
+  });
+
+  it('hides Rollback with only one successful deploy', async () => {
+    setupMocks({ status: 'running' }, { logs: [deployLog('d1', 8), deployLog('x', 9, { status: 'error' })] });
+    renderDetail();
+    await waitForPage();
+    await waitFor(() => expect(screen.getByTestId('deployment-log-viewer')).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: 'Rollback' })).not.toBeInTheDocument();
+  });
+
+  it('hides Rollback for a stopped instance', async () => {
+    setupMocks({ status: 'stopped' }, { logs: threeDeploys });
+    renderDetail();
+    await waitForPage();
+    await waitFor(() => expect(screen.getByTestId('deployment-log-viewer')).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: 'Rollback' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Roll back to/ })).not.toBeInTheDocument();
+  });
+
+  it('rolls back to the previous deploy by default and names the target', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'running' }, { logs: threeDeploys });
+    (instanceService.rollback as MockFn).mockResolvedValue({ log_id: 'rb1', message: 'ok' });
+    renderDetail();
+    await waitForPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Rollback' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Roll Back Instance' });
+    const radios = within(dialog).getAllByRole('radio');
+    expect(radios).toHaveLength(3);
+    // The current deploy (d3) cannot be selected; the previous one (d2) is the default.
+    expect(within(dialog).getByRole('radio', { name: new RegExp(timeOf(12).replace(/[()]/g, '.')) })).toBeDisabled();
+    expect(within(dialog).getByRole('radio', { name: `${timeOf(10)} (branch feature-x)` })).toBeChecked();
+    expect(within(dialog).getByText(`Roll back "Test Instance" to the deploy of ${timeOf(10)} (branch feature-x)?`)).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('button', { name: 'Roll Back' }));
+    await waitFor(() => expect(instanceService.rollback).toHaveBeenCalledWith('123', 'd2'));
+    expect(await screen.findByText('Rollback started. Follow the deployment log.')).toBeInTheDocument();
+  });
+
+  it('names the image and pre-deploy check limits in the rollback dialog', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'running' }, { logs: threeDeploys });
+    renderDetail();
+    await waitForPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Rollback' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Roll Back Instance' });
+    expect(within(dialog).getByText(/restores the stored values of that deploy, not its images/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Pre-deploy checks do not run for a rollback\. Pre-rollback hooks run\./)).toBeInTheDocument();
+  });
+
+  it('shows the rollback warning and the drift flag from the response', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'running' }, { logs: threeDeploys });
+    (instanceService.rollback as MockFn).mockResolvedValue({
+      log_id: 'rb1', message: 'ok', target_log_id: 'd2', values_drift: true,
+      warning: 'The next deploy applies the stored overrides again.',
+    });
+    renderDetail();
+    await waitForPage();
+    const getCalls = (instanceService.get as MockFn).mock.calls.length;
+
+    await user.click(await screen.findByRole('button', { name: 'Rollback' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Roll Back Instance' });
+    await user.click(within(dialog).getByRole('button', { name: 'Roll Back' }));
+
+    expect(await screen.findByText(
+      'Rollback started. Follow the deployment log. The next deploy applies the stored overrides again.',
+    )).toBeInTheDocument();
+    // One refetch after the rollback. It returns no drift yet (the log still
+    // runs), so the flag from the rollback response stays.
+    await waitFor(() => expect(instanceService.getDeployLog).toHaveBeenCalledTimes(2));
+    expect((instanceService.get as MockFn).mock.calls.length).toBe(getCalls + 1);
+    expect(screen.getByText(/The running values differ from the stored overrides/)).toBeInTheDocument();
+  });
+
+  it('labels the placeholder log of a rollback as rollback', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'running' }, { logs: threeDeploys });
+    (instanceService.rollback as MockFn).mockResolvedValue({ log_id: 'rb1', message: 'ok' });
+    renderDetail();
+    await waitForPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Rollback' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Roll Back Instance' });
+    await user.click(within(dialog).getByRole('button', { name: 'Roll Back' }));
+    await screen.findByText('Rollback started. Follow the deployment log.');
+
+    act(() => {
+      wsState.handler?.({ type: 'deployment.status', payload: { instance_id: '123', status: 'deploying', log_id: 'rb1' } });
+    });
+    await waitFor(() => expect(screen.getByTestId('log-actions').textContent?.startsWith('rollback,')).toBe(true));
+  });
+
+  it('labels the placeholder log from the action in the WebSocket message', async () => {
+    setupMocks({ status: 'running' }, { logs: threeDeploys });
+    renderDetail();
+    await waitForPage();
+    await waitFor(() => expect(screen.getByTestId('log-actions')).toBeInTheDocument());
+
+    // A rollback started by another user: no local pending action.
+    act(() => {
+      wsState.handler?.({
+        type: 'deployment.status',
+        payload: { instance_id: '123', status: 'deploying', log_id: 'rb2', action: 'rollback' },
+      });
+    });
+    await waitFor(() => expect(screen.getByTestId('log-actions').textContent?.startsWith('rollback,')).toBe(true));
+  });
+
+  it('labels the placeholder log of a deploy started elsewhere as deploy', async () => {
+    setupMocks({ status: 'running' }, { logs: threeDeploys });
+    renderDetail();
+    await waitForPage();
+    await waitFor(() => expect(screen.getByTestId('log-actions')).toBeInTheDocument());
+
+    act(() => {
+      wsState.handler?.({ type: 'deployment.status', payload: { instance_id: '123', status: 'deploying', log_id: 'x1' } });
+    });
+    await waitFor(() => expect(screen.getByTestId('log-actions').textContent?.startsWith('deploy,')).toBe(true));
+  });
+
+  it('keeps a newer WebSocket status when a late instance fetch returns', async () => {
+    const inst = setupMocks({ status: 'running' }, { logs: threeDeploys });
+    renderDetail();
+    await waitForPage();
+
+    // The terminal refetch is slow; a newer status arrives before it returns.
+    let resolveGet: (value: unknown) => void = () => {};
+    (instanceService.get as MockFn).mockImplementation(() => new Promise((resolve) => { resolveGet = resolve; }));
+    act(() => {
+      wsState.handler?.({ type: 'deployment.status', payload: { instance_id: '123', status: 'running' } });
+    });
+    act(() => {
+      wsState.handler?.({ type: 'deployment.status', payload: { instance_id: '123', status: 'stopping' } });
+    });
+    await act(async () => {
+      resolveGet({ ...inst, status: 'running', values_drift: true });
+    });
+
+    expect(screen.getByTestId('status-badge')).toHaveTextContent('stopping');
+    // Other fields from the fetch still apply.
+    expect(screen.getByText(/The running values differ from the stored overrides/)).toBeInTheDocument();
+  });
+
+  it('keeps the current error message when a late instance fetch returns', async () => {
+    const inst = setupMocks({ status: 'running' }, { logs: threeDeploys });
+    renderDetail();
+    await waitForPage();
+
+    // Each fetch waits; the test resolves only the first (stale) one.
+    const resolvers: ((value: unknown) => void)[] = [];
+    (instanceService.get as MockFn).mockImplementation(() => new Promise((resolve) => { resolvers.push(resolve); }));
+    act(() => {
+      wsState.handler?.({ type: 'deployment.status', payload: { instance_id: '123', status: 'running' } });
+    });
+    act(() => {
+      wsState.handler?.({ type: 'deployment.status', payload: { instance_id: '123', status: 'stopped' } });
+    });
+    // The stale fetch carries an old error message. With the newer status
+    // "stopped" it would show the Expired chip.
+    await act(async () => {
+      resolvers[0]({ ...inst, status: 'running', error_message: 'Expired (TTL)' });
+    });
+
+    expect(screen.getByTestId('status-badge')).toHaveTextContent('stopped');
+    expect(screen.queryByText('Expired')).not.toBeInTheDocument();
+  });
+
+  it('refetches the instance on a terminal WebSocket status so the drift alert follows', async () => {
+    const inst = setupMocks({ status: 'running' }, { logs: threeDeploys });
+    renderDetail();
+    await waitForPage();
+    expect(screen.queryByText(/The running values differ from the stored overrides/)).not.toBeInTheDocument();
+
+    // Rollback finished: the instance now has drift.
+    (instanceService.get as MockFn).mockResolvedValue({ ...inst, values_drift: true });
+    act(() => {
+      wsState.handler?.({ type: 'deployment.status', payload: { instance_id: '123', status: 'running' } });
+    });
+    expect(await screen.findByText(/The running values differ from the stored overrides/)).toBeInTheDocument();
+
+    // Redeploy finished: the drift is gone.
+    (instanceService.get as MockFn).mockResolvedValue({ ...inst, values_drift: false });
+    act(() => {
+      wsState.handler?.({ type: 'deployment.status', payload: { instance_id: '123', status: 'running' } });
+    });
+    await waitFor(() => {
+      expect(screen.queryByText(/The running values differ from the stored overrides/)).not.toBeInTheDocument();
+    });
+  });
+
+  it('shows the error message of an instance in error (denied pre-deploy hook)', async () => {
+    const reason = 'pre-deploy hook "ci-gate" denied the deployment: frontend: build failed';
+    setupMocks({ status: 'error', error_message: reason }, { logs: threeDeploys });
+    renderDetail();
+    await waitForPage();
+
+    expect(await screen.findByText('Instance is error', { exact: false })).toBeInTheDocument();
+    expect(screen.getByTestId('instance-error-message')).toHaveTextContent(reason);
+  });
+
+  it('shows the error message from the WebSocket status message', async () => {
+    const inst = setupMocks({ status: 'deploying' }, { logs: threeDeploys });
+    renderDetail();
+    await waitForPage();
+    expect(screen.queryByTestId('instance-error-message')).not.toBeInTheDocument();
+
+    const reason = 'pre-deploy hook "ci-gate" denied the deployment: no image';
+    // The refetch is slow; the message from the status message shows first.
+    (instanceService.get as MockFn).mockImplementation(() => new Promise(() => {}));
+    act(() => {
+      wsState.handler?.({
+        type: 'deployment.status',
+        payload: { instance_id: inst.id, status: 'error', error_message: reason },
+      });
+    });
+    expect(await screen.findByTestId('instance-error-message')).toHaveTextContent(reason);
+  });
+
+  it('rolls back to a selected older deploy', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'running' }, { logs: threeDeploys });
+    (instanceService.rollback as MockFn).mockResolvedValue({ log_id: 'rb1', message: 'ok' });
+    renderDetail();
+    await waitForPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Rollback' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Roll Back Instance' });
+    await user.click(within(dialog).getByRole('radio', { name: timeOf(8) }));
+    expect(within(dialog).getByText(`Roll back "Test Instance" to the deploy of ${timeOf(8)}?`)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: 'Roll Back' }));
+
+    await waitFor(() => expect(instanceService.rollback).toHaveBeenCalledWith('123', 'd1'));
+  });
+
+  it('shows the API error when the rollback fails', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'running' }, { logs: threeDeploys });
+    (instanceService.rollback as MockFn).mockRejectedValue({ response: { status: 400, data: { error: 'target is not a successful deploy' } } });
+    renderDetail();
+    await waitForPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Rollback' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Roll Back Instance' });
+    await user.click(within(dialog).getByRole('button', { name: 'Roll Back' }));
+
+    expect(await screen.findByText(/target is not a successful deploy/)).toBeInTheDocument();
+  });
+
+  it('offers "Roll back to this deploy" in the history for older successful deploys only', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'running' }, { logs: threeDeploys });
+    (instanceService.rollback as MockFn).mockResolvedValue({ log_id: 'rb1', message: 'ok' });
+    renderDetail();
+    await waitForPage();
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Roll back to d1' })).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: 'Roll back to d2' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Roll back to d3' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Roll back to failed' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Roll back to d1' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Roll Back Instance' });
+    expect(within(dialog).getByRole('radio', { name: timeOf(8) })).toBeChecked();
+    await user.click(within(dialog).getByRole('button', { name: 'Roll Back' }));
+
+    await waitFor(() => expect(instanceService.rollback).toHaveBeenCalledWith('123', 'd1'));
+  });
+
+  it('shows the drift warning when values_drift is true', async () => {
+    setupMocks({ status: 'running', values_drift: true });
+    renderDetail();
+    await waitForPage();
+    expect(screen.getByText(
+      'The running values differ from the stored overrides (after a rollback). The next deploy applies the stored overrides.',
+    )).toBeInTheDocument();
+  });
+
+  it('does not show the drift warning without drift', async () => {
+    setupMocks({ status: 'running' });
+    renderDetail();
+    await waitForPage();
+    expect(screen.queryByText(/The running values differ from the stored overrides/)).not.toBeInTheDocument();
+  });
+
+  it('shows none of the new actions to a user who may not modify the instance', async () => {
+    authState.user = { id: 'u-bob', username: 'bob', role: 'user', display_name: 'Bob' };
+    (useCountdown as unknown as MockFn).mockReturnValue({
+      remaining: '1h 0m', isWarning: false, isCritical: false, isExpired: false,
+    });
+    setupMocks({ status: 'running', expires_at: '2030-01-01T12:00:00Z' }, { logs: threeDeploys });
+    renderDetail();
+    await waitForPage();
+    await waitFor(() => expect(screen.getByTestId('deployment-log-viewer')).toBeInTheDocument());
+
+    for (const name of ['Redeploy', 'Deploy', 'Rollback', 'Extend']) {
+      expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
+    }
+    expect(screen.queryByRole('button', { name: /Roll back to/ })).not.toBeInTheDocument();
+    expect(screen.queryByText('Saved. Redeploy to apply.')).not.toBeInTheDocument();
+    (useCountdown as unknown as MockFn).mockReturnValue(null);
+  });
+  describe('deploy with unsaved changes', () => {
+    const editAndClickRedeploy = async (user: ReturnType<typeof userEvent.setup>) => {
+      await waitFor(() => {
+        expect(screen.getByText('Test Instance')).toBeInTheDocument();
+      });
+      await user.click(screen.getByRole('button', { name: 'edit Your Overrides' }));
+      await user.click(screen.getByRole('button', { name: 'Redeploy' }));
+    };
+
+    it('opens the deploy preview at once when nothing is unsaved', async () => {
+      const user = userEvent.setup();
+      setupMocks();
+      renderDetail();
+      await waitFor(() => {
+        expect(screen.getByText('Test Instance')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: 'Redeploy' }));
+
+      expect(screen.getByTestId('deploy-preview-dialog')).toBeInTheDocument();
+      expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument();
+    });
+
+    it('asks first and does nothing on Cancel', async () => {
+      const user = userEvent.setup();
+      setupMocks();
+      renderDetail();
+      await editAndClickRedeploy(user);
+
+      const dialog = screen.getByRole('dialog', { name: 'Unsaved changes' });
+      expect(within(dialog).getByText('You have unsaved changes. Save them before the deploy?')).toBeInTheDocument();
+      await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog', { name: 'Unsaved changes' })).not.toBeInTheDocument();
+      });
+      expect(screen.queryByTestId('deploy-preview-dialog')).not.toBeInTheDocument();
+      expect(instanceService.setOverride).not.toHaveBeenCalled();
+    });
+
+    it('opens the deploy preview without a save on "Deploy without saving"', async () => {
+      const user = userEvent.setup();
+      setupMocks();
+      renderDetail();
+      await editAndClickRedeploy(user);
+
+      await user.click(screen.getByRole('button', { name: 'Deploy without saving' }));
+
+      expect(screen.getByTestId('deploy-preview-dialog')).toBeInTheDocument();
+      expect(instanceService.setOverride).not.toHaveBeenCalled();
+    });
+
+    it('saves and then opens the deploy preview on "Save and deploy"', async () => {
+      const user = userEvent.setup();
+      setupMocks();
+      (instanceService.setOverride as MockFn).mockResolvedValue({});
+      renderDetail();
+      await editAndClickRedeploy(user);
+
+      await user.click(screen.getByRole('button', { name: 'Save and deploy' }));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('deploy-preview-dialog')).toBeInTheDocument();
+      });
+      expect(instanceService.setOverride).toHaveBeenCalledWith('123', 'chart1', { values: 'replicaCount: 5' });
+    });
+
+    it('does not open the deploy preview when the save fails', async () => {
+      const user = userEvent.setup();
+      setupMocks();
+      (instanceService.setOverride as MockFn).mockRejectedValue(new Error('fail'));
+      renderDetail();
+      await editAndClickRedeploy(user);
+
+      await user.click(screen.getByRole('button', { name: 'Save and deploy' }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/Failed to save changes/)).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId('deploy-preview-dialog')).not.toBeInTheDocument();
+    });
+  });
+});
+
+describe('StackInstances Detail Actions menu', () => {
+  const seedAction = {
+    name: 'seed-data',
+    label: 'Seed data',
+    description: 'Load seed data',
+    parameters: [],
+    has_job_log: false,
+    can_invoke: true,
+  };
+
+  const mockActions = (actions: unknown[]) =>
+    (instanceService.listActions as MockFn).mockResolvedValue({ instance_id: '123', can_invoke: true, actions });
+
+  /** Menu entries in DOM order: the item text, or '---' for a divider. */
+  const menuEntries = (menu: HTMLElement) =>
+    Array.from(menu.querySelectorAll('[role="menuitem"], [role="separator"], hr')).map((el) =>
+      el.getAttribute('role') === 'menuitem' ? (el.textContent ?? '') : '---',
+    );
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    mockActions([]);
+    authState.user = { id: 'user1', username: 'alice', role: 'user', display_name: 'Alice' };
+  });
+
+  it('shows the groups in order: custom actions, export and clone, clean namespace and delete', async () => {
+    const user = userEvent.setup();
+    mockActions([seedAction]);
+    setupMocks({ status: 'running' });
+    renderDetail();
+
+    const menu = await openActionsMenu(user);
+    await within(menu).findByRole('menuitem', { name: /Seed data/ });
+    expect(menuEntries(menu)).toEqual([
+      'Seed dataLoad seed data',
+      '---',
+      'Export values…',
+      'Clone',
+      '---',
+      'Clean namespace',
+      'Delete',
+    ]);
+  });
+
+  it('omits the custom actions group when the server lists no actions', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'running' });
+    renderDetail();
+
+    const menu = await openActionsMenu(user);
+    expect(menuEntries(menu)).toEqual(['Export values…', 'Clone', '---', 'Clean namespace', 'Delete']);
+  });
+
+  it('omits the custom actions group when the action list call fails', async () => {
+    const user = userEvent.setup();
+    (instanceService.listActions as MockFn).mockRejectedValue(new Error('boom'));
+    setupMocks({ status: 'draft' }, { deployLogReject: true });
+    renderDetail();
+
+    const menu = await openActionsMenu(user);
+    expect(menuEntries(menu)).toEqual(['Export values…', 'Clone', '---', 'Delete']);
+  });
+
+  it('opens the action dialog and closes the menu when a custom action is clicked', async () => {
+    const user = userEvent.setup();
+    mockActions([seedAction]);
+    setupMocks();
+    renderDetail();
+
+    const menu = await openActionsMenu(user);
+    await user.click(await within(menu).findByRole('menuitem', { name: /Seed data/ }));
+
+    expect(await screen.findByRole('dialog', { name: 'Seed data' })).toBeInTheDocument();
+    await waitFor(() => expect(menu).not.toBeInTheDocument());
+  });
+
+  it('shows a disabled action and no clean namespace or delete for a read-only user', async () => {
+    const user = userEvent.setup();
+    authState.user = { id: 'u-bob', username: 'bob', role: 'user', display_name: 'Bob' };
+    mockActions([{ ...seedAction, can_invoke: false }]);
+    setupMocks({ status: 'running' });
+    renderDetail();
+
+    const menu = await openActionsMenu(user);
+    const item = await within(menu).findByRole('menuitem', { name: /Seed data/ });
+    expect(item).toHaveAttribute('aria-disabled', 'true');
+    expect(within(item).getByText('Only the owner, an admin or a devops user can run this action')).toBeInTheDocument();
+    expect(within(menu).queryByRole('menuitem', { name: 'Clean namespace' })).not.toBeInTheDocument();
+    expect(within(menu).queryByRole('menuitem', { name: 'Delete' })).not.toBeInTheDocument();
+    expect(menuEntries(menu)).toEqual([
+      'Seed dataOnly the owner, an admin or a devops user can run this action',
+      '---',
+      'Export values…',
+      'Clone',
+    ]);
+  });
+
+  it('opens the export menu with all charts and one item per chart', async () => {
+    const user = userEvent.setup();
+    setupMocks();
+    renderDetail();
+
+    await clickMenuAction(user, /export values/i);
+    const exportMenu = await screen.findByRole('menu', { name: 'Export values' });
+    expect(within(exportMenu).getByRole('menuitem', { name: 'All charts (ZIP)' })).toBeInTheDocument();
+    expect(within(exportMenu).getByRole('menuitem', { name: 'frontend (YAML)' })).toBeInTheDocument();
+  });
+});
+
+describe('StackInstances Detail stale responses (#596)', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /** Renders Detail in StrictMode; the first (stale) instance response comes last. */
+  const renderWithStaleFirstResponse = async () => {
+    const inst = setupMocks();
+    let resolveFirst: (v: unknown) => void = () => {};
+    let resolveSecond: (v: unknown) => void = () => {};
+    (instanceService.get as MockFn)
+      .mockReturnValueOnce(new Promise((r) => { resolveFirst = r; }))
+      .mockReturnValueOnce(new Promise((r) => { resolveSecond = r; }));
+    render(
+      <StrictMode>
+        <MemoryRouter initialEntries={['/stack-instances/123']}>
+          <NotificationProvider>
+            <Routes>
+              <Route path="/stack-instances/:id" element={<Detail />} />
+            </Routes>
+          </NotificationProvider>
+        </MemoryRouter>
+      </StrictMode>
+    );
+    await waitFor(() => expect(instanceService.get).toHaveBeenCalledTimes(2));
+    await act(async () => resolveSecond(inst));
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'frontend' })).toBeInTheDocument());
+    return { resolveStale: () => act(async () => resolveFirst(inst)) };
+  };
+
+  it('keeps the edited instance branch (StrictMode)', async () => {
+    const user = userEvent.setup();
+    const { resolveStale } = await renderWithStaleFirstResponse();
+    await user.click(screen.getAllByText('change-branch')[0]);
+    expect(within(screen.getAllByTestId('branch-selector')[0]).getByText('feature/new-branch')).toBeInTheDocument();
+    await resolveStale();
+    expect(within(screen.getAllByTestId('branch-selector')[0]).getByText('feature/new-branch')).toBeInTheDocument();
+  });
+
+  it('keeps an edited chart branch override (StrictMode)', async () => {
+    const user = userEvent.setup();
+    const { resolveStale } = await renderWithStaleFirstResponse();
+    await user.click(screen.getAllByText('change-branch')[1]);
+    expect(screen.getByText('Override: feature/new-branch')).toBeInTheDocument();
+    await resolveStale();
+    expect(screen.getByText('Override: feature/new-branch')).toBeInTheDocument();
   });
 });

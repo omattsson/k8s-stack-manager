@@ -7,7 +7,7 @@ import (
 
 // Message is the envelope for all WebSocket messages sent to clients.
 type Message struct {
-	// Type identifies the event kind, e.g. "item.created", "item.updated".
+	// Type identifies the event kind, e.g. "deployment.status", "instance.deleted".
 	Type string `json:"type"`
 
 	// Payload carries the event-specific data (typically the affected entity).

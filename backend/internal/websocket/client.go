@@ -29,11 +29,42 @@ const (
 	sendBufferSize = 256
 )
 
+// Close frame values for sockets that the server closes on purpose.
+const (
+	// closeReasonRevoked is the close reason when a logout or a user
+	// revocation closes the socket (see Hub.DisconnectUser, DisconnectToken).
+	closeReasonRevoked = "session revoked"
+	// closeReasonExpired is the close reason when the access token that
+	// opened the socket expires. The client reconnects with a fresh token.
+	closeReasonExpired = "token expired"
+	// closeReasonAPIKeyExpired is the close reason when the API key that
+	// opened the socket expires.
+	closeReasonAPIKeyExpired = "api key expired"
+)
+
+// ClientIdentity identifies the credential that opened a socket: an access
+// token (TokenID, the jti) or an API key (APIKeyID). The hub uses it to close
+// the sockets of a revoked user, token or API key. The client uses ExpiresAt
+// to close the socket when the token or the API key expires.
+type ClientIdentity struct {
+	ExpiresAt time.Time // zero: the socket does not expire (API key without expiry)
+	IssuedAt  time.Time // access token: iat_ms claim (ms) or iat (whole seconds); the user blocklist compares it with the block time. Zero for an API key
+	UserID    string
+	TokenID   string // jti claim; empty for an API key
+	APIKeyID  string // ID of the API key; empty for an access token
+}
+
 // Client is a middleman between the WebSocket connection and the hub.
 type Client struct {
-	hub  *Hub
-	conn *websocket.Conn
-	send chan []byte
+	identity ClientIdentity
+	hub      *Hub
+	conn     *websocket.Conn
+	send     chan []byte
+	// closeReason is the reason of the close frame that writePump sends when
+	// the hub closes send. The hub sets it under h.mu before it closes send.
+	// writePump reads it only after the receive on the closed channel, so
+	// the channel close orders the two accesses. Empty: no reason.
+	closeReason string
 }
 
 // NewClient creates a new Client attached to the given hub and connection,
@@ -41,10 +72,18 @@ type Client struct {
 // The caller should not interact with conn after calling NewClient.
 // Returns an error if the hub has already been shut down.
 func NewClient(hub *Hub, conn *websocket.Conn) (*Client, error) {
+	return NewClientWithIdentity(hub, conn, ClientIdentity{})
+}
+
+// NewClientWithIdentity is NewClient for a socket opened with an access
+// token. The hub can close the socket by user ID or token ID, and the socket
+// closes when the token expires.
+func NewClientWithIdentity(hub *Hub, conn *websocket.Conn, identity ClientIdentity) (*Client, error) {
 	client := &Client{
-		hub:  hub,
-		conn: conn,
-		send: make(chan []byte, sendBufferSize),
+		identity: identity,
+		hub:      hub,
+		conn:     conn,
+		send:     make(chan []byte, sendBufferSize),
 	}
 	if err := hub.Register(client); err != nil {
 		conn.Close() //nolint:gosec // G104: close errors during cleanup are non-critical
@@ -91,8 +130,18 @@ func (c *Client) readPump() {
 // writePump pumps messages from the hub to the WebSocket connection.
 // It runs in its own goroutine. A ticker sends periodic pings to detect
 // dead connections.
+//
+// When the client has a token expiry, writePump sends a close frame and
+// returns at that time. The client then reconnects with a fresh token.
 func (c *Client) writePump() {
 	ticker := time.NewTicker(pingPeriod)
+	// A nil channel blocks forever: no expiry timer for a zero ExpiresAt.
+	var expired <-chan time.Time
+	if !c.identity.ExpiresAt.IsZero() {
+		timer := time.NewTimer(time.Until(c.identity.ExpiresAt))
+		defer timer.Stop()
+		expired = timer.C
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("Panic in WebSocket writePump", "recover", r)
@@ -103,6 +152,13 @@ func (c *Client) writePump() {
 
 	for {
 		select {
+		case <-expired:
+			reason := closeReasonExpired
+			if c.identity.APIKeyID != "" {
+				reason = closeReasonAPIKeyExpired
+			}
+			c.writeClose(reason)
+			return
 		case message, ok := <-c.send:
 			if err := c.handleSend(message, ok); err != nil {
 				return
@@ -119,7 +175,7 @@ func (c *Client) writePump() {
 func (c *Client) handleSend(message []byte, ok bool) error {
 	if !ok {
 		// Hub closed the channel — send a close frame.
-		_ = c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+		c.writeClose(c.closeReason)
 		return errChanClosed
 	}
 	if err := c.conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
@@ -140,6 +196,19 @@ func (c *Client) handleSend(message []byte, ok bool) error {
 		}
 	}
 	return nil
+}
+
+// writeClose sends a close frame. An empty reason sends an empty frame (hub
+// shutdown, slow client). A reason sends code 1008 (policy violation) with the
+// reason: the server closed the socket on purpose (revocation, token expiry).
+// Errors are ignored: the caller closes the connection next.
+func (c *Client) writeClose(reason string) {
+	data := []byte{}
+	if reason != "" {
+		data = websocket.FormatCloseMessage(websocket.ClosePolicyViolation, reason)
+	}
+	_ = c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+	_ = c.conn.WriteMessage(websocket.CloseMessage, data)
 }
 
 // writePing sends a ping frame with the configured write deadline.

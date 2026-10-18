@@ -1,7 +1,9 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import { authService, oidcService } from '../api/client';
+import { isAuthRejection, onTokenRefreshed, TOKEN_STORAGE_KEY } from '../api/refresh';
 import { reconnectWebSocket } from '../hooks/useWebSocket';
+import { decodeJwtPayload, isTokenExpired } from '../utils/jwt';
 import type { User, JwtPayload } from '../types';
 
 interface OidcConfig {
@@ -26,22 +28,6 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-function decodeJwtPayload(token: string): JwtPayload | null {
-  try {
-    const base64Url = token.split('.')[1];
-    const base64 = base64Url.replaceAll('-', '+').replaceAll('_', '/');
-    const padded = base64.padEnd(base64.length + (4 - (base64.length % 4)) % 4, '=');
-    const json = atob(padded);
-    return JSON.parse(json);
-  } catch {
-    return null;
-  }
-}
-
-function isTokenExpired(payload: JwtPayload): boolean {
-  return Date.now() >= payload.exp * 1000;
-}
-
 function userFromPayload(payload: JwtPayload): User {
   return {
     id: payload.user_id,
@@ -64,37 +50,76 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [authProvider, setAuthProvider] = useState<string | null>(null);
   const [authEmail, setAuthEmail] = useState<string | null>(null);
 
+  /** Set user, authProvider and authEmail from a token. Returns false when the token is unusable. */
+  const applyToken = useCallback((token: string): boolean => {
+    const payload = decodeJwtPayload(token);
+    if (!payload || isTokenExpired(payload)) return false;
+    setUser(userFromPayload(payload));
+    setAuthProvider(payload.auth_provider ?? null);
+    setAuthEmail(payload.email ?? null);
+    return true;
+  }, []);
+
+  const clearSession = useCallback(() => {
+    setUser(null);
+    setAuthProvider(null);
+    setAuthEmail(null);
+  }, []);
+
   useEffect(() => {
     const init = async () => {
-      const token = localStorage.getItem('token');
-      if (token) {
-        const payload = decodeJwtPayload(token);
-        if (payload && !isTokenExpired(payload)) {
-          setUser(userFromPayload(payload));
-          setAuthProvider(payload.auth_provider ?? null);
-          setAuthEmail(payload.email ?? null);
-        } else {
-          // Token expired — attempt a silent refresh via the httpOnly cookie
-          try {
-            const { token: newToken } = await authService.refresh();
-            localStorage.setItem('token', newToken);
-            const newPayload = decodeJwtPayload(newToken);
-            if (newPayload && !isTokenExpired(newPayload)) {
-              setUser(userFromPayload(newPayload));
-              setAuthProvider(newPayload.auth_provider ?? null);
-              setAuthEmail(newPayload.email ?? null);
-            } else {
-              localStorage.removeItem('token');
+      const token = localStorage.getItem(TOKEN_STORAGE_KEY);
+      if (token && !applyToken(token)) {
+        // Token expired — attempt a silent refresh via the httpOnly cookie.
+        // The shared refresh stores the new token and is single flight across tabs.
+        try {
+          const { token: newToken } = await authService.refresh(token);
+          if (!applyToken(newToken)) {
+            localStorage.removeItem(TOKEN_STORAGE_KEY);
+          }
+        } catch (error) {
+          if (isAuthRejection(error)) {
+            localStorage.removeItem(TOKEN_STORAGE_KEY);
+          } else {
+            // Network error, timeout or 5xx (for example a backend restart): keep
+            // the token and the user from its payload. Pages show their normal
+            // API errors, and the next 401 retries the refresh via the interceptor.
+            const payload = decodeJwtPayload(token);
+            if (payload) {
+              setUser(userFromPayload(payload));
+              setAuthProvider(payload.auth_provider ?? null);
+              setAuthEmail(payload.email ?? null);
             }
-          } catch {
-            localStorage.removeItem('token');
           }
         }
       }
       setIsLoading(false);
     };
     init();
-  }, []);
+  }, [applyToken]);
+
+  // Refreshes in this tab (for example the 401 interceptor) update the session state.
+  useEffect(() => onTokenRefreshed((token) => {
+    applyToken(token);
+  }), [applyToken]);
+
+  // Other tabs: a new token (refresh or login) updates this tab; a removed token
+  // (logout or failed refresh) logs this tab out. ProtectedRoute then routes to
+  // /login, and the login page itself is not redirected again.
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== TOKEN_STORAGE_KEY && event.key !== null) return;
+      const token = event.key === null ? null : event.newValue;
+      if (token) {
+        applyToken(token);
+        return;
+      }
+      clearSession();
+      reconnectWebSocket();
+    };
+    globalThis.addEventListener('storage', onStorage);
+    return () => globalThis.removeEventListener('storage', onStorage);
+  }, [applyToken, clearSession]);
 
   useEffect(() => {
     const fetchOidcConfig = async () => {
@@ -112,23 +137,26 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const login = useCallback(async (username: string, password: string) => {
     const response = await authService.login({ username, password });
-    localStorage.setItem('token', response.token);
+    localStorage.setItem(TOKEN_STORAGE_KEY, response.token);
     setUser(response.user);
+    const payload = decodeJwtPayload(response.token);
+    setAuthProvider(payload?.auth_provider ?? null);
+    setAuthEmail(payload?.email ?? null);
     reconnectWebSocket();
   }, []);
 
   const logout = useCallback(async () => {
     // Capture token before clearing so the logout request can attach it.
-    const token = localStorage.getItem('token');
-    localStorage.removeItem('token');
-    setUser(null);
+    const token = localStorage.getItem(TOKEN_STORAGE_KEY);
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
+    clearSession();
     reconnectWebSocket();
     try {
       await authService.logout(token ?? undefined);
     } catch {
       // Best-effort server-side revocation; local state already cleared
     }
-  }, []);
+  }, [clearSession]);
 
   const loginWithOIDC = useCallback(async (redirect?: string) => {
     const result = await oidcService.getAuthorizeUrl(redirect);
@@ -136,15 +164,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   }, []);
 
   const handleOIDCCallback = useCallback((token: string) => {
-    localStorage.setItem('token', token);
-    const payload = decodeJwtPayload(token);
-    if (payload && !isTokenExpired(payload)) {
-      setUser(userFromPayload(payload));
-      setAuthProvider(payload.auth_provider ?? null);
-      setAuthEmail(payload.email ?? null);
-    }
+    localStorage.setItem(TOKEN_STORAGE_KEY, token);
+    applyToken(token);
     reconnectWebSocket();
-  }, []);
+  }, [applyToken]);
 
   const isAuthenticated = user !== null;
 

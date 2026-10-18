@@ -214,3 +214,25 @@ func TestGORMInstanceQuotaOverrideRepository_Delete(t *testing.T) {
 		assert.True(t, errors.Is(dbErr.Err, dberrors.ErrNotFound))
 	})
 }
+
+func TestGORMInstanceQuotaOverrideRepository_ListByInstanceIDs(t *testing.T) {
+	t.Parallel()
+
+	repo := setupInstanceQuotaOverrideRepo(t)
+	ctx := context.Background()
+	for _, id := range []string{"inst-1", "inst-2", "inst-3"} {
+		require.NoError(t, repo.Upsert(ctx, &models.InstanceQuotaOverride{StackInstanceID: id, CPURequest: "100m"}))
+	}
+
+	got, err := repo.ListByInstanceIDs(ctx, []string{"inst-1", "inst-3", "inst-missing"})
+	require.NoError(t, err)
+	ids := []string{}
+	for _, o := range got {
+		ids = append(ids, o.StackInstanceID)
+	}
+	assert.ElementsMatch(t, []string{"inst-1", "inst-3"}, ids)
+
+	empty, err := repo.ListByInstanceIDs(ctx, nil)
+	require.NoError(t, err)
+	assert.Empty(t, empty)
+}

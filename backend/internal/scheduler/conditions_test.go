@@ -93,6 +93,7 @@ func TestMatchesInstance(t *testing.T) {
 	twoDaysAgo := now.Add(-2 * 24 * time.Hour)
 	oneDayAgo := now.Add(-24 * time.Hour)
 	oneHourAgo := now.Add(-time.Hour)
+	inOneDay := now.Add(24 * time.Hour)
 
 	tests := []struct {
 		name     string
@@ -128,6 +129,42 @@ func TestMatchesInstance(t *testing.T) {
 			name:     "idle_days uses created_at when no deploy",
 			filter:   &InstanceFilter{IdleDays: 7},
 			instance: &models.StackInstance{CreatedAt: tenDaysAgo},
+			matches:  true,
+		},
+		{
+			name:     "idle_days no match — running with a future expiry (extended TTL)",
+			filter:   &InstanceFilter{IdleDays: 7},
+			instance: &models.StackInstance{Status: models.StackStatusRunning, LastDeployedAt: &tenDaysAgo, ExpiresAt: &inOneDay},
+			matches:  false,
+		},
+		{
+			name:     "idle_days match — running with a past expiry",
+			filter:   &InstanceFilter{IdleDays: 7},
+			instance: &models.StackInstance{Status: models.StackStatusRunning, LastDeployedAt: &tenDaysAgo, ExpiresAt: &oneHourAgo},
+			matches:  true,
+		},
+		{
+			name:     "idle_days match — stopped with a future expiry",
+			filter:   &InstanceFilter{IdleDays: 7},
+			instance: &models.StackInstance{Status: models.StackStatusStopped, LastDeployedAt: &tenDaysAgo, ExpiresAt: &inOneDay},
+			matches:  true,
+		},
+		{
+			name:     "idle_days no match — partial with a future expiry",
+			filter:   &InstanceFilter{IdleDays: 7},
+			instance: &models.StackInstance{Status: models.StackStatusPartial, LastDeployedAt: &tenDaysAgo, ExpiresAt: &inOneDay},
+			matches:  false,
+		},
+		{
+			name:     "idle_days match — error with a future expiry (the reaper does not stop it)",
+			filter:   &InstanceFilter{IdleDays: 7},
+			instance: &models.StackInstance{Status: models.StackStatusError, LastDeployedAt: &tenDaysAgo, ExpiresAt: &inOneDay},
+			matches:  true,
+		},
+		{
+			name:     "idle_days match — draft after a clean with a future expiry",
+			filter:   &InstanceFilter{IdleDays: 7},
+			instance: &models.StackInstance{Status: models.StackStatusDraft, LastDeployedAt: &tenDaysAgo, ExpiresAt: &inOneDay},
 			matches:  true,
 		},
 		{
@@ -193,4 +230,167 @@ func TestMatchesInstance(t *testing.T) {
 			assert.Equal(t, tt.matches, tt.filter.MatchesInstance(tt.instance))
 		})
 	}
+}
+
+func TestStoppedDaysCondition(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	ago := func(d time.Duration) *time.Time { ts := now.Add(-d); return &ts }
+	day := 24 * time.Hour
+
+	tests := []struct {
+		name      string
+		condition string
+		inst      models.StackInstance
+		want      bool
+	}{
+		{"stopped long ago matches", "stopped_days:3",
+			models.StackInstance{Status: models.StackStatusStopped, CreatedAt: now.Add(-10 * day), StoppedAt: ago(4 * day)}, true},
+		{"old instance stopped recently does not match", "stopped_days:3",
+			models.StackInstance{Status: models.StackStatusStopped, CreatedAt: now.Add(-10 * day), StoppedAt: ago(time.Minute)}, false},
+		{"new instance stopped long ago matches", "stopped_days:1",
+			models.StackInstance{Status: models.StackStatusStopped, CreatedAt: now.Add(-2 * day), StoppedAt: ago(36 * time.Hour)}, true},
+		{"stopped without stop time never matches", "stopped_days:1",
+			models.StackInstance{Status: models.StackStatusStopped, CreatedAt: now.Add(-10 * day)}, false},
+		{"running instance with an old stop time does not match", "stopped_days:1",
+			models.StackInstance{Status: models.StackStatusRunning, CreatedAt: now.Add(-10 * day), StoppedAt: ago(5 * day)}, false},
+		{"stopped_days:0 matches any recorded stop", "stopped_days:0",
+			models.StackInstance{Status: models.StackStatusStopped, StoppedAt: ago(time.Second)}, true},
+		{"combined with age_days", "stopped_days:2,age_days:30",
+			models.StackInstance{Status: models.StackStatusStopped, CreatedAt: now.Add(-5 * day), StoppedAt: ago(3 * day)}, false},
+		{"legacy status:stopped,age_days still uses the creation age", "status:stopped,age_days:3",
+			models.StackInstance{Status: models.StackStatusStopped, CreatedAt: now.Add(-7 * day), StoppedAt: ago(time.Minute)}, true},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f, err := ParseCondition(tt.condition)
+			assert.NoError(t, err)
+			inst := tt.inst
+			assert.Equal(t, tt.want, f.MatchesInstance(&inst))
+		})
+	}
+}
+
+func TestStoppedDaysCondition_InvalidValues(t *testing.T) {
+	t.Parallel()
+	for _, cond := range []string{"stopped_days:x", "stopped_days:-1", "stopped_days"} {
+		_, err := ParseCondition(cond)
+		assert.Error(t, err, cond)
+	}
+}
+
+func TestCleanedDaysCondition(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	ago := func(d time.Duration) *time.Time { ts := now.Add(-d); return &ts }
+	day := 24 * time.Hour
+
+	tests := []struct {
+		name      string
+		condition string
+		inst      models.StackInstance
+		want      bool
+	}{
+		{"cleaned long ago matches", "cleaned_days:30",
+			models.StackInstance{Status: models.StackStatusDraft, CreatedAt: now.Add(-90 * day), CleanedAt: ago(31 * day)}, true},
+		{"old instance cleaned recently does not match", "cleaned_days:30",
+			models.StackInstance{Status: models.StackStatusDraft, CreatedAt: now.Add(-90 * day), CleanedAt: ago(2 * day)}, false},
+		{"draft without clean time (never deployed) never matches", "cleaned_days:1",
+			models.StackInstance{Status: models.StackStatusDraft, CreatedAt: now.Add(-90 * day)}, false},
+		{"deployed instance with an old clean time does not match", "cleaned_days:1",
+			models.StackInstance{Status: models.StackStatusRunning, CreatedAt: now.Add(-90 * day), CleanedAt: ago(5 * day)}, false},
+		{"cleaned_days:0 matches any recorded clean", "cleaned_days:0",
+			models.StackInstance{Status: models.StackStatusDraft, CleanedAt: ago(time.Second)}, true},
+		{"combined with age_days", "cleaned_days:2,age_days:30",
+			models.StackInstance{Status: models.StackStatusDraft, CreatedAt: now.Add(-5 * day), CleanedAt: ago(3 * day)}, false},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f, err := ParseCondition(tt.condition)
+			assert.NoError(t, err)
+			inst := tt.inst
+			assert.Equal(t, tt.want, f.MatchesInstance(&inst))
+		})
+	}
+}
+
+func TestCleanedDaysCondition_InvalidValues(t *testing.T) {
+	t.Parallel()
+	for _, cond := range []string{"cleaned_days:x", "cleaned_days:-1", "cleaned_days"} {
+		_, err := ParseCondition(cond)
+		assert.Error(t, err, cond)
+	}
+}
+
+func TestExpiresWithinHoursCondition(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	in := func(d time.Duration) *time.Time { ts := now.Add(d); return &ts }
+	running := models.StackStatusRunning
+
+	tests := []struct {
+		name      string
+		condition string
+		inst      models.StackInstance
+		want      bool
+	}{
+		{"no expiry matches", "expires_within_hours:12",
+			models.StackInstance{Status: running}, true},
+		{"expiry within the window matches", "expires_within_hours:12",
+			models.StackInstance{Status: running, ExpiresAt: in(6 * time.Hour)}, true},
+		{"past expiry matches", "expires_within_hours:12",
+			models.StackInstance{Status: running, ExpiresAt: in(-time.Hour)}, true},
+		{"extended past the window does not match", "expires_within_hours:12",
+			models.StackInstance{Status: running, ExpiresAt: in(64 * time.Hour)}, false},
+		{"just after the window does not match", "expires_within_hours:12",
+			models.StackInstance{Status: running, ExpiresAt: in(12*time.Hour + time.Minute)}, false},
+		{"0 matches only no expiry or a past expiry", "expires_within_hours:0",
+			models.StackInstance{Status: running, ExpiresAt: in(time.Minute)}, false},
+		{"combined with status: other status does not match", "status:running,expires_within_hours:12",
+			models.StackInstance{Status: models.StackStatusStopped}, false},
+		{"combined with status: weekend stop", "status:running,expires_within_hours:12",
+			models.StackInstance{Status: running, ExpiresAt: in(3 * time.Hour)}, true},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f, err := ParseCondition(tt.condition)
+			assert.NoError(t, err)
+			inst := tt.inst
+			assert.Equal(t, tt.want, f.MatchesInstance(&inst))
+		})
+	}
+}
+
+func TestExpiresWithinHoursCondition_InvalidValues(t *testing.T) {
+	t.Parallel()
+	for _, cond := range []string{"expires_within_hours:x", "expires_within_hours:-1", "expires_within_hours", "expires_within_hours:1.5",
+		"expires_within_hours:8761", "expires_within_hours:99999999999"} {
+		_, err := ParseCondition(cond)
+		assert.Error(t, err, cond)
+	}
+}
+
+func TestExpiresWithinHoursCondition_Boundary(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 16, 17, 0, 0, 0, time.UTC)
+	f, err := ParseCondition("expires_within_hours:12,idle_days:1")
+	assert.NoError(t, err)
+	at := func(d time.Duration) *time.Time { ts := now.Add(d); return &ts }
+	stopped := func(exp *time.Time) *models.StackInstance {
+		// A stopped instance: idle_days does not skip it for a future expiry.
+		return &models.StackInstance{Status: models.StackStatusStopped, CreatedAt: now.Add(-48 * time.Hour), ExpiresAt: exp}
+	}
+	assert.True(t, f.matchesAt(stopped(at(12*time.Hour)), now), "exactly N hours matches")
+	assert.False(t, f.matchesAt(stopped(at(12*time.Hour+time.Nanosecond)), now), "just after N hours does not match")
+	_, err = ParseCondition("expires_within_hours:8760")
+	assert.NoError(t, err, "one year is allowed")
 }

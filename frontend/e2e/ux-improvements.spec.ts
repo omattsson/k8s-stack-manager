@@ -1,5 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
-import { loginAsDevops, loginAsUser, uniqueName, createTemplate, createAndPublishTemplate } from './helpers';
+import { loginAsDevops, loginAsUser, uniqueName, createTemplate, createAndPublishTemplate, mockListAPI } from './helpers';
 
 // ---------------------------------------------------------------------------
 // Mock data & helpers
@@ -75,16 +75,7 @@ const mockDefinitions = [
  * Mock dashboard API endpoints to avoid needing real data.
  */
 async function mockDashboardAPIs(page: Page) {
-  await page.route('**/api/v1/stack-instances', (route) => {
-    if (route.request().method() === 'GET') {
-      return route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify(mockInstances),
-      });
-    }
-    return route.continue();
-  });
+  await mockListAPI(page, '/api/v1/stack-instances', mockInstances);
 
   await page.route('**/api/v1/stack-instances/recent', (route) =>
     route.fulfill({
@@ -118,28 +109,10 @@ async function mockDashboardAPIs(page: Page) {
  * Mock the definitions list API.
  */
 async function mockDefinitionsAPI(page: Page) {
-  await page.route('**/api/v1/stack-definitions', (route) => {
-    if (route.request().method() === 'GET') {
-      return route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify(mockDefinitions),
-      });
-    }
-    return route.continue();
-  });
+  await mockListAPI(page, '/api/v1/stack-definitions', mockDefinitions);
 
   // Template list for the upgrade-check logic in the List
-  await page.route('**/api/v1/templates', (route) => {
-    if (route.request().method() === 'GET') {
-      return route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify([]),
-      });
-    }
-    return route.continue();
-  });
+  await mockListAPI(page, '/api/v1/templates', []);
 
   await page.route('**/api/v1/favorites', (route) =>
     route.fulfill({
@@ -786,7 +759,7 @@ test.describe('Definitions Inline Deploy Button', () => {
     await expect(page.getByRole('button', { name: /Deploy Backend Service/ })).toBeVisible();
   });
 
-  test('clicking deploy button navigates to new instance page with definition param', async ({ page }) => {
+  test('clicking deploy button opens the new instance form with the definition selected', async ({ page }) => {
     await page.goto('/stack-definitions');
     await expect(page.getByText('My App')).toBeVisible({ timeout: 10_000 });
 
@@ -794,6 +767,12 @@ test.describe('Definitions Inline Deploy Button', () => {
 
     // Should navigate to new instance with definition query param
     await page.waitForURL(/\/stack-instances\/new\?definition=def-001/, { timeout: 10_000 });
+
+    // The form selects that definition, and the branch is its default branch
+    await expect(page.getByRole('combobox', { name: 'Stack Definition' })).toHaveText(/My App/, {
+      timeout: 10_000,
+    });
+    await expect(page.getByRole('textbox', { name: 'Branch' })).toHaveValue('main');
   });
 });
 

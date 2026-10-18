@@ -1,31 +1,33 @@
 # Bug Fix Pull Request
 
+<!-- The pull request title must use the Conventional Commits format, for example "fix(deployer): clear a pending release". -->
+
 ## Bug Description
-<!-- Provide a clear description of the bug that this PR fixes -->
+<!-- Describe the bug that this pull request fixes. -->
 
 ## Root Cause
-<!-- Describe what was causing the issue -->
+<!-- Describe the cause of the bug. -->
 
-## Fix Implemented
-<!-- Explain the fix that was implemented -->
+## Fix
+<!-- Describe the fix. -->
 
 ## Related Issue
-<!-- Link to the issue: Fixes #(issue) -->
+<!-- Link the issue. Example: Fixes #123 -->
 
 ## Testing
-<!-- Describe how you tested the fix -->
-- [ ] Added unit tests
-- [ ] Added integration tests
-- [ ] Manually verified fix
+<!-- Describe how you tested the fix. -->
+- [ ] I added unit tests.
+- [ ] I added integration tests.
+- [ ] I verified the fix manually.
 
 ## Checklist
-- [ ] I have performed a self-review of my code
-- [ ] All tests pass locally
-- [ ] I have updated any relevant documentation
-- [ ] My changes generate no new warnings or errors
+- [ ] I reviewed my own code.
+- [ ] All tests pass on my computer.
+- [ ] I updated the relevant documentation.
+- [ ] The change adds no new warnings or errors.
 
 ## Screenshots or Logs
-<!-- If applicable, add screenshots or logs to help explain the fix -->
+<!-- Add screenshots or logs that help to explain the fix. -->
 
 ## Impact Analysis
-<!-- Describe any potential impact this bug fix might have on existing functionality -->
+<!-- Describe how the fix can affect existing behavior. -->

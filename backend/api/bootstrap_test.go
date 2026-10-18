@@ -11,6 +11,7 @@ import (
 	"backend/internal/helm"
 	"backend/internal/hooks"
 	"backend/internal/k8s"
+	"backend/internal/leader"
 	"backend/internal/models"
 	"backend/internal/notifier"
 	"backend/internal/scheduler"
@@ -150,7 +151,6 @@ func TestDomainServicesFieldTypes(t *testing.T) {
 	var _ *deployer.CleanupExecutor = ds.CleanupExecutor
 	var _ *scheduler.Scheduler = ds.CleanupScheduler
 	var _ *helm.ValuesGenerator = ds.ValuesGen
-	var _ context.CancelFunc = ds.WatcherCancel
 }
 
 func TestHandlerSetFieldTypes(t *testing.T) {
@@ -186,7 +186,6 @@ func TestRouterDepsFieldTypes(t *testing.T) {
 
 	var rd routerDeps
 
-	var _ models.Repository = rd.Repo
 	var _ *health.HealthChecker = rd.HealthChecker
 	var _ *websocket.Hub = rd.Hub
 	var _ sessionstore.SessionStore = rd.SessionStore
@@ -194,16 +193,16 @@ func TestRouterDepsFieldTypes(t *testing.T) {
 	var _ *domainServices = rd.Svc
 }
 
-func TestBackgroundServicesFieldTypes(t *testing.T) {
+func TestLeaderWorkersFieldTypes(t *testing.T) {
 	t.Parallel()
 
-	var bg backgroundServices
+	var lw leaderWorkers
 
-	var _ *ttl.Reaper = bg.Reaper
-	var _ *ttl.Warner = bg.ExpiryWarner
-	var _ *cluster.QuotaMonitor = bg.QuotaMonitor
-	var _ *cluster.SecretMonitor = bg.SecretMonitor
-	var _ context.CancelFunc = bg.RefreshTokenCleanupCancel
+	var _ *leader.Group = lw.Group
+	var _ *ttl.Reaper = lw.Reaper
+	var _ *ttl.Warner = lw.ExpiryWarner
+	var _ *cluster.QuotaMonitor = lw.QuotaMonitor
+	var _ *cluster.SecretMonitor = lw.SecretMonitor
 }
 
 // ---- startHTTPServer tests ----
@@ -451,7 +450,7 @@ func (s *stubStackInstanceRepo) FindByNamespace(_ string) (*models.StackInstance
 func (s *stubStackInstanceRepo) Update(_ *models.StackInstance) error  { return nil }
 func (s *stubStackInstanceRepo) Delete(_ string) error                 { return nil }
 func (s *stubStackInstanceRepo) List() ([]models.StackInstance, error) { return nil, nil }
-func (s *stubStackInstanceRepo) ListPaged(_, _ int) ([]models.StackInstance, int, error) {
+func (s *stubStackInstanceRepo) ListPaged(_ models.StackInstanceFilter, _, _ int) ([]models.StackInstance, int, error) {
 	return nil, 0, nil
 }
 func (s *stubStackInstanceRepo) ListByOwner(_ string) ([]models.StackInstance, error) {
@@ -485,6 +484,9 @@ func (s *stubStackInstanceRepo) ListExpired() ([]*models.StackInstance, error) {
 func (s *stubStackInstanceRepo) ListExpiringSoon(_ time.Duration) ([]*models.StackInstance, error) {
 	return nil, nil
 }
+func (*stubStackInstanceRepo) MarkExpiryWarned(_ string, _, _ time.Time) (bool, error) {
+	return false, nil
+}
 func (s *stubStackInstanceRepo) ListByStatus(_ string, _ int) ([]*models.StackInstance, error) {
 	return nil, nil
 }
@@ -501,9 +503,10 @@ func (s *stubStackDefinitionRepo) FindByName(_ string) ([]models.StackDefinition
 	return nil, nil
 }
 func (s *stubStackDefinitionRepo) Update(_ *models.StackDefinition) error  { return nil }
+func (s *stubStackDefinitionRepo) SetTemplateLink(_, _, _ string) error    { return nil }
 func (s *stubStackDefinitionRepo) Delete(_ string) error                   { return nil }
 func (s *stubStackDefinitionRepo) List() ([]models.StackDefinition, error) { return nil, nil }
-func (s *stubStackDefinitionRepo) ListPaged(_, _ int) ([]models.StackDefinition, int64, error) {
+func (s *stubStackDefinitionRepo) ListPaged(_ models.StackDefinitionFilter, _, _ int) ([]models.StackDefinition, int64, error) {
 	return nil, 0, nil
 }
 func (s *stubStackDefinitionRepo) ListByOwner(_ string) ([]models.StackDefinition, error) {
@@ -515,10 +518,16 @@ func (s *stubStackDefinitionRepo) ListByTemplate(_ string) ([]models.StackDefini
 func (s *stubStackDefinitionRepo) CountByTemplateIDs(_ []string) (map[string]int, error) {
 	return nil, nil
 }
+func (s *stubStackDefinitionRepo) FindByIDForUpdate(_ string) (*models.StackDefinition, error) {
+	return nil, nil
+}
 func (s *stubStackDefinitionRepo) ListIDsByTemplateIDs(_ []string) (map[string][]string, error) {
 	return nil, nil
 }
 func (s *stubStackDefinitionRepo) Count() (int64, error) { return 0, nil }
+func (s *stubStackDefinitionRepo) NamesByIDs(_ []string) (map[string]string, error) {
+	return map[string]string{}, nil
+}
 
 // ---- stubChartConfigRepo ----
 
@@ -528,7 +537,11 @@ func (s *stubChartConfigRepo) Create(_ *models.ChartConfig) error             { 
 func (s *stubChartConfigRepo) FindByID(_ string) (*models.ChartConfig, error) { return nil, nil }
 func (s *stubChartConfigRepo) Update(_ *models.ChartConfig) error             { return nil }
 func (s *stubChartConfigRepo) Delete(_ string) error                          { return nil }
+func (s *stubChartConfigRepo) DeleteByDefinition(_ string) error              { return nil }
 func (s *stubChartConfigRepo) ListByDefinition(_ string) ([]models.ChartConfig, error) {
+	return nil, nil
+}
+func (s *stubChartConfigRepo) CountByDefinitionIDs(_ []string) (map[string]int, error) {
 	return nil, nil
 }
 
@@ -547,6 +560,9 @@ func (s *stubDeploymentLogRepo) ListByInstance(_ context.Context, _ string) ([]m
 func (s *stubDeploymentLogRepo) ListByInstancePaginated(_ context.Context, _ models.DeploymentLogFilters) (*models.DeploymentLogResult, error) {
 	return nil, nil
 }
+func (s *stubDeploymentLogRepo) ListLatestByActions(_ context.Context, _ string, _ []string, _ int) ([]models.DeploymentLog, error) {
+	return nil, nil
+}
 func (s *stubDeploymentLogRepo) GetLatestByInstance(_ context.Context, _ string) (*models.DeploymentLog, error) {
 	return nil, nil
 }
@@ -554,6 +570,10 @@ func (s *stubDeploymentLogRepo) SummarizeByInstance(_ context.Context, _ string)
 	return nil, nil
 }
 func (s *stubDeploymentLogRepo) SummarizeBatch(_ context.Context, _ []string) (map[string]*models.DeployLogSummary, error) {
+	return nil, nil
+}
+
+func (s *stubDeploymentLogRepo) SummarizeByUsers(_ context.Context, _ []string) (map[string]*models.DeployLogSummary, error) {
 	return nil, nil
 }
 func (s *stubDeploymentLogRepo) CountByAction(_ context.Context, _ string) (int, error) {
@@ -595,6 +615,9 @@ func (s *stubInstanceQuotaOverrideRepo) Upsert(_ context.Context, _ *models.Inst
 	return nil
 }
 func (s *stubInstanceQuotaOverrideRepo) Delete(_ context.Context, _ string) error { return nil }
+func (s *stubInstanceQuotaOverrideRepo) ListByInstanceIDs(_ context.Context, _ []string) ([]models.InstanceQuotaOverride, error) {
+	return nil, nil
+}
 
 // ---- stubCleanupPolicyRepo ----
 
@@ -621,6 +644,9 @@ func (s *stubNotificationRepo) MarkAllAsRead(_ context.Context, _ string) error 
 func (s *stubNotificationRepo) GetPreferences(_ context.Context, _ string) ([]models.NotificationPreference, error) {
 	return nil, nil
 }
+func (s *stubNotificationRepo) DisabledUserIDs(_ context.Context, _ string, _ []string) (map[string]bool, error) {
+	return map[string]bool{}, nil
+}
 func (s *stubNotificationRepo) UpdatePreference(_ context.Context, _ *models.NotificationPreference) error {
 	return nil
 }
@@ -639,6 +665,13 @@ func (s *stubUserRepo) Delete(_ string) error                                 { 
 func (s *stubUserRepo) List() ([]models.User, error)                          { return nil, nil }
 func (s *stubUserRepo) Count() (int64, error)                                 { return 0, nil }
 func (s *stubUserRepo) ListByRoles(_ []string) ([]models.User, error)         { return nil, nil }
+func (s *stubUserRepo) UpdateRole(_, _, _ string) (string, error)             { return "", nil }
+func (s *stubUserRepo) SetDisabled(_, _ string, _ bool) error                 { return nil }
+func (s *stubUserRepo) DeleteGuarded(_, _ string) error                       { return nil }
+func (s *stubUserRepo) UpdatePassword(_, _ string) error                      { return nil }
+func (s *stubUserRepo) UpdateProfile(_ string, _ models.UserProfileUpdate) error {
+	return nil
+}
 
 // ---- stubStackTemplateRepo ----
 
@@ -646,14 +679,17 @@ type stubStackTemplateRepo struct{}
 
 func (s *stubStackTemplateRepo) Create(_ *models.StackTemplate) error             { return nil }
 func (s *stubStackTemplateRepo) FindByID(_ string) (*models.StackTemplate, error) { return nil, nil }
-func (s *stubStackTemplateRepo) Update(_ *models.StackTemplate) error             { return nil }
-func (s *stubStackTemplateRepo) Delete(_ string) error                            { return nil }
-func (s *stubStackTemplateRepo) List() ([]models.StackTemplate, error)            { return nil, nil }
-func (s *stubStackTemplateRepo) ListPaged(_, _ int) ([]models.StackTemplate, int64, error) {
+func (s *stubStackTemplateRepo) FindByIDForUpdate(_ string) (*models.StackTemplate, error) {
+	return nil, nil
+}
+func (s *stubStackTemplateRepo) Update(_ *models.StackTemplate) error  { return nil }
+func (s *stubStackTemplateRepo) Delete(_ string) error                 { return nil }
+func (s *stubStackTemplateRepo) List() ([]models.StackTemplate, error) { return nil, nil }
+func (s *stubStackTemplateRepo) ListPaged(_, _ int, _ string) ([]models.StackTemplate, int64, error) {
 	return nil, 0, nil
 }
 func (s *stubStackTemplateRepo) ListPublished() ([]models.StackTemplate, error) { return nil, nil }
-func (s *stubStackTemplateRepo) ListPublishedPaged(_, _ int) ([]models.StackTemplate, int64, error) {
+func (s *stubStackTemplateRepo) ListPublishedPaged(_, _ int, _ string) ([]models.StackTemplate, int64, error) {
 	return nil, 0, nil
 }
 func (s *stubStackTemplateRepo) ListByOwner(_ string) ([]models.StackTemplate, error) {
@@ -681,6 +717,7 @@ type stubValueOverrideRepo struct{}
 
 func (s *stubValueOverrideRepo) Create(_ *models.ValueOverride) error             { return nil }
 func (s *stubValueOverrideRepo) FindByID(_ string) (*models.ValueOverride, error) { return nil, nil }
+func (s *stubValueOverrideRepo) DeleteByInstance(_ string) error                  { return nil }
 func (s *stubValueOverrideRepo) FindByInstanceAndChart(_, _ string) (*models.ValueOverride, error) {
 	return nil, nil
 }
@@ -711,9 +748,13 @@ type stubAPIKeyRepo struct{}
 func (s *stubAPIKeyRepo) Create(_ *models.APIKey) error                   { return nil }
 func (s *stubAPIKeyRepo) FindByID(_, _ string) (*models.APIKey, error)    { return nil, nil }
 func (s *stubAPIKeyRepo) FindByPrefix(_ string) ([]*models.APIKey, error) { return nil, nil }
+func (s *stubAPIKeyRepo) FindByIDs(_ []string) ([]*models.APIKey, error)  { return nil, nil }
 func (s *stubAPIKeyRepo) ListByUser(_ string) ([]*models.APIKey, error)   { return nil, nil }
 func (s *stubAPIKeyRepo) UpdateLastUsed(_, _ string, _ time.Time) error   { return nil }
 func (s *stubAPIKeyRepo) Delete(_, _ string) error                        { return nil }
+func (s *stubAPIKeyRepo) DeleteAllForUser(_ string) (int64, error) {
+	return 0, nil
+}
 
 // ---- stubSharedValuesRepo ----
 
@@ -765,13 +806,20 @@ func (s *stubRefreshTokenRepo) FindByTokenHash(_ string) (*models.RefreshToken, 
 	return nil, nil
 }
 func (s *stubRefreshTokenRepo) RevokeByID(_ string) error                  { return nil }
-func (s *stubRefreshTokenRepo) RevokeByIDIfActive(_ string) (int64, error) { return 0, nil }
 func (s *stubRefreshTokenRepo) RevokeAllForUser(_ string) error            { return nil }
 func (s *stubRefreshTokenRepo) RevokeAllForUserExcept(_, _ string) error   { return nil }
 func (s *stubRefreshTokenRepo) DeleteExpired() (int64, error)              { return 0, nil }
 func (s *stubRefreshTokenRepo) CountActiveForUser(_ string) (int64, error) { return 0, nil }
 func (s *stubRefreshTokenRepo) WithTx(fn func(txRepo models.RefreshTokenRepository) error) error {
 	return fn(s)
+}
+func (s *stubRefreshTokenRepo) MarkRotatedIfActive(_ string, _ time.Time) (int64, error) {
+	return 0, nil
+}
+func (s *stubRefreshTokenRepo) RevokeFamily(_ string) error                 { return nil }
+func (s *stubRefreshTokenRepo) CountActiveInFamily(_ string) (int64, error) { return 0, nil }
+func (s *stubRefreshTokenRepo) TouchFamily(_ context.Context, _ string, _ time.Time) error {
+	return nil
 }
 
 // ---- stubTxRunner ----
@@ -781,22 +829,6 @@ type stubTxRunner struct{}
 func (s *stubTxRunner) RunInTx(fn func(repos database.TxRepos) error) error {
 	return fn(database.TxRepos{})
 }
-
-// ---- stubGenericRepo (models.Repository) ----
-
-type stubGenericRepo struct{}
-
-func (s *stubGenericRepo) Create(_ context.Context, _ interface{}) error                 { return nil }
-func (s *stubGenericRepo) FindByID(_ context.Context, _ uint, _ interface{}) error       { return nil }
-func (s *stubGenericRepo) Update(_ context.Context, _ interface{}) error                 { return nil }
-func (s *stubGenericRepo) Delete(_ context.Context, _ interface{}) error                 { return nil }
-func (s *stubGenericRepo) List(_ context.Context, _ interface{}, _ ...interface{}) error { return nil }
-func (s *stubGenericRepo) Ping(_ context.Context) error                                  { return nil }
-func (s *stubGenericRepo) Close() error                                                  { return nil }
-
-// ============================================================================
-// Test helpers
-// ============================================================================
 
 // buildTestConfig returns a minimal *config.Config suitable for bootstrap tests.
 // Fields are set to their minimum valid values needed for the bootstrap functions.
@@ -885,14 +917,6 @@ func TestBuildDomainServices_ReturnsAllFields(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, svc)
 
-	// Clean up background goroutines started by buildDomainServices.
-	t.Cleanup(func() {
-		svc.WatcherCancel()
-		svc.K8sWatcher.Stop()
-		svc.HealthPoller.Stop()
-		svc.SecretRefresher.Stop()
-	})
-
 	// Every non-optional field must be populated.
 	assert.NotNil(t, svc.GitRegistry, "GitRegistry")
 	assert.NotNil(t, svc.ClusterRegistry, "ClusterRegistry")
@@ -904,7 +928,7 @@ func TestBuildDomainServices_ReturnsAllFields(t *testing.T) {
 	assert.NotNil(t, svc.CleanupExecutor, "CleanupExecutor")
 	assert.NotNil(t, svc.CleanupScheduler, "CleanupScheduler")
 	assert.NotNil(t, svc.ValuesGen, "ValuesGen")
-	assert.NotNil(t, svc.WatcherCancel, "WatcherCancel")
+	assert.False(t, svc.CleanupScheduler.Active(), "the scheduler runs only in a leadership term")
 
 	// HookDispatcher and ActionRegistry are nil when HooksConfigFile is empty.
 	assert.Nil(t, svc.HookDispatcher, "HookDispatcher should be nil when no hooks config")
@@ -922,12 +946,6 @@ func TestBuildDomainServices_PassesGitHubTokenToRegistry(t *testing.T) {
 
 	svc, err := buildDomainServices(cfg, repos, hub, health.New())
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		svc.WatcherCancel()
-		svc.K8sWatcher.Stop()
-		svc.HealthPoller.Stop()
-		svc.SecretRefresher.Stop()
-	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -959,12 +977,6 @@ func TestBuildDomainServices_PassesGitHubAllowedRepositoriesToRegistry(t *testin
 
 	svc, err := buildDomainServices(cfg, repos, hub, health.New())
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		svc.WatcherCancel()
-		svc.K8sWatcher.Stop()
-		svc.HealthPoller.Stop()
-		svc.SecretRefresher.Stop()
-	})
 
 	_, err = svc.GitRegistry.ListBranches(context.Background(), "https://github.com/octo-org/denied-marker")
 	assert.ErrorIs(t, err, gitprovider.ErrRepositoryNotAllowed)
@@ -1010,14 +1022,8 @@ func TestBuildDomainServices_AddsHealthChecks(t *testing.T) {
 	healthChecker := health.New()
 	healthChecker.SetReady(true)
 
-	svc, err := buildDomainServices(cfg, repos, hub, healthChecker)
+	_, err := buildDomainServices(cfg, repos, hub, healthChecker)
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		svc.WatcherCancel()
-		svc.K8sWatcher.Stop()
-		svc.HealthPoller.Stop()
-		svc.SecretRefresher.Stop()
-	})
 
 	// HealthChecker should have at least the three checks added by buildDomainServices:
 	// "cluster_registry", "git_provider", "helm". We verify by running readiness
@@ -1045,12 +1051,6 @@ func TestBuildHandlers_ReturnsAllFields(t *testing.T) {
 
 	svc, err := buildDomainServices(cfg, repos, hub, healthChecker)
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		svc.WatcherCancel()
-		svc.K8sWatcher.Stop()
-		svc.HealthPoller.Stop()
-		svc.SecretRefresher.Stop()
-	})
 
 	sessStore := sessionstore.NewMemoryStore()
 	t.Cleanup(func() { sessStore.Stop() })
@@ -1097,12 +1097,6 @@ func TestBuildHandlers_OIDCDisabled(t *testing.T) {
 
 	svc, err := buildDomainServices(cfg, repos, hub, healthChecker)
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		svc.WatcherCancel()
-		svc.K8sWatcher.Stop()
-		svc.HealthPoller.Stop()
-		svc.SecretRefresher.Stop()
-	})
 
 	sessStore := sessionstore.NewMemoryStore()
 	t.Cleanup(func() { sessStore.Stop() })
@@ -1128,12 +1122,6 @@ func TestBuildRouter_ReturnsEngineAndRateLimiters(t *testing.T) {
 
 	svc, err := buildDomainServices(cfg, repos, hub, healthChecker)
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		svc.WatcherCancel()
-		svc.K8sWatcher.Stop()
-		svc.HealthPoller.Stop()
-		svc.SecretRefresher.Stop()
-	})
 
 	sessStore := sessionstore.NewMemoryStore()
 	t.Cleanup(func() { sessStore.Stop() })
@@ -1142,7 +1130,6 @@ func TestBuildRouter_ReturnsEngineAndRateLimiters(t *testing.T) {
 	require.NoError(t, err)
 
 	router, rateLimiters := buildRouter(cfg, hs, routerDeps{
-		Repo:          &stubGenericRepo{},
 		HealthChecker: healthChecker,
 		Hub:           hub,
 		SessionStore:  sessStore,
@@ -1171,12 +1158,6 @@ func TestBuildRouter_HealthEndpointResponds(t *testing.T) {
 
 	svc, err := buildDomainServices(cfg, repos, hub, healthChecker)
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		svc.WatcherCancel()
-		svc.K8sWatcher.Stop()
-		svc.HealthPoller.Stop()
-		svc.SecretRefresher.Stop()
-	})
 
 	sessStore := sessionstore.NewMemoryStore()
 	t.Cleanup(func() { sessStore.Stop() })
@@ -1185,7 +1166,6 @@ func TestBuildRouter_HealthEndpointResponds(t *testing.T) {
 	require.NoError(t, err)
 
 	router, rateLimiters := buildRouter(cfg, hs, routerDeps{
-		Repo:          &stubGenericRepo{},
 		HealthChecker: healthChecker,
 		Hub:           hub,
 		SessionStore:  sessStore,
@@ -1202,56 +1182,69 @@ func TestBuildRouter_HealthEndpointResponds(t *testing.T) {
 }
 
 // ============================================================================
-// startBackgroundServices tests
+// buildLeaderWorkers / startLeaderElection tests
 // ============================================================================
 
-func TestStartBackgroundServices_ReturnsAllFields(t *testing.T) {
+func TestBuildLeaderWorkers_ReturnsAllWorkers(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)
 
 	cfg := buildTestConfig()
 	repos := buildTestRepositorySet()
 	hub := buildTestHub(t)
-	healthChecker := health.New()
 
-	svc, err := buildDomainServices(cfg, repos, hub, healthChecker)
+	svc, err := buildDomainServices(cfg, repos, hub, health.New())
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		svc.WatcherCancel()
-		svc.K8sWatcher.Stop()
-		svc.HealthPoller.Stop()
-		svc.SecretRefresher.Stop()
-	})
-
 	sessStore := sessionstore.NewMemoryStore()
 	t.Cleanup(func() { sessStore.Stop() })
-
 	hs, err := buildHandlers(cfg, repos, svc, sessStore, hub)
 	require.NoError(t, err)
 
-	bg, err := startBackgroundServices(svc, hs, repos, hub)
+	lw := buildLeaderWorkers(svc, hs, repos, hub, time.Second)
+	require.NotNil(t, lw)
+	assert.NotNil(t, lw.Reaper, "Reaper")
+	assert.NotNil(t, lw.ExpiryWarner, "ExpiryWarner")
+	assert.NotNil(t, lw.QuotaMonitor, "QuotaMonitor")
+	assert.NotNil(t, lw.SecretMonitor, "SecretMonitor")
+	assert.Equal(t, []string{
+		"ttl-reaper", "expiry-warner", "cleanup-scheduler", "quota-monitor", "secret-monitor",
+		"secret-refresher", "cluster-health-poller", "k8s-status-watcher", "refresh-token-cleanup",
+	}, lw.Group.Names())
+	assert.False(t, lw.Group.Running(), "buildLeaderWorkers must not start the workers")
+}
+
+func TestStartLeaderElection_DisabledRunsWorkersUntilShutdown(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	cfg := buildTestConfig()
+	repos := buildTestRepositorySet()
+	hub := buildTestHub(t)
+
+	svc, err := buildDomainServices(cfg, repos, hub, health.New())
 	require.NoError(t, err)
-	require.NotNil(t, bg)
+	sessStore := sessionstore.NewMemoryStore()
+	t.Cleanup(func() { sessStore.Stop() })
+	hs, err := buildHandlers(cfg, repos, svc, sessStore, hub)
+	require.NoError(t, err)
 
-	// Clean up all background services.
-	t.Cleanup(func() {
-		bg.RefreshTokenCleanupCancel()
-		bg.Reaper.Stop()
-		bg.ExpiryWarner.Stop()
-		bg.QuotaMonitor.Stop()
-		bg.SecretMonitor.Stop()
-		svc.CleanupScheduler.Stop()
-	})
+	elector, err := leader.NewInCluster(leaderConfig(cfg.LeaderElection))
+	require.NoError(t, err, "election is disabled by default: no cluster needed")
+	lw := buildLeaderWorkers(svc, hs, repos, hub, time.Second)
+	lr := startLeaderElection(elector, lw.Group)
 
-	assert.NotNil(t, bg.Reaper, "Reaper")
-	assert.NotNil(t, bg.ExpiryWarner, "ExpiryWarner")
-	assert.NotNil(t, bg.QuotaMonitor, "QuotaMonitor")
-	assert.NotNil(t, bg.SecretMonitor, "SecretMonitor")
-	assert.NotNil(t, bg.RefreshTokenCleanupCancel, "RefreshTokenCleanupCancel")
+	require.Eventually(t, func() bool {
+		return elector.IsLeader() && lw.Group.Running() && svc.CleanupScheduler.Active()
+	}, 2*time.Second, 10*time.Millisecond)
+
+	lr.Shutdown(2 * time.Second)
+	assert.False(t, elector.IsLeader())
+	assert.False(t, lw.Group.Running())
+	assert.False(t, svc.CleanupScheduler.Active())
 }
 
 // ============================================================================
-// Full integration: buildDomainServices -> buildHandlers -> buildRouter -> startBackgroundServices
+// Full integration: buildDomainServices -> buildHandlers -> buildRouter -> leader workers
 // ============================================================================
 
 func TestBootstrapFullPipeline(t *testing.T) {
@@ -1267,12 +1260,6 @@ func TestBootstrapFullPipeline(t *testing.T) {
 	// Step 1: Domain services.
 	svc, err := buildDomainServices(cfg, repos, hub, healthChecker)
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		svc.WatcherCancel()
-		svc.K8sWatcher.Stop()
-		svc.HealthPoller.Stop()
-		svc.SecretRefresher.Stop()
-	})
 
 	// Step 2: Handlers.
 	sessStore := sessionstore.NewMemoryStore()
@@ -1283,7 +1270,6 @@ func TestBootstrapFullPipeline(t *testing.T) {
 
 	// Step 3: Router.
 	router, rateLimiters := buildRouter(cfg, hs, routerDeps{
-		Repo:          &stubGenericRepo{},
 		HealthChecker: healthChecker,
 		Hub:           hub,
 		SessionStore:  sessStore,
@@ -1293,17 +1279,11 @@ func TestBootstrapFullPipeline(t *testing.T) {
 	require.NotNil(t, router)
 	t.Cleanup(func() { rateLimiters.Stop() })
 
-	// Step 4: Background services.
-	bg, err := startBackgroundServices(svc, hs, repos, hub)
+	// Step 4: Leader workers (election disabled: this process leads).
+	elector, err := leader.New(leaderConfig(cfg.LeaderElection), nil)
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		bg.RefreshTokenCleanupCancel()
-		bg.Reaper.Stop()
-		bg.ExpiryWarner.Stop()
-		bg.QuotaMonitor.Stop()
-		bg.SecretMonitor.Stop()
-		svc.CleanupScheduler.Stop()
-	})
+	lr := startLeaderElection(elector, buildLeaderWorkers(svc, hs, repos, hub, time.Second).Group)
+	t.Cleanup(func() { lr.Shutdown(2 * time.Second) })
 
 	// Verify full pipeline produced working endpoints.
 	w := httptest.NewRecorder()
@@ -1317,3 +1297,95 @@ func (*stubStackInstanceRepo) CountByStatuses(statuses []string) (int, error) { 
 func (*stubClusterRepo) CountAll() (int, error) { return 0, nil }
 
 func (*stubClusterRepo) CountByHealthStatus(status string) (int, error) { return 0, nil }
+func (*stubClusterRepo) NamesByIDs(_ []string) (map[string]string, error) {
+	return map[string]string{}, nil
+}
+
+func TestGinMode(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		env   string
+		debug bool
+		want  string
+	}{
+		{name: "env wins", env: "debug", debug: false, want: gin.DebugMode},
+		{name: "debug config", env: "", debug: true, want: gin.DebugMode},
+		{name: "production default", env: "", debug: false, want: gin.ReleaseMode},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, ginMode(tt.env, tt.debug))
+		})
+	}
+}
+
+// stubRetentionRepo is a models.RetentionRepository that deletes nothing.
+type stubRetentionRepo struct{}
+
+func (stubRetentionRepo) DeleteDeploymentLogsOlderThan(context.Context, time.Duration, int) (int64, error) {
+	return 0, nil
+}
+func (stubRetentionRepo) DeleteAuditLogsOlderThan(context.Context, time.Duration, int) (int64, error) {
+	return 0, nil
+}
+func (stubRetentionRepo) DeleteNotificationsOlderThan(context.Context, time.Duration, int) (int64, error) {
+	return 0, nil
+}
+func (stubRetentionRepo) DeleteDeliveryLogsOlderThan(context.Context, time.Duration, int) (int64, error) {
+	return 0, nil
+}
+
+func TestBuildLogRetention(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		retention config.RetentionConfig
+		repos     *database.RepositorySet
+		want      bool
+	}{
+		{name: "retention set", retention: config.RetentionConfig{AuditLogDays: 365}, repos: &database.RepositorySet{Retention: stubRetentionRepo{}}, want: true},
+		{name: "all 0 keeps everything", retention: config.RetentionConfig{}, repos: &database.RepositorySet{Retention: stubRetentionRepo{}}},
+		{name: "no repository", retention: config.RetentionConfig{AuditLogDays: 365}, repos: &database.RepositorySet{}},
+		{name: "no repository set", retention: config.RetentionConfig{AuditLogDays: 365}},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			w := buildLogRetention(&config.Config{Retention: tt.retention}, tt.repos)
+			if !tt.want {
+				assert.Nil(t, w)
+				return
+			}
+			require.NotNil(t, w)
+			assert.Equal(t, "log-retention", w.Name)
+			assert.NotNil(t, w.Run)
+		})
+	}
+}
+
+// UNIQUE_INSTANCE_NAMES needs an instance repository with name lookup; the
+// test stub has none, so buildHandlers must refuse to start.
+func TestBuildHandlers_UniqueInstanceNamesNeedsNameLookup(t *testing.T) {
+	t.Parallel()
+
+	cfg := buildTestConfig()
+	cfg.App.UniqueInstanceNames = true
+	repos := buildTestRepositorySet()
+	hub := buildTestHub(t)
+	healthChecker := health.New()
+
+	svc, err := buildDomainServices(cfg, repos, hub, healthChecker)
+	require.NoError(t, err)
+
+	sessStore := sessionstore.NewMemoryStore()
+	t.Cleanup(func() { sessStore.Stop() })
+
+	_, err = buildHandlers(cfg, repos, svc, sessStore, hub)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "UNIQUE_INSTANCE_NAMES")
+}

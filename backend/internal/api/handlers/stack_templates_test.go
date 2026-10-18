@@ -30,9 +30,12 @@ func setupTemplateRouter(
 	r.Use(injectAuthContext(callerID, callerRole))
 
 	h := NewTemplateHandler(templateRepo, chartRepo, definitionRepo, chartConfigRepo)
+	versionRepo := newWorkingCopyReleaseRepo(templateRepo, chartRepo)
+	h.versionRepo = versionRepo
 	h.txRunner = &mockHandlerTxRunner{repos: database.TxRepos{
 		StackTemplate:   templateRepo,
 		TemplateChart:   chartRepo,
+		TemplateVersion: versionRepo,
 		StackDefinition: definitionRepo,
 		ChartConfig:     chartConfigRepo,
 	}}
@@ -261,8 +264,8 @@ func TestCreateTemplate(t *testing.T) {
 // TestCreateTemplate_WithInlineCharts locks the contract that POST
 // /api/v1/templates accepts a `charts: [...]` array and persists every
 // entry as a TemplateChartConfig in the same transaction. This is the
-// behaviour stackctl's CreateTemplateRequest assumes and the kvk-k8s-dev
-// seed-templates.sh script relies on — without this the array was being
+// behaviour stackctl's CreateTemplateRequest assumes and that seed scripts
+// rely on — without this the array was being
 // silently dropped by gin's bind, leaving a chartless template behind.
 func TestCreateTemplate_WithInlineCharts(t *testing.T) {
 	t.Parallel()
@@ -273,8 +276,8 @@ func TestCreateTemplate_WithInlineCharts(t *testing.T) {
 	  "version": "1.0.0",
 	  "default_branch": "main",
 	  "charts": [
-	    {"chart_name": "kvk-mysql", "chart_path": "/charts/mysql", "chart_version": "0.1.0", "deploy_order": 1, "required": true},
-	    {"chart_name": "kvk-redis", "chart_path": "/charts/redis", "chart_version": "0.1.0", "deploy_order": 2, "required": true}
+	    {"chart_name": "app-mysql", "chart_path": "/charts/mysql", "chart_version": "0.1.0", "deploy_order": 1, "required": true},
+	    {"chart_name": "app-redis", "chart_path": "/charts/redis", "chart_version": "0.1.0", "deploy_order": 2, "required": true}
 	  ]
 	}`
 
@@ -296,10 +299,10 @@ func TestCreateTemplate_WithInlineCharts(t *testing.T) {
 
 	// Response body echoes the persisted charts back.
 	require.Len(t, resp.Charts, 2)
-	assert.Equal(t, "kvk-mysql", resp.Charts[0].ChartName)
+	assert.Equal(t, "app-mysql", resp.Charts[0].ChartName)
 	assert.Equal(t, resp.ID, resp.Charts[0].StackTemplateID, "chart must be stamped with new template ID")
 	assert.NotEmpty(t, resp.Charts[0].ID, "chart ID must be assigned server-side")
-	assert.Equal(t, "kvk-redis", resp.Charts[1].ChartName)
+	assert.Equal(t, "app-redis", resp.Charts[1].ChartName)
 
 	// And the chart repo actually contains them — guards against future
 	// refactors that satisfy the response but skip persistence.
@@ -320,7 +323,7 @@ func TestCreateTemplate_InvalidChartRollsBack(t *testing.T) {
 	  "category": "Full Stack",
 	  "version": "1.0.0",
 	  "charts": [
-	    {"chart_name": "kvk-mysql", "chart_path": "/charts/mysql", "chart_version": "0.1.0", "deploy_order": 1},
+	    {"chart_name": "app-mysql", "chart_path": "/charts/mysql", "chart_version": "0.1.0", "deploy_order": 1},
 	    {"chart_name": "", "chart_path": "/charts/bad", "chart_version": "0.1.0", "deploy_order": 2}
 	  ]
 	}`
@@ -693,6 +696,50 @@ func TestCloneTemplate(t *testing.T) {
 		assert.False(t, resp.IsPublished, "clone should start as unpublished")
 		assert.Equal(t, "uid-2", resp.OwnerID, "clone owner should be the caller")
 	})
+
+	nameTests := []struct {
+		name     string
+		body     string
+		wantCode int
+		wantName string
+	}{
+		{name: "no body uses default name", body: "", wantCode: http.StatusCreated, wantName: "Original (Copy)"},
+		{name: "empty object uses default name", body: `{}`, wantCode: http.StatusCreated, wantName: "Original (Copy)"},
+		{name: "name from body", body: `{"name":"retest-template"}`, wantCode: http.StatusCreated, wantName: "retest-template"},
+		{name: "name is trimmed", body: `{"name":"  spaced  "}`, wantCode: http.StatusCreated, wantName: "spaced"},
+		{name: "empty name is rejected", body: `{"name":"   "}`, wantCode: http.StatusBadRequest},
+		{name: "invalid JSON is rejected", body: `{"name":`, wantCode: http.StatusBadRequest},
+	}
+	for _, tt := range nameTests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tmplRepo := NewMockStackTemplateRepository()
+			seedTemplate(t, tmplRepo, "t1", "Original", "owner-1", true)
+			router := setupTemplateRouter(tmplRepo, NewMockTemplateChartConfigRepository(), NewMockStackDefinitionRepository(), NewMockChartConfigRepository(), "uid-2", "devops")
+
+			w := httptest.NewRecorder()
+			var req *http.Request
+			if tt.body == "" {
+				req, _ = http.NewRequest(http.MethodPost, "/api/v1/templates/t1/clone", nil)
+			} else {
+				req, _ = http.NewRequest(http.MethodPost, "/api/v1/templates/t1/clone", bytes.NewBufferString(tt.body))
+				req.Header.Set("Content-Type", "application/json")
+			}
+			router.ServeHTTP(w, req)
+
+			require.Equal(t, tt.wantCode, w.Code, w.Body.String())
+			if tt.wantCode != http.StatusCreated {
+				return
+			}
+			var resp models.StackTemplate
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			assert.Equal(t, tt.wantName, resp.Name)
+			stored, err := tmplRepo.FindByID(resp.ID)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantName, stored.Name)
+		})
+	}
 
 	t.Run("template not found returns 404", func(t *testing.T) {
 		t.Parallel()

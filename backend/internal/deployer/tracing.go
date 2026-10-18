@@ -25,6 +25,26 @@ type deployerMetrics struct {
 	deploymentTotal    metric.Int64Counter
 	deploymentDuration metric.Float64Histogram
 	deploymentActive   metric.Int64UpDownCounter
+	// interruptEvents counts the interrupted operation events: recovered
+	// (the leader ended an operation), late_finalize_skipped (a goroutine
+	// finished after the recovery and wrote nothing) and queued_cancelled (a
+	// queued operation found its log ended when it got its slot).
+	interruptEvents metric.Int64Counter
+}
+
+// Events of deployment.interrupt.events_total.
+const (
+	interruptEventRecovered           = "recovered"
+	interruptEventLateFinalizeSkipped = "late_finalize_skipped"
+	interruptEventQueuedCancelled     = "queued_cancelled"
+)
+
+// recordInterruptEvent adds one interrupted operation event of action.
+func recordInterruptEvent(action, event string) {
+	metrics.interruptEvents.Add(context.Background(), 1, metric.WithAttributes(
+		attribute.String("action", action),
+		attribute.String("event", event),
+	))
 }
 
 // metrics is the singleton metrics instance, initialised at package init.
@@ -48,6 +68,18 @@ func init() {
 		"deployment.duration",
 		metric.WithDescription("Duration of deployment operations"),
 		metric.WithUnit("s"),
+		// Deploy, stop, clean, rollback: 1 s (a stop of a small stack) to 2 h (a deploy of N charts may take N x DEPLOYMENT_TIMEOUT). The OpenTelemetry default buckets (0 to 10000) are for
+		// milliseconds: in seconds every value fell into the first bucket.
+		metric.WithExplicitBucketBoundaries(1, 2.5, 5, 15, 30, 60, 120, 300, 600, 900, 1200, 1800, 3600, 7200),
+	)
+	if err != nil {
+		otel.Handle(err)
+	}
+
+	metrics.interruptEvents, err = deployerMeter.Int64Counter(
+		"deployment.interrupt.events_total",
+		metric.WithDescription("Interrupted operation events: recovered, late_finalize_skipped, queued_cancelled"),
+		metric.WithUnit("{event}"),
 	)
 	if err != nil {
 		otel.Handle(err)

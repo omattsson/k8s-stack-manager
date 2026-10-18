@@ -38,6 +38,18 @@ func (r *GORMInstanceQuotaOverrideRepository) GetByInstanceID(ctx context.Contex
 	return &override, nil
 }
 
+// ListByInstanceIDs returns the quota overrides of the given instances in one query.
+func (r *GORMInstanceQuotaOverrideRepository) ListByInstanceIDs(ctx context.Context, instanceIDs []string) ([]models.InstanceQuotaOverride, error) {
+	if len(instanceIDs) == 0 {
+		return nil, nil
+	}
+	var overrides []models.InstanceQuotaOverride
+	if err := r.db.WithContext(ctx).Where("stack_instance_id IN ?", instanceIDs).Find(&overrides).Error; err != nil {
+		return nil, dberrors.NewDatabaseError("ListByInstanceIDs", fmt.Errorf("query instance quota overrides: %w", err))
+	}
+	return overrides, nil
+}
+
 // Upsert creates or updates the quota override for a stack instance.
 func (r *GORMInstanceQuotaOverrideRepository) Upsert(ctx context.Context, override *models.InstanceQuotaOverride) error {
 	if err := override.Validate(); err != nil {

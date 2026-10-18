@@ -1,9 +1,12 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { StrictMode } from 'react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import axios from 'axios';
 import Form from '../Form';
+import { BRANDING_DEFAULTS, StaticBrandingProvider } from '../../../context/BrandingContext';
+import { toLocalInputValue } from '../../../utils/stopTime';
 
 const mockNavigate = vi.fn();
 vi.mock('react-router-dom', async () => {
@@ -19,7 +22,7 @@ vi.mock('../../../api/client', () => ({
     create: vi.fn(),
   },
   definitionService: {
-    list: vi.fn(),
+    listAll: vi.fn(),
   },
   clusterService: {
     list: vi.fn().mockResolvedValue([]),
@@ -56,7 +59,7 @@ describe('StackInstances Form', () => {
   });
 
   it('shows loading spinner while fetching definitions', () => {
-    (definitionService.list as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
     render(
       <MemoryRouter>
         <Form />
@@ -66,7 +69,7 @@ describe('StackInstances Form', () => {
   });
 
   it('displays the form when definitions load', async () => {
-    (definitionService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
     render(
       <MemoryRouter>
         <Form />
@@ -79,7 +82,7 @@ describe('StackInstances Form', () => {
   });
 
   it('shows error alert when definitions fetch fails', async () => {
-    (definitionService.list as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Network'));
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Network'));
     render(
       <MemoryRouter>
         <Form />
@@ -91,8 +94,14 @@ describe('StackInstances Form', () => {
     });
   });
 
-  it('shows helper text about auto-generated namespace', async () => {
-    (definitionService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+  it('offers all definitions, also past the first API page', async () => {
+    const user = userEvent.setup();
+    const many = Array.from({ length: 30 }, (_, i) => ({
+      ...mockDefinitions[0],
+      id: `def-${i}`,
+      name: `Definition ${String(i).padStart(2, '0')}`,
+    }));
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(many);
     render(
       <MemoryRouter>
         <Form />
@@ -102,12 +111,56 @@ describe('StackInstances Form', () => {
       expect(screen.getByText('Create Stack Instance')).toBeInTheDocument();
     });
 
-    expect(screen.getByText(/namespace will be auto-generated/i)).toBeInTheDocument();
+    await user.click(screen.getByRole('combobox', { name: /stack definition/i }));
+    expect(screen.getByRole('option', { name: /Definition 29/ })).toBeInTheDocument();
+    expect(definitionService.listAll).toHaveBeenCalledTimes(1);
+  });
+
+  it('preselects the definition of the ?definition= URL parameter', async () => {
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+    render(
+      <MemoryRouter initialEntries={['/stack-instances/new?definition=def2']}>
+        <Form />
+      </MemoryRouter>
+    );
+    const select = await screen.findByRole('combobox', { name: /stack definition/i });
+    await waitFor(() => {
+      expect(select).toHaveTextContent('API Stack');
+    });
+    // The branch follows the default branch of the selected definition
+    expect(screen.getByDisplayValue('develop')).toBeInTheDocument();
+  });
+
+  it('ignores a ?definition= value that is not in the list', async () => {
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+    render(
+      <MemoryRouter initialEntries={['/stack-instances/new?definition=missing']}>
+        <Form />
+      </MemoryRouter>
+    );
+    const select = await screen.findByRole('combobox', { name: /stack definition/i });
+    expect(select).not.toHaveTextContent('Web Stack');
+    expect(select).not.toHaveTextContent('API Stack');
+    expect(screen.getByRole('button', { name: /create instance/i })).toBeDisabled();
+  });
+
+  it('shows helper text about auto-generated namespace', async () => {
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+    render(
+      <MemoryRouter>
+        <Form />
+      </MemoryRouter>
+    );
+    await waitFor(() => {
+      expect(screen.getByText('Create Stack Instance')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText(/namespace is generated from the name and the owner/i)).toBeInTheDocument();
   });
 
   it('creates an instance on form submit', async () => {
     const user = userEvent.setup();
-    (definitionService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
     (instanceService.create as ReturnType<typeof vi.fn>).mockResolvedValue({
       id: 'inst-new',
       name: 'My App',
@@ -129,7 +182,7 @@ describe('StackInstances Form', () => {
 
     // Type instance name
     const nameInput = screen.getByRole('textbox', { name: /instance name/i });
-    await user.type(nameInput, 'My App');
+    await user.type(nameInput, 'my-app');
 
     // Click create
     await user.click(screen.getByRole('button', { name: /create instance/i }));
@@ -142,7 +195,7 @@ describe('StackInstances Form', () => {
 
   it('navigates home when Cancel is clicked', async () => {
     const user = userEvent.setup();
-    (definitionService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
     render(
       <MemoryRouter>
         <Form />
@@ -158,7 +211,7 @@ describe('StackInstances Form', () => {
 
   it('shows error on generic create failure', async () => {
     const user = userEvent.setup();
-    (definitionService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
     (instanceService.create as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Server error'));
 
     render(
@@ -175,7 +228,7 @@ describe('StackInstances Form', () => {
     await user.click(defSelect);
     await user.click(screen.getByText(/Web Stack/));
     const nameInput = screen.getByRole('textbox', { name: /instance name/i });
-    await user.type(nameInput, 'My App');
+    await user.type(nameInput, 'my-app');
 
     await user.click(screen.getByRole('button', { name: /create instance/i }));
 
@@ -186,7 +239,7 @@ describe('StackInstances Form', () => {
 
   it('shows name conflict error with suggestions on 409 response', async () => {
     const user = userEvent.setup();
-    (definitionService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
 
     const axiosError = new Error('Conflict') as Error & {
       isAxiosError: boolean;
@@ -231,7 +284,7 @@ describe('StackInstances Form', () => {
 
   it('applies suggestion name when suggestion chip is clicked', async () => {
     const user = userEvent.setup();
-    (definitionService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
 
     const axiosError = new Error('Conflict') as Error & {
       isAxiosError: boolean;
@@ -282,7 +335,7 @@ describe('StackInstances Form', () => {
 
   it('shows 409 error without suggestions when no suggestions returned', async () => {
     const user = userEvent.setup();
-    (definitionService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
 
     const axiosError = new Error('Conflict') as Error & {
       isAxiosError: boolean;
@@ -325,7 +378,7 @@ describe('StackInstances Form', () => {
 
   it('updates branch when definition changes', async () => {
     const user = userEvent.setup();
-    (definitionService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
 
     render(
       <MemoryRouter>
@@ -349,7 +402,7 @@ describe('StackInstances Form', () => {
   });
 
   it('displays cluster selector when clusters are available', async () => {
-    (definitionService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
     (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
       {
         id: 'c1',
@@ -383,7 +436,7 @@ describe('StackInstances Form', () => {
   });
 
   it('shows instance limit info when cluster with limit is selected', async () => {
-    (definitionService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
     (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
       {
         id: 'c1',
@@ -411,7 +464,7 @@ describe('StackInstances Form', () => {
   });
 
   it('disables Create button when name is empty', async () => {
-    (definitionService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
     const user = userEvent.setup();
     render(
       <MemoryRouter>
@@ -431,7 +484,7 @@ describe('StackInstances Form', () => {
   });
 
   it('disables Create button when no definition is selected', async () => {
-    (definitionService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
     const user = userEvent.setup();
     render(
       <MemoryRouter>
@@ -444,8 +497,143 @@ describe('StackInstances Form', () => {
 
     // Type name but don't select a definition
     const nameInput = screen.getByRole('textbox', { name: /instance name/i });
-    await user.type(nameInput, 'My App');
+    await user.type(nameInput, 'my-app');
 
     expect(screen.getByRole('button', { name: /create instance/i })).toBeDisabled();
+  });
+
+  it('shows the name rule and blocks an invalid name', async () => {
+    const user = userEvent.setup();
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+    render(
+      <MemoryRouter>
+        <Form />
+      </MemoryRouter>
+    );
+    await waitFor(() => {
+      expect(screen.getByText('Create Stack Instance')).toBeInTheDocument();
+    });
+    expect(screen.getByText(/Use lowercase letters \(a-z\), digits \(0-9\) and hyphens/)).toBeInTheDocument();
+
+    const defSelect = screen.getByRole('combobox', { name: /stack definition/i });
+    await user.click(defSelect);
+    await user.click(screen.getByText(/Web Stack/));
+
+    const nameInput = screen.getByRole('textbox', { name: /instance name/i });
+    await user.type(nameInput, 'My App');
+    expect(screen.getByText('Use lowercase letters only')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /create instance/i })).toBeDisabled();
+
+    await user.clear(nameInput);
+    await user.type(nameInput, 'my-app-');
+    expect(screen.getByText('Start and end with a letter or a digit')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /create instance/i })).toBeDisabled();
+
+    await user.type(nameInput, '1');
+    expect(screen.getByRole('button', { name: /create instance/i })).toBeEnabled();
+  });
+
+  describe('TTL default from the UI config', () => {
+    const renderWithDefault = async (defaultTtlMinutes: number) => {
+      (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+      (instanceService.create as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'inst-new', name: 'my-app' });
+      render(
+        <MemoryRouter>
+          <StaticBrandingProvider value={{ ...BRANDING_DEFAULTS, defaultTtlMinutes }}>
+            <Form />
+          </StaticBrandingProvider>
+        </MemoryRouter>
+      );
+      await waitFor(() => expect(screen.getByText('Create Stack Instance')).toBeInTheDocument());
+    };
+
+    const create = async (user: ReturnType<typeof userEvent.setup>) => {
+      await user.click(screen.getByRole('combobox', { name: /stack definition/i }));
+      await user.click(screen.getByText(/Web Stack/));
+      await user.type(screen.getByRole('textbox', { name: /instance name/i }), 'my-app');
+      await user.click(screen.getByRole('button', { name: /create instance/i }));
+      await waitFor(() => expect(instanceService.create).toHaveBeenCalledTimes(1));
+      return (instanceService.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    };
+
+    it('shows the server default and leaves out ttl_minutes when the user does not change it', async () => {
+      const user = userEvent.setup();
+      await renderWithDefault(480);
+      expect(screen.getByRole('combobox', { name: /ttl/i })).toHaveTextContent('8 hours');
+      const body = await create(user);
+      expect(body).not.toHaveProperty('ttl_minutes');
+    });
+
+    it('shows "No expiry" when the server default is 0', async () => {
+      await renderWithDefault(0);
+      expect(screen.getByRole('combobox', { name: /ttl/i })).toHaveTextContent('No expiry');
+    });
+
+    it('sends the TTL that the user picks, also "No expiry"', async () => {
+      const user = userEvent.setup();
+      await renderWithDefault(480);
+      await user.click(screen.getByRole('combobox', { name: /ttl/i }));
+      await user.click(screen.getByRole('option', { name: 'No expiry' }));
+      const body = await create(user);
+      expect(body).toHaveProperty('ttl_minutes', 0);
+    });
+
+    it('sends a custom stop time as expires_at, without ttl_minutes', async () => {
+      const user = userEvent.setup();
+      await renderWithDefault(480);
+      await user.click(screen.getByRole('combobox', { name: /ttl/i }));
+      await user.click(screen.getByRole('option', { name: 'Custom stop time' }));
+      const stop = new Date(Date.now() + 3 * 86_400_000);
+      stop.setSeconds(0, 0);
+      fireEvent.change(screen.getByLabelText('Stop at'), { target: { value: toLocalInputValue(stop) } });
+      const body = await create(user);
+      expect(body).toHaveProperty('expires_at', stop.toISOString());
+      expect(body).not.toHaveProperty('ttl_minutes');
+    });
+
+    it('blocks Create for a stop time after the limit', async () => {
+      const user = userEvent.setup();
+      await renderWithDefault(480);
+      await user.click(screen.getByRole('combobox', { name: /stack definition/i }));
+      await user.click(screen.getByText(/Web Stack/));
+      await user.type(screen.getByRole('textbox', { name: /instance name/i }), 'my-app');
+      await user.click(screen.getByRole('combobox', { name: /ttl/i }));
+      await user.click(screen.getByRole('option', { name: 'Custom stop time' }));
+      fireEvent.change(screen.getByLabelText('Stop at'), {
+        target: { value: toLocalInputValue(new Date(Date.now() + 40 * 86_400_000)) },
+      });
+      expect(screen.getByText(/^Choose a time before /)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /create instance/i })).toBeDisabled();
+    });
+  });
+
+  it('keeps the chosen definition and branch when a late, stale list arrives (StrictMode, #596)', async () => {
+    // StrictMode runs the load effect twice. The first (stale) response comes last.
+    let resolveFirst: (v: unknown) => void = () => {};
+    let resolveSecond: (v: unknown) => void = () => {};
+    (definitionService.listAll as ReturnType<typeof vi.fn>)
+      .mockReturnValueOnce(new Promise((r) => { resolveFirst = r; }))
+      .mockReturnValueOnce(new Promise((r) => { resolveSecond = r; }));
+    const user = userEvent.setup();
+    render(
+      <StrictMode>
+        <MemoryRouter initialEntries={['/stack-instances/new?definition=def1']}>
+          <Form />
+        </MemoryRouter>
+      </StrictMode>
+    );
+    await waitFor(() => expect(definitionService.listAll).toHaveBeenCalledTimes(2));
+    await act(async () => resolveSecond(mockDefinitions));
+    const select = await screen.findByRole('combobox', { name: /stack definition/i });
+    await waitFor(() => expect(select).toHaveTextContent('Web Stack'));
+    // The user picks another definition and changes its branch.
+    await user.click(select);
+    await user.click(screen.getByRole('option', { name: /API Stack/ }));
+    const branch = screen.getByRole('textbox', { name: 'Branch' });
+    await user.clear(branch);
+    await user.type(branch, 'feature/x');
+    await act(async () => resolveFirst(mockDefinitions));
+    expect(select).toHaveTextContent('API Stack');
+    expect(branch).toHaveValue('feature/x');
   });
 });

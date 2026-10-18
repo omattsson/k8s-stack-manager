@@ -1,46 +1,55 @@
 # Pull Request Templates
 
-This directory contains pull request templates for the K8s Stack Manager project.
+This directory has the pull request templates for the K8s Stack Manager project.
 
 ## Available Templates
 
-1. **Default Template** - Used automatically when creating a PR
-   - General purpose template for most changes
+1. **Default template** (`.github/pull_request_template.md`). GitHub uses it automatically when you create a pull request.
+   - It is a general template for most changes.
+   - `default.md` in this directory has a longer version of the same template.
 
-2. **Specialized Templates** - Use these by adding query parameters to your PR URL:
-   - **Bug Fix**: `?template=bugfix.md`
+2. **Specialized templates.** To use one, add a query parameter to the pull request URL:
+   - **Bug fix**: `?template=bugfix.md`
    - **Feature**: `?template=feature.md`
    - **Documentation**: `?template=documentation.md`
+   - **Long default**: `?template=default.md`
 
-## How to Use Templates
+## How to Use the Templates
 
 ### Default Template
-Simply create a new PR, and the default template will be used automatically.
+
+Create a new pull request. GitHub fills in the default template.
 
 ### Specialized Templates
-1. Create your branch and push changes
-2. Navigate to the repository on GitHub
-3. Click "Compare & pull request"
-4. Add the query parameter to the URL before filling out the PR form:
+
+1. Create your branch and push your changes.
+2. Open the repository on GitHub.
+3. Click "Compare & pull request".
+4. Add the query parameter to the URL before you fill in the form:
+
    ```
    https://github.com/your-username/k8s-stack-manager/compare/main...your-branch?template=feature.md
    ```
-   
+
 ## Example
-For a bug fix PR:
+
+For a bug fix pull request:
+
 ```
 https://github.com/your-username/k8s-stack-manager/compare/main...fix-login-issue?template=bugfix.md
 ```
 
-## Tips for Creating Good Pull Requests
-- Be specific about the changes made
-- Link to related issues
-- Include test information
-- Add screenshots for UI changes
-- Respond to review comments promptly
+## Tips for Good Pull Requests
 
-## Adding New Templates
-To add a new template:
-1. Create a new markdown file in this directory
-2. Follow the format of existing templates
-3. Update this README to include the new template
+- Use a title in the Conventional Commits format (for example `fix(auth): reject a disabled user`). A CI check validates it.
+- Describe the changes in specific words.
+- Link the related issues.
+- Describe how you tested the change.
+- Add screenshots for UI changes.
+- Answer review comments promptly.
+
+## Add a New Template
+
+1. Create a new Markdown file in this directory.
+2. Use the format of the existing templates.
+3. Add the template to this README.

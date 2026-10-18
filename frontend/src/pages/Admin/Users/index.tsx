@@ -24,6 +24,8 @@ import {
   MenuItem,
   Breadcrumbs,
   Link as MuiLink,
+  useMediaQuery,
+  useTheme,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -34,9 +36,12 @@ import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import CheckIcon from '@mui/icons-material/Check';
 import NavigateNextIcon from '@mui/icons-material/NavigateNext';
 import LockResetIcon from '@mui/icons-material/LockReset';
+import PersonOffIcon from '@mui/icons-material/PersonOff';
+import HowToRegIcon from '@mui/icons-material/HowToReg';
+import ManageAccountsIcon from '@mui/icons-material/ManageAccounts';
 import { userService, apiKeyService } from '../../../api/client';
 import { useAuth } from '../../../context/AuthContext';
-import type { User, APIKey, CreateUserRequest, CreateAPIKeyRequest, CreateAPIKeyResponse } from '../../../types';
+import type { User, UserRole, APIKey, CreateUserRequest, CreateAPIKeyRequest, CreateAPIKeyResponse } from '../../../types';
 import LoadingState from '../../../components/LoadingState';
 import { Link } from 'react-router-dom';
 
@@ -48,7 +53,23 @@ const getRoleChipColor = (role: string): 'error' | 'warning' | 'default' => {
   return 'default';
 };
 
+/** Label for the sign-in method: "Local" for a password account, otherwise "SSO". */
+const authProviderLabel = (provider: string | undefined): string =>
+  !provider || provider === 'local' ? 'Local' : 'SSO';
+
+/** True for a password account. The identity provider manages the role of an SSO user. */
+const isLocalUser = (u: User): boolean => !u.auth_provider || u.auth_provider === 'local';
+
+const ROLE_OPTIONS: UserRole[] = ['user', 'devops', 'admin'];
+
+/** Server error message of a failed request, if any. */
+const serverErrorMessage = (err: unknown): string | undefined =>
+  (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
+
 const AdminUsers = () => {
+  // Phones hide the Display Name, Sign-in and Status columns.
+  const theme = useTheme();
+  const isPhone = useMediaQuery(theme.breakpoints.down('sm'));
   const { user: currentUser } = useAuth();
 
   // Users list
@@ -75,6 +96,9 @@ const AdminUsers = () => {
 
   // Delete user confirm
   const [deleteUserTarget, setDeleteUserTarget] = useState<User | null>(null);
+  // Disable user confirm; enable needs no confirmation.
+  const [disableUserTarget, setDisableUserTarget] = useState<User | null>(null);
+  const [statusLoadingId, setStatusLoadingId] = useState<string | null>(null);
 
   // Generate API key dialog
   const [generateKeyUserId, setGenerateKeyUserId] = useState<string | null>(null);
@@ -95,6 +119,12 @@ const AdminUsers = () => {
 
   // Revoke API key confirm
   const [revokeKeyTarget, setRevokeKeyTarget] = useState<{ userId: string; key: APIKey } | null>(null);
+
+  // Edit role dialog
+  const [editRoleTarget, setEditRoleTarget] = useState<User | null>(null);
+  const [editRoleValue, setEditRoleValue] = useState<UserRole>('user');
+  const [editRoleError, setEditRoleError] = useState<string | null>(null);
+  const [editRoleLoading, setEditRoleLoading] = useState(false);
 
   const fetchUsers = useCallback(async () => {
     setLoading(true);
@@ -169,6 +199,27 @@ const AdminUsers = () => {
     }
   };
 
+  const setUserDisabled = async (target: User, disabled: boolean) => {
+    setStatusLoadingId(target.id);
+    setError(null);
+    try {
+      if (disabled) {
+        await userService.disable(target.id);
+      } else {
+        await userService.enable(target.id);
+      }
+      setUsers((prev) => prev.map((u) => (u.id === target.id ? { ...u, disabled } : u)));
+    } catch (err) {
+      setError(
+        serverErrorMessage(err)
+          || (disabled ? `Failed to disable user ${target.username}` : `Failed to enable user ${target.username}`),
+      );
+    } finally {
+      setStatusLoadingId(null);
+      setDisableUserTarget(null);
+    }
+  };
+
   const handleDeleteUser = async () => {
     if (!deleteUserTarget) return;
     const userId = deleteUserTarget.id;
@@ -178,8 +229,8 @@ const AdminUsers = () => {
       setExpandedUsers((prev) => { const n = new Set(prev); n.delete(userId); return n; });
       setApiKeysMap((prev) => { const n = { ...prev }; delete n[userId]; return n; });
       await fetchUsers();
-    } catch {
-      setError('Failed to delete user');
+    } catch (err) {
+      setError(serverErrorMessage(err) || 'Failed to delete user');
       setDeleteUserTarget(null);
     }
   };
@@ -199,6 +250,27 @@ const AdminUsers = () => {
       setResetPasswordError('Failed to reset password');
     } finally {
       setResetPasswordLoading(false);
+    }
+  };
+
+  const openEditRole = (target: User) => {
+    setEditRoleTarget(target);
+    setEditRoleValue(ROLE_OPTIONS.includes(target.role as UserRole) ? (target.role as UserRole) : 'user');
+    setEditRoleError(null);
+  };
+
+  const handleChangeRole = async () => {
+    if (!editRoleTarget) return;
+    setEditRoleLoading(true);
+    setEditRoleError(null);
+    try {
+      const result = await userService.changeRole(editRoleTarget.id, editRoleValue);
+      setUsers((prev) => prev.map((u) => (u.id === editRoleTarget.id ? { ...u, role: result.new_role } : u)));
+      setEditRoleTarget(null);
+    } catch (err) {
+      setEditRoleError(serverErrorMessage(err) || 'Failed to change role');
+    } finally {
+      setEditRoleLoading(false);
     }
   };
 
@@ -282,8 +354,10 @@ const AdminUsers = () => {
               <TableRow>
                 <TableCell width={48} />
                 <TableCell>Username</TableCell>
-                <TableCell>Display Name</TableCell>
+                <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>Display Name</TableCell>
                 <TableCell>Role</TableCell>
+                <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>Sign-in</TableCell>
+                <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>Status</TableCell>
                 <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>Created At</TableCell>
                 <TableCell>Actions</TableCell>
               </TableRow>
@@ -291,7 +365,7 @@ const AdminUsers = () => {
             <TableBody>
               {users.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} align="center">
+                  <TableCell colSpan={8} align="center">
                     <Typography color="text.secondary" sx={{ py: 2 }}>
                       No users found.
                     </Typography>
@@ -314,14 +388,55 @@ const AdminUsers = () => {
                         <Typography variant="body2" sx={{ fontWeight: 'medium' }}>
                           {u.username}
                         </Typography>
+                        {/* Phones hide the Display Name and Status columns: show them here. */}
+                        {isPhone && u.display_name && (
+                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                            {u.display_name}
+                          </Typography>
+                        )}
+                        {isPhone && u.disabled && <Chip label="Disabled" size="small" variant="outlined" sx={{ mt: 0.5 }} />}
                       </TableCell>
-                      <TableCell>{u.display_name || '—'}</TableCell>
+                      <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>{u.display_name || '—'}</TableCell>
                       <TableCell>
                         <Chip label={u.role} size="small" color={getRoleChipColor(u.role)} />
+                        {!isLocalUser(u) && (
+                          <Typography
+                            variant="caption"
+                            color="text.secondary"
+                            sx={{ display: 'block', mt: 0.5 }}
+                          >
+                            managed by SSO
+                          </Typography>
+                        )}
+                      </TableCell>
+                      <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>
+                        <Chip label={authProviderLabel(u.auth_provider)} size="small" variant="outlined" />
+                      </TableCell>
+                      <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>
+                        <Chip
+                          label={u.disabled ? 'Disabled' : 'Active'}
+                          size="small"
+                          color={u.disabled ? 'default' : 'success'}
+                          variant="outlined"
+                        />
                       </TableCell>
                       <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>{new Date(u.created_at).toLocaleDateString()}</TableCell>
-                      <TableCell>
-                        {(!u.auth_provider || u.auth_provider === 'local') && (
+                      <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                        {isLocalUser(u) && (
+                          <Tooltip title={u.id === currentUser.id ? 'Cannot change your own role' : 'Edit role'}>
+                            <span>
+                              <IconButton
+                                size="small"
+                                disabled={u.id === currentUser.id}
+                                onClick={() => openEditRole(u)}
+                                aria-label={`Edit role of ${u.username}`}
+                              >
+                                <ManageAccountsIcon fontSize="small" />
+                              </IconButton>
+                            </span>
+                          </Tooltip>
+                        )}
+                        {isLocalUser(u) && (
                           <Tooltip title="Reset password">
                             <IconButton
                               size="small"
@@ -336,6 +451,22 @@ const AdminUsers = () => {
                             </IconButton>
                           </Tooltip>
                         )}
+                        <Tooltip
+                          title={u.id === currentUser.id
+                            ? 'Cannot change your own account status'
+                            : u.disabled ? 'Enable user' : 'Disable user'}
+                        >
+                          <span>
+                            <IconButton
+                              size="small"
+                              disabled={u.id === currentUser.id || statusLoadingId === u.id}
+                              onClick={() => (u.disabled ? setUserDisabled(u, false) : setDisableUserTarget(u))}
+                              aria-label={`${u.disabled ? 'Enable' : 'Disable'} user ${u.username}`}
+                            >
+                              {u.disabled ? <HowToRegIcon fontSize="small" /> : <PersonOffIcon fontSize="small" />}
+                            </IconButton>
+                          </span>
+                        </Tooltip>
                         <Tooltip title={u.id === currentUser.id ? 'Cannot delete your own account' : 'Delete user'}>
                           <span>
                             <IconButton
@@ -353,7 +484,7 @@ const AdminUsers = () => {
                     </TableRow>
                     <TableRow>
                       <TableCell
-                        colSpan={6}
+                        colSpan={8}
                         sx={{ py: 0, borderBottom: expandedUsers.has(u.id) ? undefined : 'none' }}
                       >
                         <Collapse in={expandedUsers.has(u.id)} timeout="auto" unmountOnExit>
@@ -496,6 +627,31 @@ const AdminUsers = () => {
           <Button onClick={() => setCreateUserOpen(false)}>Cancel</Button>
           <Button variant="contained" onClick={handleCreateUser} disabled={createUserLoading}>
             {createUserLoading ? <CircularProgress size={20} /> : 'Create'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* ── Disable User Confirm ───────────────────────────────────── */}
+      <Dialog open={Boolean(disableUserTarget)} onClose={() => !statusLoadingId && setDisableUserTarget(null)}>
+        <DialogTitle>Disable User</DialogTitle>
+        <DialogContent>
+          <Typography>
+            Disable user <strong>{disableUserTarget?.username}</strong>?
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            The user is signed out and cannot sign in. API keys of the user stop working.
+            Enable the user to give access again. The user keeps all instances and data.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDisableUserTarget(null)} disabled={Boolean(statusLoadingId)}>Cancel</Button>
+          <Button
+            variant="contained"
+            color="warning"
+            onClick={() => disableUserTarget && setUserDisabled(disableUserTarget, true)}
+            disabled={Boolean(statusLoadingId)}
+          >
+            Disable
           </Button>
         </DialogActions>
       </Dialog>
@@ -643,6 +799,51 @@ const AdminUsers = () => {
             disabled={resetPasswordLoading || resetPasswordValue.length < 8}
           >
             {resetPasswordLoading ? <CircularProgress size={20} /> : 'Reset Password'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* ── Edit Role Dialog ───────────────────────────────────────── */}
+      <Dialog
+        open={Boolean(editRoleTarget)}
+        onClose={() => !editRoleLoading && setEditRoleTarget(null)}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle>Edit Role</DialogTitle>
+        <DialogContent>
+          {editRoleError && <Alert severity="error" sx={{ mb: 2, mt: 1 }}>{editRoleError}</Alert>}
+          <Typography variant="body2" sx={{ mb: 2, mt: 1 }}>
+            Change the role of <strong>{editRoleTarget?.username}</strong>.
+          </Typography>
+          <TextField
+            label="Role"
+            value={editRoleValue}
+            onChange={(e) => setEditRoleValue(e.target.value as UserRole)}
+            select
+            fullWidth
+            size="small"
+          >
+            {ROLE_OPTIONS.map((role) => (
+              <MenuItem key={role} value={role}>{role}</MenuItem>
+            ))}
+          </TextField>
+          {editRoleTarget && editRoleValue !== editRoleTarget.role && (
+            <Alert severity="warning" sx={{ mt: 2 }}>
+              The role changes from <strong>{editRoleTarget.role}</strong> to <strong>{editRoleValue}</strong>.
+              The user is signed out and must sign in again. API keys of the user keep working and get the new role.
+            </Alert>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setEditRoleTarget(null)} disabled={editRoleLoading}>Cancel</Button>
+          <Button
+            variant="contained"
+            color="warning"
+            onClick={handleChangeRole}
+            disabled={editRoleLoading || !editRoleTarget || editRoleValue === editRoleTarget.role}
+          >
+            {editRoleLoading ? <CircularProgress size={20} /> : 'Change Role'}
           </Button>
         </DialogActions>
       </Dialog>

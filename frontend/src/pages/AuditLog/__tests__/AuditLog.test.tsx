@@ -223,4 +223,81 @@ describe('Audit Log Page', () => {
       );
     });
   });
+
+  it('filters on entity type, entity ID and a lifecycle action', async () => {
+    (auditService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockAuditData);
+    const user = userEvent.setup();
+
+    render(
+      <MemoryRouter>
+        <AuditLog />
+      </MemoryRouter>
+    );
+    await waitFor(() => {
+      expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+    });
+
+    await user.click(screen.getByLabelText('Entity Type'));
+    await user.click(await screen.findByRole('option', { name: 'stack_instance' }));
+    await user.click(screen.getByLabelText('Action'));
+    await user.click(await screen.findByRole('option', { name: 'deploy' }));
+    await user.type(screen.getByLabelText('Entity ID'), 'inst-1');
+
+    await waitFor(() => {
+      expect(auditService.list).toHaveBeenLastCalledWith(
+        expect.objectContaining({ entity_type: 'stack_instance', action: 'deploy', entity_id: 'inst-1' }),
+      );
+    });
+  });
+
+  it('offers the operation actions and singular entity types as filter options', async () => {
+    (auditService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockAuditData);
+    const user = userEvent.setup();
+
+    render(
+      <MemoryRouter>
+        <AuditLog />
+      </MemoryRouter>
+    );
+    await waitFor(() => {
+      expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+    });
+
+    await user.click(screen.getByLabelText('Action'));
+    for (const action of ['deploy', 'stop', 'clean', 'rollback', 'extend_ttl', 'invoke_action', 'publish', 'expired']) {
+      expect(await screen.findByRole('option', { name: action })).toBeInTheDocument();
+    }
+    await user.keyboard('{Escape}');
+
+    await user.click(screen.getByLabelText('Entity Type'));
+    for (const entity of ['cluster', 'cleanup_policy', 'notification_channel', 'api_key', 'quota']) {
+      expect(await screen.findByRole('option', { name: entity })).toBeInTheDocument();
+    }
+  });
+
+  it('passes the entity ID filter to the export', async () => {
+    (auditService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockAuditData);
+    (auditService.export as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    const user = userEvent.setup();
+
+    render(
+      <MemoryRouter>
+        <AuditLog />
+      </MemoryRouter>
+    );
+    await waitFor(() => {
+      expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+    });
+
+    await user.type(screen.getByLabelText('Entity ID'), 'inst-1');
+    await user.click(screen.getByRole('button', { name: /export/i }));
+    await user.click(screen.getByText('Export as CSV'));
+
+    await waitFor(() => {
+      expect(auditService.export).toHaveBeenCalledWith(
+        expect.objectContaining({ entity_id: 'inst-1' }),
+        'csv',
+      );
+    });
+  });
 });

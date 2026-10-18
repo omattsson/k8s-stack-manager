@@ -62,6 +62,11 @@ Watch deployment status:
 {{- end }}
 {{- end }}
 
+{{- /* The placeholder warnings apply only when the chart renders its own
+     Secrets. With externalSecrets.enabled the values come from the
+     external store, and backend.secrets.* and mysql.auth.* are not used. */}}
+{{- if not .Values.externalSecrets.enabled }}
+
 {{- if eq .Values.backend.secrets.JWT_SECRET "CHANGE-ME-generate-a-random-secret" }}
 
 WARNING: backend.secrets.JWT_SECRET is still the placeholder value!
@@ -79,9 +84,38 @@ WARNING: backend.secrets.ADMIN_PASSWORD is set to a default/placeholder value!
 WARNING: mysql.auth.rootPassword is still the placeholder value!
   Change it with: --set mysql.auth.rootPassword="$(openssl rand -base64 24)"
 {{- end }}
+{{- end }}
 
-{{- if eq (index .Values.backend.env "CORS_ALLOWED_ORIGINS") "*" }}
+{{- $cors := trim (toString (index .Values.backend.env "CORS_ALLOWED_ORIGINS" | default "")) }}
+{{- if or (eq $cors "*") (eq $cors "") }}
 
-WARNING: CORS_ALLOWED_ORIGINS is set to "*" (allow all origins).
-  For production, restrict it: --set backend.env.CORS_ALLOWED_ORIGINS="https://your-domain.com"
+WARNING: CORS_ALLOWED_ORIGINS allows all origins ("*").
+  For production, use the default "same-origin" or list the origins:
+  --set backend.env.CORS_ALLOWED_ORIGINS="https://your-domain.com"
+{{- end }}
+
+{{- if eq (lower (toString (index .Values.backend.env "SELF_REGISTRATION" | default ""))) "true" }}
+
+WARNING: SELF_REGISTRATION is "true". Every signed-in user can create local
+  accounts. For a shared installation, set it to "false" (only an admin can).
+{{- end }}
+
+{{- if .Values.backend.leaderElection.enabled }}
+
+Leader election: one backend replica runs the background workers (Lease "{{ include "k8s-stack-manager.leaderElection.leaseName" . }}" in namespace {{ .Release.Namespace }}).
+{{- if .Values.backend.serviceAccount.create }}
+  The chart created a Role and RoleBinding for leases (get, create, update).
+{{- else }}
+WARNING: backend.serviceAccount.create=false, so the chart created no Role for leases.
+  Grant the backend service account get, create and update on coordination.k8s.io leases
+  in namespace {{ .Release.Namespace }}, or no replica runs the background workers.
+{{- end }}
+{{- end }}
+
+{{- $hpaMulti := and .Values.backend.autoscaling.enabled (gt (int .Values.backend.autoscaling.maxReplicas) 1) }}
+{{- if and (or (gt (int .Values.backend.replicas) 1) $hpaMulti) (not .Values.backend.wsFanout.enabled) }}
+
+WARNING: the backend can run more than one replica ({{ if $hpaMulti }}autoscaling up to {{ .Values.backend.autoscaling.maxReplicas }}{{ else }}backend.replicas={{ .Values.backend.replicas }}{{ end }}) and backend.wsFanout.enabled=false.
+  A WebSocket client sees only the events of its own replica (deploy logs, status updates).
+  Set --set backend.wsFanout.enabled=true.
 {{- end }}

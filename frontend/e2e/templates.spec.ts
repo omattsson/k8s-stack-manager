@@ -24,7 +24,7 @@ test.describe('Template Management', () => {
     await page.getByLabel('Description').fill('An e2e test template');
     await page.getByLabel('Category').click();
     await page.getByRole('option', { name: 'Web' }).click();
-    await page.getByLabel('Version').fill('1.0.0');
+    await page.getByLabel('Version', { exact: true }).fill('1.0.0');
 
     await page.getByRole('button', { name: 'Save Template' }).click();
     // Redirected to preview page
@@ -79,37 +79,32 @@ test.describe('Template Management', () => {
 
     const templateId = page.url().split('/templates/')[1];
 
-    // Edit and publish
-    await page.goto(`/templates/${templateId}/edit`);
-    await expect(page.getByRole('heading', { level: 1, name: 'Edit Template' })).toBeVisible({
-      timeout: 10_000,
-    });
-    const publishSwitch = page.getByRole('switch', { name: /Draft|Published/ });
-    await publishSwitch.click();
-    // Wait for the async publish API call to complete
-    await expect(publishSwitch).toBeChecked({ timeout: 5_000 });
+    // Publish from the detail page
+    await expect(page.getByRole('heading', { level: 1, name })).toBeVisible({ timeout: 10_000 });
+    await page.getByRole('button', { name: 'Publish', exact: true }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('textbox', { name: /^Version/ })).toBeVisible();
+    await dialog.getByRole('textbox', { name: /^Version/ }).fill('1.0.0');
+    await dialog.getByRole('button', { name: 'Publish', exact: true }).click();
+    await expect(page.getByText('Published version 1.0.0.')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('Released: v1.0.0')).toBeVisible();
+    await expect(page.getByText('Published', { exact: true })).toBeVisible();
+    // Wait until the dialog has closed: during the close animation the next
+    // checks would still find the old dialog.
+    await expect(dialog).toBeHidden();
 
-    // Save
-    await page.getByRole('button', { name: 'Save Template' }).click();
-    await page.waitForURL(/\/templates\//, { timeout: 10_000 });
+    // Publishing the same version again without changes creates no new version
+    // (a new version string counts as a change and would create a snapshot)
+    await page.getByRole('button', { name: 'Publish', exact: true }).click();
+    await expect(dialog.getByRole('textbox', { name: /^Version/ })).toHaveValue('1.0.0');
+    await dialog.getByRole('button', { name: 'Publish', exact: true }).click();
+    await expect(page.getByText(/No changes since version 1\.0\.0\. No new version was created/)).toBeVisible({ timeout: 10_000 });
+    await expect(dialog).toBeHidden();
 
-    // Verify published on preview page
-    await page.goto(`/templates/${templateId}`);
-    await expect(page.getByText('Published')).toBeVisible({ timeout: 10_000 });
-
-    // Unpublish
-    await page.goto(`/templates/${templateId}/edit`);
-    await expect(page.getByRole('heading', { level: 1, name: 'Edit Template' })).toBeVisible({
-      timeout: 10_000,
-    });
-    const unpublishSwitch = page.getByRole('switch', { name: /Draft|Published/ });
-    await unpublishSwitch.click();
-    await expect(unpublishSwitch).not.toBeChecked({ timeout: 5_000 });
-    await page.getByRole('button', { name: 'Save Template' }).click();
-    await page.waitForURL(/\/templates\//, { timeout: 10_000 });
-
-    await page.goto(`/templates/${templateId}`);
-    await expect(page.getByText('Draft')).toBeVisible({ timeout: 10_000 });
+    // Unpublish (asks for confirmation)
+    await page.getByRole('button', { name: 'Unpublish', exact: true }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Unpublish', exact: true }).click();
+    await expect(page.getByText('Draft', { exact: true })).toBeVisible({ timeout: 10_000 });
   });
 
   test('clone a template', async ({ page }) => {
@@ -121,17 +116,17 @@ test.describe('Template Management', () => {
     await page.getByRole('button', { name: 'Save Template' }).click();
     await page.waitForURL(/\/templates\/(?!new)[^/]+$/, { timeout: 10_000 });
 
-    // Clone from preview page
+    // Clone from preview page: the dialog asks for the name of the copy
     await page.getByRole('button', { name: 'Clone as Template' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Clone as Template' });
+    await expect(dialog.getByRole('textbox', { name: 'Name' })).toHaveValue(`${name} (Copy)`);
+    await dialog.getByRole('button', { name: 'Clone' }).click();
     // Redirects to the clone's edit page
     await page.waitForURL(/\/templates\/[^/]+\/edit/, { timeout: 10_000 });
     await expect(page.getByRole('heading', { level: 1, name: 'Edit Template' })).toBeVisible({
       timeout: 10_000,
     });
-    // The cloned template should have the original name (or a copy prefix)
-    const clonedNameField = page.getByRole('textbox', { name: 'Name' });
-    const clonedName = await clonedNameField.inputValue();
-    expect(clonedName).toContain(name);
+    await expect(page.getByRole('textbox', { name: 'Name' })).toHaveValue(`${name} (Copy)`);
   });
 
   test('template gallery shows published templates', async ({ page }) => {
@@ -245,6 +240,7 @@ test.describe('Template Management', () => {
   });
 
   test('quick deploy creates instance and navigates to it', async ({ page }) => {
+    test.skip(!process.env.E2E_KUBECONFIG, 'Needs a cluster: set E2E_KUBECONFIG (see make test-e2e)');
     const tplName = uniqueName('tpl-qdrun');
     await createAndPublishTemplate(page, tplName);
 
@@ -314,16 +310,17 @@ test.describe('Template Management', () => {
     });
     await expect(page.getByRole('heading', { name: tplName })).toBeVisible({ timeout: 10_000 });
 
-    // Filter by a category that should not include our template
-    await page.getByText('Data', { exact: true }).click();
-    await expect(page.getByText('No templates found')).toBeVisible({ timeout: 10_000 });
+    // Filter by a category that should not include our template. Other
+    // templates in that category can exist, so check only our template.
+    await page.getByRole('button', { name: 'Data', exact: true }).click();
+    await expect(page.getByRole('heading', { name: tplName })).toBeHidden({ timeout: 10_000 });
 
     // Filter by 'Web' should show our template again
-    await page.getByText('Web', { exact: true }).click();
+    await page.getByRole('button', { name: 'Web', exact: true }).click();
     await expect(page.getByRole('heading', { name: tplName })).toBeVisible({ timeout: 10_000 });
 
     // 'All' should also show it
-    await page.getByText('All', { exact: true }).click();
+    await page.getByRole('button', { name: 'All', exact: true }).click();
     await expect(page.getByRole('heading', { name: tplName })).toBeVisible({ timeout: 10_000 });
   });
 

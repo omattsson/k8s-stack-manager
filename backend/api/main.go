@@ -6,8 +6,11 @@ import (
 	"backend/internal/config"
 	"backend/internal/deployer"
 	"backend/internal/health"
+	"backend/internal/hooks"
+	"backend/internal/leader"
 	"backend/internal/models"
 	"backend/internal/notifier"
+	"backend/internal/replica"
 	"backend/internal/scheduler"
 	"backend/internal/sessionstore"
 	"backend/internal/telemetry"
@@ -21,8 +24,6 @@ import (
 
 	"backend/internal/api/handlers"
 	"backend/internal/cluster"
-	"backend/internal/k8s"
-	"backend/internal/ttl"
 
 	"github.com/google/uuid"
 	"k8s.io/client-go/tools/clientcmd"
@@ -66,6 +67,10 @@ func main() {
 		slog.Error("Failed to load configuration", "error", err)
 		os.Exit(1)
 	}
+	// LOG_LEVEL. Validate already rejected an invalid value.
+	if level, err := cfg.Logging.SlogLevel(); err == nil {
+		slog.SetLogLoggerLevel(level)
+	}
 
 	if cfg.CORS.AllowedOrigins == "" || cfg.CORS.AllowedOrigins == "*" {
 		slog.Warn("CORS wildcard mode: cookie-based refresh tokens require an explicit CORS_ALLOWED_ORIGINS when frontend runs on a different origin")
@@ -77,6 +82,11 @@ func main() {
 		slog.Error("Failed to initialize OpenTelemetry", "error", err)
 		os.Exit(1)
 	}
+
+	// Leader election. With LEADER_ELECTION_ENABLED=true, startup fails
+	// here when the process does not run in a Kubernetes pod.
+	elector, err := leader.NewInCluster(leaderConfig(cfg.LeaderElection))
+	must("leader election", err)
 
 	// Database + generic repository.
 	repo, mysqlGormDB, err := initDatabase(cfg)
@@ -97,6 +107,12 @@ func main() {
 	repos, err := initRepositories(cfg, mysqlGormDB)
 	must("domain repositories", err)
 
+	// WebSocket fan-out between replicas (WS_FANOUT_ENABLED). Each hub send
+	// also writes a ws_events row; a poller delivers the rows of the other
+	// replicas to the local clients. Disabled: no database writes.
+	wsFanout, wsEventCleanup := buildWSFanout(cfg, hub, repos.WSEvent)
+	wsFanout.Start()
+
 	// Register database/sql pool metrics with OTel after repositories are available.
 	if cfg.Otel.Enabled || cfg.Otel.MetricsEnabled {
 		sqlDB, dbErr := mysqlGormDB.DB()
@@ -113,11 +129,18 @@ func main() {
 		); metricsErr != nil {
 			slog.Warn("Failed to register business metrics", "error", metricsErr)
 		}
+		if metricsErr := telemetry.StartLeaderMetric(elector.IsLeader); metricsErr != nil {
+			slog.Warn("Failed to register leader metric", "error", metricsErr)
+		}
 	}
 
 	// Domain services (git, cluster, deployer, hooks, etc.).
 	svc, err := buildDomainServices(cfg, repos, hub, healthChecker)
 	must("domain services", err)
+
+	// Heartbeat of this process (every replica). The leader treats a
+	// process without a fresh heartbeat as stopped and ends its operations.
+	svc.Heartbeat.Start()
 
 	// Session store for token blocklist and OIDC state.
 	sessStore := buildSessionStore(cfg.SessionStore.Backend, mysqlGormDB)
@@ -126,9 +149,14 @@ func main() {
 	hs, err := buildHandlers(cfg, repos, svc, sessStore, hub)
 	must("handlers", err)
 
+	// Close revoked WebSocket connections that this replica did not revoke
+	// itself (revoke on another replica, token blocklist). Stops on hub
+	// shutdown.
+	hub.StartRevalidation(websocket.DefaultRevalidateInterval,
+		handlers.NewWebSocketRevocationChecker(sessStore, repos.User, repos.APIKey))
+
 	// Router.
 	router, rateLimiters := buildRouter(cfg, hs, routerDeps{
-		Repo:          repo,
 		HealthChecker: healthChecker,
 		Hub:           hub,
 		SessionStore:  sessStore,
@@ -137,10 +165,17 @@ func main() {
 	})
 	defer rateLimiters.Stop()
 
-	// Background services (TTL reaper, expiry warner, monitors, cleanup scheduler).
-	bgSvc, err := startBackgroundServices(svc, hs, repos, hub)
-	must("background services", err)
-	defer bgSvc.RefreshTokenCleanupCancel()
+	// Leader-only background workers (TTL reaper, expiry warner, cleanup
+	// scheduler, monitors, pollers, k8s watcher). Only the leader replica
+	// runs them; readiness does not depend on leadership.
+	workers := buildLeaderWorkers(svc, hs, repos, hub, leader.DefaultStopTimeout)
+	if wsEventCleanup != nil {
+		workers.Group.Add(*wsEventCleanup)
+	}
+	if logRetention := buildLogRetention(cfg, repos); logRetention != nil {
+		workers.Group.Add(*logRetention)
+	}
+	leaderRun := startLeaderElection(elector, workers.Group)
 
 	// HTTP server.
 	srvs := startHTTPServer(router, cfg, tel)
@@ -158,18 +193,14 @@ func main() {
 
 	gracefulShutdown(srvs, shutdownTimeout, shutdownDeps{
 		telemetry:        tel,
-		reaper:           bgSvc.Reaper,
-		expiryWarner:     bgSvc.ExpiryWarner,
+		leader:           leaderRun,
 		cleanupScheduler: svc.CleanupScheduler,
 		deployManager:    svc.DeployManager,
-		healthPoller:     svc.HealthPoller,
-		secretRefresher:  svc.SecretRefresher,
-		quotaMonitor:     bgSvc.QuotaMonitor,
-		secretMonitor:    bgSvc.SecretMonitor,
-		k8sWatcher:       svc.K8sWatcher,
+		clusterNames:     svc.ClusterNames,
+		heartbeat:        svc.Heartbeat,
 		hub:              hub,
+		wsFanout:         wsFanout,
 		clusterRegistry:  svc.ClusterRegistry,
-		watcherCancel:    svc.WatcherCancel,
 		sessionStore:     sessStore,
 		dashboardHandler: hs.Dashboard,
 		notifier:         svc.LifecycleNotifier,
@@ -180,18 +211,14 @@ func main() {
 // shutdownDeps holds all dependencies that need to be stopped during graceful shutdown.
 type shutdownDeps struct {
 	telemetry        *telemetry.Telemetry
-	reaper           *ttl.Reaper
-	expiryWarner     *ttl.Warner
+	leader           *leaderRuntime // nil: no leader workers to stop
 	cleanupScheduler *scheduler.Scheduler
 	deployManager    *deployer.Manager
-	healthPoller     *cluster.HealthPoller
-	secretRefresher  *cluster.SecretRefresher
-	quotaMonitor     *cluster.QuotaMonitor
-	secretMonitor    *cluster.SecretMonitor
-	k8sWatcher       *k8s.Watcher
+	clusterNames     *hooks.ClusterNameResolver // nil: no hooks or actions
+	heartbeat        *replica.Heartbeat         // nil: no heartbeat repository
 	hub              *websocket.Hub
+	wsFanout         *websocket.Fanout // nil: fan-out disabled
 	clusterRegistry  *cluster.Registry
-	watcherCancel    context.CancelFunc
 	sessionStore     sessionstore.SessionStore
 	dashboardHandler *handlers.DashboardHandler
 	notifier         *notifier.Notifier
@@ -218,33 +245,27 @@ func gracefulShutdown(srvs *servers, timeout time.Duration, deps shutdownDeps) {
 		}
 	}
 
-	// 2. Stop producers of deploy work.
-	deps.reaper.Stop()
-	if deps.expiryWarner != nil {
-		deps.expiryWarner.Stop()
+	// 2. Stop producers of deploy work: the leader workers (TTL reaper,
+	//    cleanup scheduler, monitors, pollers, watcher), then release the
+	//    lease so another replica takes over. Then cancel manual cleanup runs.
+	if deps.leader != nil {
+		deps.leader.Shutdown(timeout)
 	}
-	deps.cleanupScheduler.Stop()
+	if deps.cleanupScheduler != nil {
+		deps.cleanupScheduler.Stop()
+	}
 
-	// 3. Now safe to wait for in-flight deploys.
+	// 3. Now safe to wait for in-flight deploys. Then stop the heartbeat
+	//    and delete its row: the operations of this process have ended.
 	deps.deployManager.Shutdown()
+	deps.heartbeat.Stop(timeout)
+	deps.clusterNames.Stop()
 
-	// 4. Stop remaining services.
-	deps.healthPoller.Stop()
-	if deps.secretRefresher != nil {
-		deps.secretRefresher.Stop()
-	}
-	if deps.quotaMonitor != nil {
-		deps.quotaMonitor.Stop()
-	}
-	if deps.secretMonitor != nil {
-		deps.secretMonitor.Stop()
-	}
-	if deps.k8sWatcher != nil {
-		deps.k8sWatcher.Stop()
-	}
+	// 4. Stop remaining services. The fan-out writes its queued rows
+	//    before the hub and the database close.
+	deps.wsFanout.Stop()
 	deps.hub.Shutdown()
 	deps.clusterRegistry.Close()
-	deps.watcherCancel()
 	if deps.notifier != nil {
 		deps.notifier.Stop()
 	}

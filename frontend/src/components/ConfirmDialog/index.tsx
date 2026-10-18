@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -26,11 +27,13 @@ const ConfirmDialog = ({
   confirmText = 'Confirm',
   cancelText = 'Cancel',
 }: ConfirmDialogProps) => {
+  const titleId = useId();
+  const messageId = useId();
   return (
-    <Dialog open={open} onClose={onCancel}>
-      <DialogTitle>{title}</DialogTitle>
+    <Dialog open={open} onClose={onCancel} aria-labelledby={titleId} aria-describedby={messageId}>
+      <DialogTitle id={titleId}>{title}</DialogTitle>
       <DialogContent>
-        <DialogContentText>{message}</DialogContentText>
+        <DialogContentText id={messageId}>{message}</DialogContentText>
       </DialogContent>
       <DialogActions>
         <Button onClick={onCancel}>{cancelText}</Button>

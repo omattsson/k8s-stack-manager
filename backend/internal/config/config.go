@@ -32,10 +32,63 @@ const (
 	defaultShutdownTimeout = 30 * time.Second
 )
 
-// CORSConfig holds CORS configuration
+// CORSSameOrigin is the CORS_ALLOWED_ORIGINS value that allows no
+// cross-origin request: only the web UI on the same host can call the API.
+const CORSSameOrigin = "same-origin"
+
+// CORSConfig holds CORS configuration. AllowedOrigins (CORS_ALLOWED_ORIGINS)
+// is "*" (all origins, development only; the code default), CORSSameOrigin,
+// or a comma-separated list of origins.
 type CORSConfig struct {
 	AllowedOrigins string
 }
+
+// Entries returns the comma-separated entries of AllowedOrigins, trimmed,
+// without empty entries. The CORS middleware and the WebSocket origin check
+// read the setting through this method.
+func (c CORSConfig) Entries() []string {
+	var entries []string
+	for _, e := range strings.Split(c.AllowedOrigins, ",") {
+		if e = strings.TrimSpace(e); e != "" {
+			entries = append(entries, e)
+		}
+	}
+	return entries
+}
+
+// AllowsAllOrigins reports whether every origin may call the API: no entry
+// (the middleware treats an empty value as "*") or the single entry "*".
+func (c CORSConfig) AllowsAllOrigins() bool {
+	entries := c.Entries()
+	return len(entries) == 0 || (len(entries) == 1 && entries[0] == "*")
+}
+
+// SameOriginOnly reports whether the setting is the single entry
+// CORSSameOrigin.
+func (c CORSConfig) SameOriginOnly() bool {
+	entries := c.Entries()
+	return len(entries) == 1 && entries[0] == CORSSameOrigin
+}
+
+// Validate checks that "*" and "same-origin" are not mixed with other
+// entries: in a list they would be compared as literal origins and never
+// match.
+func (c CORSConfig) Validate() error {
+	entries := c.Entries()
+	if len(entries) < 2 {
+		return nil
+	}
+	for _, e := range entries {
+		if e == "*" || e == CORSSameOrigin {
+			return fmt.Errorf("CORS_ALLOWED_ORIGINS: %q must be the only value, got %q", e, c.AllowedOrigins)
+		}
+	}
+	return nil
+}
+
+// maxRefreshReuseGrace caps REFRESH_REUSE_GRACE. The grace window only has to
+// cover concurrent refresh requests; a long window weakens replay detection.
+const maxRefreshReuseGrace = 5 * time.Minute
 
 // AuthConfig holds authentication and authorization configuration.
 type AuthConfig struct {
@@ -44,6 +97,8 @@ type AuthConfig struct {
 	AccessTokenExpiration   time.Duration
 	RefreshTokenExpiration  time.Duration
 	SessionIdleTimeout      time.Duration
+	SessionMaxLifetime      time.Duration // Absolute session lifetime; rotation never extends a session beyond it.
+	RefreshReuseGrace       time.Duration // A just-rotated refresh token still gets an access token this long; 0 disables.
 	LoginCacheTTL           time.Duration
 	AdminUsername           string
 	AdminPassword           string
@@ -63,6 +118,11 @@ type GitProviderConfig struct {
 	GitLabToken               string
 	GitLabBaseURL             string
 	GitHubAllowedRepositories []string
+
+	// AzureDevOpsAuth selects the Azure DevOps credential: "pat" (default,
+	// AZURE_DEVOPS_PAT) or "workload-identity" (an Entra ID token from
+	// AZURE_CLIENT_ID, AZURE_TENANT_ID and AZURE_FEDERATED_TOKEN_FILE).
+	AzureDevOpsAuth string
 }
 
 // NamespaceRoleBindingSpec describes a RoleBinding that the deployer applies
@@ -89,7 +149,12 @@ type DeploymentConfig struct {
 	ClusterHealthPollInterval time.Duration
 	HelmBinary                string
 	KubeconfigPath            string
-	KubeconfigEncryptionKey   string
+	// InClusterFallbackKubeconfig (IN_CLUSTER_FALLBACK_KUBECONFIG) is for
+	// local development only: outside a pod, an in-cluster cluster uses this
+	// kubeconfig for the Kubernetes client and Helm. Empty (default): an
+	// in-cluster cluster outside a pod is unreachable (#582).
+	InClusterFallbackKubeconfig string
+	KubeconfigEncryptionKey     string
 	// WildcardTLSSourceNamespace + WildcardTLSSourceSecret point at a pre-existing
 	// TLS secret that is copied into each stack namespace before chart install
 	// (so ingresses can reference it). When WildcardTLSSourceSecret is empty, the
@@ -108,6 +173,22 @@ type DeploymentConfig struct {
 	// the NAMESPACE_ROLE_BINDINGS_JSON env var as a JSON array; empty
 	// disables the feature.
 	NamespaceRoleBindings []NamespaceRoleBindingSpec
+
+	// NamespaceLabels are extra labels that the deployer sets on every stack
+	// namespace, in addition to managed-by=k8s-stack-manager. Sourced from
+	// NAMESPACE_LABELS (comma-separated key=value pairs, see
+	// ParseNamespaceLabels); nil = no extra labels.
+	NamespaceLabels map[string]string
+
+	// AllowedChartRepos are the chart repository URL prefixes that chart
+	// configs may use (ALLOWED_CHART_REPOS, see ParseAllowedChartRepos);
+	// nil = every chart source is allowed.
+	AllowedChartRepos []string
+
+	// StackAccess is the namespace-scoped access of the backend
+	// (STACK_ACCESS_CLUSTER_ROLE, STACK_ACCESS_SERVICE_ACCOUNT, see
+	// ParseStackAccess); empty = off.
+	StackAccess StackAccessConfig
 
 	// HooksConfigFile points at a JSON file describing outbound webhook
 	// subscriptions (for lifecycle events) and registered named actions. When
@@ -175,6 +256,73 @@ type OtelConfig struct {
 	MetricsEnabled bool // env: METRICS_ENABLED (default: false)
 }
 
+// LeaderElectionConfig holds the settings for the election of the replica
+// that runs the leader-only background workers.
+type LeaderElectionConfig struct {
+	// 8-byte aligned fields first
+	LeaseDuration time.Duration // env: LEADER_ELECTION_LEASE_DURATION (default 15s)
+	RenewDeadline time.Duration // env: LEADER_ELECTION_RENEW_DEADLINE (default 10s)
+	RetryPeriod   time.Duration // env: LEADER_ELECTION_RETRY_PERIOD (default 2s)
+	// String fields
+	LeaseName string // env: LEADER_ELECTION_LEASE_NAME (default "k8s-stack-manager-workers")
+	Namespace string // env: LEADER_ELECTION_NAMESPACE, else POD_NAMESPACE, else the service account namespace file
+	Identity  string // env: POD_NAME, else the host name
+	// Bool fields
+	Enabled bool // env: LEADER_ELECTION_ENABLED (default false: this process is always the leader)
+}
+
+// Validate checks the leader election settings when election is enabled.
+func (c *LeaderElectionConfig) Validate() error {
+	if !c.Enabled {
+		return nil
+	}
+	if c.LeaseName == "" {
+		return errors.New("LEADER_ELECTION_LEASE_NAME is required when leader election is enabled")
+	}
+	if c.Namespace == "" {
+		return errors.New("LEADER_ELECTION_NAMESPACE (or POD_NAMESPACE) is required when leader election is enabled and the service account namespace file is not available")
+	}
+	if c.Identity == "" {
+		return errors.New("POD_NAME (or a host name) is required when leader election is enabled")
+	}
+	if c.LeaseDuration < time.Second {
+		return errors.New("LEADER_ELECTION_LEASE_DURATION must be at least 1s")
+	}
+	if c.RenewDeadline <= 0 || c.RetryPeriod <= 0 {
+		return errors.New("LEADER_ELECTION_RENEW_DEADLINE and LEADER_ELECTION_RETRY_PERIOD must be greater than zero")
+	}
+	if c.LeaseDuration <= c.RenewDeadline {
+		return errors.New("LEADER_ELECTION_LEASE_DURATION must be greater than LEADER_ELECTION_RENEW_DEADLINE")
+	}
+	// client-go needs renew deadline > 1.2 x retry period (jitter factor).
+	if c.RenewDeadline*10 <= c.RetryPeriod*12 {
+		return errors.New("LEADER_ELECTION_RENEW_DEADLINE must be greater than 1.2 x LEADER_ELECTION_RETRY_PERIOD")
+	}
+	return nil
+}
+
+// WSFanoutConfig holds the settings for the WebSocket fan-out between
+// replicas (table ws_events).
+type WSFanoutConfig struct {
+	PollInterval time.Duration // env: WS_FANOUT_POLL_INTERVAL (default 500ms)
+	Retention    time.Duration // env: WS_FANOUT_RETENTION (default 5m)
+	Enabled      bool          // env: WS_FANOUT_ENABLED (default false: one process, no ws_events writes)
+}
+
+// Validate checks the fan-out settings when fan-out is enabled.
+func (c *WSFanoutConfig) Validate() error {
+	if !c.Enabled {
+		return nil
+	}
+	if c.PollInterval < 50*time.Millisecond || c.PollInterval > time.Minute {
+		return errors.New("WS_FANOUT_POLL_INTERVAL must be between 50ms and 1m")
+	}
+	if c.Retention < time.Minute {
+		return errors.New("WS_FANOUT_RETENTION must be at least 1m")
+	}
+	return nil
+}
+
 // Config holds all configuration for the application
 //
 //nolint:govet // Struct field alignment has been optimized for better memory usage
@@ -193,15 +341,36 @@ type Config struct {
 	Deployment   DeploymentConfig
 	Otel         OtelConfig
 	SessionStore SessionStoreConfig
+
+	// LeaderElection selects the replica that runs the background workers.
+	LeaderElection LeaderElectionConfig
+
+	// WSFanout shares WebSocket messages between replicas.
+	WSFanout WSFanoutConfig
+	// Retention is the age limit of the log tables (leader worker log-retention).
+	Retention RetentionConfig
+
+	// Branding holds the display values of the web UI (title, logo, favicon).
+	Branding BrandingConfig
 }
 
 // AppConfig holds application-wide configuration
 type AppConfig struct {
-	Name                      string
-	Environment               string
+	Name        string
+	Environment string
+	// maxInstanceTTLDaysErr is the parse error of MAX_INSTANCE_TTL_DAYS.
+	// Validate returns it, so an invalid value stops the start.
+	maxInstanceTTLDaysErr     error
 	DefaultInstanceTTLMinutes int
-	Debug                     bool
-	EnableSwagger             bool
+	// MaxInstanceTTLDays (MAX_INSTANCE_TTL_DAYS, default 30) is the maximum
+	// TTL of an instance and the maximum distance of a stop time from now.
+	MaxInstanceTTLDays int
+	Debug              bool
+	EnableSwagger      bool
+	// UniqueInstanceNames (UNIQUE_INSTANCE_NAMES) makes an instance name
+	// unique on its cluster. Turn it on when Ingress hosts use
+	// {{.InstanceName}}: two stacks with the same name claim the same host.
+	UniqueInstanceNames bool
 }
 
 // DatabaseConfig holds database-specific configuration
@@ -244,6 +413,10 @@ type ServerConfig struct {
 	Host      string
 	Port      string
 	PprofAddr string
+	// TrustedProxies are the IPs and CIDR ranges that may set the client IP
+	// with X-Forwarded-For or X-Real-IP (TRUSTED_PROXIES, see
+	// ParseTrustedProxies); nil = no proxy is trusted.
+	TrustedProxies []string
 	// 4-byte fields
 	RateLimit      int32
 	LoginRateLimit int32
@@ -254,14 +427,35 @@ type ServerConfig struct {
 
 // LogConfig holds logging configuration
 type LogConfig struct {
+	// Level is LOG_LEVEL: debug, info, warn (or warning) or error. main
+	// applies it to the default slog logger.
 	Level string
-	File  string
+}
+
+// SlogLevel parses Level (case-insensitive). An empty Level is info.
+func (c LogConfig) SlogLevel() (slog.Level, error) {
+	switch strings.ToLower(strings.TrimSpace(c.Level)) {
+	case "", "info":
+		return slog.LevelInfo, nil
+	case "debug":
+		return slog.LevelDebug, nil
+	case "warn", "warning":
+		return slog.LevelWarn, nil
+	case "error":
+		return slog.LevelError, nil
+	default:
+		return slog.LevelInfo, fmt.Errorf("invalid LOG_LEVEL %q: use debug, info, warn or error", c.Level)
+	}
 }
 
 // Validate checks if the configuration is valid
 func (c *Config) Validate() error {
 	if err := c.App.Validate(); err != nil {
 		return fmt.Errorf("app config: %w", err)
+	}
+
+	if _, err := c.Logging.SlogLevel(); err != nil {
+		return err
 	}
 
 	if err := c.Database.Validate(); err != nil {
@@ -278,6 +472,19 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	switch c.GitProvider.AzureDevOpsAuth {
+	case "", "pat", "workload-identity":
+	default:
+		return fmt.Errorf("AZURE_DEVOPS_AUTH must be \"pat\" or \"workload-identity\", got %q", c.GitProvider.AzureDevOpsAuth)
+	}
+
+	if err := c.CORS.Validate(); err != nil {
+		return err
+	}
+	if c.CORS.AllowsAllOrigins() && c.App.Environment == "production" {
+		slog.Warn("CORS_ALLOWED_ORIGINS allows every origin (\"*\") in production; set \"same-origin\" or a list of origins")
+	}
+
 	if c.Deployment.KubeconfigEncryptionKey == "" || len(c.Deployment.KubeconfigEncryptionKey) < 16 {
 		slog.Warn("KUBECONFIG_ENCRYPTION_KEY is not set or too short, kubeconfig data will not be encrypted at rest")
 	}
@@ -286,6 +493,27 @@ func (c *Config) Validate() error {
 		if err := c.OIDC.Validate(); err != nil {
 			return fmt.Errorf("OIDC config: %w", err)
 		}
+	}
+
+	if err := c.LeaderElection.Validate(); err != nil {
+		return fmt.Errorf("leader election config: %w", err)
+	}
+
+	if err := c.Branding.Validate(); err != nil {
+		return fmt.Errorf("branding config: %w", err)
+	}
+
+	if err := c.WSFanout.Validate(); err != nil {
+		return fmt.Errorf("WebSocket fan-out config: %w", err)
+	}
+	// The fan-out marks its rows with the replica identity (as the leader
+	// election does) to skip its own rows.
+	if c.WSFanout.Enabled && c.LeaderElection.Identity == "" {
+		return errors.New("WebSocket fan-out config: POD_NAME (or a host name) is required when WS_FANOUT_ENABLED is true")
+	}
+
+	if err := c.Retention.Validate(); err != nil {
+		return fmt.Errorf("log retention config: %w", err)
 	}
 
 	if err := c.GitProvider.Validate(); err != nil {
@@ -319,6 +547,14 @@ func (c *AppConfig) Validate() error {
 
 	if c.Environment == "" {
 		return errors.New("environment is required")
+	}
+
+	if c.maxInstanceTTLDaysErr != nil {
+		return c.maxInstanceTTLDaysErr
+	}
+	if maxMinutes := c.MaxInstanceTTLDays * 24 * 60; c.MaxInstanceTTLDays > 0 && c.DefaultInstanceTTLMinutes > maxMinutes {
+		return fmt.Errorf("DEFAULT_INSTANCE_TTL_MINUTES (%d) must not exceed MAX_INSTANCE_TTL_DAYS (%d days, %d minutes)",
+			c.DefaultInstanceTTLMinutes, c.MaxInstanceTTLDays, maxMinutes)
 	}
 
 	return nil
@@ -395,6 +631,14 @@ func (c *AuthConfig) Validate() error {
 
 	if c.AccessTokenExpiration > c.SessionIdleTimeout {
 		return errors.New("access_token_expiration must not exceed session_idle_timeout")
+	}
+
+	if c.SessionMaxLifetime < c.AccessTokenExpiration {
+		return errors.New("session_max_lifetime must be at least access_token_expiration")
+	}
+
+	if c.RefreshReuseGrace < 0 || c.RefreshReuseGrace > maxRefreshReuseGrace {
+		return fmt.Errorf("refresh_reuse_grace must be between 0 and %s", maxRefreshReuseGrace)
 	}
 
 	if c.MaxRefreshTokensPerUser < 0 {
@@ -484,7 +728,6 @@ func LoadConfig() (*Config, error) {
 		},
 		Logging: LogConfig{
 			Level: getEnv("LOG_LEVEL", "info"),
-			File:  getEnv("LOG_FILE", ""),
 		},
 		Auth:         loadAuthConfig(),
 		GitProvider:  loadGitProviderConfig(),
@@ -493,6 +736,34 @@ func LoadConfig() (*Config, error) {
 		Otel:         loadOtelConfig(),
 		SessionStore: SessionStoreConfig{Backend: strings.TrimSpace(strings.ToLower(getEnv("SESSION_STORE", "mysql")))},
 	}
+	cfg.LeaderElection = loadLeaderElectionConfig()
+	cfg.WSFanout = loadWSFanoutConfig()
+	cfg.Retention = loadRetentionConfig()
+	cfg.Branding = loadBrandingConfig()
+
+	nsLabels, err := ParseNamespaceLabels(getEnv("NAMESPACE_LABELS", ""))
+	if err != nil {
+		return nil, fmt.Errorf("invalid configuration: NAMESPACE_LABELS: %w", err)
+	}
+	cfg.Deployment.NamespaceLabels = nsLabels
+
+	chartRepos, err := ParseAllowedChartRepos(getEnv("ALLOWED_CHART_REPOS", ""))
+	if err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+	cfg.Deployment.AllowedChartRepos = chartRepos
+
+	trustedProxies, err := ParseTrustedProxies(getEnv("TRUSTED_PROXIES", ""))
+	if err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+	cfg.Server.TrustedProxies = trustedProxies
+
+	stackAccess, err := ParseStackAccess(getEnv("STACK_ACCESS_CLUSTER_ROLE", ""), getEnv("STACK_ACCESS_SERVICE_ACCOUNT", ""))
+	if err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+	cfg.Deployment.StackAccess = stackAccess
 
 	// Validate the configuration
 	if err := cfg.Validate(); err != nil {
@@ -518,12 +789,16 @@ func loadDotEnv() error {
 }
 
 func loadAppConfig() AppConfig {
+	maxTTLDays, maxTTLDaysErr := ParseMaxInstanceTTLDays(getEnv("MAX_INSTANCE_TTL_DAYS", ""))
 	return AppConfig{
 		Name:                      getEnv("APP_NAME", "backend-api"),
 		Environment:               getEnv("GO_ENV", "development"),
 		DefaultInstanceTTLMinutes: int(getEnvInt32("DEFAULT_INSTANCE_TTL_MINUTES", 0)),
 		Debug:                     getEnvBool("APP_DEBUG", true),
 		EnableSwagger:             getEnvBool("ENABLE_SWAGGER", false),
+		UniqueInstanceNames:       getEnvBool("UNIQUE_INSTANCE_NAMES", false),
+		MaxInstanceTTLDays:        maxTTLDays,
+		maxInstanceTTLDaysErr:     maxTTLDaysErr,
 	}
 }
 
@@ -566,6 +841,8 @@ func loadAuthConfig() AuthConfig {
 		AccessTokenExpiration:   accessExp,
 		RefreshTokenExpiration:  getEnvDuration("REFRESH_TOKEN_EXPIRATION", 168*time.Hour),
 		SessionIdleTimeout:      getEnvDuration("SESSION_IDLE_TIMEOUT", 30*time.Minute),
+		SessionMaxLifetime:      getEnvDuration("SESSION_MAX_LIFETIME", 12*time.Hour),
+		RefreshReuseGrace:       getEnvDuration("REFRESH_REUSE_GRACE", 30*time.Second),
 		LoginCacheTTL:           getEnvDuration("LOGIN_CACHE_TTL", 30*time.Second),
 		AdminUsername:           getEnv("ADMIN_USERNAME", "admin"),
 		AdminPassword:           getEnv("ADMIN_PASSWORD", ""),
@@ -588,6 +865,7 @@ func loadGitProviderConfig() GitProviderConfig {
 		GitLabToken:               getEnv("GITLAB_TOKEN", ""),
 		GitLabBaseURL:             getEnv("GITLAB_BASE_URL", ""),
 		GitHubAllowedRepositories: parseGitHubAllowedRepositories(getEnv("GITHUB_ALLOWED_REPOSITORIES", "")),
+		AzureDevOpsAuth:           getEnv("AZURE_DEVOPS_AUTH", "pat"),
 	}
 }
 
@@ -615,19 +893,20 @@ func loadDeploymentConfig() DeploymentConfig {
 	// lives in out-of-process extension subscribers — see internal/hooks and
 	// EXTENDING.md. HOOKS_CONFIG_FILE points at the JSON file describing them.
 	return DeploymentConfig{
-		HelmBinary:                 getEnv("HELM_BINARY", "helm"),
-		KubeconfigPath:             getEnv("KUBECONFIG_PATH", getEnv("KUBECONFIG", "")),
-		KubeconfigEncryptionKey:    getEnv("KUBECONFIG_ENCRYPTION_KEY", ""),
-		DeploymentTimeout:          getEnvDuration("DEPLOYMENT_TIMEOUT", 10*time.Minute),
-		ClusterHealthPollInterval:  getEnvDuration("CLUSTER_HEALTH_POLL_INTERVAL", 60*time.Second),
-		StabilizeTimeout:           getEnvDuration("DEPLOY_STABILIZE_TIMEOUT", 5*time.Minute),
-		StabilizePollInterval:      getEnvDuration("DEPLOY_STABILIZE_POLL_INTERVAL", 5*time.Second),
-		MaxConcurrentDeploys:       getEnvInt32("MAX_CONCURRENT_DEPLOYS", 5),
-		WildcardTLSSourceNamespace: getEnv("WILDCARD_TLS_SOURCE_NAMESPACE", ""),
-		WildcardTLSSourceSecret:    getEnv("WILDCARD_TLS_SOURCE_SECRET", ""),
-		WildcardTLSTargetSecret:    getEnv("WILDCARD_TLS_TARGET_SECRET", ""),
-		NamespaceRoleBindings:      parseNamespaceRoleBindings(getEnv("NAMESPACE_ROLE_BINDINGS_JSON", "")),
-		HooksConfigFile:            getEnv("HOOKS_CONFIG_FILE", ""),
+		HelmBinary:                  getEnv("HELM_BINARY", "helm"),
+		KubeconfigPath:              getEnv("KUBECONFIG_PATH", getEnv("KUBECONFIG", "")),
+		InClusterFallbackKubeconfig: getEnv("IN_CLUSTER_FALLBACK_KUBECONFIG", ""),
+		KubeconfigEncryptionKey:     getEnv("KUBECONFIG_ENCRYPTION_KEY", ""),
+		DeploymentTimeout:           getEnvDuration("DEPLOYMENT_TIMEOUT", 10*time.Minute),
+		ClusterHealthPollInterval:   getEnvDuration("CLUSTER_HEALTH_POLL_INTERVAL", 60*time.Second),
+		StabilizeTimeout:            getEnvDuration("DEPLOY_STABILIZE_TIMEOUT", 5*time.Minute),
+		StabilizePollInterval:       getEnvDuration("DEPLOY_STABILIZE_POLL_INTERVAL", 5*time.Second),
+		MaxConcurrentDeploys:        getEnvInt32("MAX_CONCURRENT_DEPLOYS", 5),
+		WildcardTLSSourceNamespace:  getEnv("WILDCARD_TLS_SOURCE_NAMESPACE", ""),
+		WildcardTLSSourceSecret:     getEnv("WILDCARD_TLS_SOURCE_SECRET", ""),
+		WildcardTLSTargetSecret:     getEnv("WILDCARD_TLS_TARGET_SECRET", ""),
+		NamespaceRoleBindings:       parseNamespaceRoleBindings(getEnv("NAMESPACE_ROLE_BINDINGS_JSON", "")),
+		HooksConfigFile:             getEnv("HOOKS_CONFIG_FILE", ""),
 	}
 }
 
@@ -674,6 +953,42 @@ func loadOIDCConfig() OIDCConfig {
 		AutoProvision: getEnvBool("OIDC_AUTO_PROVISION", true),
 		LocalAuth:     getEnvBool("OIDC_LOCAL_AUTH", false),
 		StateTTL:      getEnvDuration("OIDC_STATE_TTL", 5*time.Minute),
+	}
+}
+
+// serviceAccountNamespaceFile holds the pod namespace in a Kubernetes pod.
+// It is a variable so tests can change it.
+var serviceAccountNamespaceFile = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+
+func loadLeaderElectionConfig() LeaderElectionConfig {
+	namespace := getEnv("LEADER_ELECTION_NAMESPACE", os.Getenv("POD_NAMESPACE"))
+	if namespace == "" {
+		if b, err := os.ReadFile(serviceAccountNamespaceFile); err == nil {
+			namespace = strings.TrimSpace(string(b))
+		}
+	}
+	identity := os.Getenv("POD_NAME")
+	if identity == "" {
+		if host, err := os.Hostname(); err == nil {
+			identity = host
+		}
+	}
+	return LeaderElectionConfig{
+		Enabled:       getEnvBool("LEADER_ELECTION_ENABLED", false),
+		LeaseName:     getEnv("LEADER_ELECTION_LEASE_NAME", "k8s-stack-manager-workers"),
+		Namespace:     namespace,
+		Identity:      identity,
+		LeaseDuration: getEnvDuration("LEADER_ELECTION_LEASE_DURATION", 15*time.Second),
+		RenewDeadline: getEnvDuration("LEADER_ELECTION_RENEW_DEADLINE", 10*time.Second),
+		RetryPeriod:   getEnvDuration("LEADER_ELECTION_RETRY_PERIOD", 2*time.Second),
+	}
+}
+
+func loadWSFanoutConfig() WSFanoutConfig {
+	return WSFanoutConfig{
+		Enabled:      getEnvBool("WS_FANOUT_ENABLED", false),
+		PollInterval: getEnvDuration("WS_FANOUT_POLL_INTERVAL", 500*time.Millisecond),
+		Retention:    getEnvDuration("WS_FANOUT_RETENTION", 5*time.Minute),
 	}
 }
 

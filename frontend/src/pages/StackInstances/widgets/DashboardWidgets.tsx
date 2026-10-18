@@ -16,6 +16,8 @@ import TimerIcon from '@mui/icons-material/Timer';
 import ErrorOutlinedIcon from '@mui/icons-material/ErrorOutlined';
 import { dashboardService } from '../../../api/client';
 import { useWebSocket } from '../../../hooks/useWebSocket';
+import { useAuth } from '../../../context/AuthContext';
+import { hasAtLeastRole } from '../../../utils/roles';
 import type { DashboardResponse } from '../../../types';
 import ClusterHealthWidget from './ClusterHealthWidget';
 import RecentDeploymentsWidget from './RecentDeploymentsWidget';
@@ -46,6 +48,10 @@ function saveCollapsed(state: Record<WidgetKey, boolean>) {
 }
 
 const DashboardWidgets = () => {
+  const { user } = useAuth();
+  // The API sends cluster health only to admin and devops (same rule as
+  // GET /clusters). Role user does not see the widget instead of "unknown".
+  const showClusterHealth = hasAtLeastRole(user?.role, 'devops');
   const [data, setData] = useState<DashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -136,7 +142,7 @@ const DashboardWidgets = () => {
 
   if (!data) return null;
 
-  const widgets: { key: WidgetKey; label: string; icon: ReactNode; count?: number; content: ReactNode }[] = [
+  const allWidgets: { key: WidgetKey; label: string; icon: ReactNode; count?: number; content: ReactNode }[] = [
     {
       key: 'clusters',
       label: 'Cluster Health',
@@ -166,6 +172,7 @@ const DashboardWidgets = () => {
       content: <FailingInstancesWidget instances={data.failing_instances} />,
     },
   ];
+  const widgets = allWidgets.filter((w) => w.key !== 'clusters' || showClusterHealth);
 
   return (
     <Box sx={{ mb: 3 }}>

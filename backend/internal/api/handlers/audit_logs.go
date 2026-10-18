@@ -76,9 +76,10 @@ func parseAuditFilters(c *gin.Context) (models.AuditLogFilters, error) {
 
 // ListAuditLogs godoc
 // @Summary     List audit logs
-// @Description List audit logs with optional filters and pagination. Supports cursor-based pagination for efficient large dataset traversal.
+// @Description List audit logs with optional filters and pagination. Supports cursor-based pagination for efficient large dataset traversal. Requires the devops or admin role.
 // @Tags        audit-logs
 // @Produce     json
+// @Security    BearerAuth
 // @Param       user_id     query    string false "Filter by user ID"
 // @Param       entity_type query    string false "Filter by entity type"
 // @Param       entity_id   query    string false "Filter by entity ID"
@@ -90,6 +91,8 @@ func parseAuditFilters(c *gin.Context) (models.AuditLogFilters, error) {
 // @Param       cursor      query    string false "Cursor from previous page for cursor-based pagination (overrides offset)"
 // @Success     200         {object} models.PaginatedAuditLogs
 // @Failure     400         {object} map[string]string
+// @Failure     401         {object} map[string]string
+// @Failure     403         {object} map[string]string
 // @Failure     500         {object} map[string]string
 // @Router      /api/v1/audit-logs [get]
 func (h *AuditLogHandler) ListAuditLogs(c *gin.Context) {

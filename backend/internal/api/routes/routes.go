@@ -11,6 +11,7 @@ import (
 	"backend/internal/scheduler"
 	"backend/internal/sessionstore"
 	"backend/internal/websocket"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -22,7 +23,6 @@ import (
 
 // Deps holds all handler dependencies needed by SetupRoutes.
 type Deps struct {
-	Repository    models.Repository
 	HealthChecker *health.HealthChecker
 	Config        *config.Config
 	Hub           *websocket.Hub
@@ -91,6 +91,10 @@ type Deps struct {
 	// SessionStore for token blocklist and OIDC state persistence.
 	SessionStore sessionstore.SessionStore
 
+	// SessionActivity records request activity of JWT sessions (the "sid"
+	// claim) for the session idle timeout. nil disables activity tracking.
+	SessionActivity middleware.SessionActivityFunc
+
 	// HealthVerbose enables verbose health check output.
 	HealthVerbose bool
 }
@@ -121,6 +125,16 @@ func (r *RateLimiters) Stop() {
 func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 	cfg := deps.Config
 
+	// Client IP: only the proxies of TRUSTED_PROXIES may set it with
+	// X-Forwarded-For or X-Real-IP. Without the list Gin trusts every peer,
+	// so a client could pick a new IP for each request and pass the per-IP
+	// rate limits. config.ParseTrustedProxies validated the list; on an
+	// error, trust no proxy.
+	if err := router.SetTrustedProxies(cfg.Server.TrustedProxies); err != nil {
+		slog.Error("Invalid TRUSTED_PROXIES; no proxy is trusted", "error", err)
+		_ = router.SetTrustedProxies(nil)
+	}
+
 	// Add middleware
 	router.Use(middleware.RequestID())
 	// RedactWSToken MUST run before HTTPMetrics / otelgin / Logger so it
@@ -145,8 +159,20 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 	router.Use(middleware.CORS(cfg.CORS.AllowedOrigins))
 	router.Use(middleware.MaxBodySize(1 << 20)) // 1 MB default
 
-	// WebSocket endpoint (top-level, outside rate limiter — connections are long-lived)
-	wsHandler := handlers.NewWebSocketHandler(deps.Hub, cfg.CORS.AllowedOrigins, cfg.Auth.JWTSecret)
+	// Rate limiter for API routes. The API-key upgrade of /ws uses it too.
+	rateLimiter := handlers.NewRateLimiter(int(cfg.Server.RateLimit), time.Minute)
+
+	// WebSocket endpoint (top-level, outside the rate limiter middleware —
+	// connections are long-lived). Only the API-key upgrade is rate limited,
+	// before the key lookup.
+	// The upgrade runs the same token and user revocation checks as the
+	// HTTP JWT auth (session store blocklists, deleted or disabled user),
+	// and accepts an X-API-Key header with the checks of the HTTP API-key
+	// auth.
+	wsHandler := handlers.NewWebSocketHandler(deps.Hub, cfg.CORS.AllowedOrigins, cfg.Auth.JWTSecret).
+		WithRevocationChecks(deps.SessionStore, deps.UserRepo).
+		WithAPIKeys(deps.APIKeyRepo).
+		WithAPIKeyRateLimiter(rateLimiter)
 	router.GET("/ws", wsHandler.HandleWebSocket)
 
 	// Swagger UI (only when explicitly enabled via ENABLE_SWAGGER=true)
@@ -162,9 +188,6 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 		healthGroup.GET("", handlers.HealthCheck) // Keep the original health check for backward compatibility
 	}
 
-	// Rate limiter for API routes
-	rateLimiter := handlers.NewRateLimiter(int(cfg.Server.RateLimit), time.Minute)
-
 	// Stricter rate limiter for login endpoint to prevent brute-force attacks.
 	// Only created when LoginRateLimit > 0; otherwise login uses the general API limiter.
 	var loginRateLimiter *handlers.RateLimiter
@@ -179,16 +202,13 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 		// Ping endpoint
 		v1.GET("/ping", handlers.Ping)
 
-		// Items endpoints
-		itemsHandler := handlers.NewHandlerWithHub(deps.Repository, deps.Hub)
-		items := v1.Group("/items")
-		{
-			items.GET("", itemsHandler.GetItems)
-			items.GET("/:id", itemsHandler.GetItem)
-			items.POST("", itemsHandler.CreateItem)
-			items.PUT("/:id", itemsHandler.UpdateItem)
-			items.DELETE("/:id", itemsHandler.DeleteItem)
-		}
+		// Web UI display config (title, logo, favicon, TTL default) — public,
+		// so the login page can use it before sign-in.
+		v1.GET("/ui-config", handlers.NewUIConfigHandler(cfg.Branding, cfg.App.DefaultInstanceTTLMinutes, cfg.App.MaxInstanceTTLDays))
+
+		// No /items routes: handlers.Handler (items.go) is the reference
+		// implementation of the CRUD pattern only. Unauthenticated item routes
+		// let any client change data (GitHub issue #534).
 	}
 
 	// Phase 1 routes — only register if handlers are provided (they are nil in legacy tests).
@@ -199,6 +219,9 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 			APIKeyRepo:   deps.APIKeyRepo,
 			UserRepo:     deps.UserRepo,
 			SessionStore: deps.SessionStore,
+			// Each authenticated JWT request keeps the refresh-token
+			// family alive for the idle timeout (throttled per session).
+			OnSessionActivity: deps.SessionActivity,
 		})
 
 		// Auth — login and refresh are public; register requires auth.
@@ -309,12 +332,15 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 			}
 		}
 
-		// Stack Definitions
+		// Stack Definitions. Creating a definition and adding or removing
+		// charts needs devops or admin: the chart set decides what Helm
+		// installs. Users get definitions from templates (instantiate,
+		// quick deploy) and may edit their names, values and branches.
 		if deps.DefinitionHandler != nil {
 			definitions := authed.Group("/stack-definitions")
 			{
 				definitions.GET("", deps.DefinitionHandler.ListDefinitions)
-				definitions.POST("", deps.DefinitionHandler.CreateDefinition)
+				definitions.POST("", devops, deps.DefinitionHandler.CreateDefinition)
 				definitions.POST("/import", devops, deps.DefinitionHandler.ImportDefinition)
 				definitions.GET("/:id", deps.DefinitionHandler.GetDefinition)
 				definitions.GET("/:id/export", devops, deps.DefinitionHandler.ExportDefinition)
@@ -322,10 +348,11 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 				definitions.DELETE("/:id", deps.DefinitionHandler.DeleteDefinition)
 				definitions.GET("/:id/check-upgrade", deps.DefinitionHandler.CheckUpgrade)
 				definitions.POST("/:id/upgrade", deps.DefinitionHandler.ApplyUpgrade)
-				definitions.POST("/:id/charts", deps.DefinitionHandler.AddChartConfig)
+				definitions.PUT("/:id/template-link", devops, deps.DefinitionHandler.SetTemplateLink)
+				definitions.POST("/:id/charts", devops, deps.DefinitionHandler.AddChartConfig)
 				definitions.GET("/:id/charts/:chartId", deps.DefinitionHandler.GetChartConfig)
 				definitions.PUT("/:id/charts/:chartId", deps.DefinitionHandler.UpdateChartConfig)
-				definitions.DELETE("/:id/charts/:chartId", deps.DefinitionHandler.DeleteChartConfig)
+				definitions.DELETE("/:id/charts/:chartId", devops, deps.DefinitionHandler.DeleteChartConfig)
 			}
 		}
 
@@ -344,13 +371,19 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 				instances.GET("/:id/values", deps.InstanceHandler.ExportAllValues)
 				instances.GET("/:id/values/:chartId", deps.InstanceHandler.ExportChartValues)
 				instances.GET("/:id/overrides", deps.InstanceHandler.GetOverrides)
+				instances.GET("/:id/overrides/:chartId", deps.InstanceHandler.GetOverride)
 				instances.PUT("/:id/overrides/:chartId", deps.InstanceHandler.SetOverride)
+				instances.DELETE("/:id/overrides/:chartId", deps.InstanceHandler.DeleteOverride)
 				instances.POST("/:id/deploy", deps.InstanceHandler.DeployInstance)
 				instances.GET("/:id/deploy-preview", deps.InstanceHandler.DeployPreview)
 				instances.POST("/:id/stop", deps.InstanceHandler.StopInstance)
 				instances.POST("/:id/clean", deps.InstanceHandler.CleanInstance)
+				instances.GET("/:id/actions", deps.InstanceHandler.ListActions)
 				instances.POST("/:id/actions/:name", deps.InstanceHandler.InvokeAction)
+				instances.GET("/:id/actions/:name/jobs/:job_id/log", deps.InstanceHandler.GetActionJobLog)
 				instances.POST("/:id/extend", deps.InstanceHandler.ExtendTTL)
+				instances.POST("/:id/follow", deps.InstanceHandler.FollowInstance)
+				instances.DELETE("/:id/follow", deps.InstanceHandler.UnfollowInstance)
 				instances.GET("/:id/deploy-log", deps.InstanceHandler.GetDeployLog)
 				instances.GET("/:id/deploy-log/:logId/values", deps.InstanceHandler.GetDeployLogValues)
 				instances.POST("/:id/rollback", deps.InstanceHandler.RollbackInstance)
@@ -370,6 +403,7 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 				// Per-chart branch overrides
 				if deps.BranchOverrideHandler != nil {
 					instances.GET("/:id/branches", deps.BranchOverrideHandler.ListBranchOverrides)
+					instances.GET("/:id/branches/:chartId", deps.BranchOverrideHandler.GetBranchOverride)
 					instances.PUT("/:id/branches/:chartId", deps.BranchOverrideHandler.SetBranchOverride)
 					instances.DELETE("/:id/branches/:chartId", deps.BranchOverrideHandler.DeleteBranchOverride)
 				}
@@ -395,10 +429,12 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 
 		// Audit Logs
 		if deps.AuditLogHandler != nil {
+			// The audit trail holds the actions of all users: reading it
+			// requires devops or admin, and export requires admin.
 			auditLogs := authed.Group("/audit-logs")
 			{
 				auditLogs.GET("/export", middleware.RequireAdmin(), deps.AuditLogHandler.ExportAuditLogs)
-				auditLogs.GET("", deps.AuditLogHandler.ListAuditLogs)
+				auditLogs.GET("", middleware.RequireDevOps(), deps.AuditLogHandler.ListAuditLogs)
 			}
 		}
 
@@ -412,6 +448,7 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 				users.PUT("/:id/disable", admin, deps.UserHandler.DisableUser)
 				users.PUT("/:id/enable", admin, deps.UserHandler.EnableUser)
 				users.PUT("/:id/password", admin, deps.UserHandler.ResetUserPassword)
+				users.PUT("/:id/role", admin, deps.UserHandler.ChangeUserRole)
 			}
 		}
 

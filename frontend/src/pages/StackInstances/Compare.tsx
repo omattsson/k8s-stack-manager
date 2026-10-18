@@ -12,6 +12,8 @@ import {
   Autocomplete,
   TextField,
   Chip,
+  useMediaQuery,
+  useTheme,
 } from '@mui/material';
 import CompareArrowsIcon from '@mui/icons-material/CompareArrows';
 import CheckCircleOutlinedIcon from '@mui/icons-material/CheckCircleOutlined';
@@ -26,6 +28,9 @@ import type {
 import ReactDiffViewer from 'react-diff-viewer-continued';
 
 const Compare = () => {
+  // Side by side needs the width of a desktop; a phone gets one column.
+  const theme = useTheme();
+  const splitView = useMediaQuery(theme.breakpoints.up('md'));
   const [searchParams, setSearchParams] = useSearchParams();
   const { showError } = useNotification();
 
@@ -42,7 +47,7 @@ const Compare = () => {
   useEffect(() => {
     const fetchInstances = async () => {
       try {
-        const data = await instanceService.list();
+        const data = await instanceService.listAll();
         setInstances(data || []);
       } catch {
         showError('Failed to load instance list');
@@ -281,7 +286,7 @@ const Compare = () => {
                         <ReactDiffViewer
                           oldValue={chart.left_values ?? ''}
                           newValue={chart.right_values ?? ''}
-                          splitView={true}
+                          splitView={splitView}
                           leftTitle={result.left.name}
                           rightTitle={result.right.name}
                           showDiffOnly={false}

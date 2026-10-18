@@ -2,13 +2,17 @@ package database
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
+	"time"
 
 	"backend/internal/database/schema"
 	"backend/internal/models"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -1023,6 +1027,93 @@ func (d *Database) AutoMigrate() error {
 		},
 	})
 
+	// Migration 41: Session family columns on refresh_tokens (absolute session
+	// lifetime, reuse grace window, idle timeout from the last request).
+	migrator.AddMigration(refreshTokenSessionFamilyMigration())
+
+	// Migration 42: Remove empty value override rows. A PUT with empty values
+	// now deletes the override; older versions stored an empty row instead.
+	migrator.AddMigration(removeEmptyValueOverridesMigration())
+
+	// Migration 43: stack lifecycle columns. stopped_at on stack_instances
+	// (cleanup condition stopped_days), owner_instance_id on
+	// stack_definitions (quick deploy definitions) and chart_versions on
+	// deployment_logs (rollback to a deploy) and branch on deployment_logs.
+	migrator.AddMigration(stackLifecycleColumnsMigration())
+
+	// Migration 44: release the working copy of published (or referenced)
+	// templates whose latest snapshot is missing, legacy or stale. Use
+	// Template, Quick Deploy, upgrades and locked values now read the latest
+	// snapshot, never the working copy.
+	migrator.AddMigration(backfillPublishedTemplateSnapshotsMigration())
+
+	// Migration 45: stack_instances.expiry_warned_at. The TTL expiry warner
+	// keeps its "already warned" state in the database, so a new leader
+	// replica does not warn again.
+	migrator.AddMigration(expiryWarnedAtMigration())
+
+	// Migration 46: ws_events. Each replica writes its WebSocket messages
+	// there; the other replicas poll the table and deliver them to their
+	// clients (WS_FANOUT_ENABLED).
+	migrator.AddMigration(wsEventsMigration())
+
+	// Migration 47: audit_logs. Rename the plural, route-derived entity
+	// types of old CRUD entries to the singular names of the audit route
+	// table, and widen entity_id to 63 (namespace names are longer than a
+	// UUID).
+	migrator.AddMigration(auditEntityTypesMigration())
+
+	// Migration 48: stack_definitions (owner_id, name) index for the owner
+	// and name list filters and the per-owner name check.
+	migrator.AddMigration(definitionOwnerNameIndexMigration())
+
+	// Migration 49: deployment_logs.user_id (who started a deploy) for the
+	// per-user analytics; older deploy logs get the instance owner.
+	migrator.AddMigration(deployLogUserIDMigration())
+
+	// Migration 50: users.role index for the guarded admin changes, which
+	// lock the admin rows (role = 'admin').
+	migrator.AddMigration(userRoleIndexMigration())
+
+	// Migration 51: stack_instances.post_deploy_hook_until (blocking
+	// post-deploy hooks run; the k8s status watcher skips the instance).
+	migrator.AddMigration(postDeployHookUntilMigration())
+
+	// Migration 52: notification_channels.filters (instance filters of a
+	// channel, JSON text; NULL = all instances).
+	migrator.AddMigration(notificationChannelFiltersMigration())
+
+	// Migration 53: instance_followers (users who follow a stack instance
+	// and get its in-app notifications).
+	migrator.AddMigration(instanceFollowersMigration())
+
+	// Migration 54: deployment_logs.replica_id (the process that runs the
+	// operation), deployment_logs.deadline_at (its time budget) and an index on (status, started_at) for the recovery of
+	// interrupted operations.
+	migrator.AddMigration(deployLogReplicaIDMigration())
+
+	// Migration 55: replica_heartbeats (one row per backend process; the
+	// leader treats a process without a fresh heartbeat as stopped).
+	migrator.AddMigration(replicaHeartbeatsMigration())
+
+	// Migration 56: delete notification preferences of unknown event types
+	// (the API stored any type before it validated them, issue #498).
+	migrator.AddMigration(unknownPreferenceTypesMigration())
+
+	// Migration 57: stack_instances.delete_after_clean (the clean of a
+	// delete is persisted, so the delete works across replicas, issue #504).
+	migrator.AddMigration(deleteAfterCleanMigration())
+
+	// Migration 58: per-container LimitRange fields and the namespace
+	// ephemeral-storage total on cluster quotas and instance quota overrides.
+	migrator.AddMigration(containerQuotaFieldsMigration())
+
+	// Migration 59: stack_instances.cleaned_at (cleanup condition cleaned_days).
+	migrator.AddMigration(cleanedAtMigration())
+
+	// Migration 60: notification_channels.format (generic or teams).
+	migrator.AddMigration(notificationChannelFormatMigration())
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err
@@ -1030,4 +1121,879 @@ func (d *Database) AutoMigrate() error {
 
 	slog.Info("Database migrations completed successfully")
 	return nil
+}
+
+// refreshTokenSessionFamilyMigration is migration 41. It is a function so
+// tests can run its Down step.
+func refreshTokenSessionFamilyMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261008000041",
+		Name:        "add_refresh_token_session_family",
+		Description: "Add family_id, session_started_at and rotated_at to refresh_tokens and backfill legacy rows",
+		Up: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			for _, field := range []string{"FamilyID", "SessionStartedAt", "RotatedAt"} {
+				if !m.HasColumn(&models.RefreshToken{}, field) {
+					if err := m.AddColumn(&models.RefreshToken{}, field); err != nil {
+						return err
+					}
+				}
+			}
+			if !m.HasIndex(&models.RefreshToken{}, "FamilyID") {
+				if err := m.CreateIndex(&models.RefreshToken{}, "FamilyID"); err != nil {
+					return err
+				}
+			}
+			// A legacy token is its own family; its session started when it was created.
+			if err := tx.Exec("UPDATE refresh_tokens SET family_id = id WHERE family_id IS NULL OR family_id = ''").Error; err != nil {
+				return err
+			}
+			return tx.Exec("UPDATE refresh_tokens SET session_started_at = created_at WHERE session_started_at IS NULL").Error
+		},
+		Down: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if m.HasIndex(&models.RefreshToken{}, "FamilyID") {
+				if err := m.DropIndex(&models.RefreshToken{}, "FamilyID"); err != nil {
+					return err
+				}
+			}
+			for _, field := range []string{"RotatedAt", "SessionStartedAt", "FamilyID"} {
+				if m.HasColumn(&models.RefreshToken{}, field) {
+					if err := m.DropColumn(&models.RefreshToken{}, field); err != nil {
+						return err
+					}
+				}
+			}
+			return nil
+		},
+	}
+}
+
+// removeEmptyValueOverridesMigration is migration 42. It deletes value
+// override rows whose values are empty or whitespace only. Such rows have no
+// effect on the rendered values but show up in GET /overrides. Down is a
+// no-op: the deleted rows carried no data.
+func removeEmptyValueOverridesMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261008000042",
+		Name:        "remove_empty_value_overrides",
+		Description: "Delete value_overrides rows with empty or whitespace-only values",
+		Up: func(tx *gorm.DB) error {
+			if !tx.Migrator().HasTable(&models.ValueOverride{}) {
+				return nil
+			}
+			return tx.Exec(
+				"DELETE FROM value_overrides WHERE `values` IS NULL OR TRIM(REPLACE(REPLACE(REPLACE(`values`, ?, ''), ?, ''), ?, '')) = ''",
+				"\n", "\r", "\t",
+			).Error
+		},
+		Down: func(_ *gorm.DB) error {
+			return nil
+		},
+	}
+}
+
+// stackLifecycleColumnsMigration is migration 43. It adds
+// stack_instances.stopped_at, stack_definitions.owner_instance_id (indexed)
+// and deployment_logs.chart_versions and branch. Existing stopped instances get
+// stopped_at from their last successful stop log, or from updated_at when no
+// such log exists. It is a function so tests can run its Down step.
+func stackLifecycleColumnsMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261009000043",
+		Name:        "add_stack_lifecycle_columns",
+		Description: "Add stopped_at to stack_instances, owner_instance_id to stack_definitions, chart_versions and branch to deployment_logs; backfill stopped_at",
+		Up: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if m.HasTable(&models.StackInstance{}) && !m.HasColumn(&models.StackInstance{}, "StoppedAt") {
+				if err := m.AddColumn(&models.StackInstance{}, "StoppedAt"); err != nil {
+					return err
+				}
+			}
+			if m.HasTable(&models.StackDefinition{}) {
+				if !m.HasColumn(&models.StackDefinition{}, "OwnerInstanceID") {
+					if err := m.AddColumn(&models.StackDefinition{}, "OwnerInstanceID"); err != nil {
+						return err
+					}
+				}
+				if !m.HasIndex(&models.StackDefinition{}, "OwnerInstanceID") {
+					if err := m.CreateIndex(&models.StackDefinition{}, "OwnerInstanceID"); err != nil {
+						return err
+					}
+				}
+			}
+			for _, field := range []string{"ChartVersions", "Branch"} {
+				if m.HasTable(&models.DeploymentLog{}) && !m.HasColumn(&models.DeploymentLog{}, field) {
+					if err := m.AddColumn(&models.DeploymentLog{}, field); err != nil {
+						return err
+					}
+				}
+			}
+			if !m.HasTable(&models.StackInstance{}) {
+				return nil
+			}
+			if m.HasTable(&models.DeploymentLog{}) {
+				if err := tx.Exec(
+					`UPDATE stack_instances SET stopped_at = (
+						SELECT MAX(dl.completed_at) FROM deployment_logs dl
+						WHERE dl.stack_instance_id = stack_instances.id AND dl.action = ? AND dl.status = ?
+					) WHERE status = ? AND stopped_at IS NULL`,
+					models.DeployActionStop, models.DeployLogSuccess, models.StackStatusStopped,
+				).Error; err != nil {
+					return err
+				}
+			}
+			return tx.Exec(
+				"UPDATE stack_instances SET stopped_at = updated_at WHERE status = ? AND stopped_at IS NULL",
+				models.StackStatusStopped,
+			).Error
+		},
+		Down: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			for _, field := range []string{"Branch", "ChartVersions"} {
+				if m.HasColumn(&models.DeploymentLog{}, field) {
+					if err := m.DropColumn(&models.DeploymentLog{}, field); err != nil {
+						return err
+					}
+				}
+			}
+			if m.HasIndex(&models.StackDefinition{}, "OwnerInstanceID") {
+				if err := m.DropIndex(&models.StackDefinition{}, "OwnerInstanceID"); err != nil {
+					return err
+				}
+			}
+			if m.HasColumn(&models.StackDefinition{}, "OwnerInstanceID") {
+				if err := m.DropColumn(&models.StackDefinition{}, "OwnerInstanceID"); err != nil {
+					return err
+				}
+			}
+			if m.HasColumn(&models.StackInstance{}, "StoppedAt") {
+				return m.DropColumn(&models.StackInstance{}, "StoppedAt")
+			}
+			return nil
+		},
+	}
+}
+
+// backfillSnapshotChangeSummary marks the snapshots that migration 44 creates.
+const backfillSnapshotChangeSummary = "Backfill: release of the working copy at upgrade"
+
+// backfillDefaultVersion is the version of a migration 44 snapshot when the
+// template has no version string; the working copy takes it too.
+const backfillDefaultVersion = "1.0.0"
+
+// backfillPublishedTemplateSnapshotsMigration is migration 44. Before the
+// "draft and release" model, Use Template and Quick Deploy read the working
+// copy of a template. Now they (and the deploy-time locked values) read the
+// latest snapshot. So that nobody gets stale content after the upgrade, this
+// migration stores the working copy (template fields + template charts) as a
+// new snapshot, with the template version string and the owner as author,
+// for every template where:
+//   - the template is published and has no snapshot, or
+//   - the template is published or referenced by a stack definition
+//     (source_template_id), has a snapshot, and the latest snapshot uses the
+//     legacy format (schema_version < 1) or differs from the working copy.
+//
+// A template without a version string gets backfillDefaultVersion (snapshot
+// and working copy). Duplicate version strings are accepted here. The migration is idempotent:
+// after it, the latest snapshot equals the working copy. Down is a no-op: the
+// snapshots stay valid history.
+func backfillPublishedTemplateSnapshotsMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261009000044",
+		Name:        "release_template_working_copies",
+		Description: "Snapshot the working copy of published or referenced templates whose latest snapshot is missing, legacy or stale",
+		Up:          releaseTemplateWorkingCopies,
+		Down: func(_ *gorm.DB) error {
+			return nil
+		},
+	}
+}
+
+// releaseTemplateWorkingCopies is the Up step of migration 44.
+func releaseTemplateWorkingCopies(tx *gorm.DB) error {
+	m := tx.Migrator()
+	if !m.HasTable(&models.StackTemplate{}) || !m.HasTable(&models.TemplateVersion{}) || !m.HasTable(&models.TemplateChartConfig{}) {
+		return nil
+	}
+
+	referenced := make(map[string]bool)
+	if m.HasTable(&models.StackDefinition{}) {
+		var ids []string
+		if err := tx.Model(&models.StackDefinition{}).
+			Where("source_template_id IS NOT NULL AND source_template_id <> ''").
+			Distinct("source_template_id").
+			Pluck("source_template_id", &ids).Error; err != nil {
+			return err
+		}
+		for _, id := range ids {
+			referenced[id] = true
+		}
+	}
+
+	var templates []models.StackTemplate
+	if err := tx.Order("id").Find(&templates).Error; err != nil {
+		return err
+	}
+	for i := range templates {
+		tmpl := &templates[i]
+		if !tmpl.IsPublished && !referenced[tmpl.ID] {
+			continue
+		}
+
+		var latest models.TemplateVersion
+		hasSnapshot := true
+		if err := tx.Where("template_id = ?", tmpl.ID).Order("created_at DESC, id DESC").First(&latest).Error; err != nil {
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+			hasSnapshot = false
+		}
+		if !hasSnapshot && !tmpl.IsPublished {
+			continue // never released: readers fall back to the working copy
+		}
+
+		var charts []models.TemplateChartConfig
+		if err := tx.Where("stack_template_id = ?", tmpl.ID).Order("deploy_order ASC").Find(&charts).Error; err != nil {
+			return err
+		}
+		// A release needs a version string: an empty one becomes the default.
+		emptyVersion := strings.TrimSpace(tmpl.Version) == ""
+		if emptyVersion {
+			tmpl.Version = backfillDefaultVersion
+		}
+		working := models.NewTemplateSnapshot(tmpl, charts)
+
+		if hasSnapshot {
+			var current models.TemplateSnapshot
+			if err := json.Unmarshal([]byte(latest.Snapshot), &current); err == nil &&
+				current.SchemaVersion >= models.TemplateSnapshotSchemaVersion &&
+				models.SameTemplateContent(current, working) {
+				continue // the latest snapshot is the working copy already
+			}
+		}
+
+		snapshot, err := json.Marshal(working)
+		if err != nil {
+			return fmt.Errorf("marshal snapshot of template %s: %w", tmpl.ID, err)
+		}
+		createdAt := time.Now().UTC()
+		if hasSnapshot && !createdAt.After(latest.CreatedAt) {
+			createdAt = latest.CreatedAt.Add(time.Millisecond)
+		}
+		version := models.TemplateVersion{
+			ID:            uuid.New().String(),
+			TemplateID:    tmpl.ID,
+			Version:       tmpl.Version,
+			Snapshot:      string(snapshot),
+			ChangeSummary: backfillSnapshotChangeSummary,
+			CreatedBy:     tmpl.OwnerID,
+			CreatedAt:     createdAt,
+		}
+		if err := tx.Create(&version).Error; err != nil {
+			return err
+		}
+		if emptyVersion {
+			if err := tx.Model(&models.StackTemplate{}).Where("id = ?", tmpl.ID).Update("version", tmpl.Version).Error; err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// expiryWarnedAtMigration is migration 45. It adds the nullable
+// stack_instances.expiry_warned_at column. Before, the expiry warner kept
+// this state in process memory, so every replica (and every restart) sent the
+// warning again. No backfill: an instance in its warning window at upgrade
+// time gets one more warning, as after a restart before. It is a function so
+// tests can run its Down step.
+func expiryWarnedAtMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261009000045",
+		Name:        "add_stack_instance_expiry_warned_at",
+		Description: "Add expiry_warned_at to stack_instances (TTL expiry warning sent for the current expires_at)",
+		Up: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if m.HasTable(&models.StackInstance{}) && !m.HasColumn(&models.StackInstance{}, "ExpiryWarnedAt") {
+				return m.AddColumn(&models.StackInstance{}, "ExpiryWarnedAt")
+			}
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if m.HasColumn(&models.StackInstance{}, "ExpiryWarnedAt") {
+				return m.DropColumn(&models.StackInstance{}, "ExpiryWarnedAt")
+			}
+			return nil
+		},
+	}
+}
+
+// wsEventsMigration is migration 46. It creates the ws_events table for the
+// WebSocket fan-out between replicas: an auto-increment id (the read position
+// of the pollers) and an index on created_at for the cleanup. It is a
+// function so tests can run its Down step.
+func wsEventsMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261009000046",
+		Name:        "create_ws_events",
+		Description: "Create ws_events (WebSocket fan-out between replicas)",
+		Up: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&models.WSEvent{})
+		},
+		Down: func(tx *gorm.DB) error {
+			if tx.Migrator().HasTable(&models.WSEvent{}) {
+				return tx.Migrator().DropTable(&models.WSEvent{})
+			}
+			return nil
+		},
+	}
+}
+
+// auditEntityTypeRenames maps the plural entity types that the audit
+// middleware derived from the route before the audit route table to the
+// singular names it writes now (see middleware.KnownAuditEntityTypes). Only
+// plain CRUD entries used these names.
+var auditEntityTypeRenames = map[string]string{
+	"api_keys":              "api_key",
+	"branches":              "branch_override",
+	"cleanup_policies":      "cleanup_policy",
+	"clusters":              "cluster",
+	"favorites":             "favorite",
+	"notification_channels": "notification_channel",
+	"orphaned_namespaces":   "namespace",
+	"preferences":           "notification_preference",
+	"quota_overrides":       "quota_override",
+	"quotas":                "quota",
+	"subscriptions":         "notification_subscription",
+}
+
+// auditEntityTypesMigration is migration 47. It renames the plural entity
+// types of old audit entries (auditEntityTypeRenames) and widens
+// audit_logs.entity_id from 36 to 63 characters (an in-place ALTER on
+// MySQL; 63 is the RFC 1123 label maximum, for namespace names). Entries of non-CRUD operations
+// written before the route table (for example "create | deploy") keep their
+// values: the old entry does not tell the operation apart reliably. Down is a
+// no-op: new entries use the singular names too, and a narrower entity_id
+// could cut values.
+func auditEntityTypesMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261009000047",
+		Name:        "audit_logs_singular_entity_types",
+		Description: "Rename plural audit entity types to singular names and widen audit_logs.entity_id to 63",
+		Up: func(tx *gorm.DB) error {
+			if !tx.Migrator().HasTable(&models.AuditLog{}) {
+				return nil
+			}
+			if err := tx.Migrator().AlterColumn(&models.AuditLog{}, "EntityID"); err != nil {
+				return fmt.Errorf("widening audit_logs.entity_id: %w", err)
+			}
+			for from, to := range auditEntityTypeRenames {
+				if err := tx.Model(&models.AuditLog{}).
+					Where("entity_type = ?", from).
+					Update("entity_type", to).Error; err != nil {
+					return fmt.Errorf("renaming audit entity type %q: %w", from, err)
+				}
+			}
+			return nil
+		},
+		Down: func(_ *gorm.DB) error {
+			return nil
+		},
+	}
+}
+
+// definitionOwnerNameIndexName is the index that migration 48 creates.
+const definitionOwnerNameIndexName = "idx_stack_definitions_owner_name"
+
+// definitionOwnerNameIndexMigration is migration 48. It adds an index on
+// stack_definitions (owner_id, name) for the owner and name filters of
+// GET /stack-definitions and for the per-owner name check. Up and Down are
+// idempotent: they check whether the index exists first. It is a function so
+// tests can run its Down step.
+func definitionOwnerNameIndexMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261009000048",
+		Name:        "add_stack_definitions_owner_name_index",
+		Description: "Add index on stack_definitions (owner_id, name) for the owner and name list filters",
+		Up: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if !m.HasTable(&models.StackDefinition{}) || m.HasIndex(&models.StackDefinition{}, definitionOwnerNameIndexName) {
+				return nil
+			}
+			return tx.Exec("CREATE INDEX " + definitionOwnerNameIndexName + " ON stack_definitions(owner_id, name)").Error // #nosec G202 -- index name is a constant
+		},
+		Down: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if m.HasIndex(&models.StackDefinition{}, definitionOwnerNameIndexName) {
+				return m.DropIndex(&models.StackDefinition{}, definitionOwnerNameIndexName)
+			}
+			return nil
+		},
+	}
+}
+
+// deployLogUserIndexName is the composite index that migration 49 creates.
+// It covers SummarizeByUsers (filter user_id and action, read the times and
+// the status) without a table read.
+const deployLogUserIndexName = "idx_deployment_logs_user_action"
+
+// deployLogUserBackfillBatch is the number of deploy logs that one backfill
+// UPDATE of migration 49 changes.
+const deployLogUserBackfillBatch = 1000
+
+// deployLogUserIDMigration is migration 49. It adds deployment_logs.user_id
+// and a composite index on (user_id, action, started_at, completed_at,
+// status). Older deploy logs get the owner of their instance when the
+// instance still exists (the best value available; a deploy by another user
+// counts for the owner). Logs of deleted instances stay without a user. The
+// backfill runs in batches, so no statement locks the whole table. Up and
+// Down are idempotent. It is a function so tests can run its Down step.
+func deployLogUserIDMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261009000049",
+		Name:        "add_deployment_logs_user_id",
+		Description: "Add deployment_logs.user_id with a composite index for per-user deploy analytics and fill it from the instance owner",
+		Up: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if !m.HasTable(&models.DeploymentLog{}) {
+				return nil
+			}
+			if !m.HasColumn(&models.DeploymentLog{}, "UserID") {
+				if err := m.AddColumn(&models.DeploymentLog{}, "UserID"); err != nil {
+					return err
+				}
+			}
+			if !m.HasIndex(&models.DeploymentLog{}, deployLogUserIndexName) {
+				if err := tx.Exec("CREATE INDEX " + deployLogUserIndexName + // #nosec G202 -- index name is a constant
+					" ON deployment_logs(user_id, action, started_at, completed_at, status)").Error; err != nil {
+					return err
+				}
+			}
+			if !m.HasTable(&models.StackInstance{}) {
+				return nil
+			}
+			return backfillDeployLogUsers(tx, deployLogUserBackfillBatch)
+		},
+		Down: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if m.HasIndex(&models.DeploymentLog{}, deployLogUserIndexName) {
+				if err := m.DropIndex(&models.DeploymentLog{}, deployLogUserIndexName); err != nil {
+					return err
+				}
+			}
+			if m.HasColumn(&models.DeploymentLog{}, "UserID") {
+				return m.DropColumn(&models.DeploymentLog{}, "UserID")
+			}
+			return nil
+		},
+	}
+}
+
+// backfillDeployLogUsers sets user_id of deploy logs without a user to the
+// owner of their instance, batchSize rows per UPDATE, until no row is left.
+// It selects the IDs first and updates by ID: MySQL does not allow LIMIT in
+// an IN subquery on the updated table, and SQLite has no UPDATE ... LIMIT.
+// Only logs of an existing instance with an owner are selected, so each
+// batch changes every selected row and the loop ends.
+func backfillDeployLogUsers(tx *gorm.DB, batchSize int) error {
+	for {
+		var ids []string
+		if err := tx.Raw(
+			`SELECT dl.id FROM deployment_logs dl
+			JOIN stack_instances si ON si.id = dl.stack_instance_id
+			WHERE (dl.user_id IS NULL OR dl.user_id = '') AND dl.action = ?
+			AND si.owner_id IS NOT NULL AND si.owner_id <> ''
+			LIMIT ?`,
+			models.DeployActionDeploy, batchSize,
+		).Scan(&ids).Error; err != nil {
+			return fmt.Errorf("selecting deploy logs without a user: %w", err)
+		}
+		if len(ids) == 0 {
+			return nil
+		}
+		if err := tx.Exec(
+			`UPDATE deployment_logs SET user_id = (
+				SELECT si.owner_id FROM stack_instances si WHERE si.id = deployment_logs.stack_instance_id
+			) WHERE id IN ?`,
+			ids,
+		).Error; err != nil {
+			return fmt.Errorf("setting deploy log users: %w", err)
+		}
+	}
+}
+
+// userRoleIndexName is the index on users.role.
+const userRoleIndexName = "idx_users_role"
+
+// userRoleIndexMigration is migration 50. It adds an index on users.role.
+// The guarded admin changes (UpdateRole, SetDisabled, DeleteGuarded) lock
+// the admin rows with SELECT ... WHERE role = 'admin' FOR UPDATE; with the
+// index, InnoDB locks the admin rows only, not every scanned users row. Up
+// and Down are idempotent. It is a function so tests can run its Down step.
+func userRoleIndexMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261009000050",
+		Name:        "add_users_role_index",
+		Description: "Add an index on users.role for the admin-row locks of role, disable and delete changes",
+		Up: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if !m.HasTable(&models.User{}) || m.HasIndex(&models.User{}, userRoleIndexName) {
+				return nil
+			}
+			return tx.Exec("CREATE INDEX " + userRoleIndexName + " ON users (role)").Error // #nosec G202 -- index name is a constant
+		},
+		Down: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if m.HasIndex(&models.User{}, userRoleIndexName) {
+				return m.DropIndex(&models.User{}, userRoleIndexName)
+			}
+			return nil
+		},
+	}
+}
+
+// postDeployHookUntilMigration is migration 51. It adds
+// post_deploy_hook_until to stack_instances: set while blocking post-deploy
+// hooks run, so the k8s status watcher on the leader does not set error for
+// the instance during the wait. No backfill. It is a function so tests can
+// run its Down step.
+func postDeployHookUntilMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261009000051",
+		Name:        "add_stack_instance_post_deploy_hook_until",
+		Description: "Add post_deploy_hook_until to stack_instances (blocking post-deploy hooks run until this time)",
+		Up: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if m.HasTable(&models.StackInstance{}) && !m.HasColumn(&models.StackInstance{}, "PostDeployHookUntil") {
+				return m.AddColumn(&models.StackInstance{}, "PostDeployHookUntil")
+			}
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if m.HasColumn(&models.StackInstance{}, "PostDeployHookUntil") {
+				return m.DropColumn(&models.StackInstance{}, "PostDeployHookUntil")
+			}
+			return nil
+		},
+	}
+}
+
+// notificationChannelFiltersMigration is migration 52. It adds the nullable
+// text column notification_channels.filters. Existing channels get NULL (no
+// filters): they keep getting the events of all instances. Up and Down are
+// idempotent. It is a function so tests can run its Down step.
+func notificationChannelFiltersMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261009000052",
+		Name:        "add_notification_channels_filters",
+		Description: "Add notification_channels.filters (instance name, owner, definition and cluster filters of a channel)",
+		Up: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if !m.HasTable(&models.NotificationChannel{}) || m.HasColumn(&models.NotificationChannel{}, "Filters") {
+				return nil
+			}
+			return m.AddColumn(&models.NotificationChannel{}, "Filters")
+		},
+		Down: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if m.HasTable(&models.NotificationChannel{}) && m.HasColumn(&models.NotificationChannel{}, "Filters") {
+				return m.DropColumn(&models.NotificationChannel{}, "Filters")
+			}
+			return nil
+		},
+	}
+}
+
+// instanceFollowersMigration is migration 53. It creates instance_followers
+// with the primary key (user_id, instance_id), so a pair exists once, and an
+// index on instance_id for the follower lookups of the notifier. Up and Down
+// are idempotent. It is a function so tests can run its Down step.
+func instanceFollowersMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261009000053",
+		Name:        "create_instance_followers",
+		Description: "Create instance_followers (users who follow a stack instance)",
+		Up: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&models.InstanceFollower{})
+		},
+		Down: func(tx *gorm.DB) error {
+			if tx.Migrator().HasTable(&models.InstanceFollower{}) {
+				return tx.Migrator().DropTable(&models.InstanceFollower{})
+			}
+			return nil
+		},
+	}
+}
+
+// deployLogStatusStartedIndexName is the index on deployment_logs (status,
+// started_at) for ListRunningStartedBefore.
+const deployLogStatusStartedIndexName = "idx_deployment_logs_status_started"
+
+// deployLogReplicaIDMigration is migration 54. It adds the nullable columns
+// deployment_logs.replica_id (the process identity of the replica that runs
+// the operation) and deployment_logs.deadline_at (the latest time the
+// operation can still run), and the index idx_deployment_logs_status_started (status,
+// started_at): the leader lists the running logs every minute. Existing logs
+// get NULL; the recovery of interrupted operations skips them. Up and Down
+// are idempotent. It is a function so tests can run its Down step.
+func deployLogReplicaIDMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261010000054",
+		Name:        "add_deployment_logs_replica_id",
+		Description: "Add deployment_logs.replica_id, deployment_logs.deadline_at and an index on (status, started_at) for the recovery of interrupted operations",
+		Up: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if !m.HasTable(&models.DeploymentLog{}) {
+				return nil
+			}
+			for _, col := range []string{"ReplicaID", "DeadlineAt"} {
+				if !m.HasColumn(&models.DeploymentLog{}, col) {
+					if err := m.AddColumn(&models.DeploymentLog{}, col); err != nil {
+						return err
+					}
+				}
+			}
+			if m.HasIndex(&models.DeploymentLog{}, deployLogStatusStartedIndexName) {
+				return nil
+			}
+			return tx.Exec("CREATE INDEX " + deployLogStatusStartedIndexName + " ON deployment_logs (status, started_at)").Error // #nosec G202 -- index name is a constant
+		},
+		Down: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if !m.HasTable(&models.DeploymentLog{}) {
+				return nil
+			}
+			if m.HasIndex(&models.DeploymentLog{}, deployLogStatusStartedIndexName) {
+				if err := m.DropIndex(&models.DeploymentLog{}, deployLogStatusStartedIndexName); err != nil {
+					return err
+				}
+			}
+			for _, col := range []string{"ReplicaID", "DeadlineAt"} {
+				if m.HasColumn(&models.DeploymentLog{}, col) {
+					if err := m.DropColumn(&models.DeploymentLog{}, col); err != nil {
+						return err
+					}
+				}
+			}
+			return nil
+		},
+	}
+}
+
+// replicaHeartbeatsMigration is migration 55. It creates replica_heartbeats
+// (id = process identity, last_seen) with an index on last_seen for the
+// cleanup. Up and Down are idempotent. It is a function so tests can run its
+// Down step.
+func replicaHeartbeatsMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261010000055",
+		Name:        "create_replica_heartbeats",
+		Description: "Create replica_heartbeats (last sign of life of each backend process)",
+		Up: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&models.ReplicaHeartbeat{})
+		},
+		Down: func(tx *gorm.DB) error {
+			if tx.Migrator().HasTable(&models.ReplicaHeartbeat{}) {
+				return tx.Migrator().DropTable(&models.ReplicaHeartbeat{})
+			}
+			return nil
+		},
+	}
+}
+
+// migration56PreferenceEventTypes is the list of known notification
+// preference types when migration 56 was written (notifier.PreferenceEventTypes;
+// the database package cannot import notifier). It is frozen with the
+// migration: do not change it when the notifier list changes.
+var migration56PreferenceEventTypes = []string{
+	"deployment.success", "deployment.error", "deployment.partial", "deployment.warning",
+	"deploy.timeout", "deployment.stopped", "stop.error", "instance.created", "instance.deleted",
+	"clean.completed", "clean.error", "rollback.completed", "rollback.error", "stack.expiring",
+	"cleanup.policy.stop", "cleanup.policy.clean",
+	"cleanup.policy.executed", "quota.warning", "secret.expiring",
+}
+
+// unknownPreferenceTypesMigration is migration 56. It deletes the stored
+// notification preferences whose event type is not a known preference type
+// (migration56PreferenceEventTypes). The API accepted any type before it
+// validated them (issue #498); such rows have no effect and the Profile page
+// would send them back on save. Up is idempotent. Down does nothing: the
+// deleted rows had no effect.
+func unknownPreferenceTypesMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261010000056",
+		Name:        "delete_unknown_notification_preference_types",
+		Description: "Delete notification preferences of unknown event types",
+		Up: func(tx *gorm.DB) error {
+			if !tx.Migrator().HasTable(&models.NotificationPreference{}) {
+				return nil
+			}
+			return tx.Where("event_type NOT IN ?", migration56PreferenceEventTypes).
+				Delete(&models.NotificationPreference{}).Error
+		},
+		Down: func(_ *gorm.DB) error {
+			return nil
+		},
+	}
+}
+
+// deleteAfterCleanMigration is migration 57. It adds
+// stack_instances.delete_after_clean (bool, default false): set while a clean
+// runs as the first step of a delete. Up and Down are idempotent.
+func deleteAfterCleanMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261010000057",
+		Name:        "add_stack_instance_delete_after_clean",
+		Description: "Add delete_after_clean to stack_instances (the deploy manager deletes the instance when the clean completes)",
+		Up: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if m.HasTable(&models.StackInstance{}) && !m.HasColumn(&models.StackInstance{}, "DeleteAfterClean") {
+				return m.AddColumn(&models.StackInstance{}, "DeleteAfterClean")
+			}
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if m.HasTable(&models.StackInstance{}) && m.HasColumn(&models.StackInstance{}, "DeleteAfterClean") {
+				return m.DropColumn(&models.StackInstance{}, "DeleteAfterClean")
+			}
+			return nil
+		},
+	}
+}
+
+// containerQuotaFieldColumns are the fields that migration 58 adds to
+// resource_quota_configs and instance_quota_overrides. Frozen with the
+// migration.
+var containerQuotaFieldColumns = []string{
+	"ContainerCPURequest", "ContainerCPULimit", "ContainerCPUMax",
+	"ContainerMemoryRequest", "ContainerMemoryLimit", "ContainerMemoryMax",
+	"EphemeralStorageLimit", "ContainerEphemeralStorageRequest", "ContainerEphemeralStorageLimit",
+}
+
+// containerQuotaFieldsMigration is migration 58. It adds the per-container
+// LimitRange fields (container_cpu_request, ..., container_memory_max), the
+// namespace ephemeral_storage_limit and the per-container ephemeral-storage
+// defaults to resource_quota_configs and instance_quota_overrides
+// (varchar(20), NULL = not set). Up and Down are idempotent.
+func containerQuotaFieldsMigration() schema.Migration {
+	tables := []interface{}{&models.ResourceQuotaConfig{}, &models.InstanceQuotaOverride{}}
+	return schema.Migration{
+		Version:     "20261012000058",
+		Name:        "add_container_quota_fields",
+		Description: "Add per-container LimitRange fields and ephemeral_storage_limit to resource_quota_configs and instance_quota_overrides",
+		Up: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			for _, table := range tables {
+				if !m.HasTable(table) {
+					continue
+				}
+				for _, col := range containerQuotaFieldColumns {
+					if m.HasColumn(table, col) {
+						continue
+					}
+					if err := m.AddColumn(table, col); err != nil {
+						return err
+					}
+				}
+			}
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			for _, table := range tables {
+				if !m.HasTable(table) {
+					continue
+				}
+				for _, col := range containerQuotaFieldColumns {
+					if !m.HasColumn(table, col) {
+						continue
+					}
+					if err := m.DropColumn(table, col); err != nil {
+						return err
+					}
+				}
+			}
+			return nil
+		},
+	}
+}
+
+// cleanedAtMigration is migration 59. It adds stack_instances.cleaned_at, the
+// time the last successful clean finished (cleanup condition cleaned_days).
+// It backfills draft instances from their last successful clean log. A draft
+// without a clean log (never deployed) keeps NULL, so cleaned_days never
+// matches it. Up and Down are idempotent.
+func cleanedAtMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261014000059",
+		Name:        "add_stack_instance_cleaned_at",
+		Description: "Add cleaned_at to stack_instances (cleanup condition cleaned_days); backfill drafts from their last successful clean",
+		Up: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if !m.HasTable(&models.StackInstance{}) {
+				return nil
+			}
+			if !m.HasColumn(&models.StackInstance{}, "CleanedAt") {
+				if err := m.AddColumn(&models.StackInstance{}, "CleanedAt"); err != nil {
+					return err
+				}
+			}
+			if !m.HasTable(&models.DeploymentLog{}) {
+				return nil
+			}
+			return tx.Exec(
+				`UPDATE stack_instances SET cleaned_at = (
+					SELECT MAX(dl.completed_at) FROM deployment_logs dl
+					WHERE dl.stack_instance_id = stack_instances.id AND dl.action = ? AND dl.status = ?
+				) WHERE status = ? AND cleaned_at IS NULL`,
+				models.DeployActionClean, models.DeployLogSuccess, models.StackStatusDraft,
+			).Error
+		},
+		Down: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if m.HasTable(&models.StackInstance{}) && m.HasColumn(&models.StackInstance{}, "CleanedAt") {
+				return m.DropColumn(&models.StackInstance{}, "CleanedAt")
+			}
+			return nil
+		},
+	}
+}
+
+// notificationChannelFormatMigration is migration 60. It adds
+// notification_channels.format (varchar(20), NOT NULL, default 'generic'):
+// the body format of the channel webhook (generic event JSON or a Microsoft
+// Teams Adaptive Card envelope). Existing channels get 'generic', so they
+// keep the body they had. Up and Down are idempotent.
+func notificationChannelFormatMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261014000060",
+		Name:        "add_notification_channels_format",
+		Description: "Add notification_channels.format (generic or teams body format of a channel)",
+		Up: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if !m.HasTable(&models.NotificationChannel{}) {
+				return nil
+			}
+			if !m.HasColumn(&models.NotificationChannel{}, "Format") {
+				if err := m.AddColumn(&models.NotificationChannel{}, "Format"); err != nil {
+					return err
+				}
+			}
+			// The column default fills existing rows. This also repairs a
+			// row with an empty value.
+			return tx.Exec("UPDATE notification_channels SET format = ? WHERE format IS NULL OR format = ''",
+				models.NotificationChannelFormatGeneric).Error
+		},
+		Down: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if m.HasTable(&models.NotificationChannel{}) && m.HasColumn(&models.NotificationChannel{}, "Format") {
+				return m.DropColumn(&models.NotificationChannel{}, "Format")
+			}
+			return nil
+		},
+	}
 }

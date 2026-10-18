@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"backend/internal/models"
+	"backend/pkg/dberrors"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -106,4 +107,75 @@ func TestGORMStackTemplateRepository_ListByOwner(t *testing.T) {
 	tmpls, err := repo.ListByOwner("owner-a")
 	require.NoError(t, err)
 	assert.Len(t, tmpls, 2)
+}
+
+func TestGORMStackTemplateRepository_FindByIDForUpdate(t *testing.T) {
+	t.Parallel()
+
+	repo := setupStackTemplateRepo(t)
+	tmpl := &models.StackTemplate{Name: "locked", Version: "1.0.0", OwnerID: "owner-1"}
+	require.NoError(t, repo.Create(tmpl))
+
+	tests := []struct {
+		name         string
+		id           string
+		wantNotFound bool
+	}{
+		{"found", tmpl.ID, false},
+		{"not found", "missing", true},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := repo.FindByIDForUpdate(tt.id)
+			if tt.wantNotFound {
+				require.Error(t, err)
+				assert.ErrorIs(t, err, dberrors.ErrNotFound)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, "locked", got.Name)
+			assert.Equal(t, "1.0.0", got.Version)
+		})
+	}
+}
+
+func TestGORMStackTemplateRepository_ListPagedNameFilter(t *testing.T) {
+	t.Parallel()
+
+	repo := setupStackTemplateRepo(t)
+	for _, tmpl := range []*models.StackTemplate{
+		{Name: "web", OwnerID: "o", IsPublished: true},
+		{Name: "web", OwnerID: "o", IsPublished: false},
+		{Name: "web-2", OwnerID: "o", IsPublished: true},
+	} {
+		require.NoError(t, repo.Create(tmpl))
+	}
+
+	tests := []struct {
+		name      string
+		published bool
+		filter    string
+		want      int64
+	}{
+		{"all, exact name", false, "web", 2},
+		{"published, exact name", true, "web", 1},
+		{"no partial match", false, "we", 0},
+		{"no filter", false, "", 3},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			list := repo.ListPaged
+			if tt.published {
+				list = repo.ListPublishedPaged
+			}
+			got, total, err := list(10, 0, tt.filter)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, total)
+			assert.Len(t, got, int(tt.want))
+		})
+	}
 }

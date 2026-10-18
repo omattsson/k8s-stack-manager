@@ -269,6 +269,17 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 		expiration = h.authCfg.JWTExpiration
 	}
 
+	isCLI := strings.HasPrefix(stateData.RedirectURL, "cli:")
+
+	// With refresh tokens a browser login starts a session; the access token
+	// carries its ID ("sid") for idle-timeout tracking. A CLI login gets only
+	// its long-lived token: no session, no refresh cookie.
+	startsSession := h.refreshTokenRepo != nil && !isCLI
+	var sess refreshSession
+	if startsSession {
+		sess = newRefreshSession()
+	}
+
 	token, err := middleware.GenerateTokenWithOpts(middleware.GenerateTokenOptions{
 		UserID:       user.ID,
 		Username:     user.Username,
@@ -278,6 +289,7 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 		Expiration:   expiration,
 		AuthProvider: "oidc",
 		Email:        user.Email,
+		SessionID:    sess.familyID,
 	})
 	if err != nil {
 		slog.Error("Failed to generate JWT for OIDC user", "error", err)
@@ -285,37 +297,68 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 		return
 	}
 
-	// Issue refresh token cookie for OIDC users too.
-	if h.refreshTokenRepo != nil {
-		if issueErr := issueOIDCRefreshToken(c, h.refreshTokenRepo, h.authCfg, user.ID); issueErr != nil {
+	// CLI can't use refresh token cookies, so issue a long-lived JWT. It is
+	// signed here, before the user re-check below, so the re-check covers it.
+	cliToken := token
+	if isCLI && h.refreshTokenRepo != nil {
+		longLived, err := middleware.GenerateTokenWithOpts(middleware.GenerateTokenOptions{
+			UserID:       user.ID,
+			Username:     user.Username,
+			DisplayName:  user.DisplayName,
+			Role:         user.Role,
+			Secret:       h.authCfg.JWTSecret,
+			Expiration:   h.authCfg.JWTExpiration,
+			AuthProvider: "oidc",
+			Email:        user.Email,
+		})
+		if err == nil {
+			cliToken = longLived
+		} else {
+			slog.Warn("Failed to generate long-lived CLI token, using short-lived", "error", err)
+		}
+	}
+
+	// Close the disable race: re-read the user after signing and before any
+	// token is stored, returned, or a refresh token is persisted.
+	if err := recheckUserActive(h.userRepo, user.ID); err != nil {
+		switch {
+		case errors.Is(err, errAccountDisabled):
+			loginOutcome = "disabled"
+			c.Redirect(http.StatusFound, "/login?error="+errAccountDisabled.Error())
+		default:
+			slog.Error("OIDC user re-check failed", "user_id", user.ID, "error", err)
+			c.Redirect(http.StatusFound, "/login?error=auth_failed")
+		}
+		return
+	}
+
+	// Issue the refresh token cookie for a browser session.
+	if startsSession {
+		rawRefresh, refreshExpiry, issueErr := createRefreshToken(c, h.refreshTokenRepo, h.authCfg, user.ID, sess, "")
+		if issueErr != nil {
 			slog.Error("Failed to issue refresh token for OIDC user", "user_id", user.ID, "error", issueErr)
 			// Continue — access token is still valid.
+		} else {
+			// Close the revoke race (same as local login): a revoke-all after
+			// the issue must not leave a working session.
+			if err := recheckSessionActive(h.refreshTokenRepo, sess.familyID); err != nil {
+				abandonSession(h.refreshTokenRepo, sess.familyID)
+				clearRefreshCookieWith(c, h.authCfg)
+				if errors.Is(err, errSessionRevoked) {
+					loginOutcome = "revoked"
+				} else {
+					slog.Error("OIDC session re-check failed", "user_id", user.ID, "family_id", sess.familyID, "error", err)
+				}
+				c.Redirect(http.StatusFound, "/login?error=auth_failed")
+				return
+			}
+			writeRefreshCookie(c, h.authCfg, rawRefresh, refreshExpiry)
 		}
 	}
 
 	// Check if this is a CLI auth session.
-	if strings.HasPrefix(stateData.RedirectURL, "cli:") {
+	if isCLI {
 		sessionID := strings.TrimPrefix(stateData.RedirectURL, "cli:")
-
-		// CLI can't use refresh token cookies, so issue a long-lived JWT.
-		cliToken := token
-		if h.refreshTokenRepo != nil {
-			longLived, err := middleware.GenerateTokenWithOpts(middleware.GenerateTokenOptions{
-				UserID:       user.ID,
-				Username:     user.Username,
-				DisplayName:  user.DisplayName,
-				Role:         user.Role,
-				Secret:       h.authCfg.JWTSecret,
-				Expiration:   h.authCfg.JWTExpiration,
-				AuthProvider: "oidc",
-				Email:        user.Email,
-			})
-			if err == nil {
-				cliToken = longLived
-			} else {
-				slog.Warn("Failed to generate long-lived CLI token, using short-lived", "error", err)
-			}
-		}
 
 		if err := h.sessionStore.UpdateCLIAuth(c.Request.Context(), sessionID, sessionstore.CLIAuthData{
 			Token:    cliToken,
@@ -548,22 +591,28 @@ func (h *OIDCHandler) updateExistingOIDCUser(user *models.User, oidcUser *auth.O
 	if user.Disabled {
 		return nil, errAccountDisabled
 	}
+	// Write only the changed profile columns: a full-row save would
+	// overwrite a concurrent change of other columns (for example disabled).
+	var upd models.UserProfileUpdate
 	changed := false
 	if oidcUser.Email != "" && user.Email != oidcUser.Email {
 		user.Email = oidcUser.Email
+		upd.Email = &user.Email
 		changed = true
 	}
 	if oidcUser.Name != "" && user.DisplayName != oidcUser.Name {
 		user.DisplayName = oidcUser.Name
+		upd.DisplayName = &user.DisplayName
 		changed = true
 	}
 	newRole := h.provider.MapRole(oidcUser.Roles)
 	if newRole != user.Role {
 		user.Role = newRole
+		upd.Role = &user.Role
 		changed = true
 	}
 	if changed {
-		if updateErr := h.userRepo.Update(user); updateErr != nil {
+		if updateErr := h.userRepo.UpdateProfile(user.ID, upd); updateErr != nil {
 			slog.Error("Failed to update OIDC user", "user_id", user.ID, "error", updateErr)
 			// Abort authentication to avoid issuing a token with
 			// unpersisted changes (e.g., elevated role or new email).
@@ -580,16 +629,20 @@ func (h *OIDCHandler) linkLocalUserToOIDC(user *models.User, oidcUser *auth.OIDC
 	}
 	user.AuthProvider = "oidc"
 	user.ExternalID = &oidcUser.Subject
+	upd := models.UserProfileUpdate{LinkProvider: &user.AuthProvider, ExternalID: user.ExternalID}
 	if oidcUser.Email != "" {
 		user.Email = oidcUser.Email
+		upd.Email = &user.Email
 	}
 	if oidcUser.Name != "" {
 		user.DisplayName = oidcUser.Name
+		upd.DisplayName = &user.DisplayName
 	}
 	user.Role = h.provider.MapRole(oidcUser.Roles)
+	upd.Role = &user.Role
 	user.PasswordHash = ""
 
-	if err := h.userRepo.Update(user); err != nil {
+	if err := h.userRepo.UpdateProfile(user.ID, upd); err != nil {
 		slog.Error("Failed to link local user to OIDC", "user_id", user.ID, "error", err)
 		return nil, fmt.Errorf(errMsgAuthFailed)
 	}
@@ -698,55 +751,4 @@ func isDuplicateError(err error) bool {
 	}
 	msg := err.Error()
 	return strings.Contains(msg, "duplicate key") || strings.Contains(msg, "Duplicate entry")
-}
-
-// issueOIDCRefreshToken creates and stores a refresh token for an OIDC-authenticated user
-// and sets the httpOnly cookie. Enforces MaxRefreshTokensPerUser like the main auth flow.
-func issueOIDCRefreshToken(c *gin.Context, repo models.RefreshTokenRepository, cfg *config.AuthConfig, userID string) error {
-	// Enforce max tokens per user.
-	if cfg.MaxRefreshTokensPerUser > 0 {
-		activeCount, err := repo.CountActiveForUser(userID)
-		if err != nil {
-			return err
-		}
-		if int(activeCount) >= cfg.MaxRefreshTokensPerUser {
-			if err := repo.RevokeAllForUser(userID); err != nil {
-				return err
-			}
-		}
-	}
-
-	rawToken, err := generateRefreshToken()
-	if err != nil {
-		return err
-	}
-
-	now := time.Now().UTC()
-	rt := &models.RefreshToken{
-		ID:           uuid.New().String(),
-		UserID:       userID,
-		TokenHash:    hashRefreshToken(rawToken),
-		ExpiresAt:    now.Add(cfg.RefreshTokenExpiration),
-		LastActivity: now,
-		CreatedAt:    now,
-		UserAgent:    truncate(c.GetHeader("User-Agent"), 500),
-		IPAddress:    c.ClientIP(),
-	}
-
-	if err := repo.Create(rt); err != nil {
-		return err
-	}
-
-	maxAge := int(cfg.RefreshTokenExpiration.Seconds())
-	c.SetSameSite(cfg.HTTPSameSite())
-	c.SetCookie(
-		refreshTokenCookieName,
-		rawToken,
-		maxAge,
-		"/api/v1/auth",
-		"",
-		cfg.SecureCookies,
-		true,
-	)
-	return nil
 }

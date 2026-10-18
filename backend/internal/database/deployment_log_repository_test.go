@@ -185,6 +185,28 @@ func TestGORMDeploymentLogRepository_SummarizeByInstance(t *testing.T) {
 			wantError:   2,
 			wantLastNil: false,
 		},
+		{
+			name: "a partial deploy counts as an error",
+			setup: func(t *testing.T, repo *GORMDeploymentLogRepository) {
+				t.Helper()
+				ctx := context.Background()
+				now := time.Now().UTC()
+				completed := now.Add(-1 * time.Minute)
+				for _, status := range []string{models.DeployLogSuccess, models.DeployLogPartial} {
+					require.NoError(t, repo.Create(ctx, &models.DeploymentLog{
+						StackInstanceID: "si-sum-partial",
+						Action:          models.DeployActionDeploy,
+						Status:          status,
+						StartedAt:       now.Add(-1 * time.Hour),
+						CompletedAt:     &completed,
+					}))
+				}
+			},
+			instanceID:  "si-sum-partial",
+			wantDeploy:  2,
+			wantSuccess: 1,
+			wantError:   1,
+		},
 	}
 
 	for _, tt := range tests {

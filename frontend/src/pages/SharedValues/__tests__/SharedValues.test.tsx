@@ -108,6 +108,24 @@ describe('SharedValues Page', () => {
     expect(within(firstDataRow).getByText('Base Config')).toBeInTheDocument();
   });
 
+  it('shows that shared values are not secret', async () => {
+    (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockClusters);
+    (sharedValuesService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockSharedValues);
+
+    render(
+      <MemoryRouter>
+        <NotificationProvider>
+          <SharedValuesPage />
+        </NotificationProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/Shared values are not secret/)).toBeInTheDocument();
+    });
+    expect(screen.getByText(/Keep secrets in Kubernetes Secrets\./)).toBeInTheDocument();
+  });
+
   it('opens create dialog and submits', async () => {
     const user = userEvent.setup();
     (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockClusters);

@@ -10,6 +10,19 @@ export interface User {
   updated_at: string;
 }
 
+/** User role, lowest to highest permission. */
+export type UserRole = 'user' | 'devops' | 'admin';
+
+/** Response of `PUT /api/v1/users/:id/role`. */
+export interface ChangeRoleResponse {
+  id: string;
+  old_role: string;
+  new_role: UserRole;
+  /** False when the user already had the role (no change, no sign-out). */
+  changed: boolean;
+  message: string;
+}
+
 export interface JwtPayload {
   user_id: string;
   username: string;
@@ -50,6 +63,31 @@ export interface StackTemplate {
   charts?: TemplateChartConfig[];
   definition_count?: number;
   owner_username?: string;
+  /** Version string of the latest release snapshot. Null when the template has no release. */
+  published_version?: string | null;
+  /** ID of the latest release snapshot. Null when the template has no release. */
+  published_version_id?: string | null;
+  /** True when the working copy differs from the latest release snapshot. */
+  has_unpublished_changes?: boolean;
+  /**
+   * Charts of the latest release snapshot: what Use Template and Quick Deploy apply.
+   * Their IDs are valid `chart_overrides` keys. Null when the template has no release.
+   */
+  published_charts?: TemplateChartConfig[] | null;
+}
+
+/** Optional body for `POST /api/v1/templates/:id/publish`. */
+export interface PublishTemplateRequest {
+  /** Release version. The API uses the working copy version when this is omitted. */
+  version?: string;
+  change_summary?: string;
+}
+
+/** Normalized result of a publish call. */
+export interface PublishTemplateResult {
+  template: StackTemplate;
+  /** False when nothing changed since the latest release and the API created no snapshot. */
+  snapshotCreated: boolean;
 }
 
 export interface TemplateChartConfig {
@@ -72,12 +110,16 @@ export interface StackDefinition {
   name: string;
   description: string;
   owner_id: string;
+  /** Username of the owner. Omitted when the owner does not exist. */
+  owner_username?: string;
   source_template_id?: string;
   source_template_version?: string;
   default_branch: string;
   created_at: string;
   updated_at: string;
   charts?: ChartConfig[];
+  /** Number of charts; set by the paged list, which does not load the charts. */
+  chart_count?: number;
 }
 
 export interface ChartConfig {
@@ -106,18 +148,63 @@ export interface StackInstance {
   last_deployed_at?: string;
   ttl_minutes?: number;
   expires_at?: string;
+  /** True when the stored overrides differ from the values that run (for example after a rollback). */
+  values_drift?: boolean;
+  /** Username of the owner. Omitted when the owner does not exist. */
+  owner_username?: string;
+  /** Name of the stack definition. Omitted when the definition does not exist. */
+  definition_name?: string;
+  /** Name of the target cluster. Omitted when the cluster no longer exists or `cluster_id` is empty (older instances). */
+  cluster_name?: string;
+  /** True when the current user follows the instance. `GET`, `PUT` and `POST .../extend` on `/stack-instances/:id` set it; omitted when following is not available. */
+  following?: boolean;
+  /** Number of users who follow the instance. `GET`, `PUT` and `POST .../extend` on `/stack-instances/:id` set it. */
+  follower_count?: number;
   created_at: string;
   updated_at: string;
   definition?: StackDefinition;
+}
+
+/** Response of `POST` and `DELETE /stack-instances/:id/follow`. */
+export interface FollowState {
+  following: boolean;
+  follower_count: number;
+}
+
+/** Response of `POST /stack-instances/:id/rollback`. */
+export interface RollbackResponse {
+  log_id: string;
+  message: string;
+  /** The deploy log the rollback goes back to, when a target was given. */
+  target_log_id?: string;
+  /** True when the stored overrides differ from the values that run after the rollback. */
+  values_drift?: boolean;
+  /** Warning for the user, for example that the next deploy applies the stored overrides again. */
+  warning?: string;
+}
+
+/** Request body of `POST /stack-instances/:id/clone`. */
+export interface CloneInstanceRequest {
+  /** Name of the copy (RFC 1123 label). Omit it to let the server pick a free `<name>-copy[-N]`. */
+  name?: string;
+  branch?: string;
+  ttl_minutes?: number;
+  /** Fixed stop time (ISO 8601). Do not send it with ttl_minutes. */
+  expires_at?: string;
 }
 
 export interface DeploymentLog {
   id: string;
   stack_instance_id: string;
   action: 'deploy' | 'stop' | 'clean' | 'rollback';
-  status: 'running' | 'success' | 'error';
+  /** `partial`: the deploy finished, but not all workloads are ready (same meaning as the instance status). */
+  status: 'running' | 'success' | 'partial' | 'error';
   output: string;
   error_message?: string;
+  /** Branch of the deploy, when the API sends it. */
+  branch?: string;
+  /** For a rollback: the deploy log that was the rollback target. */
+  target_log_id?: string;
   started_at: string;
   completed_at?: string;
 }
@@ -195,6 +282,8 @@ export interface IngressInfo {
   path: string;
   tls: boolean;
   url: string;
+  /** Set for the Ingress with the annotation k8s-stack-manager.io/primary-url: "true". The API lists primary ingresses first. */
+  primary?: boolean;
 }
 
 export interface NamespaceStatus {
@@ -228,6 +317,7 @@ export interface AuditLog {
 export interface AuditLogFilters {
   user_id?: string;
   entity_type?: string;
+  entity_id?: string;
   action?: string;
   start_date?: string;
   end_date?: string;
@@ -308,8 +398,12 @@ export interface OrphanedNamespace {
   name: string;
   created_at: string;
   phase: string;
-  resource_counts?: ResourceCounts;
-  helm_releases: string[];
+  /** Null or absent when the server did not count the resources. */
+  resource_counts?: ResourceCounts | null;
+  /** Null when the namespace has no Helm releases (Go nil slice). */
+  helm_releases: string[] | null;
+  /** True when the namespace has the label managed-by=k8s-stack-manager. */
+  managed: boolean;
 }
 
 export interface Cluster {
@@ -322,6 +416,8 @@ export interface Cluster {
   max_namespaces: number;
   max_instances_per_user: number;
   is_default: boolean;
+  /** True when the backend uses its own service account (in-cluster config); api_server_url is then empty. */
+  use_in_cluster?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -336,6 +432,7 @@ export interface CreateClusterRequest {
   max_namespaces: number;
   max_instances_per_user?: number;
   is_default: boolean;
+  use_in_cluster?: boolean;
 }
 
 export interface UpdateClusterRequest {
@@ -348,6 +445,7 @@ export interface UpdateClusterRequest {
   max_namespaces?: number;
   max_instances_per_user?: number;
   is_default?: boolean;
+  use_in_cluster?: boolean;
 }
 
 export interface ClusterTestResult {
@@ -378,6 +476,8 @@ export interface QuickDeployRequest {
   branch?: string;
   cluster_id?: string;
   ttl_minutes?: number;
+  /** Fixed stop time (ISO 8601). Do not send it with ttl_minutes. */
+  expires_at?: string;
   branch_overrides?: Record<string, string>;
 }
 
@@ -394,6 +494,10 @@ export interface ClusterSummary {
   total_memory: string;
   allocatable_cpu: string;
   allocatable_memory: string;
+  /** Sum of the CPU requests of scheduled, unfinished pods (not real use). */
+  requested_cpu?: string;
+  /** Sum of the memory requests of scheduled, unfinished pods (not real use). */
+  requested_memory?: string;
   namespace_count: number;
 }
 
@@ -442,6 +546,8 @@ export interface OverviewStats {
   running_instances: number;
   total_deploys: number;
   total_users: number;
+  /** DEPLOY_LOG_RETENTION_DAYS. Deploy counts cover only the kept deploy logs. 0: all logs are kept. */
+  deploy_log_retention_days?: number;
 }
 
 export interface TemplateStats {
@@ -567,6 +673,17 @@ export interface NotificationListResponse {
   unread_count: number;
 }
 
+/** Source template of an exported definition. The import looks it up by id, else by name. */
+export interface SourceTemplateRef {
+  id?: string;
+  name?: string;
+  /** A published version of the template. Empty means the latest. */
+  version?: string;
+}
+
+/** Response of the definition import: the definition, and warnings such as a template link that was not set. */
+export type ImportDefinitionResponse = StackDefinition & { warnings?: string[] };
+
 export interface DefinitionExportBundle {
   schema_version: string;
   exported_at: string;
@@ -575,6 +692,8 @@ export interface DefinitionExportBundle {
     description: string;
     default_branch: string;
     repository_url: string;
+    /** Template that the definition is linked to (id or name, and version). */
+    source_template?: SourceTemplateRef;
     [key: string]: unknown;
   };
   charts: Array<{
@@ -595,6 +714,16 @@ export interface ResourceQuotaConfig {
   memory_limit: string;
   storage_limit: string;
   pod_limit: number;
+  /** Per-container LimitRange values and the namespace ephemeral-storage total (empty = not set). */
+  container_cpu_request?: string;
+  container_cpu_limit?: string;
+  container_cpu_max?: string;
+  container_memory_request?: string;
+  container_memory_limit?: string;
+  container_memory_max?: string;
+  ephemeral_storage_limit?: string;
+  container_ephemeral_storage_request?: string;
+  container_ephemeral_storage_limit?: string;
 }
 
 export interface InstanceQuotaOverride {
@@ -606,6 +735,16 @@ export interface InstanceQuotaOverride {
   memory_limit: string;
   storage_limit: string;
   pod_limit: number | null;
+  /** Per-container LimitRange values and the namespace ephemeral-storage total (empty = not set). */
+  container_cpu_request?: string;
+  container_cpu_limit?: string;
+  container_cpu_max?: string;
+  container_memory_request?: string;
+  container_memory_limit?: string;
+  container_memory_max?: string;
+  ephemeral_storage_limit?: string;
+  container_ephemeral_storage_request?: string;
+  container_ephemeral_storage_limit?: string;
   created_at?: string;
   updated_at?: string;
 }
@@ -630,6 +769,7 @@ export interface TemplateVersion {
   version: string;
   change_summary: string;
   created_by: string;
+  created_by_username?: string;
   created_at: string;
   snapshot?: TemplateSnapshot;
 }
@@ -654,16 +794,57 @@ export interface TemplateSnapshot {
   }>;
 }
 
+/** Per-chart difference between two template snapshots. */
+export interface TemplateChartDiff {
+  chart_name: string;
+  left_values?: string | null;
+  right_values?: string | null;
+  left_locked?: string;
+  right_locked?: string;
+  left_repo_url?: string;
+  right_repo_url?: string;
+  /** Omitted by the API when false. */
+  left_required?: boolean;
+  right_required?: boolean;
+  /** Omitted by the API when 0. */
+  left_sort_order?: number;
+  right_sort_order?: number;
+  /** Compared by the API only when both sides store them (snapshot schema 1 or the working copy). */
+  left_chart_version?: string;
+  right_chart_version?: string;
+  left_chart_path?: string;
+  right_chart_path?: string;
+  has_differences: boolean;
+  change_type: 'added' | 'removed' | 'modified' | 'unchanged';
+}
+
+/** One side of a version diff. `version` is the version string (for example "1.0.0"). */
+export interface VersionDiffSide {
+  /** Version ID, or "working" for the working copy. */
+  id?: string;
+  version: string;
+  snapshot: TemplateSnapshot;
+  change_summary?: string;
+  created_by?: string;
+  created_by_username?: string;
+  created_at?: string;
+  is_working_copy?: boolean;
+}
+
+/** One template field that differs between the two sides of a version diff. */
+export interface TemplateFieldDiff {
+  /** Snapshot field name: name, description, category, default_branch or version. */
+  field: string;
+  left: string;
+  right: string;
+}
+
 export interface VersionDiffResponse {
-  left: { version: TemplateVersion; snapshot: TemplateSnapshot };
-  right: { version: TemplateVersion; snapshot: TemplateSnapshot };
-  chart_diffs: Array<{
-    chart_name: string;
-    left_values: string | null;
-    right_values: string | null;
-    has_differences: boolean;
-    change_type: 'added' | 'removed' | 'modified' | 'unchanged';
-  }>;
+  left: VersionDiffSide;
+  right: VersionDiffSide;
+  /** Changed template fields. Absent in responses of older servers. */
+  template_diffs?: TemplateFieldDiff[];
+  chart_diffs: TemplateChartDiff[];
 }
 
 export interface UpgradeCheckResponse {
@@ -676,6 +857,8 @@ export interface UpgradeCheckResponse {
     charts_modified: string[];
     charts_unchanged: string[];
   };
+  /** Optional per-chart value diff (current definition values vs the latest release). */
+  chart_diffs?: TemplateChartDiff[];
 }
 
 export interface ChartDeployPreview {
@@ -723,6 +906,8 @@ export interface DashboardExpiring {
   expires_at: string;
   ttl_minutes: number;
   cluster_id?: string;
+  /** Owner user ID. Optional: older backends do not send it. */
+  owner_id?: string;
 }
 
 export interface DashboardFailing {
@@ -742,13 +927,44 @@ export interface DashboardResponse {
   failing_instances: DashboardFailing[];
 }
 
+/**
+ * Instance filters of a notification channel. Each set filter must match
+ * (AND); one value of a filter is enough (OR). Empty filters match all
+ * instances. Events without an instance go only to channels without filters.
+ */
+export interface NotificationChannelFilters {
+  /** Glob patterns for the instance name (`*`, `?`, `[a-z]`), case-insensitive. */
+  instance_name_patterns?: string[];
+  /** User IDs of instance owners. */
+  owner_ids?: string[];
+  /** Stack definition IDs. */
+  definition_ids?: string[];
+  /** Cluster IDs. */
+  cluster_ids?: string[];
+}
+
+/**
+ * Body format of a notification channel. `generic` sends the event JSON.
+ * `teams` sends a Microsoft Teams Adaptive Card envelope.
+ */
+export type NotificationChannelFormat = 'generic' | 'teams';
+
 export interface NotificationChannel {
   id: string;
   name: string;
   webhook_url: string;
   enabled: boolean;
+  /** Body format. An older backend omits it; treat a missing value as `generic`. */
+  format?: NotificationChannelFormat;
+  /** Instance filters; an empty object means all instances. */
+  filters?: NotificationChannelFilters;
   created_at: string;
   updated_at: string;
+}
+
+/** Create and update response of a channel: the channel and warnings for unknown filter IDs. */
+export interface NotificationChannelSaveResult extends NotificationChannel {
+  warnings?: string[];
 }
 
 export interface NotificationChannelWithCount extends NotificationChannel {
@@ -770,4 +986,95 @@ export interface NotificationDeliveryLog {
   status_code: number;
   error_message?: string;
   created_at: string;
+}
+
+/** Type of an action parameter: a text field, a switch or a select. */
+export type ActionParameterType = 'string' | 'bool' | 'enum';
+
+/** One input of a custom action, from the action config. */
+export interface ActionParameter {
+  name: string;
+  /** Form label. The server sets it to the name when the config has no label. */
+  label: string;
+  description?: string;
+  type: ActionParameterType;
+  required: boolean;
+  /** A string for `string` and `enum`, a boolean for `bool`. */
+  default?: string | boolean;
+  /** The allowed values of an `enum` parameter. */
+  options?: string[];
+}
+
+/** A custom action that can run on a stack instance (`GET /stack-instances/:id/actions`). */
+export interface InstanceAction {
+  name: string;
+  /** Menu text. The server sets it to the name when the config has no label. */
+  label: string;
+  description?: string;
+  /** Confirmation text to show before the action runs. */
+  confirm?: string;
+  parameters: ActionParameter[];
+  /** True when the backend proxies the job log of the action. */
+  has_job_log: boolean;
+  /** True when the current user may run the action on this instance. */
+  can_invoke: boolean;
+}
+
+/** Response of `GET /stack-instances/:id/actions`. */
+export interface InstanceActionList {
+  instance_id: string;
+  can_invoke: boolean;
+  actions: InstanceAction[];
+}
+
+/** Response of `POST /stack-instances/:id/actions/:name`. */
+export interface ActionInvokeResult {
+  action: string;
+  instance_id: string;
+  /** HTTP status of the action subscriber. A non-2xx value is an action failure. */
+  status_code: number;
+  /** JSON body of the action subscriber. */
+  result: unknown;
+  /** Job ID of an asynchronous action with a job log. */
+  job_id?: string;
+  /**
+   * Reason of the subscriber for a status of 400 or higher (one line, at most
+   * 500 characters, URLs replaced by [url]). Older servers omit it.
+   */
+  message?: string;
+}
+
+/** Response of `GET /stack-instances/:id/actions/:name/jobs/:job_id/log`. */
+export interface ActionJobLog {
+  action: string;
+  instance_id: string;
+  job_id: string;
+  /** `running` while the job runs, else a final state such as `succeeded` or `failed`. */
+  status: string;
+  /** Log text from `offset` to `next_offset`. */
+  log: string;
+  offset: number;
+  /** Offset for the next poll. */
+  next_offset: number;
+  /** True when the job has ended and the log is read to the end. */
+  done: boolean;
+  /** True when the chunk was cut at the size cap. Poll again at once. */
+  truncated: boolean;
+}
+
+/**
+ * Display values of the web UI from `GET /api/v1/ui-config` (env APP_TITLE,
+ * APP_LOGO_URL, APP_FAVICON_URL).
+ */
+export interface UIConfig {
+  /** Product name in the browser tab, sidebar, app bar, login page and setup wizard. */
+  title: string;
+  /** Logo image URL. Empty: the built-in logo. */
+  logo_url: string;
+  /** Browser tab icon URL. */
+  favicon_url: string;
+  /** Start value of the TTL field in the create forms, in minutes (DEFAULT_INSTANCE_TTL_MINUTES). 0: no expiry. */
+  default_instance_ttl_minutes?: number;
+  /** Maximum TTL and stop-time distance from now, in days (MAX_INSTANCE_TTL_DAYS). */
+  max_instance_ttl_days?: number;
 }

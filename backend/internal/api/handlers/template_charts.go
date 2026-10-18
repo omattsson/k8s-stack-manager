@@ -18,7 +18,7 @@ const (
 
 // AddTemplateChart godoc
 // @Summary     Add a chart to a template
-// @Description Add a new chart configuration to a stack template
+// @Description Add a new chart configuration to the working copy (draft) of a stack template. Users get the change after the next publish. Template owner or admin only.
 // @Tags        template-charts
 // @Accept      json
 // @Produce     json
@@ -26,17 +26,18 @@ const (
 // @Param       chart body     models.TemplateChartConfig   true "Chart config"
 // @Success     201   {object} models.TemplateChartConfig
 // @Failure     400   {object} map[string]string
+// @Failure     401   {object} map[string]string
+// @Failure     403   {object} map[string]string
 // @Failure     404   {object} map[string]string
+// @Failure     500   {object} map[string]string
 // @Router      /api/v1/templates/{id}/charts [post]
 func (h *TemplateHandler) AddTemplateChart(c *gin.Context) {
-	templateID := c.Param("id")
-
-	// Verify template exists.
-	if _, err := h.templateRepo.FindByID(templateID); err != nil {
-		status, message := mapError(err, entityTemplate)
-		c.JSON(status, gin.H{"error": message})
+	// Verify the template exists and the caller is its owner or an admin.
+	tmpl := h.findManagedTemplate(c)
+	if tmpl == nil {
 		return
 	}
+	templateID := tmpl.ID
 
 	var chart models.TemplateChartConfig
 	if err := c.ShouldBindJSON(&chart); err != nil {
@@ -64,7 +65,7 @@ func (h *TemplateHandler) AddTemplateChart(c *gin.Context) {
 
 // UpdateTemplateChart godoc
 // @Summary     Update a template chart
-// @Description Update a chart configuration within a stack template
+// @Description Update a chart configuration in the working copy (draft) of a stack template. Users get the change after the next publish. Template owner or admin only.
 // @Tags        template-charts
 // @Accept      json
 // @Produce     json
@@ -73,15 +74,14 @@ func (h *TemplateHandler) AddTemplateChart(c *gin.Context) {
 // @Param       chart   body     models.TemplateChartConfig   true "Updated chart config"
 // @Success     200     {object} models.TemplateChartConfig
 // @Failure     400     {object} map[string]string
+// @Failure     401     {object} map[string]string
+// @Failure     403     {object} map[string]string
 // @Failure     404     {object} map[string]string
+// @Failure     500     {object} map[string]string
 // @Router      /api/v1/templates/{id}/charts/{chartId} [put]
 func (h *TemplateHandler) UpdateTemplateChart(c *gin.Context) {
-	chartID := c.Param("chartId")
-
-	existing, err := h.chartRepo.FindByID(chartID)
-	if err != nil {
-		status, message := mapError(err, entityTemplateChart)
-		c.JSON(status, gin.H{"error": message})
+	existing := h.findManagedTemplateChart(c)
+	if existing == nil {
 		return
 	}
 
@@ -118,22 +118,50 @@ func (h *TemplateHandler) UpdateTemplateChart(c *gin.Context) {
 
 // DeleteTemplateChart godoc
 // @Summary     Delete a template chart
-// @Description Remove a chart configuration from a stack template
+// @Description Remove a chart configuration from the working copy (draft) of a stack template. Users get the change after the next publish. Template owner or admin only.
 // @Tags        template-charts
 // @Produce     json
 // @Param       id      path     string true "Template ID"
 // @Param       chartId path     string true "Chart config ID"
 // @Success     204     "No Content"
+// @Failure     401     {object} map[string]string
+// @Failure     403     {object} map[string]string
 // @Failure     404     {object} map[string]string
+// @Failure     500     {object} map[string]string
 // @Router      /api/v1/templates/{id}/charts/{chartId} [delete]
 func (h *TemplateHandler) DeleteTemplateChart(c *gin.Context) {
-	chartID := c.Param("chartId")
+	chart := h.findManagedTemplateChart(c)
+	if chart == nil {
+		return
+	}
 
-	if err := h.chartRepo.Delete(chartID); err != nil {
+	if err := h.chartRepo.Delete(chart.ID); err != nil {
 		status, message := mapError(err, entityTemplateChart)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	c.Status(http.StatusNoContent)
+}
+
+// findManagedTemplateChart loads the :chartId chart of the :id template and
+// checks that the caller is the template owner or an admin. A chart of
+// another template gives 404. It writes the error response and returns nil on
+// failure.
+func (h *TemplateHandler) findManagedTemplateChart(c *gin.Context) *models.TemplateChartConfig {
+	tmpl := h.findManagedTemplate(c)
+	if tmpl == nil {
+		return nil
+	}
+	chart, err := h.chartRepo.FindByID(c.Param("chartId"))
+	if err != nil {
+		status, message := mapError(err, entityTemplateChart)
+		c.JSON(status, gin.H{"error": message})
+		return nil
+	}
+	if chart.StackTemplateID != tmpl.ID {
+		c.JSON(http.StatusNotFound, gin.H{"error": entityTemplateChart + " not found"})
+		return nil
+	}
+	return chart
 }

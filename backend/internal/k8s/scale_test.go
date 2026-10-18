@@ -32,15 +32,15 @@ func newTestDeployment(namespace, name string, replicas int32, matchLabels map[s
 func TestScaleDeployment_UpdatesReplicas(t *testing.T) {
 	t.Parallel()
 
-	labels := map[string]string{"app": "kvk-core"}
-	deploy := newTestDeployment("ns1", "kvk-core", 1, labels)
+	labels := map[string]string{"app": "app-core"}
+	deploy := newTestDeployment("ns1", "app-core", 1, labels)
 	cs := fake.NewSimpleClientset(deploy)
 	c := NewClientFromInterface(cs)
 
-	err := c.ScaleDeployment(context.Background(), "ns1", "kvk-core", 0)
+	err := c.ScaleDeployment(context.Background(), "ns1", "app-core", 0)
 	require.NoError(t, err)
 
-	got, err := cs.AppsV1().Deployments("ns1").Get(context.Background(), "kvk-core", metav1.GetOptions{})
+	got, err := cs.AppsV1().Deployments("ns1").Get(context.Background(), "app-core", metav1.GetOptions{})
 	require.NoError(t, err)
 	require.NotNil(t, got.Spec.Replicas)
 	assert.Equal(t, int32(0), *got.Spec.Replicas)
@@ -49,12 +49,12 @@ func TestScaleDeployment_UpdatesReplicas(t *testing.T) {
 func TestScaleDeployment_NoOpWhenAlreadyAtTarget(t *testing.T) {
 	t.Parallel()
 
-	labels := map[string]string{"app": "kvk-core"}
-	deploy := newTestDeployment("ns1", "kvk-core", 0, labels)
+	labels := map[string]string{"app": "app-core"}
+	deploy := newTestDeployment("ns1", "app-core", 0, labels)
 	cs := fake.NewSimpleClientset(deploy)
 	c := NewClientFromInterface(cs)
 
-	err := c.ScaleDeployment(context.Background(), "ns1", "kvk-core", 0)
+	err := c.ScaleDeployment(context.Background(), "ns1", "app-core", 0)
 	assert.NoError(t, err)
 }
 
@@ -72,12 +72,12 @@ func TestScaleDeployment_NotFound(t *testing.T) {
 func TestWaitForDeploymentPodsGone_NoPods(t *testing.T) {
 	t.Parallel()
 
-	labels := map[string]string{"app": "kvk-mysql"}
-	deploy := newTestDeployment("ns2", "kvk-mysql", 0, labels)
+	labels := map[string]string{"app": "app-mysql"}
+	deploy := newTestDeployment("ns2", "app-mysql", 0, labels)
 	cs := fake.NewSimpleClientset(deploy)
 	c := NewClientFromInterface(cs)
 
-	err := c.WaitForDeploymentPodsGone(context.Background(), "ns2", "kvk-mysql", 2*time.Second)
+	err := c.WaitForDeploymentPodsGone(context.Background(), "ns2", "app-mysql", 2*time.Second)
 	assert.NoError(t, err)
 }
 
@@ -181,11 +181,11 @@ func TestWaitForDeploymentPodsGone_NilSelectorRefused(t *testing.T) {
 func TestWaitForDeploymentPodsGone_Timeout(t *testing.T) {
 	t.Parallel()
 
-	labels := map[string]string{"app": "kvk-mysql"}
-	deploy := newTestDeployment("ns3", "kvk-mysql", 1, labels)
+	labels := map[string]string{"app": "app-mysql"}
+	deploy := newTestDeployment("ns3", "app-mysql", 1, labels)
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "kvk-mysql-abc",
+			Name:      "app-mysql-abc",
 			Namespace: "ns3",
 			Labels:    labels,
 		},
@@ -193,15 +193,15 @@ func TestWaitForDeploymentPodsGone_Timeout(t *testing.T) {
 	cs := fake.NewSimpleClientset(deploy, pod)
 	c := NewClientFromInterface(cs)
 
-	err := c.WaitForDeploymentPodsGone(context.Background(), "ns3", "kvk-mysql", 100*time.Millisecond)
+	err := c.WaitForDeploymentPodsGone(context.Background(), "ns3", "app-mysql", 100*time.Millisecond)
 	assert.Error(t, err)
 }
 
 func TestWaitForDeploymentAvailable_Success(t *testing.T) {
 	t.Parallel()
 
-	labels := map[string]string{"app": "kvk-mysql"}
-	deploy := newTestDeployment("ns4", "kvk-mysql", 1, labels)
+	labels := map[string]string{"app": "app-mysql"}
+	deploy := newTestDeployment("ns4", "app-mysql", 1, labels)
 	deploy.Status.ObservedGeneration = 1
 	deploy.Status.Conditions = []appsv1.DeploymentCondition{{
 		Type:   appsv1.DeploymentAvailable,
@@ -210,20 +210,20 @@ func TestWaitForDeploymentAvailable_Success(t *testing.T) {
 	cs := fake.NewSimpleClientset(deploy)
 	c := NewClientFromInterface(cs)
 
-	err := c.WaitForDeploymentAvailable(context.Background(), "ns4", "kvk-mysql", 2*time.Second)
+	err := c.WaitForDeploymentAvailable(context.Background(), "ns4", "app-mysql", 2*time.Second)
 	assert.NoError(t, err)
 }
 
 func TestWaitForDeploymentAvailable_TimeoutWhenUnobserved(t *testing.T) {
 	t.Parallel()
 
-	labels := map[string]string{"app": "kvk-mysql"}
-	deploy := newTestDeployment("ns5", "kvk-mysql", 1, labels)
+	labels := map[string]string{"app": "app-mysql"}
+	deploy := newTestDeployment("ns5", "app-mysql", 1, labels)
 	deploy.Status.ObservedGeneration = 0 // controller hasn't caught up
 	cs := fake.NewSimpleClientset(deploy)
 	c := NewClientFromInterface(cs)
 
-	err := c.WaitForDeploymentAvailable(context.Background(), "ns5", "kvk-mysql", 100*time.Millisecond)
+	err := c.WaitForDeploymentAvailable(context.Background(), "ns5", "app-mysql", 100*time.Millisecond)
 	assert.Error(t, err)
 }
 
@@ -241,7 +241,7 @@ func TestRunPVCCleanupJob_CompletesAndDeletes(t *testing.T) {
 		defer close(done)
 		deadline := time.Now().Add(2 * time.Second)
 		for time.Now().Before(deadline) {
-			j, err := cs.BatchV1().Jobs("ns-pvc").Get(context.Background(), "kvk-mysql-pvc-cleanup", metav1.GetOptions{})
+			j, err := cs.BatchV1().Jobs("ns-pvc").Get(context.Background(), "app-mysql-pvc-cleanup", metav1.GetOptions{})
 			if err == nil {
 				j.Status.Conditions = []batchv1.JobCondition{{
 					Type:   batchv1.JobComplete,
@@ -257,8 +257,8 @@ func TestRunPVCCleanupJob_CompletesAndDeletes(t *testing.T) {
 	c := NewClientFromInterface(cs)
 	err := c.RunPVCCleanupJob(context.Background(), PVCCleanupJobRequest{
 		Namespace: "ns-pvc",
-		JobName:   "kvk-mysql-pvc-cleanup",
-		PVCName:   "kvk-mysql-data",
+		JobName:   "app-mysql-pvc-cleanup",
+		PVCName:   "app-mysql-data",
 		Image:     "alpine:3.20",
 		Timeout:   3 * time.Second,
 	})
@@ -266,7 +266,7 @@ func TestRunPVCCleanupJob_CompletesAndDeletes(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Job should have been deleted after completion.
-	_, err = cs.BatchV1().Jobs("ns-pvc").Get(context.Background(), "kvk-mysql-pvc-cleanup", metav1.GetOptions{})
+	_, err = cs.BatchV1().Jobs("ns-pvc").Get(context.Background(), "app-mysql-pvc-cleanup", metav1.GetOptions{})
 	assert.Error(t, err, "expected cleanup Job to have been deleted after completion")
 }
 

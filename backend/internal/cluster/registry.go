@@ -37,6 +37,19 @@ type RegistryOptions struct {
 	ClusterRepo models.ClusterRepository
 	HelmBinary  string
 	HelmTimeout time.Duration
+	// NamespaceLabels are extra labels for every stack namespace
+	// (NAMESPACE_LABELS); each new k8s client gets them.
+	NamespaceLabels map[string]string
+	// AccessBinding, when set, is the RoleBinding that the k8s client of an
+	// in-cluster cluster applies to every stack namespace
+	// (STACK_ACCESS_CLUSTER_ROLE, STACK_ACCESS_SERVICE_ACCOUNT). Clusters
+	// with a kubeconfig use their own credentials and do not get it.
+	AccessBinding *k8s.AccessBinding
+	// InClusterFallbackKubeconfig (IN_CLUSTER_FALLBACK_KUBECONFIG) is the
+	// kubeconfig of an in-cluster cluster when the backend does not run in
+	// a pod (local development). Empty: such a cluster is unreachable. It
+	// never falls back to ~/.kube/config (#582).
+	InClusterFallbackKubeconfig string
 }
 
 // Registry manages per-cluster Kubernetes and Helm clients.
@@ -50,6 +63,13 @@ type Registry struct {
 	helmTimeout     time.Duration
 	defaultID       string // cached default cluster ID (empty = not resolved yet)
 	defaultResolved bool   // whether we've attempted to resolve default
+	namespaceLabels map[string]string
+	accessBinding   *k8s.AccessBinding
+	// inClusterFallback: see RegistryOptions.InClusterFallbackKubeconfig.
+	inClusterFallback string
+	// inClusterAvailable reports whether the in-cluster config can be
+	// loaded (k8s.InClusterAvailable); a variable for tests.
+	inClusterAvailable func() bool
 
 	// Factories for testability.
 	k8sFactory  K8sClientFactory
@@ -59,15 +79,26 @@ type Registry struct {
 // NewRegistry creates a Registry with the given configuration.
 func NewRegistry(cfg RegistryOptions) *Registry {
 	return &Registry{
-		clients:     make(map[string]*ClusterClients),
-		clusterRepo: cfg.ClusterRepo,
-		helmBinary:  cfg.HelmBinary,
-		helmTimeout: cfg.HelmTimeout,
-		k8sFactory:  k8s.NewClient,
+		clients:         make(map[string]*ClusterClients),
+		clusterRepo:     cfg.ClusterRepo,
+		helmBinary:      cfg.HelmBinary,
+		helmTimeout:     cfg.HelmTimeout,
+		namespaceLabels: cfg.NamespaceLabels,
+		accessBinding:   cfg.AccessBinding,
+		k8sFactory:      k8s.NewClient,
+
+		inClusterFallback:  cfg.InClusterFallbackKubeconfig,
+		inClusterAvailable: k8s.InClusterAvailable,
 		helmFactory: func(binaryPath, kubeconfig string, timeout time.Duration) deployer.HelmExecutor {
 			return deployer.NewHelmClient(binaryPath, kubeconfig, timeout)
 		},
 	}
+}
+
+// HasAccessBinding reports whether in-cluster clients apply an access
+// RoleBinding to stack namespaces (namespace-scoped access).
+func (r *Registry) HasAccessBinding() bool {
+	return r.accessBinding != nil
 }
 
 // GetClients returns cached clients for the given cluster ID, creating them on first access.
@@ -153,6 +184,11 @@ func (r *Registry) GetDefaultClients() (*ClusterClients, error) {
 	return r.GetClients(cluster.ID)
 }
 
+// ErrNoDefaultCluster is returned by ResolveClusterID when the cluster ID is
+// empty and no cluster is marked as default. Other lookup failures (for
+// example a database error) are not wrapped with it.
+var ErrNoDefaultCluster = errors.New("no default cluster configured")
+
 // ResolveClusterID returns clusterID if non-empty, otherwise returns the default cluster's ID.
 func (r *Registry) ResolveClusterID(clusterID string) (string, error) {
 	if clusterID != "" {
@@ -166,7 +202,7 @@ func (r *Registry) ResolveClusterID(clusterID string) (string, error) {
 
 	if resolved {
 		if id == "" {
-			return "", fmt.Errorf("no default cluster configured")
+			return "", ErrNoDefaultCluster
 		}
 		return id, nil
 	}
@@ -176,7 +212,7 @@ func (r *Registry) ResolveClusterID(clusterID string) (string, error) {
 		id = r.defaultID
 		r.mu.Unlock()
 		if id == "" {
-			return "", fmt.Errorf("no default cluster configured")
+			return "", ErrNoDefaultCluster
 		}
 		return id, nil
 	}
@@ -186,6 +222,8 @@ func (r *Registry) ResolveClusterID(clusterID string) (string, error) {
 		if isNotFoundError(err) {
 			r.defaultResolved = true
 			r.defaultID = ""
+			r.mu.Unlock()
+			return "", fmt.Errorf("%w: %w", ErrNoDefaultCluster, err)
 		}
 		r.mu.Unlock()
 		return "", fmt.Errorf("no default cluster configured: %w", err)
@@ -414,6 +452,12 @@ func (r *Registry) ClusterExists(clusterID string) bool {
 	return true
 }
 
+// Config sources of a cluster, for the log line of buildClients.
+const (
+	configSourceInCluster         = "in-cluster"
+	configSourceInClusterFallback = "in-cluster fallback (IN_CLUSTER_FALLBACK_KUBECONFIG)"
+)
+
 // buildClients creates k8s + helm clients for a cluster.
 // It does not perform any locking itself; callers are responsible for
 // holding r.mu when mutating r.clients, but this function may be invoked
@@ -421,15 +465,23 @@ func (r *Registry) ClusterExists(clusterID string) bool {
 func (r *Registry) buildClients(cluster *models.Cluster) (*ClusterClients, error) {
 	var kubeconfigPath string
 	var tempPath string
+	var source string
 
 	switch {
 	case cluster.UseInCluster:
-		// Use the pod's own service account — empty kubeconfig path
-		// triggers in-cluster config in both k8s.NewClient and helm CLI.
-		kubeconfigPath = ""
+		// Use the pod's own service account: an empty kubeconfig path means
+		// the in-cluster config only, in k8s.NewClient and in the helm CLI.
+		// Outside a pod, only an explicit fallback kubeconfig is used, for
+		// both clients (#582).
+		source = configSourceInCluster
+		if r.inClusterFallback != "" && !r.inClusterAvailable() {
+			kubeconfigPath = r.inClusterFallback
+			source = configSourceInClusterFallback
+		}
 
 	case cluster.KubeconfigPath != "":
 		kubeconfigPath = cluster.KubeconfigPath
+		source = "kubeconfig path"
 
 	case cluster.KubeconfigData != "":
 		// KubeconfigData is already decrypted by the repository layer.
@@ -455,6 +507,7 @@ func (r *Registry) buildClients(cluster *models.Cluster) (*ClusterClients, error
 
 		kubeconfigPath = f.Name()
 		tempPath = f.Name()
+		source = "kubeconfig data"
 
 	default:
 		return nil, fmt.Errorf("cluster has neither kubeconfig path nor kubeconfig data")
@@ -467,8 +520,20 @@ func (r *Registry) buildClients(cluster *models.Cluster) (*ClusterClients, error
 		}
 		return nil, fmt.Errorf("create k8s client: %w", err)
 	}
+	k8sClient.SetNamespaceLabels(r.namespaceLabels)
+	if cluster.UseInCluster {
+		k8sClient.SetAccessBinding(r.accessBinding)
+	}
 
 	helmClient := r.helmFactory(r.helmBinary, kubeconfigPath, r.helmTimeout)
+
+	if source == configSourceInClusterFallback {
+		slog.Warn("in-cluster cluster uses the fallback kubeconfig (local development only)",
+			"cluster_id", cluster.ID, "cluster", cluster.Name, "kubeconfig", kubeconfigPath)
+	} else {
+		slog.Info("cluster clients created",
+			"cluster_id", cluster.ID, "cluster", cluster.Name, "config_source", source)
+	}
 
 	return &ClusterClients{
 		K8s:            k8sClient,

@@ -1,5 +1,7 @@
-import axios, { type AxiosRequestConfig } from 'axios';
+import axios from 'axios';
+import type { InternalAxiosRequestConfig } from 'axios';
 import { axiosConfig } from './config';
+import { isAuthRejection, refreshAccessToken, TOKEN_STORAGE_KEY } from './refresh';
 import type {
   LoginRequest,
   LoginResponse,
@@ -12,6 +14,8 @@ import type {
   ChartConfig,
   CreateChartConfigRequest,
   StackInstance,
+  CloneInstanceRequest,
+  RollbackResponse,
   ValueOverride,
   AuditLog,
   AuditLogFilters,
@@ -42,6 +46,7 @@ import type {
   CleanupResult,
   CompareInstancesResponse,
   DefinitionExportBundle,
+  ImportDefinitionResponse,
   BulkOperationResponse,
   BulkTemplateResponse,
   NotificationListResponse,
@@ -51,13 +56,25 @@ import type {
   ClusterUtilization,
   TemplateVersion,
   VersionDiffResponse,
+  PublishTemplateRequest,
+  PublishTemplateResult,
   UpgradeCheckResponse,
   InstanceQuotaOverride,
   DeployPreviewResponse,
   DashboardResponse,
   NotificationChannel,
+  NotificationChannelFilters,
+  NotificationChannelFormat,
+  NotificationChannelSaveResult,
   NotificationChannelWithCount,
+  FollowState,
   NotificationDeliveryLog,
+  InstanceActionList,
+  ActionInvokeResult,
+  ActionJobLog,
+  UIConfig,
+  UserRole,
+  ChangeRoleResponse,
 } from '../types';
 
 // Extend Axios config to include our retry flag (avoids `any` cast).
@@ -69,45 +86,141 @@ declare module 'axios' {
 
 const api = axios.create(axiosConfig);
 
-// Separate instance for token refresh — sends the httpOnly cookie and has no
-// response interceptors, preventing refresh-retry loops.
-const refreshApi = axios.create({ ...axiosConfig, withCredentials: true });
+/** Largest page size that the paginated list endpoints accept. */
+export const MAX_PAGE_SIZE = 100;
+
+/** Upper limit of pages that fetchAllPages reads (protects against a server that never ends the list). */
+const MAX_PAGES = 100;
+
+/** Number of page requests that fetchAllPages sends at the same time after the first page. */
+const PAGE_FETCH_CONCURRENCY = 4;
+
+/**
+ * Read all pages of a paginated list endpoint (`page`/`pageSize`, envelope
+ * `{ data, total }`) with the largest page size. Page 1 gives `total`; the
+ * remaining pages load in parallel, PAGE_FETCH_CONCURRENCY at a time.
+ *
+ * The read stops when the rows reach `total`, when a page is shorter than the
+ * page size, when a batch of pages adds no new ID (for example a server that
+ * ignores `page`), or after MAX_PAGES pages.
+ *
+ * Note: offset paging is not a snapshot. When rows are created or deleted
+ * while the pages load, a row can be skipped or show twice. The result keeps
+ * the first row of each ID, so a row never shows twice; a skipped row shows on
+ * the next load.
+ * @param url - List endpoint, for example `/api/v1/stack-instances`
+ * @returns All rows of the list
+ */
+async function fetchAllPages<T extends { id: string }>(url: string): Promise<T[]> {
+  const fetchPage = async (page: number): Promise<{ data: T[]; total?: number; plain: boolean }> => {
+    const response = await api.get(url, { params: { page, pageSize: MAX_PAGE_SIZE } });
+    const body = response.data as { data?: T[]; total?: number } | T[] | null;
+    // An endpoint without pagination returns a plain array.
+    if (Array.isArray(body)) return { data: body, plain: true };
+    return {
+      data: Array.isArray(body?.data) ? body.data : [],
+      total: typeof body?.total === 'number' ? body.total : undefined,
+      plain: false,
+    };
+  };
+
+  const rows: T[] = [];
+  const seen = new Set<string>();
+  /** Add the new rows of a page. Returns the number of new rows. */
+  const addRows = (data: T[]): number => {
+    let added = 0;
+    for (const row of data) {
+      if (!seen.has(row.id)) {
+        seen.add(row.id);
+        rows.push(row);
+        added += 1;
+      }
+    }
+    return added;
+  };
+
+  const first = await fetchPage(1);
+  if (first.plain) return first.data;
+  addRows(first.data);
+  const total = first.total ?? rows.length;
+  if (first.data.length < MAX_PAGE_SIZE || rows.length >= total) return rows;
+
+  const lastPage = Math.min(Math.ceil(total / MAX_PAGE_SIZE), MAX_PAGES);
+  for (let start = 2; start <= lastPage; start += PAGE_FETCH_CONCURRENCY) {
+    const pages: number[] = [];
+    for (let page = start; page < start + PAGE_FETCH_CONCURRENCY && page <= lastPage; page += 1) {
+      pages.push(page);
+    }
+    const results = await Promise.all(pages.map(fetchPage));
+    let added = 0;
+    let shortPage = false;
+    for (const result of results) {
+      added += addRows(result.data);
+      if (result.data.length < MAX_PAGE_SIZE) shortPage = true;
+    }
+    if (added === 0 || shortPage || rows.length >= total) break;
+  }
+  return rows;
+}
+
+/** A downloaded file: the raw body and the file name to save it under. */
+export interface ValuesExport {
+  blob: Blob;
+  filename: string;
+}
+
+/**
+ * Read the file name from a `Content-Disposition` header.
+ * Supports `filename*=UTF-8''<encoded>` (RFC 5987), quoted and bare `filename=` values.
+ */
+function filenameFromContentDisposition(header: unknown): string | null {
+  if (typeof header !== 'string' || !header) return null;
+  const extended = /filename\*\s*=\s*(?:UTF-8|utf-8)''([^;]+)/.exec(header);
+  if (extended) {
+    try {
+      return decodeURIComponent(extended[1].trim());
+    } catch {
+      // Malformed encoding: fall through to the plain filename parameter.
+    }
+  }
+  const quoted = /filename\s*=\s*"([^"]*)"/.exec(header);
+  if (quoted?.[1]) return quoted[1];
+  const bare = /filename\s*=\s*([^;]+)/.exec(header);
+  const name = bare?.[1]?.trim();
+  return name || null;
+}
 
 // Auth interceptor — attach JWT from localStorage
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token');
+  const token = localStorage.getItem(TOKEN_STORAGE_KEY);
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
   return config;
 });
 
-// --- Silent token refresh on 401 ---
-interface QueueItem {
-  resolve: (token: string) => void;
-  reject: (error: unknown) => void;
+function redirectToLogin(): void {
+  if (globalThis.location.pathname !== '/login') {
+    globalThis.location.href = '/login';
+  }
 }
 
-let isRefreshing = false;
-let failedQueue: QueueItem[] = [];
-
-function processQueue(error: unknown, token: string | null): void {
-  for (const item of failedQueue) {
-    if (token) {
-      item.resolve(token);
-    } else {
-      item.reject(error);
-    }
+/** Extract the bearer token that a request was sent with, if any. */
+function bearerToken(config: InternalAxiosRequestConfig): string | null {
+  const header = config.headers?.Authorization;
+  if (typeof header === 'string' && header.startsWith('Bearer ')) {
+    return header.slice('Bearer '.length);
   }
-  failedQueue = [];
+  return null;
 }
 
 // Response interceptor — attempt a silent refresh on 401, then retry the
-// original request. Concurrent 401s are queued so only one refresh fires.
+// original request once. refreshAccessToken() is single flight in this tab
+// (concurrent 401s share one refresh) and across tabs (Web Locks).
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
-    const originalRequest = error.config;
+    const originalRequest: InternalAxiosRequestConfig | undefined = error.config;
     const authPaths = ['/auth/login', '/auth/refresh', '/auth/logout', '/auth/logout-all'];
     const isAuthEndpoint = authPaths.some(p => originalRequest?.url?.includes(p));
 
@@ -117,50 +230,25 @@ api.interceptors.response.use(
       !originalRequest._retry &&
       !isAuthEndpoint
     ) {
-      if (isRefreshing) {
-        // Park this request until the in-flight refresh settles.
-        return new Promise<unknown>((resolve, reject) => {
-          failedQueue.push({
-            resolve: (token: string) => {
-              originalRequest._retry = true;
-              originalRequest.headers.Authorization = `Bearer ${token}`;
-              resolve(api(originalRequest));
-            },
-            reject,
-          });
-        });
-      }
-
       originalRequest._retry = true;
-      isRefreshing = true;
-
       try {
-        const { data } = await refreshApi.post<{ token: string }>(
-          '/api/v1/auth/refresh',
-        );
-        const newToken = data.token;
-        localStorage.setItem('token', newToken);
+        const newToken = await refreshAccessToken(bearerToken(originalRequest));
         originalRequest.headers.Authorization = `Bearer ${newToken}`;
-        processQueue(null, newToken);
         return api(originalRequest);
       } catch (refreshError) {
-        processQueue(refreshError, null);
-        localStorage.removeItem('token');
-        if (globalThis.location.pathname !== '/login') {
-          globalThis.location.href = '/login';
+        // 401/403: refreshAccessToken() removed the token; the session is over.
+        // Network error, timeout or 5xx: keep the session and surface the error.
+        if (isAuthRejection(refreshError)) {
+          redirectToLogin();
         }
         return Promise.reject(refreshError);
-      } finally {
-        isRefreshing = false;
       }
     }
 
     // Retried request still got 401 — session is invalid
     if (error.response?.status === 401 && originalRequest?._retry) {
-      localStorage.removeItem('token');
-      if (globalThis.location.pathname !== '/login') {
-        globalThis.location.href = '/login';
-      }
+      localStorage.removeItem(TOKEN_STORAGE_KEY);
+      redirectToLogin();
     }
 
     return Promise.reject(error);
@@ -215,12 +303,15 @@ export const authService = {
   },
   /**
    * Refresh the access token using the httpOnly refresh cookie.
+   * Single flight in this tab and across tabs (see `refreshAccessToken`);
+   * stores the new token in localStorage, removes it only on a 401/403 answer.
+   * @param failedToken - The expired or rejected access token (defaults to the stored token)
    * @returns Object containing the new short-lived access token
    * @see POST /api/v1/auth/refresh
    */
-  refresh: async (): Promise<{ token: string }> => {
-    const response = await refreshApi.post<{ token: string }>('/api/v1/auth/refresh');
-    return response.data;
+  refresh: async (failedToken?: string | null): Promise<{ token: string }> => {
+    const token = await refreshAccessToken(failedToken);
+    return { token };
   },
   /**
    * Logout the current session (revokes the refresh token server-side and clears the cookie).
@@ -284,6 +375,26 @@ export const oidcService = {
   },
 };
 
+/** Time limit of the UI config request, so a slow backend does not block the first render. */
+const UI_CONFIG_TIMEOUT_MS = 5000;
+
+/** Web UI display config service (branding). Maps to `/api/v1/ui-config`. */
+export const uiConfigService = {
+  /**
+   * Get the display values of the web UI: title, logo URL and favicon URL.
+   * Public endpoint (no token), so the login page can use it.
+   * @returns The UI config
+   * @see GET /api/v1/ui-config
+   */
+  get: async (): Promise<UIConfig> => {
+    const response = await api.get('/api/v1/ui-config', { timeout: UI_CONFIG_TIMEOUT_MS });
+    return response.data;
+  },
+};
+
+/** Version ID that selects the unpublished working copy in a version diff. */
+export const WORKING_COPY_VERSION_ID = 'working';
+
 /** Stack template service for managing reusable deployment templates. Maps to `/api/v1/templates`. */
 export const templateService = {
   /**
@@ -296,6 +407,22 @@ export const templateService = {
       const response = await api.get('/api/v1/templates');
       const body = response.data;
       return Array.isArray(body) ? body : body.data ?? [];
+    } catch (error) {
+      console.error('Failed to fetch templates:', error);
+      throw error;
+    }
+  },
+  /**
+   * List all stack templates that the user may see. Reads all pages with the
+   * largest page size (the API returns 25 templates without `pageSize`).
+   * Offset paging can skip a row when templates change during the load (see
+   * fetchAllPages).
+   * @returns All stack templates
+   * @see GET /api/v1/templates?page=N&pageSize=100
+   */
+  listAll: async (): Promise<StackTemplate[]> => {
+    try {
+      return await fetchAllPages<StackTemplate>('/api/v1/templates');
     } catch (error) {
       console.error('Failed to fetch templates:', error);
       throw error;
@@ -362,15 +489,28 @@ export const templateService = {
     }
   },
   /**
-   * Publish a template, making it available for instantiation.
+   * Publish the working copy of a template as a release. Creates a version
+   * snapshot. When nothing changed since the latest release, the API creates
+   * no snapshot (`snapshotCreated` is false). A version that already exists
+   * gives HTTP 409.
    * @param id - Template ID
-   * @returns The published template
+   * @param data - Optional release version and change summary
+   * @returns The template and whether the API created a new snapshot
    * @see POST /api/v1/templates/:id/publish
    */
-  publish: async (id: string): Promise<StackTemplate> => {
+  publish: async (id: string, data?: PublishTemplateRequest): Promise<PublishTemplateResult> => {
     try {
-      const response = await api.post(`/api/v1/templates/${id}/publish`);
-      return response.data;
+      const body = data && (data.version || data.change_summary) ? data : undefined;
+      const response = body
+        ? await api.post(`/api/v1/templates/${id}/publish`, body)
+        : await api.post(`/api/v1/templates/${id}/publish`);
+      const { snapshot_created: snapshotCreated, ...template } = (response.data ?? {}) as StackTemplate & {
+        snapshot_created?: unknown;
+      };
+      return {
+        template: template as StackTemplate,
+        snapshotCreated: typeof snapshotCreated === 'boolean' ? snapshotCreated : true,
+      };
     } catch (error) {
       console.error('Failed to publish template:', error);
       throw error;
@@ -410,12 +550,13 @@ export const templateService = {
   /**
    * Clone a template, creating an independent copy.
    * @param id - Template ID to clone
+   * @param data - Optional name of the copy; the server uses "<name> (Copy)" when omitted
    * @returns The cloned template
    * @see POST /api/v1/templates/:id/clone
    */
-  clone: async (id: string): Promise<StackTemplate> => {
+  clone: async (id: string, data?: { name?: string }): Promise<StackTemplate> => {
     try {
-      const response = await api.post(`/api/v1/templates/${id}/clone`);
+      const response = await api.post(`/api/v1/templates/${id}/clone`, data ?? {});
       return response.data;
     } catch (error) {
       console.error('Failed to clone template:', error);
@@ -548,13 +689,19 @@ export const templateService = {
   },
   /**
    * Diff two versions of a template, showing per-chart YAML differences.
+   * Pass `WORKING_COPY_VERSION_ID` (the default) as the right side to compare
+   * a release with the unpublished working copy.
    * @param templateId - Template ID
    * @param leftId - Left version ID
-   * @param rightId - Right version ID
+   * @param rightId - Right version ID, or `WORKING_COPY_VERSION_ID` for the working copy
    * @returns Diff response with chart-level differences
    * @see GET /api/v1/templates/:id/versions/diff?left=ID&right=ID
    */
-  diffVersions: async (templateId: string, leftId: string, rightId: string): Promise<VersionDiffResponse> => {
+  diffVersions: async (
+    templateId: string,
+    leftId: string,
+    rightId: string = WORKING_COPY_VERSION_ID,
+  ): Promise<VersionDiffResponse> => {
     try {
       const response = await api.get(`/api/v1/templates/${templateId}/versions/diff`, {
         params: { left: leftId, right: rightId },
@@ -588,6 +735,22 @@ export const definitionService = {
       }
       // Fallback for unexpected shapes.
       return Array.isArray(body) ? body : [];
+    } catch (error) {
+      console.error('Failed to fetch definitions:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * List all stack definitions. Reads all pages with the largest page size.
+   * Use it for pickers that must offer every definition. Offset paging can
+   * skip a row when definitions change during the load (see fetchAllPages).
+   * @returns All stack definitions
+   * @see GET /api/v1/stack-definitions?page=N&pageSize=100
+   */
+  listAll: async (): Promise<StackDefinition[]> => {
+    try {
+      return await fetchAllPages<StackDefinition>('/api/v1/stack-definitions');
     } catch (error) {
       console.error('Failed to fetch definitions:', error);
       throw error;
@@ -742,10 +905,10 @@ export const definitionService = {
   /**
    * Import a stack definition from a JSON bundle.
    * @param bundle - The export bundle to import
-   * @returns The created stack definition
+   * @returns The created stack definition, with warnings (for example a source template that was not linked)
    * @see POST /api/v1/stack-definitions/import
    */
-  importDefinition: async (bundle: DefinitionExportBundle): Promise<StackDefinition> => {
+  importDefinition: async (bundle: DefinitionExportBundle): Promise<ImportDefinitionResponse> => {
     try {
       const response = await api.post('/api/v1/stack-definitions/import', bundle);
       return response.data;
@@ -784,6 +947,27 @@ export const definitionService = {
       throw error;
     }
   },
+  /**
+   * Link a definition to a published template version, or remove the link.
+   * The charts and the values of the definition do not change.
+   * @param definitionId - Definition ID
+   * @param templateId - Template ID; an empty string removes the link
+   * @param version - A published version of the template; empty means the latest
+   * @returns The updated definition
+   * @see PUT /api/v1/stack-definitions/:id/template-link
+   */
+  setTemplateLink: async (definitionId: string, templateId: string, version = ''): Promise<StackDefinition> => {
+    try {
+      const response = await api.put(`/api/v1/stack-definitions/${definitionId}/template-link`, {
+        template_id: templateId,
+        version,
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Failed to set template link:', error);
+      throw error;
+    }
+  },
 };
 
 /** Stack instance service for managing deployed stack instances. Maps to `/api/v1/stack-instances`. */
@@ -807,6 +991,23 @@ export const instanceService = {
       }
       // Fallback for unexpected shapes.
       return Array.isArray(body) ? body : [];
+    } catch (error) {
+      console.error('Failed to fetch instances:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * List all stack instances. Reads all pages with the largest page size.
+   * Use it where the page must see every instance (client-side search and
+   * filters, instance pickers). Offset paging can skip a row when instances
+   * change during the load (see fetchAllPages).
+   * @returns All stack instances
+   * @see GET /api/v1/stack-instances?page=N&pageSize=100
+   */
+  listAll: async (): Promise<StackInstance[]> => {
+    try {
+      return await fetchAllPages<StackInstance>('/api/v1/stack-instances');
     } catch (error) {
       console.error('Failed to fetch instances:', error);
       throw error;
@@ -893,14 +1094,16 @@ export const instanceService = {
     }
   },
   /**
-   * Clone an instance, creating an independent copy.
+   * Clone an instance, creating an independent copy. The copy gets the value,
+   * branch and quota overrides of the source.
    * @param id - Instance ID to clone
+   * @param data - Optional name of the copy (RFC 1123 label; the server picks a free `<name>-copy[-N]` when omitted), branch and TTL in minutes
    * @returns The cloned instance
    * @see POST /api/v1/stack-instances/:id/clone
    */
-  clone: async (id: string): Promise<StackInstance> => {
+  clone: async (id: string, data: CloneInstanceRequest): Promise<StackInstance> => {
     try {
-      const response = await api.post(`/api/v1/stack-instances/${id}/clone`);
+      const response = await api.post(`/api/v1/stack-instances/${id}/clone`, data);
       return response.data;
     } catch (error) {
       console.error('Failed to clone instance:', error);
@@ -940,17 +1143,61 @@ export const instanceService = {
     }
   },
   /**
-   * Export merged Helm values for an instance as YAML.
+   * Delete the value override of one chart in an instance.
    * @param id - Instance ID
-   * @returns YAML string of merged values
-   * @see GET /api/v1/stack-instances/:id/export
+   * @param chartConfigId - Chart config ID whose override is removed
+   * @returns Resolves when the override is deleted
+   * @see DELETE /api/v1/stack-instances/:id/overrides/:chartConfigId
    */
-  exportValues: async (id: string): Promise<string> => {
+  deleteOverride: async (id: string, chartConfigId: string): Promise<void> => {
     try {
-      const response = await api.get(`/api/v1/stack-instances/${id}/export`);
-      return response.data;
+      await api.delete(`/api/v1/stack-instances/${id}/overrides/${chartConfigId}`);
+    } catch (error) {
+      console.error('Failed to delete override:', error);
+      throw error;
+    }
+  },
+  /**
+   * Export the merged Helm values of all charts as a ZIP archive
+   * (one `<chart>/values.yaml` per chart). The body is returned as a Blob
+   * without text conversion.
+   * @param id - Instance ID
+   * @param instanceName - Instance name, used for the fallback file name when the response has no readable `Content-Disposition`
+   * @returns The ZIP Blob and the file name from `Content-Disposition` (fallback `<instance-name>-values.zip`)
+   * @see GET /api/v1/stack-instances/:id/values
+   */
+  exportValues: async (id: string, instanceName?: string): Promise<ValuesExport> => {
+    try {
+      const response = await api.get<Blob>(`/api/v1/stack-instances/${id}/values`, { responseType: 'blob' });
+      return {
+        blob: response.data,
+        filename: filenameFromContentDisposition(response.headers?.['content-disposition'])
+          ?? `${instanceName || id}-values.zip`,
+      };
     } catch (error) {
       console.error('Failed to export values:', error);
+      throw error;
+    }
+  },
+  /**
+   * Export the merged Helm values of one chart as a YAML file.
+   * The body is returned as a Blob without text conversion.
+   * @param id - Instance ID
+   * @param chartConfigId - Chart config ID
+   * @param fallbackFilename - File name to use when the response has no readable `Content-Disposition` (default `<chartConfigId>-values.yaml`)
+   * @returns The YAML Blob and the file name
+   * @see GET /api/v1/stack-instances/:id/values/:chartId
+   */
+  exportChartValues: async (id: string, chartConfigId: string, fallbackFilename?: string): Promise<ValuesExport> => {
+    try {
+      const response = await api.get<Blob>(`/api/v1/stack-instances/${id}/values/${chartConfigId}`, { responseType: 'blob' });
+      return {
+        blob: response.data,
+        filename: filenameFromContentDisposition(response.headers?.['content-disposition'])
+          ?? fallbackFilename ?? `${chartConfigId}-values.yaml`,
+      };
+    } catch (error) {
+      console.error('Failed to export chart values:', error);
       throw error;
     }
   },
@@ -996,6 +1243,95 @@ export const instanceService = {
       return response.data;
     } catch (error) {
       console.error('Failed to clean namespace:', error);
+      throw error;
+    }
+  },
+  /**
+   * Roll the Helm releases of an instance back. Without a target, each chart
+   * goes back one revision.
+   * @param id - Instance ID
+   * @param targetLogId - Optional ID of a successful deploy log of this instance to roll back to
+   * @returns Deployment log ID, status message, target, values drift flag and an optional warning
+   * @see POST /api/v1/stack-instances/:id/rollback
+   */
+  rollback: async (id: string, targetLogId?: string): Promise<RollbackResponse> => {
+    try {
+      const response = await api.post(
+        `/api/v1/stack-instances/${id}/rollback`,
+        targetLogId ? { target_log_id: targetLogId } : {},
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Failed to roll back instance:', error);
+      throw error;
+    }
+  },
+  /**
+   * List the custom actions that can run on an instance, with their UI
+   * metadata and a can_invoke flag for the current user.
+   * @param id - Instance ID
+   * @returns The actions (empty when no action is registered)
+   * @see GET /api/v1/stack-instances/:id/actions
+   */
+  listActions: async (id: string): Promise<InstanceActionList> => {
+    try {
+      const response = await api.get(`/api/v1/stack-instances/${id}/actions`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to list actions:', error);
+      throw error;
+    }
+  },
+  /**
+   * Run a custom action on an instance.
+   * @param id - Instance ID
+   * @param name - Action name
+   * @param parameters - Optional parameters for the action subscriber
+   * @returns The subscriber status code and result; job_id for an asynchronous action with a job log
+   * @see POST /api/v1/stack-instances/:id/actions/:name
+   */
+  invokeAction: async (
+    id: string,
+    name: string,
+    parameters?: Record<string, string | boolean>,
+  ): Promise<ActionInvokeResult> => {
+    try {
+      const response = await api.post(
+        `/api/v1/stack-instances/${id}/actions/${encodeURIComponent(name)}`,
+        parameters && Object.keys(parameters).length > 0 ? { parameters } : {},
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Failed to run action:', error);
+      throw error;
+    }
+  },
+  /**
+   * Read one chunk of the job log of an asynchronous action. Poll with
+   * next_offset until done is true.
+   * @param id - Instance ID
+   * @param name - Action name
+   * @param jobId - Job ID from the invoke result
+   * @param offset - Byte offset to read from
+   * @param signal - Optional AbortSignal; aborting it cancels the request (the promise rejects with a cancel error)
+   * @returns The log chunk, the next offset, the job status and the done flag
+   * @see GET /api/v1/stack-instances/:id/actions/:name/jobs/:job_id/log
+   */
+  getActionJobLog: async (
+    id: string,
+    name: string,
+    jobId: string,
+    offset = 0,
+    signal?: AbortSignal,
+  ): Promise<ActionJobLog> => {
+    try {
+      const response = await api.get(
+        `/api/v1/stack-instances/${id}/actions/${encodeURIComponent(name)}/jobs/${encodeURIComponent(jobId)}/log`,
+        { params: { offset }, signal },
+      );
+      return response.data;
+    } catch (error) {
+      if (!axios.isCancel(error)) console.error('Failed to read action job log:', error);
       throw error;
     }
   },
@@ -1046,21 +1382,71 @@ export const instanceService = {
     }
   },
   /**
-   * Extend the TTL of a running instance.
+   * Extend the expiry of an instance. Adds the minutes to the current expiry
+   * (or to now, when the instance has already expired or has no expiry).
+   * Does not change the TTL setting of the instance.
    * @param id - Instance ID
-   * @param ttlMinutes - New TTL in minutes (uses default if omitted)
-   * @returns The updated instance with new expiration
+   * @param minutes - Minutes to add to the expiry
+   * @returns The updated instance with the new `expires_at`
    * @see POST /api/v1/stack-instances/:id/extend
    */
-  extend: async (id: string, ttlMinutes?: number): Promise<StackInstance> => {
+  extend: async (id: string, minutes: number): Promise<StackInstance> => {
     try {
-      const response = await api.post(
-        `/api/v1/stack-instances/${id}/extend`,
-        ttlMinutes ? { ttl_minutes: ttlMinutes } : {},
-      );
+      const response = await api.post(`/api/v1/stack-instances/${id}/extend`, { minutes });
       return response.data;
     } catch (error) {
       console.error('Failed to extend TTL:', error);
+      throw error;
+    }
+  },
+  /**
+   * Extend the expiry of an instance to a stop time. The time must be after
+   * the current expiry and not later than now plus MAX_INSTANCE_TTL_DAYS.
+   * Works for a TTL and for a fixed stop time; does not change the TTL setting.
+   * @param id - Instance ID
+   * @param until - The new expiry (ISO 8601)
+   * @returns The updated instance with the new `expires_at`
+   * @see POST /api/v1/stack-instances/:id/extend
+   */
+  extendUntil: async (id: string, until: string): Promise<StackInstance> => {
+    try {
+      const response = await api.post(`/api/v1/stack-instances/${id}/extend`, { until });
+      return response.data;
+    } catch (error) {
+      console.error('Failed to extend TTL:', error);
+      throw error;
+    }
+  },
+  /**
+   * Follow a stack instance. The current user then gets the in-app
+   * notifications of the instance (filtered by the own notification preferences).
+   * Following again is not an error.
+   * @param id - Instance ID
+   * @returns The follow state of the current user and the follower count
+   * @see POST /api/v1/stack-instances/:id/follow
+   */
+  follow: async (id: string): Promise<FollowState> => {
+    try {
+      const response = await api.post(`/api/v1/stack-instances/${id}/follow`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to follow instance:', error);
+      throw error;
+    }
+  },
+  /**
+   * Stop following a stack instance. Unfollowing an instance that the user
+   * does not follow is not an error.
+   * @param id - Instance ID
+   * @returns The follow state of the current user and the follower count
+   * @see DELETE /api/v1/stack-instances/:id/follow
+   */
+  unfollow: async (id: string): Promise<FollowState> => {
+    try {
+      const response = await api.delete(`/api/v1/stack-instances/${id}/follow`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to unfollow instance:', error);
       throw error;
     }
   },
@@ -1216,29 +1602,159 @@ export interface ProviderStatus {
   available: boolean;
 }
 
+/** Time a loaded branch list stays in the cache, in milliseconds. */
+export const BRANCH_CACHE_TTL_MS = 60 * 1000;
+
+/** Most branch list requests that run at the same time. */
+export const BRANCH_MAX_CONCURRENT = 4;
+
+/** Options for a branch list call. */
+export interface BranchRequestOptions {
+  /**
+   * Cancels this call only. The shared request for the URL goes on while
+   * other callers wait for it; it is aborted when every caller has cancelled.
+   */
+  signal?: AbortSignal;
+}
+
+/** A cached branch list, or a branch list request in flight. */
+interface BranchCacheEntry {
+  promise: Promise<string[]>;
+  /** Infinity while the request is in flight. */
+  expiresAt: number;
+  /** Callers that wait for the request in flight. */
+  waiting: number;
+  /** Aborts the shared request (only when no caller waits any more). */
+  controller: AbortController;
+}
+
+/** Cached branch lists (or requests in flight), keyed by repository URL. */
+const branchCache = new Map<string, BranchCacheEntry>();
+let branchRequestsRunning = 0;
+const branchRequestQueue: Array<() => void> = [];
+
+/** Run a branch request when fewer than BRANCH_MAX_CONCURRENT requests run. */
+const withBranchSlot = async <T>(task: () => Promise<T>): Promise<T> => {
+  if (branchRequestsRunning >= BRANCH_MAX_CONCURRENT) {
+    await new Promise<void>((resolve) => branchRequestQueue.push(resolve));
+  }
+  branchRequestsRunning += 1;
+  try {
+    return await task();
+  } finally {
+    branchRequestsRunning -= 1;
+    branchRequestQueue.shift()?.();
+  }
+};
+
+/** The error a cancelled branch list call rejects with. */
+const branchAbortError = (): DOMException => new DOMException('Branch request cancelled', 'AbortError');
+
+/**
+ * Start the shared branch list request for a URL and cache it. The request
+ * has no caller signal: only its own controller aborts it. A failed or
+ * aborted request removes its cache entry.
+ */
+const startBranchRequest = (repoUrl: string): BranchCacheEntry => {
+  const controller = new AbortController();
+  const entry: BranchCacheEntry = {
+    promise: Promise.resolve([]),
+    expiresAt: Number.POSITIVE_INFINITY,
+    waiting: 0,
+    controller,
+  };
+  entry.promise = withBranchSlot(async () => {
+    // Every caller cancelled while the request waited for a slot.
+    if (controller.signal.aborted) throw branchAbortError();
+    const response = await api.get('/api/v1/git/branches', {
+      params: { repo: repoUrl },
+      signal: controller.signal,
+    });
+    return (response.data as Array<{ name: string }>).map((b) => b.name);
+  }).then(
+    (branches) => {
+      entry.expiresAt = Date.now() + BRANCH_CACHE_TTL_MS;
+      return branches;
+    },
+    (error: unknown) => {
+      if (branchCache.get(repoUrl) === entry) branchCache.delete(repoUrl);
+      if (!controller.signal.aborted) console.error('Failed to fetch branches:', error);
+      throw error;
+    },
+  );
+  // Callers get their own promises; this keeps a rejection that no caller
+  // waits for (all cancelled) from being reported as unhandled.
+  entry.promise.catch(() => undefined);
+  branchCache.set(repoUrl, entry);
+  return entry;
+};
+
+/**
+ * Clear the branch list cache of gitService.branches (for example in tests).
+ * @returns Nothing
+ * @see GET /api/v1/git/branches
+ */
+export const clearBranchCache = (): void => {
+  branchCache.clear();
+};
+
 /** Git provider service for branch listing and validation. Maps to `/api/v1/git`. */
 export const gitService = {
   /**
-   * List branches for a git repository.
-   * @param repoUrl - Repository URL (Azure DevOps, GitLab, or GitHub)
-   * @param config - Optional Axios request config containing an abort signal
+   * List branches for a git repository (Azure DevOps, GitHub or GitLab).
+   * Calls for the same URL share one request; a loaded list stays cached for
+   * BRANCH_CACHE_TTL_MS. A failed request is not cached. At most
+   * BRANCH_MAX_CONCURRENT requests run at the same time.
+   *
+   * An abort of `options.signal` rejects only this call, with a DOMException
+   * named `AbortError`. Other callers of the same URL still get the list. When
+   * every caller of a request in flight has cancelled, the request is aborted
+   * and removed from the cache, so the next call starts a new request.
+   * @param repoUrl - Repository URL (Azure DevOps, GitHub, or GitLab)
+   * @param options - Optional abort signal that cancels this call
    * @returns Array of branch names
    * @see GET /api/v1/git/branches
    */
-  branches: async (
-    repoUrl: string,
-    config?: Pick<AxiosRequestConfig, 'signal'>,
-  ): Promise<string[]> => {
-    try {
-      const response = await api.get('/api/v1/git/branches', {
-        ...config,
-        params: { repo: repoUrl },
-      });
-      return response.data.map((b: { name: string }) => b.name);
-    } catch (error) {
-      console.error('Failed to fetch branches:', error);
-      throw error;
-    }
+  branches: (repoUrl: string, options?: BranchRequestOptions): Promise<string[]> => {
+    const signal = options?.signal;
+    if (signal?.aborted) return Promise.reject(branchAbortError());
+
+    const cached = branchCache.get(repoUrl);
+    const entry = cached && cached.expiresAt > Date.now() ? cached : startBranchRequest(repoUrl);
+    entry.waiting += 1;
+
+    return new Promise<string[]>((resolve, reject) => {
+      let settled = false;
+      const release = (): void => {
+        settled = true;
+        entry.waiting -= 1;
+        signal?.removeEventListener('abort', onAbort);
+      };
+      function onAbort(): void {
+        if (settled) return;
+        release();
+        // The last caller of a request in flight left: abort it and drop it
+        // from the cache, so no cancelled request is reused.
+        if (entry.waiting === 0 && entry.expiresAt === Number.POSITIVE_INFINITY) {
+          if (branchCache.get(repoUrl) === entry) branchCache.delete(repoUrl);
+          entry.controller.abort();
+        }
+        reject(branchAbortError());
+      }
+      signal?.addEventListener('abort', onAbort, { once: true });
+      entry.promise.then(
+        (branches) => {
+          if (settled) return;
+          release();
+          resolve(branches);
+        },
+        (error: unknown) => {
+          if (settled) return;
+          release();
+          reject(error);
+        },
+      );
+    });
   },
   /**
    * Check whether a branch exists in a repository.
@@ -1288,7 +1804,7 @@ export interface PaginatedAuditLogs {
 export const auditService = {
   /**
    * Fetch a paginated, filterable list of audit log entries.
-   * @param filters - Optional filters (user, entity type, action, date range, pagination)
+   * @param filters - Optional filters (user, entity type, entity ID, action, date range, pagination)
    * @returns Paginated audit log response
    * @see GET /api/v1/audit-logs
    */
@@ -1312,6 +1828,7 @@ export const auditService = {
     params.set('format', format);
     if (filters.user_id) params.set('user_id', filters.user_id);
     if (filters.entity_type) params.set('entity_type', filters.entity_type);
+    if (filters.entity_id) params.set('entity_id', filters.entity_id);
     if (filters.action) params.set('action', filters.action);
     if (filters.start_date) params.set('start_date', filters.start_date);
     if (filters.end_date) params.set('end_date', filters.end_date);
@@ -1399,6 +1916,55 @@ export const userService = {
       throw error;
     }
   },
+  /**
+   * Disable a user. Admin only. Revokes the user's access tokens and refresh
+   * tokens; API keys stop working until the user is enabled again.
+   * @param id - User ID (not the caller's own ID)
+   * @returns Resolves when the user is disabled
+   * @see PUT /api/v1/users/:id/disable
+   */
+  disable: async (id: string): Promise<void> => {
+    try {
+      await api.put(`/api/v1/users/${id}/disable`);
+    } catch (error) {
+      console.error('Failed to disable user:', error);
+      throw error;
+    }
+  },
+  /**
+   * Enable a disabled user. Admin only. The user must log in again.
+   * @param id - User ID (not the caller's own ID)
+   * @returns Resolves when the user is enabled
+   * @see PUT /api/v1/users/:id/enable
+   */
+  enable: async (id: string): Promise<void> => {
+    try {
+      await api.put(`/api/v1/users/${id}/enable`);
+    } catch (error) {
+      console.error('Failed to enable user:', error);
+      throw error;
+    }
+  },
+  /**
+   * Change the role of a local user. Admin only. The server refuses an SSO
+   * user (409, the identity provider manages the role), the caller's own role
+   * (403) and the removal of the last enabled admin (409). A change signs the
+   * user out (access and refresh tokens revoked); API keys keep working with
+   * the new role.
+   * @param id - User ID (not the caller's own ID)
+   * @param role - New role: "user", "devops" or "admin"
+   * @returns The old and the new role, and whether the role changed
+   * @see PUT /api/v1/users/:id/role
+   */
+  changeRole: async (id: string, role: UserRole): Promise<ChangeRoleResponse> => {
+    try {
+      const response = await api.put(`/api/v1/users/${id}/role`, { role });
+      return response.data;
+    } catch (error) {
+      console.error('Failed to change user role:', error);
+      throw error;
+    }
+  },
 };
 
 /** API key management service for per-user key CRUD. Maps to `/api/v1/users/:id/api-keys`. */
@@ -1454,12 +2020,15 @@ export const apiKeyService = {
 export const adminService = {
   /**
    * List Kubernetes namespaces not associated with any stack instance.
-   * @returns Array of orphaned namespaces
+   * @param details - When true (default), include resource counts and Helm releases per namespace
+   * @returns Array of orphaned namespaces; `managed` is true for namespaces labelled managed-by=k8s-stack-manager
    * @see GET /api/v1/admin/orphaned-namespaces
    */
-  listOrphanedNamespaces: async (): Promise<OrphanedNamespace[]> => {
+  listOrphanedNamespaces: async (details = true): Promise<OrphanedNamespace[]> => {
     try {
-      const response = await api.get('/api/v1/admin/orphaned-namespaces');
+      const response = await api.get('/api/v1/admin/orphaned-namespaces', {
+        params: details ? { details: 'true' } : undefined,
+      });
       return response.data;
     } catch (error) {
       console.error('Failed to fetch orphaned namespaces:', error);
@@ -1469,11 +2038,15 @@ export const adminService = {
   /**
    * Delete an orphaned namespace from the cluster.
    * @param namespace - Namespace name to delete
+   * @param confirm - Full namespace name; the API requires it when the namespace is not managed by k8s-stack-manager
+   * @returns Resolves when the namespace deletion has started
    * @see DELETE /api/v1/admin/orphaned-namespaces/:namespace
    */
-  deleteOrphanedNamespace: async (namespace: string): Promise<void> => {
+  deleteOrphanedNamespace: async (namespace: string, confirm?: string): Promise<void> => {
     try {
-      await api.delete(`/api/v1/admin/orphaned-namespaces/${namespace}`);
+      await api.delete(`/api/v1/admin/orphaned-namespaces/${encodeURIComponent(namespace)}`, {
+        params: confirm ? { confirm } : undefined,
+      });
     } catch (error) {
       console.error('Failed to delete orphaned namespace:', error);
       throw error;
@@ -2130,11 +2703,18 @@ export const notificationChannelService = {
   },
   /**
    * Create a new notification channel.
-   * @param channel - Channel fields (name, webhook_url, optional secret and enabled)
-   * @returns The created channel
+   * @param channel - Channel fields (name, webhook_url, optional secret, enabled, format and instance filters). `format` defaults to `generic` on the server
+   * @returns The created channel, with warnings for filter IDs that do not exist
    * @see POST /api/v1/admin/notification-channels
    */
-  create: async (channel: { name: string; webhook_url: string; secret?: string; enabled?: boolean }): Promise<NotificationChannel> => {
+  create: async (channel: {
+    name: string;
+    webhook_url: string;
+    secret?: string;
+    enabled?: boolean;
+    format?: NotificationChannelFormat;
+    filters?: NotificationChannelFilters;
+  }): Promise<NotificationChannelSaveResult> => {
     try {
       const response = await api.post('/api/v1/admin/notification-channels', channel);
       return response.data;
@@ -2161,11 +2741,11 @@ export const notificationChannelService = {
   /**
    * Update a notification channel.
    * @param id - Channel ID
-   * @param data - Fields to update
-   * @returns The updated channel
+   * @param data - Fields to update (partial); `format` sets the body format (`generic` or `teams`); `filters` replaces the instance filters (`{}` removes them)
+   * @returns The updated channel, with warnings for filter IDs that do not exist
    * @see PUT /api/v1/admin/notification-channels/:id
    */
-  update: async (id: string, data: Partial<NotificationChannel> & { secret?: string }): Promise<NotificationChannel> => {
+  update: async (id: string, data: Partial<NotificationChannel> & { secret?: string }): Promise<NotificationChannelSaveResult> => {
     try {
       const response = await api.put(`/api/v1/admin/notification-channels/${id}`, data);
       return response.data;

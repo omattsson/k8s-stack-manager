@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"backend/internal/hooks"
 	"backend/internal/models"
 )
 
@@ -49,6 +50,8 @@ func (s *ExpiryStopper) StopInstance(ctx context.Context, inst *models.StackInst
 		chartInfos = append(chartInfos, ChartDeployInfo{ChartConfig: ch})
 	}
 
+	// The stop-completed envelope says that the TTL reaper stopped it.
+	ctx = hooks.WithTrigger(ctx, hooks.Trigger{Type: hooks.TriggerTTL})
 	_, err = s.manager.StopWithCharts(ctx, inst, chartInfos)
 	return err
 }

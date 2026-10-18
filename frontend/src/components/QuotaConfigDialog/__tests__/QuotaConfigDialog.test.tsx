@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
+import { StrictMode } from 'react';
 import userEvent from '@testing-library/user-event';
 import QuotaConfigDialog from '../index';
 import { NotificationProvider } from '../../../context/NotificationContext';
@@ -220,5 +221,305 @@ describe('QuotaConfigDialog', () => {
 
     // Dialog should NOT have been closed on failure
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  describe('validation', () => {
+    const fieldByLabel = (label: string) => screen.getByRole('textbox', { name: label });
+
+    const renderEmpty = async () => {
+      (clusterService.getQuotas as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+      renderDialog();
+      await waitFor(() => {
+        expect(screen.getByText(/No quotas configured/)).toBeInTheDocument();
+      });
+    };
+
+    it('shows a format error on blur and disables Save for an invalid quantity', async () => {
+      const user = userEvent.setup();
+      await renderEmpty();
+
+      await user.type(fieldByLabel('Memory Limit'), 'abc');
+      expect(screen.queryByText(/Invalid quantity/)).not.toBeInTheDocument();
+      await user.tab();
+
+      expect(screen.getByText(/Invalid quantity\. Use a memory quantity/)).toBeInTheDocument();
+      expect(fieldByLabel('Memory Limit')).toHaveAttribute('aria-invalid', 'true');
+      expect(screen.getByRole('button', { name: /^save$/i })).toBeDisabled();
+      expect(clusterService.updateQuotas).not.toHaveBeenCalled();
+    });
+
+    it('rejects a negative quantity', async () => {
+      const user = userEvent.setup();
+      await renderEmpty();
+
+      await user.type(fieldByLabel('Storage Limit'), '-1Gi');
+      await user.tab();
+
+      expect(screen.getByText('Must not be negative')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^save$/i })).toBeDisabled();
+    });
+
+    it('rejects a CPU request higher than the CPU limit', async () => {
+      const user = userEvent.setup();
+      await renderEmpty();
+
+      await user.type(fieldByLabel('CPU Request'), '20');
+      await user.type(fieldByLabel('CPU Limit'), '16');
+      await user.tab();
+
+      expect(screen.getByText('CPU request must not be higher than the CPU limit')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^save$/i })).toBeDisabled();
+    });
+
+    it('compares memory request and limit across units', async () => {
+      const user = userEvent.setup();
+      await renderEmpty();
+
+      // 1Gi = 1024Mi, which is higher than 1000Mi.
+      await user.type(fieldByLabel('Memory Request'), '1Gi');
+      await user.type(fieldByLabel('Memory Limit'), '1000Mi');
+      await user.tab();
+
+      expect(screen.getByText('Memory request must not be higher than the memory limit')).toBeInTheDocument();
+
+      await user.clear(fieldByLabel('Memory Limit'));
+      await user.type(fieldByLabel('Memory Limit'), '2G');
+      await user.tab();
+
+      expect(screen.queryByText('Memory request must not be higher than the memory limit')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^save$/i })).toBeEnabled();
+    });
+
+    it('saves valid quantities in mixed units', async () => {
+      const user = userEvent.setup();
+      (clusterService.updateQuotas as ReturnType<typeof vi.fn>).mockResolvedValue(mockQuota);
+      await renderEmpty();
+
+      await user.type(fieldByLabel('CPU Request'), '500m');
+      await user.type(fieldByLabel('CPU Limit'), '1.5');
+      await user.type(fieldByLabel('Memory Request'), '1G');
+      await user.type(fieldByLabel('Memory Limit'), '1Gi');
+      await user.type(fieldByLabel('Storage Limit'), '1e10');
+      await user.click(screen.getByRole('button', { name: /^save$/i }));
+
+      await waitFor(() => {
+        expect(clusterService.updateQuotas).toHaveBeenCalledWith('c1', expect.objectContaining({
+          cpu_request: '500m',
+          cpu_limit: '1.5',
+          memory_request: '1G',
+          memory_limit: '1Gi',
+          storage_limit: '1e10',
+        }));
+      });
+    });
+
+    it('trims whitespace before validation and in the payload', async () => {
+      const user = userEvent.setup();
+      (clusterService.updateQuotas as ReturnType<typeof vi.fn>).mockResolvedValue(mockQuota);
+      await renderEmpty();
+
+      await user.type(fieldByLabel('CPU Request'), ' 500m ');
+      await user.type(fieldByLabel('Memory Limit'), ' 1Gi');
+      await user.tab();
+
+      expect(screen.queryByText(/Invalid quantity/)).not.toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: /^save$/i }));
+
+      await waitFor(() => {
+        expect(clusterService.updateQuotas).toHaveBeenCalledWith('c1', expect.objectContaining({
+          cpu_request: '500m',
+          memory_limit: '1Gi',
+        }));
+      });
+    });
+
+    it('shows errors for invalid stored values right after load', async () => {
+      (clusterService.getQuotas as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ...mockQuota,
+        memory_limit: 'abc',
+        cpu_request: '20',
+        cpu_limit: '16',
+      });
+      renderDialog();
+
+      await waitFor(() => {
+        expect(screen.getByDisplayValue('abc')).toBeInTheDocument();
+      });
+
+      expect(screen.getByText(/Invalid quantity\. Use a memory quantity/)).toBeInTheDocument();
+      expect(screen.getByText('CPU request must not be higher than the CPU limit')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^save$/i })).toBeDisabled();
+      // Valid stored values show their normal help text.
+      expect(screen.getByText('Maximum storage per namespace (e.g., 10Gi, 50Gi)')).toBeInTheDocument();
+    });
+
+    it('shows the server message when the backend rejects the quotas', async () => {
+      const user = userEvent.setup();
+      (clusterService.updateQuotas as ReturnType<typeof vi.fn>).mockRejectedValue({
+        response: { status: 400, statusText: 'Bad Request', data: { error: 'memory_limit: invalid quantity' } },
+      });
+      await renderEmpty();
+
+      await user.type(fieldByLabel('Memory Limit'), '1Gi');
+      await user.click(screen.getByRole('button', { name: /^save$/i }));
+
+      await waitFor(() => {
+        expect(
+          screen.getAllByText('Failed to save quota configuration (HTTP 400: memory_limit: invalid quantity)').length,
+        ).toBeGreaterThanOrEqual(1);
+      });
+    });
+  });
+  describe('per container section', () => {
+    const fieldByLabel = (label: string) => screen.getByRole('textbox', { name: label });
+
+    const renderEmpty = async () => {
+      (clusterService.getQuotas as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+      renderDialog();
+      await waitFor(() => {
+        expect(screen.getByText(/No quotas configured/)).toBeInTheDocument();
+      });
+    };
+
+    it('shows the per container fields with helper text', async () => {
+      await renderEmpty();
+
+      expect(screen.getByText('Per container')).toBeInTheDocument();
+      for (const label of [
+        'Container CPU Request',
+        'Container CPU Limit',
+        'Container CPU Max',
+        'Container Memory Request',
+        'Container Memory Limit',
+        'Container Memory Max',
+        'Container Ephemeral Storage Request',
+        'Container Ephemeral Storage Limit',
+        'Ephemeral Storage Limit',
+      ]) {
+        expect(fieldByLabel(label)).toBeInTheDocument();
+      }
+      expect(screen.getByText('Default CPU request of a container without its own (e.g., 100m)')).toBeInTheDocument();
+      expect(screen.getByText('Default memory request of a container without its own (e.g., 128Mi)')).toBeInTheDocument();
+    });
+
+    it('loads stored container values', async () => {
+      (clusterService.getQuotas as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ...mockQuota,
+        container_cpu_request: '150m',
+        container_cpu_max: '3',
+        container_memory_max: '6Gi',
+        ephemeral_storage_limit: '30Gi',
+      });
+      renderDialog();
+
+      await waitFor(() => {
+        expect(fieldByLabel('Container CPU Request')).toHaveValue('150m');
+      });
+      expect(fieldByLabel('Container CPU Max')).toHaveValue('3');
+      expect(fieldByLabel('Container Memory Max')).toHaveValue('6Gi');
+      expect(fieldByLabel('Ephemeral Storage Limit')).toHaveValue('30Gi');
+      expect(fieldByLabel('Container CPU Limit')).toHaveValue('');
+    });
+
+    it('saves the container fields trimmed', async () => {
+      const user = userEvent.setup();
+      (clusterService.updateQuotas as ReturnType<typeof vi.fn>).mockResolvedValue(mockQuota);
+      await renderEmpty();
+
+      await user.type(fieldByLabel('Container CPU Request'), ' 100m');
+      await user.type(fieldByLabel('Container CPU Limit'), '500m');
+      await user.type(fieldByLabel('Container CPU Max'), '2');
+      await user.type(fieldByLabel('Container Memory Request'), '128Mi');
+      await user.type(fieldByLabel('Container Memory Limit'), '512Mi');
+      await user.type(fieldByLabel('Container Memory Max'), '4Gi ');
+      await user.type(fieldByLabel('Ephemeral Storage Limit'), '20Gi');
+      await user.type(fieldByLabel('Container Ephemeral Storage Request'), '128Mi');
+      await user.type(fieldByLabel('Container Ephemeral Storage Limit'), '1Gi');
+      await user.click(screen.getByRole('button', { name: /^save$/i }));
+
+      await waitFor(() => {
+        expect(clusterService.updateQuotas).toHaveBeenCalledWith('c1', expect.objectContaining({
+          container_cpu_request: '100m',
+          container_cpu_limit: '500m',
+          container_cpu_max: '2',
+          container_memory_request: '128Mi',
+          container_memory_limit: '512Mi',
+          container_memory_max: '4Gi',
+          ephemeral_storage_limit: '20Gi',
+          container_ephemeral_storage_request: '128Mi',
+          container_ephemeral_storage_limit: '1Gi',
+        }));
+      });
+    });
+
+    it('rejects an invalid container quantity', async () => {
+      const user = userEvent.setup();
+      await renderEmpty();
+
+      await user.type(fieldByLabel('Container Memory Max'), '4 GB');
+      await user.tab();
+
+      expect(screen.getByText(/Invalid quantity\. Use a memory quantity/)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^save$/i })).toBeDisabled();
+    });
+
+    it('rejects a container limit higher than the container max', async () => {
+      const user = userEvent.setup();
+      await renderEmpty();
+
+      await user.type(fieldByLabel('Container CPU Limit'), '4');
+      await user.type(fieldByLabel('Container CPU Max'), '2000m');
+      await user.tab();
+
+      expect(screen.getByText('Must not be higher than the container CPU max')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^save$/i })).toBeDisabled();
+    });
+
+    it('rejects a container default higher than the namespace total', async () => {
+      const user = userEvent.setup();
+      await renderEmpty();
+
+      await user.type(fieldByLabel('Memory Limit'), '1Gi');
+      await user.type(fieldByLabel('Container Memory Limit'), '2Gi');
+      await user.tab();
+
+      expect(screen.getByText('Must not be higher than the namespace memory limit')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^save$/i })).toBeDisabled();
+    });
+
+    it('allows a container max above the namespace total', async () => {
+      const user = userEvent.setup();
+      await renderEmpty();
+
+      await user.type(fieldByLabel('CPU Limit'), '1');
+      await user.type(fieldByLabel('Container CPU Max'), '2');
+      await user.tab();
+
+      expect(screen.getByRole('button', { name: /^save$/i })).toBeEnabled();
+    });
+  });
+
+  it('keeps an edit when a late, stale quota response arrives (StrictMode, #596)', async () => {
+    // StrictMode runs the load effect twice. The first (stale) response comes last.
+    let resolveFirst: (v: unknown) => void = () => {};
+    let resolveSecond: (v: unknown) => void = () => {};
+    (clusterService.getQuotas as ReturnType<typeof vi.fn>)
+      .mockReturnValueOnce(new Promise((r) => { resolveFirst = r; }))
+      .mockReturnValueOnce(new Promise((r) => { resolveSecond = r; }));
+    const user = userEvent.setup();
+    render(
+      <StrictMode>
+        <NotificationProvider>
+          <QuotaConfigDialog open onClose={vi.fn()} clusterId="c1" clusterName="production" />
+        </NotificationProvider>
+      </StrictMode>,
+    );
+    await waitFor(() => expect(clusterService.getQuotas).toHaveBeenCalledTimes(2));
+    await act(async () => resolveSecond(mockQuota));
+    const field = await screen.findByDisplayValue('500m');
+    await user.clear(field);
+    await user.type(field, '750m');
+    await act(async () => resolveFirst(mockQuota));
+    expect(screen.getByDisplayValue('750m')).toBeInTheDocument();
   });
 });

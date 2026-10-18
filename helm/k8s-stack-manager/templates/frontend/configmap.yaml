@@ -16,5 +16,27 @@ data:
             index index.html;
             try_files $uri $uri/ /index.html;
         }
+        {{- if include "k8s-stack-manager.brandingFilesEnabled" . }}
+
+        # Branding files from the ConfigMap (branding.files). No SPA
+        # fallback: a missing file is a 404. The sandbox CSP stops script
+        # in an SVG that a user opens directly.
+        location /branding/ {
+            root /usr/share/nginx/html;
+            try_files $uri =404;
+            types {
+                image/svg+xml svg;
+                image/png     png;
+                image/x-icon  ico;
+                image/webp    webp;
+                image/jpeg    jpg jpeg;
+                image/gif     gif;
+            }
+            default_type application/octet-stream;
+            add_header X-Content-Type-Options "nosniff" always;
+            add_header Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; sandbox" always;
+            add_header Cache-Control "public, max-age=300" always;
+        }
+        {{- end }}
     }
 {{- end }}

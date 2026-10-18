@@ -12,6 +12,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -831,6 +832,132 @@ func TestGetClusterSummary_TwoNodes(t *testing.T) {
 	// Memory: 2 * 16Gi = 32Gi → "32.0Gi"
 	assert.Equal(t, "32.0Gi", summary.TotalMemory)
 	assert.Equal(t, "32.0Gi", summary.AllocatableMemory)
+	assert.Empty(t, summary.RequestedCPU, "the summary does not list pods")
+}
+
+func TestGetClusterRequests(t *testing.T) {
+	t.Parallel()
+
+	makePod := func(name, node string, phase corev1.PodPhase, cpu, mem string) *corev1.Pod {
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "stack-app1"},
+			Spec: corev1.PodSpec{
+				NodeName: node,
+				Containers: []corev1.Container{{
+					Name: "app",
+					Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse(cpu),
+						corev1.ResourceMemory: resource.MustParse(mem),
+					}},
+				}},
+			},
+			Status: corev1.PodStatus{Phase: phase},
+		}
+	}
+
+	cs := fake.NewSimpleClientset(
+		makeNode("node-1", true, "64", "256Gi"),
+		makePod("running-a", "node-1", corev1.PodRunning, "1500m", "2Gi"),
+		makePod("running-b", "node-1", corev1.PodRunning, "120m", "512Mi"),
+		makePod("finished", "node-1", corev1.PodSucceeded, "4", "8Gi"),
+		makePod("failed", "node-1", corev1.PodFailed, "4", "8Gi"),
+		makePod("unscheduled", "", corev1.PodPending, "4", "8Gi"),
+	)
+	client := NewClientFromInterface(cs)
+
+	got, err := client.GetClusterRequests(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, int64(1620), got.CPUMillis)
+	assert.Equal(t, int64(2560*1024*1024), got.MemoryBytes)
+	assert.Equal(t, "1620m", FormatCPUMillis(got.CPUMillis))
+	assert.Equal(t, "2.5Gi", FormatMemoryBytes(got.MemoryBytes))
+}
+
+func TestPodEffectiveRequests(t *testing.T) {
+	t.Parallel()
+
+	always := corev1.ContainerRestartPolicyAlways
+	ctr := func(cpu, mem string) corev1.Container {
+		return corev1.Container{Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse(cpu),
+			corev1.ResourceMemory: resource.MustParse(mem),
+		}}}
+	}
+	sidecar := func(cpu, mem string) corev1.Container {
+		c := ctr(cpu, mem)
+		c.RestartPolicy = &always
+		return c
+	}
+
+	tests := []struct {
+		name     string
+		spec     corev1.PodSpec
+		wantCPU  int64
+		wantMemM int64 // MiB
+	}{
+		{
+			name:     "app containers are summed",
+			spec:     corev1.PodSpec{Containers: []corev1.Container{ctr("100m", "64Mi"), ctr("200m", "128Mi")}},
+			wantCPU:  300,
+			wantMemM: 192,
+		},
+		{
+			name: "a large init container wins",
+			spec: corev1.PodSpec{
+				InitContainers: []corev1.Container{ctr("2", "1Gi"), ctr("500m", "64Mi")},
+				Containers:     []corev1.Container{ctr("100m", "64Mi"), ctr("200m", "128Mi")},
+			},
+			wantCPU:  2000,
+			wantMemM: 1024,
+		},
+		{
+			name: "app containers win over a small init container",
+			spec: corev1.PodSpec{
+				InitContainers: []corev1.Container{ctr("50m", "16Mi")},
+				Containers:     []corev1.Container{ctr("1", "256Mi")},
+			},
+			wantCPU:  1000,
+			wantMemM: 256,
+		},
+		{
+			name: "a native sidecar adds to later init containers and to the app",
+			spec: corev1.PodSpec{
+				InitContainers: []corev1.Container{sidecar("100m", "32Mi"), ctr("1", "512Mi")},
+				Containers:     []corev1.Container{ctr("200m", "64Mi")},
+			},
+			// init phase: 100m + 1 = 1100m, 32 + 512 = 544Mi; app: 200m + 100m = 300m, 96Mi
+			wantCPU:  1100,
+			wantMemM: 544,
+		},
+		{
+			name: "pod overhead is added",
+			spec: corev1.PodSpec{
+				Containers: []corev1.Container{ctr("250m", "100Mi")},
+				Overhead: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("50m"),
+					corev1.ResourceMemory: resource.MustParse("20Mi"),
+				},
+			},
+			wantCPU:  300,
+			wantMemM: 120,
+		},
+		{
+			name:     "no requests",
+			spec:     corev1.PodSpec{Containers: []corev1.Container{{Name: "app"}}},
+			wantCPU:  0,
+			wantMemM: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cpu, mem := podEffectiveRequests(&corev1.Pod{Spec: tt.spec})
+			assert.Equal(t, tt.wantCPU, cpu)
+			assert.Equal(t, tt.wantMemM*1024*1024, mem)
+		})
+	}
 }
 
 func TestGetClusterSummary_NoNodes(t *testing.T) {
@@ -1229,4 +1356,81 @@ func TestGetNamespaceStatus_PodStartTimeAndNodeName(t *testing.T) {
 	assert.Equal(t, "worker-node-1", pod.NodeName)
 	require.NotNil(t, pod.StartTime)
 	assert.Equal(t, startTime.Time, *pod.StartTime)
+}
+
+func TestGetNamespaceStatus_PrimaryIngressFirst(t *testing.T) {
+	t.Parallel()
+
+	pathType := networkingv1.PathTypePrefix
+	ingress := func(ns, name, host string, annotations map[string]string) *networkingv1.Ingress {
+		return &networkingv1.Ingress{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Annotations: annotations},
+			Spec: networkingv1.IngressSpec{
+				Rules: []networkingv1.IngressRule{{
+					Host: host,
+					IngressRuleValue: networkingv1.IngressRuleValue{
+						HTTP: &networkingv1.HTTPIngressRuleValue{
+							Paths: []networkingv1.HTTPIngressPath{{
+								Path:     "/",
+								PathType: &pathType,
+								Backend: networkingv1.IngressBackend{
+									Service: &networkingv1.IngressServiceBackend{
+										Name: name, Port: networkingv1.ServiceBackendPort{Number: 80},
+									},
+								},
+							}},
+						},
+					},
+				}},
+			},
+		}
+	}
+	primary := map[string]string{PrimaryURLAnnotation: "true"}
+
+	tests := []struct {
+		name        string
+		ingresses   []*networkingv1.Ingress
+		wantOrder   []string
+		wantPrimary []bool
+	}{
+		{
+			name: "the primary ingress comes first, the others keep the name order",
+			ingresses: []*networkingv1.Ingress{
+				ingress("ns-a", "a-db", "db.example.com", nil),
+				ingress("ns-a", "b-web", "web.example.com", primary),
+				ingress("ns-a", "c-mail", "mail.example.com", nil),
+			},
+			wantOrder:   []string{"b-web", "a-db", "c-mail"},
+			wantPrimary: []bool{true, false, false},
+		},
+		{
+			name: "without the annotation the name order stays",
+			ingresses: []*networkingv1.Ingress{
+				ingress("ns-a", "a-db", "db.example.com", nil),
+				ingress("ns-a", "b-web", "web.example.com", map[string]string{PrimaryURLAnnotation: "false"}),
+			},
+			wantOrder:   []string{"a-db", "b-web"},
+			wantPrimary: []bool{false, false},
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			objs := []runtime.Object{&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "ns-a"}}}
+			for _, ing := range tt.ingresses {
+				objs = append(objs, ing)
+			}
+			client := NewClientFromInterface(fake.NewSimpleClientset(objs...))
+
+			status, err := client.GetNamespaceStatus(context.Background(), "ns-a", StatusOptions{})
+
+			require.NoError(t, err)
+			require.Len(t, status.Ingresses, len(tt.wantOrder))
+			for i, want := range tt.wantOrder {
+				assert.Equal(t, want, status.Ingresses[i].Name)
+				assert.Equal(t, tt.wantPrimary[i], status.Ingresses[i].Primary)
+			}
+		})
+	}
 }

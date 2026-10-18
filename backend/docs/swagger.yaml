@@ -95,6 +95,35 @@ definitions:
     required:
     - session_id
     type: object
+  handlers.ChangeRoleRequest:
+    properties:
+      role:
+        description: 'Role is the new role: "user", "devops" or "admin".'
+        enum:
+        - user
+        - devops
+        - admin
+        example: devops
+        type: string
+    required:
+    - role
+    type: object
+  handlers.ChangeRoleResponse:
+    properties:
+      changed:
+        description: |-
+          Changed is false when the user already had the role (no-op: the
+          sessions of the user stay valid).
+        type: boolean
+      id:
+        type: string
+      message:
+        type: string
+      new_role:
+        type: string
+      old_role:
+        type: string
+    type: object
   handlers.ChartConfigExportData:
     properties:
       build_pipeline_id:
@@ -123,6 +152,92 @@ definitions:
       pending_values:
         type: string
       previous_values:
+        type: string
+    type: object
+  handlers.CloneInstanceResponse:
+    properties:
+      branch:
+        type: string
+      cleaned_at:
+        description: |-
+          CleanedAt is the time the last successful clean finished. It is nil
+          when the instance was not cleaned since its last deploy. A deploy
+          clears it. Cleanup policies use it for the cleaned_days condition (a
+          clean also clears LastDeployedAt, so idle_days cannot count from it).
+        type: string
+      cluster_id:
+        type: string
+      cluster_name:
+        description: |-
+          ClusterName is the name of the target cluster. Omitted when the
+          cluster no longer exists or cluster_id is empty (older instances).
+        readOnly: true
+        type: string
+      created_at:
+        type: string
+      definition_name:
+        description: |-
+          DefinitionName is the name of the stack definition. Omitted when the
+          definition no longer exists.
+        readOnly: true
+        type: string
+      error_message:
+        type: string
+      expires_at:
+        type: string
+      follower_count:
+        readOnly: true
+        type: integer
+      following:
+        description: |-
+          Following and FollowerCount are computed, not stored. GET, PUT and
+          POST .../extend on /stack-instances/{id} set them: following is true
+          when the caller follows the instance, follower_count is the number of
+          followers. List responses do not set them.
+        readOnly: true
+        type: boolean
+      id:
+        type: string
+      last_deployed_at:
+        type: string
+      name:
+        type: string
+      namespace:
+        type: string
+      owner_id:
+        type: string
+      owner_username:
+        description: |-
+          OwnerUsername is the username of the owner. Omitted when the owner
+          no longer exists (for example, after a delete).
+        readOnly: true
+        type: string
+      stack_definition_id:
+        type: string
+      status:
+        type: string
+      stopped_at:
+        description: |-
+          StoppedAt is the time the last successful stop finished. It is nil
+          when the instance is not stopped. A deploy or a clean clears it.
+          Cleanup policies use it for the stopped_days condition.
+        type: string
+      ttl_minutes:
+        type: integer
+      updated_at:
+        type: string
+      values_drift:
+        description: |-
+          ValuesDrift is computed, not stored. GET, PUT and POST .../extend on
+          /stack-instances/{id} set it to true when the running values come from
+          a successful rollback and the stored overrides produce different values
+          (the next deploy undoes the rollback). List responses do not compute it.
+        type: boolean
+      warning:
+        description: |-
+          Warning is set when the clone did not get the quota override of the
+          source (above the cluster quota, or the cluster quota lookup failed).
+          The clone then uses the cluster quota.
         type: string
     type: object
   handlers.ClusterSummary:
@@ -292,6 +407,8 @@ definitions:
         type: string
       namespace:
         type: string
+      owner_id:
+        type: string
       status:
         type: string
       ttl_minutes:
@@ -354,9 +471,22 @@ definitions:
         type: string
       name:
         type: string
+      source_template:
+        allOf:
+        - $ref: '#/definitions/handlers.SourceTemplateExportData'
+        description: |-
+          SourceTemplate is the template that the definition is linked to. The
+          export sets it for a linked definition; the import links the new
+          definition when the template and the version exist.
     type: object
   handlers.DefinitionWithChartsResponse:
     properties:
+      chart_count:
+        description: |-
+          ChartCount is the number of charts. It is computed, not stored; the
+          paged list sets it (the list does not load the charts).
+        readOnly: true
+        type: integer
       charts:
         items:
           $ref: '#/definitions/models.ChartConfig'
@@ -372,6 +502,19 @@ definitions:
       name:
         type: string
       owner_id:
+        type: string
+      owner_instance_id:
+        description: |-
+          OwnerInstanceID is set when quick deploy created the definition for one
+          instance. Deleting that instance also deletes the definition when no
+          other instance uses it. Empty for definitions that users create.
+        type: string
+      owner_username:
+        description: |-
+          OwnerUsername is the username of the owner. It is computed, not
+          stored; the API sets it in list and detail responses. Omitted when
+          the owner no longer exists (for example, after a delete).
+        readOnly: true
         type: string
       source_template_id:
         type: string
@@ -389,6 +532,15 @@ definitions:
       instance_id:
         type: string
       instance_name:
+        type: string
+      values_drift:
+        description: |-
+          ValuesDrift is true when the running values come from a rollback (the
+          last operation was a successful rollback) and the stored overrides
+          produce different values: the next deploy undoes the rollback.
+        type: boolean
+      warning:
+        description: Warning explains ValuesDrift when it is true.
         type: string
     type: object
   handlers.LoginRequest:
@@ -441,9 +593,16 @@ definitions:
       created_at:
         type: string
       helm_releases:
+        description: HelmReleases is always an array, never null.
         items:
           type: string
         type: array
+      managed:
+        description: |-
+          Managed is true when the namespace has the label
+          managed-by=k8s-stack-manager. An unmanaged namespace can belong to
+          another team or tool; deleting it requires ?confirm=<namespace>.
+        type: boolean
       name:
         type: string
       phase:
@@ -453,6 +612,12 @@ definitions:
     type: object
   handlers.OverviewStats:
     properties:
+      deploy_log_retention_days:
+        description: |-
+          DeployLogRetentionDays is DEPLOY_LOG_RETENTION_DAYS. The deploy counts
+          (here, per template and per user) cover only the kept deploy logs:
+          about the last N days. 0 means all deploy logs are kept.
+        type: integer
       running_instances:
         type: integer
       total_definitions:
@@ -494,6 +659,41 @@ definitions:
     required:
     - password
     type: object
+  handlers.RollbackResponse:
+    properties:
+      log_id:
+        type: string
+      message:
+        type: string
+      target_log_id:
+        description: |-
+          TargetLogID is the deploy whose values the rollback restores. Empty
+          for a rollback by one Helm revision.
+        type: string
+      values_drift:
+        description: |-
+          ValuesDrift is set for a rollback to a target: true when the values
+          built from the stored overrides differ from the target values. The
+          rollback does not change the stored overrides, so the next deploy then
+          changes the running values again. Not set for a rollback by one
+          revision; use GET /deploy-preview after the rollback.
+        type: boolean
+      warning:
+        description: Warning explains ValuesDrift when it is true.
+        type: string
+    type: object
+  handlers.SourceTemplateExportData:
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+      version:
+        description: |-
+          Version is a published version of the template. Empty means the
+          latest published version.
+        type: string
+    type: object
   handlers.TemplateDetailResponse:
     properties:
       category:
@@ -508,6 +708,8 @@ definitions:
         type: string
       description:
         type: string
+      has_unpublished_changes:
+        type: boolean
       id:
         type: string
       is_published:
@@ -515,6 +717,26 @@ definitions:
       name:
         type: string
       owner_id:
+        type: string
+      owner_username:
+        description: |-
+          OwnerUsername is the username of the owner. It is computed, not
+          stored; the API sets it in list and detail responses. Omitted when
+          the owner no longer exists (for example, after a delete).
+        readOnly: true
+        type: string
+      published_charts:
+        description: |-
+          PublishedCharts are the charts of the latest snapshot: what Use
+          Template and Quick Deploy apply. The IDs are the template chart config
+          IDs at publish time; Use Template accepts them as chart_overrides keys.
+          Null when the template has no snapshot.
+        items:
+          $ref: '#/definitions/models.TemplateChartConfig'
+        type: array
+      published_version:
+        type: string
+      published_version_id:
         type: string
       updated_at:
         type: string
@@ -542,6 +764,35 @@ definitions:
       template_id:
         type: string
       template_name:
+        type: string
+    type: object
+  handlers.UIConfigResponse:
+    properties:
+      default_instance_ttl_minutes:
+        description: |-
+          DefaultInstanceTTLMinutes is the start value of the TTL field in the
+          create forms (DEFAULT_INSTANCE_TTL_MINUTES). 0: no expiry.
+        example: 480
+        type: integer
+      favicon_url:
+        description: FaviconURL is the browser tab icon (APP_FAVICON_URL).
+        example: /favicon.svg
+        type: string
+      logo_url:
+        description: 'LogoURL is the logo image (APP_LOGO_URL). Empty: the built-in
+          logo.'
+        example: ""
+        type: string
+      max_instance_ttl_days:
+        description: |-
+          MaxInstanceTTLDays is the maximum TTL and the maximum distance of a
+          stop time from now (MAX_INSTANCE_TTL_DAYS). The forms limit the
+          TTL field and the stop-time picker with it.
+        example: 30
+        type: integer
+      title:
+        description: Title is the product name (APP_TITLE).
+        example: K8s Stack Manager
         type: string
     type: object
   handlers.UpdateClusterRequest:
@@ -577,9 +828,38 @@ definitions:
     type: object
   handlers.UpdateQuotaRequest:
     properties:
+      container_cpu_limit:
+        example: 500m
+        type: string
+      container_cpu_max:
+        example: "2"
+        type: string
+      container_cpu_request:
+        description: Per-container LimitRange values and the namespace ephemeral-storage
+          total.
+        example: 100m
+        type: string
+      container_ephemeral_storage_limit:
+        example: 1Gi
+        type: string
+      container_ephemeral_storage_request:
+        example: 128Mi
+        type: string
+      container_memory_limit:
+        example: 512Mi
+        type: string
+      container_memory_max:
+        example: 4Gi
+        type: string
+      container_memory_request:
+        example: 128Mi
+        type: string
       cpu_limit:
         type: string
       cpu_request:
+        type: string
+      ephemeral_storage_limit:
+        example: 20Gi
         type: string
       memory_limit:
         type: string
@@ -601,6 +881,106 @@ definitions:
       user_id:
         type: string
       username:
+        type: string
+    type: object
+  handlers.ValidateBranchResponse:
+    properties:
+      branch:
+        description: Branch is the branch name from the request.
+        example: main
+        type: string
+      valid:
+        description: Valid is true when the branch exists in the repository.
+        example: true
+        type: boolean
+    type: object
+  handlers.actionInfo:
+    properties:
+      can_invoke:
+        description: CanInvoke is true when the caller may run the action on this
+          instance.
+        type: boolean
+      confirm:
+        type: string
+      description:
+        type: string
+      has_job_log:
+        description: |-
+          HasJobLog is true when the backend proxies the job log of the action
+          (the action config has a log_path).
+        type: boolean
+      label:
+        type: string
+      name:
+        type: string
+      parameters:
+        items:
+          $ref: '#/definitions/handlers.actionParameterInfo'
+        type: array
+    type: object
+  handlers.actionJobLogResponse:
+    properties:
+      action:
+        type: string
+      done:
+        description: Done is true when the job has ended and the log is read to the
+          end.
+        type: boolean
+      instance_id:
+        type: string
+      job_id:
+        type: string
+      log:
+        description: Log is the log text from Offset to NextOffset.
+        type: string
+      next_offset:
+        description: NextOffset is the offset for the next poll.
+        type: integer
+      offset:
+        description: Offset is the requested byte offset.
+        type: integer
+      status:
+        description: |-
+          Status is the job state from the subscriber: running while the job
+          runs, else a final state such as succeeded or failed.
+        type: string
+      truncated:
+        description: |-
+          Truncated is true when the chunk was cut at the size cap; poll again
+          at once with next_offset.
+        type: boolean
+    type: object
+  handlers.actionListResponse:
+    properties:
+      actions:
+        items:
+          $ref: '#/definitions/handlers.actionInfo'
+        type: array
+      can_invoke:
+        type: boolean
+      instance_id:
+        type: string
+    type: object
+  handlers.actionParameterInfo:
+    properties:
+      default: {}
+      description:
+        type: string
+      label:
+        type: string
+      name:
+        type: string
+      options:
+        items:
+          type: string
+        type: array
+      required:
+        type: boolean
+      type:
+        enum:
+        - string
+        - bool
+        - enum
         type: string
     type: object
   handlers.addFavoriteRequest:
@@ -629,10 +1009,94 @@ definitions:
       source_repo_url:
         type: string
     type: object
+  handlers.chartDiffEntry:
+    properties:
+      change_type:
+        description: '"added", "removed", "modified", "unchanged"'
+        type: string
+      chart_name:
+        type: string
+      has_differences:
+        type: boolean
+      left_chart_path:
+        type: string
+      left_chart_version:
+        description: |-
+          Chart source fields; compared only when both sides store them
+          (snapshot schema version 1 or the working copy).
+        type: string
+      left_locked:
+        type: string
+      left_repo_url:
+        type: string
+      left_required:
+        type: boolean
+      left_sort_order:
+        type: integer
+      left_values:
+        type: string
+      right_chart_path:
+        type: string
+      right_chart_version:
+        type: string
+      right_locked:
+        type: string
+      right_repo_url:
+        type: string
+      right_required:
+        type: boolean
+      right_sort_order:
+        type: integer
+      right_values:
+        type: string
+    type: object
+  handlers.cloneInstanceRequest:
+    properties:
+      branch:
+        description: 'Branch of the clone. Default: the branch of the source.'
+        type: string
+      expires_at:
+        description: |-
+          ExpiresAt is a fixed stop time of the clone (RFC 3339 with a time
+          zone). Do not send it with ttl_minutes. Default: a future fixed stop
+          time of the source.
+        type: string
+      name:
+        description: |-
+          Name of the clone. Must be a DNS label (lowercase a-z, 0-9, '-', start
+          and end alphanumeric, at most 50 characters). When empty, the server
+          picks the first free name of <source>-copy, <source>-copy-2, ...
+        type: string
+      ttl_minutes:
+        description: 'TTLMinutes of the clone (0 = no expiry). Default: the TTL of
+          the source.'
+        type: integer
+    type: object
+  handlers.cloneTemplateRequest:
+    properties:
+      name:
+        description: 'Name of the clone. Default: "<source name> (Copy)".'
+        type: string
+    type: object
   handlers.createChannelRequest:
     properties:
       enabled:
         type: boolean
+      filters:
+        allOf:
+        - $ref: '#/definitions/models.NotificationChannelFilters'
+        description: |-
+          Filters limits the channel to some stack instances. Omit it or send
+          empty lists for all instances.
+      format:
+        description: |-
+          Format is the body format: "generic" (the event JSON, default) or
+          "teams" (a Microsoft Teams Adaptive Card envelope).
+        enum:
+        - generic
+        - teams
+        example: generic
+        type: string
       name:
         type: string
       secret:
@@ -642,6 +1106,25 @@ definitions:
     required:
     - name
     - webhook_url
+    type: object
+  handlers.createInstanceRequest:
+    properties:
+      branch:
+        type: string
+      cluster_id:
+        type: string
+      expires_at:
+        description: |-
+          ExpiresAt is a fixed stop time (RFC 3339 with a time zone). It sets
+          ttl_minutes to 0, and a deploy keeps it. Do not send it with ttl_minutes.
+        example: "2026-10-17T18:00:00+02:00"
+        type: string
+      name:
+        type: string
+      stack_definition_id:
+        type: string
+      ttl_minutes:
+        type: integer
     type: object
   handlers.createTemplateRequest:
     properties:
@@ -664,10 +1147,98 @@ definitions:
     required:
     - name
     type: object
+  handlers.definitionImportResponse:
+    properties:
+      chart_count:
+        description: |-
+          ChartCount is the number of charts. It is computed, not stored; the
+          paged list sets it (the list does not load the charts).
+        readOnly: true
+        type: integer
+      charts:
+        items:
+          $ref: '#/definitions/models.ChartConfig'
+        type: array
+      created_at:
+        type: string
+      default_branch:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      owner_id:
+        type: string
+      owner_instance_id:
+        description: |-
+          OwnerInstanceID is set when quick deploy created the definition for one
+          instance. Deleting that instance also deletes the definition when no
+          other instance uses it. Empty for definitions that users create.
+        type: string
+      owner_username:
+        description: |-
+          OwnerUsername is the username of the owner. It is computed, not
+          stored; the API sets it in list and detail responses. Omitted when
+          the owner no longer exists (for example, after a delete).
+        readOnly: true
+        type: string
+      source_template_id:
+        type: string
+      source_template_version:
+        type: string
+      updated_at:
+        type: string
+      warnings:
+        items:
+          type: string
+        type: array
+    type: object
   handlers.extendTTLRequest:
     properties:
-      ttl_minutes:
+      minutes:
+        description: |-
+          Minutes adds this many minutes to the current expiry (or to now when
+          the instance already expired or has no expiry time). Must be > 0.
         type: integer
+      ttl_minutes:
+        description: |-
+          TTLMinutes is deprecated. Sent alone, it keeps the old behaviour: set
+          the TTL to this value and the expiry to now + TTL. Use minutes instead.
+        type: integer
+      until:
+        description: |-
+          Until sets the expiry to this time (RFC 3339 with a time zone). It must
+          be after the current expiry and not later than now plus the limit
+          (MAX_INSTANCE_TTL_DAYS). Do not send it with minutes or ttl_minutes.
+        example: "2026-10-17T18:00:00+02:00"
+        type: string
+    type: object
+  handlers.followStateResponse:
+    properties:
+      follower_count:
+        description: FollowerCount is the number of users who follow the instance.
+        type: integer
+      following:
+        description: Following is true when the caller follows the instance.
+        type: boolean
+    type: object
+  handlers.instantiateTemplateRequest:
+    properties:
+      chart_overrides:
+        additionalProperties:
+          type: string
+        description: |-
+          ChartOverrides replace the default values of charts in the new
+          definition. Key: a published_charts[].id, a working copy charts[].id
+          (mapped by chart name) or a chart name. Keys for charts that are not in
+          the published snapshot are ignored.
+        type: object
+      description:
+        type: string
+      name:
+        type: string
     type: object
   handlers.invokeActionRequest:
     properties:
@@ -675,12 +1246,70 @@ definitions:
         additionalProperties: {}
         type: object
     type: object
+  handlers.notificationChannelResponse:
+    properties:
+      created_at:
+        type: string
+      enabled:
+        description: |-
+          Enabled has no GORM default on purpose: with default:true GORM
+          writes true for a new channel with enabled=false (zero value). The
+          handler sets true when the request omits it; the column keeps its
+          database default (migration 40).
+        type: boolean
+      filters:
+        allOf:
+        - $ref: '#/definitions/models.NotificationChannelFilters'
+        description: |-
+          Filters limits the events of the channel to some stack instances.
+          Empty filters (the default) let all events through.
+      format:
+        description: |-
+          Format is the body format of the webhook request:
+          NotificationChannelFormatGeneric (the event JSON) or
+          NotificationChannelFormatTeams (a Microsoft Teams Adaptive Card
+          envelope). Migration 60 adds the column; existing rows get "generic".
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      updated_at:
+        type: string
+      warnings:
+        description: |-
+          Warnings lists filter IDs that point to no existing user, stack
+          definition or cluster. The channel is saved with them.
+        items:
+          type: string
+        type: array
+      webhook_url:
+        type: string
+    type: object
   handlers.notificationChannelWithCount:
     properties:
       created_at:
         type: string
       enabled:
+        description: |-
+          Enabled has no GORM default on purpose: with default:true GORM
+          writes true for a new channel with enabled=false (zero value). The
+          handler sets true when the request omits it; the column keeps its
+          database default (migration 40).
         type: boolean
+      filters:
+        allOf:
+        - $ref: '#/definitions/models.NotificationChannelFilters'
+        description: |-
+          Filters limits the events of the channel to some stack instances.
+          Empty filters (the default) let all events through.
+      format:
+        description: |-
+          Format is the body format of the webhook request:
+          NotificationChannelFormatGeneric (the event JSON) or
+          NotificationChannelFormatTeams (a Microsoft Teams Adaptive Card
+          envelope). Migration 60 adds the column; existing rows get "generic".
+        type: string
       id:
         type: string
       name:
@@ -692,6 +1321,54 @@ definitions:
       webhook_url:
         type: string
     type: object
+  handlers.publishTemplateRequest:
+    properties:
+      change_summary:
+        description: ChangeSummary is stored with the snapshot.
+        type: string
+      version:
+        description: 'Version of the new snapshot. Default: the version of the working
+          copy.'
+        type: string
+    type: object
+  handlers.publishTemplateResponse:
+    properties:
+      category:
+        type: string
+      created_at:
+        type: string
+      default_branch:
+        type: string
+      description:
+        type: string
+      has_unpublished_changes:
+        type: boolean
+      id:
+        type: string
+      is_published:
+        type: boolean
+      name:
+        type: string
+      owner_id:
+        type: string
+      owner_username:
+        description: |-
+          OwnerUsername is the username of the owner. It is computed, not
+          stored; the API sets it in list and detail responses. Omitted when
+          the owner no longer exists (for example, after a delete).
+        readOnly: true
+        type: string
+      published_version:
+        type: string
+      published_version_id:
+        type: string
+      snapshot_created:
+        type: boolean
+      updated_at:
+        type: string
+      version:
+        type: string
+    type: object
   handlers.quickDeployRequest:
     properties:
       branch:
@@ -701,6 +1378,12 @@ definitions:
           type: string
         type: object
       cluster_id:
+        type: string
+      expires_at:
+        description: |-
+          ExpiresAt is a fixed stop time (RFC 3339 with a time zone). It sets
+          ttl_minutes to 0. Do not send it with ttl_minutes.
+        example: "2026-10-17T18:00:00+02:00"
         type: string
       instance_description:
         type: string
@@ -718,6 +1401,12 @@ definitions:
       log_id:
         type: string
     type: object
+  handlers.rollbackRequest:
+    properties:
+      target_log_id:
+        description: TargetLogID is the ID of a successful deploy log of this instance.
+        type: string
+    type: object
   handlers.setBranchOverrideRequest:
     properties:
       branch:
@@ -726,11 +1415,40 @@ definitions:
     type: object
   handlers.setQuotaOverrideRequest:
     properties:
+      container_cpu_limit:
+        example: 500m
+        type: string
+      container_cpu_max:
+        example: "2"
+        type: string
+      container_cpu_request:
+        description: Per-container LimitRange values and the namespace ephemeral-storage
+          total.
+        example: 100m
+        type: string
+      container_ephemeral_storage_limit:
+        example: 1Gi
+        type: string
+      container_ephemeral_storage_request:
+        example: 128Mi
+        type: string
+      container_memory_limit:
+        example: 512Mi
+        type: string
+      container_memory_max:
+        example: 4Gi
+        type: string
+      container_memory_request:
+        example: 128Mi
+        type: string
       cpu_limit:
         example: 2000m
         type: string
       cpu_request:
         example: 500m
+        type: string
+      ephemeral_storage_limit:
+        example: 20Gi
         type: string
       memory_limit:
         example: 1Gi
@@ -745,15 +1463,85 @@ definitions:
         example: 10Gi
         type: string
     type: object
+  handlers.templateFieldDiff:
+    properties:
+      field:
+        type: string
+      left:
+        type: string
+      right:
+        type: string
+    type: object
+  handlers.templateLinkRequest:
+    properties:
+      template_id:
+        description: TemplateID is the template to link. Empty removes the link.
+        example: 6f1c2d3e-0000-0000-0000-000000000000
+        type: string
+      version:
+        description: |-
+          Version is a published version of the template. Empty means the
+          latest published version.
+        example: 1.2.0
+        type: string
+    type: object
+  handlers.templateVersionListItem:
+    properties:
+      change_summary:
+        type: string
+      created_at:
+        type: string
+      created_by:
+        type: string
+      created_by_username:
+        type: string
+      id:
+        type: string
+      template_id:
+        type: string
+      version:
+        type: string
+    type: object
   handlers.updateChannelRequest:
     properties:
       enabled:
         type: boolean
+      filters:
+        allOf:
+        - $ref: '#/definitions/models.NotificationChannelFilters'
+        description: |-
+          Filters replaces the filters of the channel. Omit it to keep them;
+          send {} to remove all filters.
+      format:
+        description: |-
+          Format replaces the body format ("generic" or "teams"). Omit it to
+          keep the format.
+        enum:
+        - generic
+        - teams
+        type: string
       name:
         type: string
       secret:
         type: string
       webhook_url:
+        type: string
+    type: object
+  handlers.updateCleanupPolicyRequest:
+    properties:
+      action:
+        type: string
+      cluster_id:
+        type: string
+      condition:
+        type: string
+      dry_run:
+        type: boolean
+      enabled:
+        type: boolean
+      name:
+        type: string
+      schedule:
         type: string
     type: object
   handlers.updatePreferenceRequest:
@@ -772,6 +1560,53 @@ definitions:
           type: string
         type: array
     type: object
+  handlers.updateTemplateRequest:
+    properties:
+      category:
+        type: string
+      default_branch:
+        type: string
+      description:
+        type: string
+      name:
+        type: string
+      version:
+        type: string
+    type: object
+  handlers.upgradeChanges:
+    properties:
+      charts_added:
+        items:
+          type: string
+        type: array
+      charts_modified:
+        items:
+          type: string
+        type: array
+      charts_removed:
+        items:
+          type: string
+        type: array
+      charts_unchanged:
+        items:
+          type: string
+        type: array
+    type: object
+  handlers.upgradeCheckResponse:
+    properties:
+      changes:
+        $ref: '#/definitions/handlers.upgradeChanges'
+      chart_diffs:
+        items:
+          $ref: '#/definitions/handlers.chartDiffEntry'
+        type: array
+      current_version:
+        type: string
+      latest_version:
+        type: string
+      upgrade_available:
+        type: boolean
+    type: object
   handlers.versionDetailResponse:
     properties:
       change_summary:
@@ -780,12 +1615,49 @@ definitions:
         type: string
       created_by:
         type: string
+      created_by_username:
+        description: CreatedByUsername is the author's username (omitted when unknown).
+        type: string
       id:
         type: string
       snapshot:
         $ref: '#/definitions/models.TemplateSnapshot'
       template_id:
         type: string
+      version:
+        type: string
+    type: object
+  handlers.versionDiffResponse:
+    properties:
+      chart_diffs:
+        items:
+          $ref: '#/definitions/handlers.chartDiffEntry'
+        type: array
+      left:
+        $ref: '#/definitions/handlers.versionDiffSide'
+      right:
+        $ref: '#/definitions/handlers.versionDiffSide'
+      template_diffs:
+        items:
+          $ref: '#/definitions/handlers.templateFieldDiff'
+        type: array
+    type: object
+  handlers.versionDiffSide:
+    properties:
+      change_summary:
+        type: string
+      created_at:
+        type: string
+      created_by:
+        type: string
+      created_by_username:
+        type: string
+      id:
+        type: string
+      is_working_copy:
+        type: boolean
+      snapshot:
+        $ref: '#/definitions/models.TemplateSnapshot'
       version:
         type: string
     type: object
@@ -840,6 +1712,15 @@ definitions:
         type: integer
       ready_node_count:
         type: integer
+      requested_cpu:
+        description: |-
+          RequestedCPU and RequestedMemory are the sums of the pod requests
+          (scheduler rule) of all scheduled pods that are not finished. They are
+          not real use (metrics-server). Only GET /clusters/:id/health/summary
+          sets them (GetClusterRequests); empty when the pod list fails.
+        type: string
+      requested_memory:
+        type: string
       total_cpu:
         type: string
       total_memory:
@@ -886,6 +1767,12 @@ definitions:
         type: string
       path:
         type: string
+      primary:
+        description: |-
+          Primary is true for an Ingress with the annotation
+          PrimaryURLAnnotation = "true". Primary entries come first in
+          NamespaceStatus.Ingresses, so clients that show one URL show it.
+        type: boolean
       tls:
         type: boolean
       url:
@@ -895,6 +1782,11 @@ definitions:
     properties:
       created_at:
         type: string
+      managed:
+        description: |-
+          Managed is true when the namespace has the label
+          managed-by=k8s-stack-manager (set by the deployer).
+        type: boolean
       name:
         type: string
       phase:
@@ -1072,6 +1964,7 @@ definitions:
       details:
         type: string
       entity_id:
+        description: '63: RFC 1123 label (namespace name); a UUID has 36'
         type: string
       entity_type:
         type: string
@@ -1132,7 +2025,8 @@ definitions:
         description: or "all" for all clusters
         type: string
       condition:
-        description: e.g. "idle_days:7", "status:stopped,age_days:14", "ttl_expired"
+        description: e.g. "idle_days:7", "status:stopped,age_days:14", "stopped_days:3",
+          "ttl_expired", "status:running,expires_within_hours:12"
         type: string
       created_at:
         type: string
@@ -1196,6 +2090,18 @@ definitions:
       action:
         description: '"deploy", "stop", "clean", "rollback"'
         type: string
+      branch:
+        description: |-
+          Branch is the instance branch of a deploy, or the branch of the target
+          deploy for a rollback to a target. Empty for older logs and for stop
+          and clean logs.
+        type: string
+      chart_versions:
+        description: |-
+          ChartVersions is a JSON object chart name -> chart version that a
+          deploy used. A rollback to this deploy installs the same versions.
+          Empty for logs written before the column existed.
+        type: string
       completed_at:
         type: string
       error_message:
@@ -1209,9 +2115,18 @@ definitions:
       started_at:
         type: string
       status:
-        description: '"running", "success", "error"'
+        description: '"running", "success", "error", "partial" (deploy only)'
         type: string
       target_log_id:
+        type: string
+      user_id:
+        description: |-
+          UserID is the user who started a deploy. Per-user analytics count
+          deploys by this field, so the history stays after the instance is
+          deleted. Empty for system deploys and for other actions. Migration 49
+          sets it for older deploy logs to the owner of the instance and adds
+          the composite index idx_deployment_logs_user_action (user_id, action,
+          started_at, completed_at, status) for SummarizeByUsers.
         type: string
       values_snapshot:
         type: string
@@ -1229,11 +2144,33 @@ definitions:
     type: object
   models.InstanceQuotaOverride:
     properties:
+      container_cpu_limit:
+        type: string
+      container_cpu_max:
+        type: string
+      container_cpu_request:
+        description: |-
+          Per-container values for the namespace LimitRange (stack-manager-limits)
+          and the namespace ephemeral-storage total. Empty means not set. See
+          k8s.Client.EnsureLimitRange for the fallback defaults.
+        type: string
+      container_ephemeral_storage_limit:
+        type: string
+      container_ephemeral_storage_request:
+        type: string
+      container_memory_limit:
+        type: string
+      container_memory_max:
+        type: string
+      container_memory_request:
+        type: string
       cpu_limit:
         type: string
       cpu_request:
         type: string
       created_at:
+        type: string
+      ephemeral_storage_limit:
         type: string
       id:
         type: string
@@ -1249,28 +2186,6 @@ definitions:
         type: string
       updated_at:
         type: string
-    type: object
-  models.Item:
-    properties:
-      created_at:
-        example: "2025-06-02T10:00:00Z"
-        type: string
-      deleted_at:
-        format: date-time
-        type: string
-      id:
-        example: 1
-        type: integer
-      name:
-        type: string
-      price:
-        type: number
-      updated_at:
-        example: "2025-06-02T10:00:00Z"
-        type: string
-      version:
-        description: For optimistic locking (1 = initial; 0 = not provided)
-        type: integer
     type: object
   models.Notification:
     properties:
@@ -1298,7 +2213,25 @@ definitions:
       created_at:
         type: string
       enabled:
+        description: |-
+          Enabled has no GORM default on purpose: with default:true GORM
+          writes true for a new channel with enabled=false (zero value). The
+          handler sets true when the request omits it; the column keeps its
+          database default (migration 40).
         type: boolean
+      filters:
+        allOf:
+        - $ref: '#/definitions/models.NotificationChannelFilters'
+        description: |-
+          Filters limits the events of the channel to some stack instances.
+          Empty filters (the default) let all events through.
+      format:
+        description: |-
+          Format is the body format of the webhook request:
+          NotificationChannelFormatGeneric (the event JSON) or
+          NotificationChannelFormatTeams (a Microsoft Teams Adaptive Card
+          envelope). Migration 60 adds the column; existing rows get "generic".
+        type: string
       id:
         type: string
       name:
@@ -1307,6 +2240,32 @@ definitions:
         type: string
       webhook_url:
         type: string
+    type: object
+  models.NotificationChannelFilters:
+    properties:
+      cluster_ids:
+        description: ClusterIDs are cluster IDs.
+        items:
+          type: string
+        type: array
+      definition_ids:
+        description: DefinitionIDs are stack definition IDs.
+        items:
+          type: string
+        type: array
+      instance_name_patterns:
+        description: |-
+          InstanceNamePatterns are glob patterns (path.Match syntax: *, ?,
+          [a-z]) for the instance name, for example "rdbtest-*". The match
+          ignores case.
+        items:
+          type: string
+        type: array
+      owner_ids:
+        description: OwnerIDs are user IDs of instance owners.
+        items:
+          type: string
+        type: array
     type: object
   models.NotificationPreference:
     properties:
@@ -1351,11 +2310,33 @@ definitions:
     properties:
       cluster_id:
         type: string
+      container_cpu_limit:
+        type: string
+      container_cpu_max:
+        type: string
+      container_cpu_request:
+        description: |-
+          Per-container values for the namespace LimitRange (stack-manager-limits)
+          and the namespace ephemeral-storage total. Empty means not set. See
+          k8s.Client.EnsureLimitRange for the fallback defaults.
+        type: string
+      container_ephemeral_storage_limit:
+        type: string
+      container_ephemeral_storage_request:
+        type: string
+      container_memory_limit:
+        type: string
+      container_memory_max:
+        type: string
+      container_memory_request:
+        type: string
       cpu_limit:
         type: string
       cpu_request:
         type: string
       created_at:
+        type: string
+      ephemeral_storage_limit:
         type: string
       id:
         type: string
@@ -1393,6 +2374,12 @@ definitions:
     type: object
   models.StackDefinition:
     properties:
+      chart_count:
+        description: |-
+          ChartCount is the number of charts. It is computed, not stored; the
+          paged list sets it (the list does not load the charts).
+        readOnly: true
+        type: integer
       created_at:
         type: string
       default_branch:
@@ -1405,6 +2392,19 @@ definitions:
         type: string
       owner_id:
         type: string
+      owner_instance_id:
+        description: |-
+          OwnerInstanceID is set when quick deploy created the definition for one
+          instance. Deleting that instance also deletes the definition when no
+          other instance uses it. Empty for definitions that users create.
+        type: string
+      owner_username:
+        description: |-
+          OwnerUsername is the username of the owner. It is computed, not
+          stored; the API sets it in list and detail responses. Omitted when
+          the owner no longer exists (for example, after a delete).
+        readOnly: true
+        type: string
       source_template_id:
         type: string
       source_template_version:
@@ -1416,14 +2416,44 @@ definitions:
     properties:
       branch:
         type: string
+      cleaned_at:
+        description: |-
+          CleanedAt is the time the last successful clean finished. It is nil
+          when the instance was not cleaned since its last deploy. A deploy
+          clears it. Cleanup policies use it for the cleaned_days condition (a
+          clean also clears LastDeployedAt, so idle_days cannot count from it).
+        type: string
       cluster_id:
         type: string
+      cluster_name:
+        description: |-
+          ClusterName is the name of the target cluster. Omitted when the
+          cluster no longer exists or cluster_id is empty (older instances).
+        readOnly: true
+        type: string
       created_at:
+        type: string
+      definition_name:
+        description: |-
+          DefinitionName is the name of the stack definition. Omitted when the
+          definition no longer exists.
+        readOnly: true
         type: string
       error_message:
         type: string
       expires_at:
         type: string
+      follower_count:
+        readOnly: true
+        type: integer
+      following:
+        description: |-
+          Following and FollowerCount are computed, not stored. GET, PUT and
+          POST .../extend on /stack-instances/{id} set them: following is true
+          when the caller follows the instance, follower_count is the number of
+          followers. List responses do not set them.
+        readOnly: true
+        type: boolean
       id:
         type: string
       last_deployed_at:
@@ -1434,14 +2464,33 @@ definitions:
         type: string
       owner_id:
         type: string
+      owner_username:
+        description: |-
+          OwnerUsername is the username of the owner. Omitted when the owner
+          no longer exists (for example, after a delete).
+        readOnly: true
+        type: string
       stack_definition_id:
         type: string
       status:
+        type: string
+      stopped_at:
+        description: |-
+          StoppedAt is the time the last successful stop finished. It is nil
+          when the instance is not stopped. A deploy or a clean clears it.
+          Cleanup policies use it for the stopped_days condition.
         type: string
       ttl_minutes:
         type: integer
       updated_at:
         type: string
+      values_drift:
+        description: |-
+          ValuesDrift is computed, not stored. GET, PUT and POST .../extend on
+          /stack-instances/{id} set it to true when the running values come from
+          a successful rollback and the stored overrides produce different values
+          (the next deploy undoes the rollback). List responses do not compute it.
+        type: boolean
     type: object
   models.StackTemplate:
     properties:
@@ -1460,6 +2509,13 @@ definitions:
       name:
         type: string
       owner_id:
+        type: string
+      owner_username:
+        description: |-
+          OwnerUsername is the username of the owner. It is computed, not
+          stored; the API sets it in list and detail responses. Omitted when
+          the owner no longer exists (for example, after a delete).
+        readOnly: true
         type: string
       updated_at:
         type: string
@@ -1498,9 +2554,21 @@ definitions:
     type: object
   models.TemplateChartSnapshotData:
     properties:
+      build_pipeline_id:
+        type: string
       chart_name:
         type: string
+      chart_path:
+        type: string
+      chart_version:
+        type: string
       default_values:
+        type: string
+      id:
+        description: |-
+          Fields below exist from schema version 1.
+          ID is the template chart config ID in the working copy at publish time.
+          It is not content: SameTemplateContent ignores it.
         type: string
       is_required:
         type: boolean
@@ -1510,6 +2578,8 @@ definitions:
         type: string
       sort_order:
         type: integer
+      source_repo_url:
+        type: string
     type: object
   models.TemplateSnapshot:
     properties:
@@ -1517,6 +2587,8 @@ definitions:
         items:
           $ref: '#/definitions/models.TemplateChartSnapshotData'
         type: array
+      schema_version:
+        type: integer
       template:
         $ref: '#/definitions/models.TemplateSnapshotData'
     type: object
@@ -1531,21 +2603,6 @@ definitions:
       is_published:
         type: boolean
       name:
-        type: string
-      version:
-        type: string
-    type: object
-  models.TemplateVersion:
-    properties:
-      change_summary:
-        type: string
-      created_at:
-        type: string
-      created_by:
-        type: string
-      id:
-        type: string
-      template_id:
         type: string
       version:
         type: string
@@ -1652,7 +2709,16 @@ paths:
     post:
       consumes:
       - application/json
-      description: Creates a new cleanup policy and reloads the scheduler
+      description: 'Creates a new cleanup policy and reloads the scheduler. condition
+        is a comma-separated list of key:value pairs (all must match): status:<status>;
+        idle_days:<N> (no deploy for N days, creation time when never deployed; a
+        running or partial instance whose expiry is in the future never matches);
+        age_days:<N> (created more than N days ago); stopped_days:<N> (stopped, and
+        the last stop finished N or more days ago; instances without a recorded stop
+        time never match); cleaned_days:<N> (a draft, and the last clean finished
+        N or more days ago; instances without a recorded clean time never match);
+        ttl_expired; expires_within_hours:<N> (no expiry, or the expiry is at most
+        N hours from now; an instance with a later expiry does not match).'
       parameters:
       - description: Cleanup policy
         in: body
@@ -1716,19 +2782,23 @@ paths:
     put:
       consumes:
       - application/json
-      description: Updates an existing cleanup policy and reloads the scheduler
+      description: 'Updates an existing cleanup policy and reloads the scheduler.
+        Partial update: only the fields in the body change (for example {"enabled":
+        false}); the merged policy is validated. See the create endpoint for the condition
+        syntax (status, idle_days, age_days, stopped_days, cleaned_days, ttl_expired,
+        expires_within_hours).'
       parameters:
       - description: Policy ID
         in: path
         name: id
         required: true
         type: string
-      - description: Cleanup policy
+      - description: Fields to change
         in: body
         name: policy
         required: true
         schema:
-          $ref: '#/definitions/models.CleanupPolicy'
+          $ref: '#/definitions/handlers.updateCleanupPolicyRequest'
       produces:
       - application/json
       responses:
@@ -1738,6 +2808,18 @@ paths:
             $ref: '#/definitions/models.CleanupPolicy'
         "400":
           description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
           schema:
             additionalProperties:
               type: string
@@ -1761,8 +2843,13 @@ paths:
       - cleanup-policies
   /api/v1/admin/cleanup-policies/{id}/run:
     post:
-      description: Executes a cleanup policy immediately. Use ?dry_run=true to preview
-        matches without acting.
+      description: Executes a cleanup policy immediately and answers when the run
+        ends. Use ?dry_run=true to preview matches without acting. Stop and clean
+        only start the operations (fast). A delete runs the pre-instance-delete hooks
+        per instance first, so a delete run can take up to the number of matches times
+        (5 minutes, or the sum of the pre-instance-delete hook timeouts plus one minute
+        when longer); use a client timeout that allows this. The run fires cleanup-policy-executed
+        when at least one instance matched.
       parameters:
       - description: Policy ID
         in: path
@@ -1831,7 +2918,17 @@ paths:
     post:
       consumes:
       - application/json
-      description: Creates a new notification channel
+      description: 'Creates a new notification channel. format sets the body of the
+        webhook request: "generic" (default, the event JSON) or "teams" (a Microsoft
+        Teams Adaptive Card envelope for a Teams workflow made from the template "Post
+        to a channel when a webhook request is received"). An unknown format gives
+        400. Optional filters limit the channel to some stack instances: instance_name_patterns
+        (globs, path.Match syntax, case-insensitive), owner_ids, definition_ids and
+        cluster_ids. Each set filter must match (AND); one value of a filter is enough
+        (OR); empty filters match all instances. Events without an instance go only
+        to channels without filters; a cleanup policy run goes to a channel when at
+        least one affected instance matches. An invalid pattern gives 400. An ID that
+        does not exist gives a warning in the response; the channel is saved.'
       parameters:
       - description: Channel
         in: body
@@ -1845,9 +2942,21 @@ paths:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/models.NotificationChannel'
+            $ref: '#/definitions/handlers.notificationChannelResponse'
         "400":
           description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
           schema:
             additionalProperties:
               type: string
@@ -1899,7 +3008,7 @@ paths:
       tags:
       - notification-channels
     get:
-      description: Returns a notification channel by ID
+      description: Returns a notification channel by ID, with its filters
       parameters:
       - description: Channel ID
         in: path
@@ -1939,7 +3048,11 @@ paths:
     put:
       consumes:
       - application/json
-      description: Updates an existing notification channel
+      description: Updates an existing notification channel. Only the fields in the
+        body change. format ("generic" or "teams") replaces the body format; omit
+        it to keep the format; an unknown format gives 400. filters replaces the channel
+        filters (omit it to keep them, send {} to remove them); the rules are the
+        same as for create. An ID that does not exist gives a warning in the response.
       parameters:
       - description: Channel ID
         in: path
@@ -1958,9 +3071,21 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/models.NotificationChannel'
+            $ref: '#/definitions/handlers.notificationChannelResponse'
         "400":
           description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
           schema:
             additionalProperties:
               type: string
@@ -2113,7 +3238,12 @@ paths:
       - notification-channels
   /api/v1/admin/notification-channels/{id}/test:
     post:
-      description: Sends a test payload to the channel's webhook URL
+      description: Sends a test payload (event type "test") to the channel's webhook
+        URL with one attempt, in the format of the channel (generic event JSON or
+        a Teams Adaptive Card envelope). Redirects are not followed. A disabled channel
+        can be tested too; channel_enabled in the response tells whether the channel
+        gets events. Each test send is written to the delivery log of the channel
+        with event_type "test".
       parameters:
       - description: Channel ID
         in: path
@@ -2124,12 +3254,25 @@ paths:
       - application/json
       responses:
         "200":
-          description: OK
+          description: success (bool), message, status_code (0 when no answer), channel_enabled
+            (bool)
           schema:
             additionalProperties: true
             type: object
         "400":
           description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
           schema:
             additionalProperties:
               type: string
@@ -2171,7 +3314,9 @@ paths:
     get:
       description: Lists all Kubernetes namespaces matching the stack-* pattern that
         have no corresponding stack instance in the database. Pass ?details=true to
-        include resource counts and helm releases per namespace (expensive).
+        include resource counts and helm releases per namespace (expensive). helm_releases
+        is always an array (empty without details, without releases or when Helm fails),
+        never null. The managed field is true when the namespace has the label managed-by=k8s-stack-manager.
       parameters:
       - description: Include resource counts and helm releases (true/false)
         in: query
@@ -2206,12 +3351,18 @@ paths:
   /api/v1/admin/orphaned-namespaces/{namespace}:
     delete:
       description: Verifies the namespace is orphaned, uninstalls all Helm releases,
-        and deletes the Kubernetes namespace
+        and deletes the Kubernetes namespace. A namespace without the label managed-by=k8s-stack-manager
+        is deleted only when the confirm query parameter is the full namespace name.
       parameters:
       - description: Namespace name
         in: path
         name: namespace
         required: true
+        type: string
+      - description: Full namespace name; required when the namespace is not managed
+          by k8s-stack-manager
+        in: query
+        name: confirm
         type: string
       produces:
       - application/json
@@ -2224,6 +3375,12 @@ paths:
             type: object
         "400":
           description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
           schema:
             additionalProperties:
               type: string
@@ -2253,8 +3410,9 @@ paths:
       - Admin
   /api/v1/analytics/overview:
     get:
-      description: Returns high-level aggregate counts (templates, definitions, instances,
-        deploys, users)
+      description: |-
+        Returns high-level aggregate counts (templates, definitions, instances, deploys, users).
+        deploy_log_retention_days is DEPLOY_LOG_RETENTION_DAYS: the deploy counts of all analytics endpoints cover only the kept deploy logs (about the last N days). 0 means all deploy logs are kept.
       produces:
       - application/json
       responses:
@@ -2318,7 +3476,8 @@ paths:
   /api/v1/audit-logs:
     get:
       description: List audit logs with optional filters and pagination. Supports
-        cursor-based pagination for efficient large dataset traversal.
+        cursor-based pagination for efficient large dataset traversal. Requires the
+        devops or admin role.
       parameters:
       - description: Filter by user ID
         in: query
@@ -2370,12 +3529,26 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "500":
           description: Internal Server Error
           schema:
             additionalProperties:
               type: string
             type: object
+      security:
+      - BearerAuth: []
       summary: List audit logs
       tags:
       - audit-logs
@@ -2727,7 +3900,12 @@ paths:
       consumes:
       - application/json
       description: Issues a new access token using the refresh token cookie. Rotates
-        the refresh token (old one invalidated, new one issued).
+        the refresh token (old one invalidated, new one issued). A session ends SESSION_MAX_LIFETIME
+        after login and after SESSION_IDLE_TIMEOUT without requests; rotation never
+        extends the session. A token rotated less than REFRESH_REUSE_GRACE ago (for
+        example a concurrent refresh from a second browser tab) gets a new access
+        token without a new cookie. Any other reuse of a consumed token revokes the
+        session.
       produces:
       - application/json
       responses:
@@ -2736,7 +3914,13 @@ paths:
           schema:
             $ref: '#/definitions/handlers.RefreshResponse'
         "401":
-          description: Invalid, expired, or revoked refresh token
+          description: Invalid, expired, or revoked refresh token or session
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Account disabled
           schema:
             additionalProperties:
               type: string
@@ -2761,7 +3945,7 @@ paths:
       consumes:
       - application/json
       description: Create a new user account (admin only, or when self-registration
-        is enabled)
+        is enabled) A role outside user, devops and admin gives 400.
       parameters:
       - description: User registration data
         in: body
@@ -3062,7 +4246,8 @@ paths:
   /api/v1/clusters/{id}/health/summary:
     get:
       description: Returns node count, CPU/memory totals, and namespace count for
-        a cluster.
+        a cluster. requested_cpu and requested_memory are the sums of the pod requests
+        of scheduled, unfinished pods (not real use); omitted when the pod list fails.
       parameters:
       - description: Cluster ID
         in: path
@@ -3207,8 +4392,26 @@ paths:
     put:
       consumes:
       - application/json
-      description: Creates or updates the resource quota configuration for a cluster.
-        Admin only.
+      description: 'Creates or updates the resource quota configuration for a cluster.
+        Admin only. Each non-empty quantity must be a valid Kubernetes quantity (for
+        example 500m, 2, 512Mi, 10Gi) and not negative; cpu_request must not exceed
+        cpu_limit and memory_request must not exceed memory_limit; pod_limit must
+        not be negative. The container_* fields set the LimitRange of each stack namespace
+        (defaultRequest, default, max per container); per container, request <= limit
+        <= max, and a container default must not exceed the namespace value of the
+        same resource. ephemeral_storage_limit sets requests.ephemeral-storage and
+        limits.ephemeral-storage of the namespace ResourceQuota. Without container
+        defaults, the LimitRange uses fallback defaults (CPU 100m request / 500m limit,
+        memory 128Mi / 512Mi, ephemeral storage 128Mi / 1Gi), capped at the namespace
+        value and the container max; never the namespace total. Values are trimmed.
+        Invalid input returns 400 with the field name. The quota is also checked merged
+        with the quota override of every instance on the cluster (for the default
+        cluster also instances without a cluster); a conflict returns 400 listing
+        up to 10 instance names and the first rule broken. After the save, the backend
+        applies the quota to every stack namespace on the cluster in the background:
+        the namespace of an instance with a quota override gets the effective quota
+        (the cluster quota merged with the override); other stack namespaces get the
+        cluster quota. A namespace whose merged quota is not valid is skipped.'
       parameters:
       - description: Cluster ID
         in: path
@@ -3230,6 +4433,18 @@ paths:
             $ref: '#/definitions/models.ResourceQuotaConfig'
         "400":
           description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
           schema:
             additionalProperties:
               type: string
@@ -3802,8 +5017,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/handlers.ValidateBranchResponse'
         "400":
           description: Bad Request
           schema:
@@ -3859,127 +5073,6 @@ paths:
       summary: Validate a branch
       tags:
       - git
-  /api/v1/items:
-    get:
-      description: Get a list of all items
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            items:
-              $ref: '#/definitions/models.Item'
-            type: array
-      summary: Get all items
-      tags:
-      - items
-    post:
-      consumes:
-      - application/json
-      description: Create a new item with the provided information
-      parameters:
-      - description: Item object
-        in: body
-        name: item
-        required: true
-        schema:
-          $ref: '#/definitions/models.Item'
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            $ref: '#/definitions/models.Item'
-        "400":
-          description: Bad Request
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      summary: Create a new item
-      tags:
-      - items
-  /api/v1/items/{id}:
-    delete:
-      description: Delete an item by its ID
-      parameters:
-      - description: Item ID
-        in: path
-        name: id
-        required: true
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "204":
-          description: No Content
-        "404":
-          description: Not Found
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      summary: Delete an item
-      tags:
-      - items
-    get:
-      description: Get an item by its ID
-      parameters:
-      - description: Item ID
-        in: path
-        name: id
-        required: true
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/models.Item'
-        "404":
-          description: Not Found
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      summary: Get an item by ID
-      tags:
-      - items
-    put:
-      consumes:
-      - application/json
-      description: Update an item's information
-      parameters:
-      - description: Item ID
-        in: path
-        name: id
-        required: true
-        type: integer
-      - description: Item object
-        in: body
-        name: item
-        required: true
-        schema:
-          $ref: '#/definitions/models.Item'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/models.Item'
-        "404":
-          description: Not Found
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      summary: Update an item
-      tags:
-      - items
   /api/v1/notifications:
     get:
       description: List the authenticated user's notifications with optional filters
@@ -4105,7 +5198,8 @@ paths:
       - notifications
   /api/v1/notifications/preferences:
     get:
-      description: Get the authenticated user's notification preferences
+      description: Get the authenticated user's notification preferences. Stored preferences
+        of unknown event types are omitted.
       produces:
       - application/json
       responses:
@@ -4136,7 +5230,10 @@ paths:
       consumes:
       - application/json
       description: Update the authenticated user's notification preferences (array
-        of event_type + enabled)
+        of event_type + enabled). Each event_type must be a known type (the instance
+        event types, and the system types cleanup.policy.executed, quota.warning and
+        secret.expiring); an unknown type gives 400 and no preference is changed.
+        The response omits stored preferences of unknown event types.
       parameters:
       - description: Preferences to update
         in: body
@@ -4224,11 +5321,18 @@ paths:
       - ping
   /api/v1/stack-definitions:
     get:
-      description: List stack definitions with server-side pagination
+      description: |-
+        List stack definitions with server-side pagination, newest first. The filters name and owner combine (AND); total is the number of definitions that match.
+        owner is "me" (the authenticated user), a username, or a user ID. A value in UUID form is matched as a user ID first, then as a username. An unknown username or ID gives an empty list. Each definition includes owner_username (omitted when the owner no longer exists) and chart_count (the number of charts; omitted when the count fails).
+        The list is paged (default pageSize 25); with owner=me or name the total is the real number of matches, not the page size.
       parameters:
       - description: Filter by exact name
         in: query
         name: name
+        type: string
+      - description: 'Filter by owner: ''me'', a username, or a user ID'
+        in: query
+        name: owner
         type: string
       - description: Page number (default 1)
         in: query
@@ -4260,6 +5364,18 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "400":
+          description: Owner filter is too long
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: owner=me without an authenticated user
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "500":
           description: Internal Server Error
           schema:
@@ -4272,7 +5388,8 @@ paths:
     post:
       consumes:
       - application/json
-      description: Create a new stack definition
+      description: Create a new stack definition. Definition names are unique per
+        owner. Requires the devops or admin role.
       parameters:
       - description: Definition object
         in: body
@@ -4289,6 +5406,30 @@ paths:
             $ref: '#/definitions/models.StackDefinition'
         "400":
           description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: The owner already has a definition with this name
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
           schema:
             additionalProperties:
               type: string
@@ -4310,6 +5451,12 @@ paths:
       responses:
         "204":
           description: No Content
+        "403":
+          description: Caller is not the owner, devops or admin
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
           schema:
@@ -4327,6 +5474,7 @@ paths:
       - stack-definitions
     get:
       description: Get a stack definition by ID, including its chart configurations
+        and owner_username (omitted when the owner no longer exists)
       parameters:
       - description: Definition ID
         in: path
@@ -4352,7 +5500,8 @@ paths:
     put:
       consumes:
       - application/json
-      description: Update an existing stack definition
+      description: Update an existing stack definition. A changed name must be unique
+        for the owner of the definition.
       parameters:
       - description: Definition ID
         in: path
@@ -4378,8 +5527,32 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Caller is not the owner, devops or admin
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: The owner already has a definition with this name
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
           schema:
             additionalProperties:
               type: string
@@ -4391,7 +5564,8 @@ paths:
     post:
       consumes:
       - application/json
-      description: Add a new chart configuration to a stack definition
+      description: Add a new chart configuration to a stack definition. Requires the
+        devops or admin role.
       parameters:
       - description: Definition ID
         in: path
@@ -4417,6 +5591,12 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
           schema:
@@ -4428,7 +5608,8 @@ paths:
       - chart-configs
   /api/v1/stack-definitions/{id}/charts/{chartId}:
     delete:
-      description: Remove a chart configuration from a stack definition
+      description: Remove a chart configuration from a stack definition. Requires
+        the devops or admin role.
       parameters:
       - description: Definition ID
         in: path
@@ -4445,6 +5626,12 @@ paths:
       responses:
         "204":
           description: No Content
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
           schema:
@@ -4526,6 +5713,12 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
           schema:
@@ -4543,8 +5736,11 @@ paths:
       - chart-configs
   /api/v1/stack-definitions/{id}/check-upgrade:
     get:
-      description: Check if the source template has a newer version than the definition's
-        current version
+      consumes:
+      - application/json
+      description: |-
+        Check if the latest published snapshot of the source template has another version than the definition's current version. An unpublished template, or one without a snapshot, gives upgrade_available=false.
+        chart_diffs has the shape of the version diff chart_diffs: left = the definition charts now (locked values from the current source version snapshot), right = the latest snapshot. change_type "removed" means the chart is only in the definition; the upgrade keeps it.
       parameters:
       - description: Definition ID
         in: path
@@ -4557,10 +5753,15 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/handlers.upgradeCheckResponse'
         "400":
           description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
           schema:
             additionalProperties:
               type: string
@@ -4618,27 +5819,42 @@ paths:
       summary: Export a stack definition
       tags:
       - stack-definitions
-  /api/v1/stack-definitions/{id}/upgrade:
-    post:
+  /api/v1/stack-definitions/{id}/template-link:
+    put:
       consumes:
       - application/json
-      description: Upgrade a definition to the latest template version, adding new
-        charts and updating defaults
+      description: |-
+        Sets or removes the source template of an existing definition (for example an imported one). The link changes only source_template_id and source_template_version; the charts and the values of the definition do not change.
+        A linked definition gets the template rules: required charts cannot be removed, the locked values of the latest published snapshot apply at deploy time (also when the link names an older version; the version is the base of the upgrade check), the upgrade check compares with the template, and the analytics template usage counts the definition, its instances and its deploys. A definition whose charts differ from the template can be linked; the upgrade check then shows the difference.
+        template_id empty removes the link (both fields become empty; version must then be empty). The template must exist (404) and be published (409). version must be a published version of the template (400); empty means the latest published version.
+        Authorization: devops or admin (403).
       parameters:
       - description: Definition ID
         in: path
         name: id
         required: true
         type: string
+      - description: Template link
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.templateLinkRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/handlers.DefinitionWithChartsResponse'
+            $ref: '#/definitions/models.StackDefinition'
         "400":
           description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
           schema:
             additionalProperties:
               type: string
@@ -4661,6 +5877,67 @@ paths:
             additionalProperties:
               type: string
             type: object
+      security:
+      - BearerAuth: []
+      summary: Link a stack definition to a template
+      tags:
+      - stack-definitions
+  /api/v1/stack-definitions/{id}/upgrade:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Upgrade a definition to the latest published snapshot of its source template, adding new charts and updating defaults, repository URL, deploy order and (when the snapshot has them) chart version, chart path, source repo and build pipeline. Charts that are only in the definition stay.
+        An unpublished template, or one without a snapshot, gives 409 "Template has no published version".
+      parameters:
+      - description: Definition ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.DefinitionWithChartsResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Caller is not the owner, devops or admin
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Already at the latest version, or no published version
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
       summary: Apply a template upgrade to a definition
       tags:
       - stack-definitions
@@ -4668,8 +5945,9 @@ paths:
     post:
       consumes:
       - application/json
-      description: Import a stack definition from a portable JSON bundle, creating
-        a new definition with fresh IDs
+      description: |-
+        Import a stack definition from a portable JSON bundle, creating a new definition with fresh IDs. Definition names are unique per owner: when the caller already has a definition with the bundle name, the import uses "<name> (imported)", then "<name> (imported 2)", ... The response holds the final name (409 when no free name is found).
+        definition.source_template (optional: id or name, and version) links the new definition to a template, as PUT /stack-definitions/{id}/template-link does. The import looks up the template by ID, else by name among the published templates (not case-sensitive on MySQL). When the template does not exist, is not published, the name matches more than one published template, or the version is not a published version, the import creates the definition without a link and adds a message to warnings; it does not fail.
       parameters:
       - description: Export bundle
         in: body
@@ -4683,7 +5961,7 @@ paths:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/handlers.DefinitionWithChartsResponse'
+            $ref: '#/definitions/handlers.definitionImportResponse'
         "400":
           description: Bad Request
           schema:
@@ -4701,18 +5979,43 @@ paths:
       - stack-definitions
   /api/v1/stack-instances:
     get:
-      description: 'List stack instances with server-side pagination. Supports page/pageSize
-        or legacy limit/offset params. Use owner=me to filter by the authenticated
-        user. Filter precedence: owner > name > pagination (only the first matching
-        filter is applied).'
+      description: |-
+        List stack instances with server-side pagination, newest first. Supports page/pageSize or legacy limit/offset params.
+        The filters name, status, cluster_id, definition_id and owner combine (AND). total is the number of instances that match the filters.
+        owner is "me" (the authenticated user), a username, or a user ID. A value in UUID form is matched as a user ID first, then as a username. An unknown username or ID gives an empty list.
+        The list is paged (default pageSize 25); with owner=me or name the total is the real number of matches, not the page size.
+        Each instance includes owner_username, definition_name and cluster_name. A field is omitted when the owner, definition or cluster no longer exists; cluster_name is also omitted when cluster_id is empty (older instances).
       parameters:
-      - description: Filter by owner (use 'me' for current user)
+      - description: 'Filter by owner: ''me'', a username, or a user ID'
         in: query
         name: owner
         type: string
       - description: Filter by exact instance name
         in: query
         name: name
+        type: string
+      - description: Filter by status
+        enum:
+        - draft
+        - queued
+        - deploying
+        - stabilizing
+        - running
+        - stopping
+        - stopped
+        - cleaning
+        - partial
+        - error
+        in: query
+        name: status
+        type: string
+      - description: Filter by cluster ID
+        in: query
+        name: cluster_id
+        type: string
+      - description: Filter by stack definition ID
+        in: query
+        name: definition_id
         type: string
       - description: 'Page number (1-based, default: 1)'
         in: query
@@ -4738,6 +6041,18 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "400":
+          description: Unknown status, or a filter value that is too long
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: owner=me without an authenticated user
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "500":
           description: Internal Server Error
           schema:
@@ -4747,13 +6062,78 @@ paths:
       summary: List stack instances
       tags:
       - stack-instances
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Create a new stack instance from a definition.
+        Expiry: ttl_minutes counts from the deploy (omitted: DEFAULT_INSTANCE_TTL_MINUTES; 0: no expiry). expires_at (RFC 3339 with a time zone) is a fixed stop time instead: ttl_minutes becomes 0, and a deploy keeps the stop time. expires_at must be in the future and not later than now + MAX_INSTANCE_TTL_DAYS (default 30). A TTL above that limit, or expires_at together with ttl_minutes, gives 400.
+      parameters:
+      - description: Instance object
+        in: body
+        name: instance
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.createInstanceRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.StackInstance'
+        "400":
+          description: Invalid body, or name is not a DNS label (lowercase a-z, 0-9,
+            '-', start and end alphanumeric, at most 50 characters)
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: A pre-instance-create hook rejected the request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Stack definition not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Namespace already exists, or the name is taken on the cluster
+            (UNIQUE_INSTANCE_NAMES)
+          schema:
+            $ref: '#/definitions/handlers.NamespaceConflictResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Create a stack instance
+      tags:
+      - stack-instances
   /api/v1/stack-instances/{id}:
     delete:
-      description: Deletes a stack instance. If the instance has running resources
+      description: 'Deletes a stack instance. If the instance has running resources
         (status running/stopped/error), a cleanup is initiated first — helm releases
         are uninstalled and the namespace is deleted before the database record is
         removed. Returns 204 for immediate deletion (draft instances) or 202 when
-        async cleanup is required.
+        async cleanup is required: the clean started, and the row is removed when
+        the clean finishes (WebSocket message instance.deleted). A failed clean keeps
+        the instance with status error ("Clean failed; the stack was not deleted.").
+        An operation in progress gives 409 before pre-instance-delete fires; of two
+        concurrent deletes one gets 409. When quick deploy created the stack definition
+        of the instance (owner_instance_id) and no other instance uses it, the definition
+        and its charts are deleted with the instance.'
       parameters:
       - description: Instance ID
         in: path
@@ -4773,6 +6153,13 @@ paths:
         "204":
           description: No Content — instance deleted immediately (no resources to
             clean)
+        "403":
+          description: Caller is not the owner, an admin or a devops user, or a pre-instance-delete
+            hook rejected the request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
           schema:
@@ -4780,7 +6167,8 @@ paths:
               type: string
             type: object
         "409":
-          description: Instance is in a transient state (deploying/stopping/cleaning)
+          description: Instance is in a transient state (deploying/stopping/cleaning),
+            or a concurrent delete started first
           schema:
             additionalProperties:
               type: string
@@ -4795,7 +6183,13 @@ paths:
       tags:
       - stack-instances
     get:
-      description: Get a stack instance by ID
+      description: 'Get a stack instance by ID. values_drift is true when the running
+        values come from a successful rollback and the stored overrides produce different
+        values: the next deploy undoes the rollback. Only this endpoint computes values_drift,
+        following (the caller follows the instance) and follower_count; list responses
+        omit them. owner_username, definition_name and cluster_name are omitted when
+        the owner, definition or cluster no longer exists; cluster_name is also omitted
+        when cluster_id is empty (older instances).'
       parameters:
       - description: Instance ID
         in: path
@@ -4809,8 +6203,26 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/models.StackInstance'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
           schema:
             additionalProperties:
               type: string
@@ -4821,7 +6233,9 @@ paths:
     put:
       consumes:
       - application/json
-      description: Update a stack instance (branch, name, etc.)
+      description: |-
+        Update a stack instance (branch, name, etc.). A changed name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters); an unchanged name is not checked, so older instances with other names stay editable. A rename does not change the namespace.
+        ttl_minutes sets a new TTL from now (0 clears the expiry). expires_at (RFC 3339 with a time zone) sets a fixed stop time and ttl_minutes 0. Do not send both (400). The limits are the same as for create (MAX_INSTANCE_TTL_DAYS).
       parameters:
       - description: Instance ID
         in: path
@@ -4838,11 +6252,24 @@ paths:
       - application/json
       responses:
         "200":
-          description: OK
+          description: The updated instance with the same computed fields as GET (values_drift,
+            names, follow state)
           schema:
             $ref: '#/definitions/models.StackInstance'
         "400":
           description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Caller is not the owner, an admin or a devops user
           schema:
             additionalProperties:
               type: string
@@ -4853,17 +6280,92 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "409":
+          description: The new name is taken on the cluster (UNIQUE_INSTANCE_NAMES)
+          schema:
+            $ref: '#/definitions/handlers.NamespaceConflictResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
       summary: Update a stack instance
+      tags:
+      - stack-instances
+  /api/v1/stack-instances/{id}/actions:
+    get:
+      consumes:
+      - application/json
+      description: Returns the registered actions with their UI metadata (label, description,
+        confirmation text, parameter schema) and a can_invoke flag. Any authenticated
+        user who can view the instance gets the list; can_invoke is true for the owner,
+        an admin and a devops user. The response never contains the subscriber URL,
+        secret or headers. Without an action registry the list is empty.
+      parameters:
+      - description: Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.actionListResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Instance not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: List the actions that can run on a stack instance
       tags:
       - stack-instances
   /api/v1/stack-instances/{id}/actions/{name}:
     post:
       consumes:
       - application/json
-      description: Dispatches to the action subscriber webhook and wraps its response
+      description: 'Dispatches to the action subscriber webhook and wraps its response
         in an envelope containing action, instance_id, status_code, and result fields.
-        The subscriber's JSON body is nested under the result key. Returns 200 even
-        for non-2xx subscriber responses — check status_code to distinguish.
+        The subscriber''s JSON body is nested under the result key. Returns 200 even
+        for non-2xx subscriber responses — check status_code to distinguish. For an
+        answer with status 400 or higher the envelope also has message: the subscriber''s
+        reason from a JSON string body or from the message, error, detail or reason
+        field (one line, at most 500 characters, URLs replaced by [url]). A text/plain
+        body of such an answer becomes a JSON string result; another non-JSON body
+        gives a null result. A non-JSON body with a status below 400 gives 502. When
+        the action declares parameters, they are checked (type, required, enum options)
+        before the call; undeclared parameters pass through. When the action has a
+        log_path, the subscriber answered 2xx and the result has a valid job_id, the
+        envelope also has job_id: poll GET /stack-instances/{id}/actions/{name}/jobs/{job_id}/log
+        for the job log.'
       parameters:
       - description: Instance ID
         in: path
@@ -4894,6 +6396,12 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "403":
+          description: Caller is not the owner, an admin or a devops user
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Instance not found or action not registered
           schema:
@@ -4913,6 +6421,89 @@ paths:
               type: string
             type: object
       summary: Invoke a registered action against a stack instance
+      tags:
+      - stack-instances
+  /api/v1/stack-instances/{id}/actions/{name}/jobs/{job_id}/log:
+    get:
+      consumes:
+      - application/json
+      description: Fetches the job log of an asynchronous action from the action subscriber,
+        from the byte offset to the end (at most 256 KiB per call). The action config
+        must have a log_path. Poll with next_offset until done is true. Only the instance
+        owner, an admin or a devops user may read the job log (the same rule as invoke).
+        The backend signs the subscriber request like an invoke call and never returns
+        the subscriber URL.
+      parameters:
+      - description: Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Action name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: 'Job ID (1-128 characters: A-Z a-z 0-9 . _ -, not starting with
+          a dot)'
+        in: path
+        name: job_id
+        required: true
+        type: string
+      - description: Byte offset to read from (default 0)
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.actionJobLogResponse'
+        "400":
+          description: Invalid job_id or offset
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Caller is not the owner, an admin or a devops user
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Instance, action, job log route or job not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "502":
+          description: Subscriber unreachable or returned an error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Action registry not configured
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Read the job log of an asynchronous action
       tags:
       - stack-instances
   /api/v1/stack-instances/{id}/branches:
@@ -4958,8 +6549,11 @@ paths:
       - branch-overrides
   /api/v1/stack-instances/{id}/branches/{chartId}:
     delete:
-      description: Remove the per-chart branch override for a specific chart in a
-        stack instance
+      description: 'Remove the per-chart branch override for a specific chart in a
+        stack instance. An existing override row is removed even when its chart is
+        not part of the definition, so stale rows can be cleaned up. Without an override
+        the response is 404: "Chart not found in this stack definition" for an unknown
+        chart, otherwise "Branch override not found".'
       parameters:
       - description: Instance ID
         in: path
@@ -4976,6 +6570,12 @@ paths:
       responses:
         "204":
           description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "403":
           description: Forbidden
           schema:
@@ -4999,11 +6599,73 @@ paths:
       summary: Delete branch override for a chart
       tags:
       - branch-overrides
+    get:
+      description: 'Get the per-chart branch override of one chart in a stack instance.
+        The authorization rule is the same as for the list (owner, admin or devops).
+        An existing override is returned also when its chart is no longer part of
+        the definition. Without an override the response is 404: "Chart not found
+        in this stack definition" for an unknown chart, otherwise "Branch override
+        not found".'
+      parameters:
+      - description: Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Chart config ID
+        in: path
+        name: chartId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.ChartBranchOverride'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Instance not found, chart not found in this stack definition,
+            or no override
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get the branch override for a chart
+      tags:
+      - branch-overrides
     put:
       consumes:
       - application/json
       description: Upsert a per-chart branch override for a specific chart in a stack
-        instance
+        instance. chartId must be a chart config of the instance's stack definition
+        (404 "Chart not found in this stack definition" otherwise).
       parameters:
       - description: Instance ID
         in: path
@@ -5030,6 +6692,12 @@ paths:
             $ref: '#/definitions/models.ChartBranchOverride'
         "400":
           description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
           schema:
             additionalProperties:
               type: string
@@ -5082,6 +6750,12 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "403":
+          description: Caller is not the owner, an admin or a devops user
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
           schema:
@@ -5089,7 +6763,8 @@ paths:
               type: string
             type: object
         "409":
-          description: Invalid status for clean
+          description: Invalid status for clean, or a concurrent clean or delete started
+            first
           schema:
             additionalProperties:
               type: string
@@ -5105,20 +6780,48 @@ paths:
       - stack-instances
   /api/v1/stack-instances/{id}/clone:
     post:
-      description: Create a new stack instance as a copy of an existing one
+      consumes:
+      - application/json
+      description: |-
+        Create a new draft stack instance as a copy of an existing one. The clone belongs to the caller and uses the cluster and definition of the source.
+        It copies the TTL (unless ttl_minutes or expires_at is given; a future fixed stop time of the source is copied too), the value overrides and the branch overrides. It copies the instance quota override only when the caller owns the source or is admin or devops; for an owner without the admin or devops role only when the override stays within the cluster quota. When it is not copied for that reason (or the cluster quota lookup fails), the response has a warning and the clone uses the cluster quota.
+        The body is optional. Without a name, the server picks the first free name of <source>-copy, <source>-copy-2, ... (the namespace stack-<name>-<owner> must be free). A given name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters).
       parameters:
-      - description: Instance ID
+      - description: Source instance ID
         in: path
         name: id
         required: true
         type: string
+      - description: Optional clone name, branch and TTL
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/handlers.cloneInstanceRequest'
       produces:
       - application/json
       responses:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/models.StackInstance'
+            $ref: '#/definitions/handlers.CloneInstanceResponse'
+        "400":
+          description: Invalid body, name or TTL
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
           schema:
@@ -5126,15 +6829,27 @@ paths:
               type: string
             type: object
         "409":
-          description: Namespace already exists
+          description: Namespace already exists (given name), the name is taken on
+            the cluster (UNIQUE_INSTANCE_NAMES), or no free generated name
           schema:
             $ref: '#/definitions/handlers.NamespaceConflictResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
       summary: Clone a stack instance
       tags:
       - stack-instances
   /api/v1/stack-instances/{id}/deploy:
     post:
-      description: Trigger Helm deployment for a stack instance
+      description: Trigger Helm deployment for a stack instance. Allowed for draft,
+        stopped, error, partial and running instances (running = redeploy, a Helm
+        upgrade with the current values). With a TTL, the expiry becomes now + ttl_minutes,
+        unless the current expiry is later (a redeploy never makes the expiry earlier).
+        A fixed stop time (ttl_minutes 0 with expires_at) stays; when it has passed,
+        the deploy gives 409 "The stop time has passed. Set a new stop time or a TTL."
       parameters:
       - description: Instance ID
         in: path
@@ -5156,6 +6871,12 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "403":
+          description: Caller is not the owner, an admin or a devops user
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
           schema:
@@ -5163,7 +6884,7 @@ paths:
               type: string
             type: object
         "409":
-          description: Already deploying
+          description: Already deploying, or the fixed stop time has passed
           schema:
             additionalProperties:
               type: string
@@ -5264,8 +6985,14 @@ paths:
       - stack-instances
   /api/v1/stack-instances/{id}/deploy-preview:
     get:
-      description: Compare pending merged values against last-deployed values per
-        chart
+      description: 'Compare pending merged values against the running values per chart.
+        Pending values use the deploy pipeline: cluster shared values (by priority),
+        chart defaults, instance overrides, locked template values. Previous values
+        are the values of the last deploy, or of the last successful rollback. has_changes
+        compares the YAML content (key order and formatting do not matter). values_drift
+        is true when the last operation was a successful rollback and at least one
+        chart has changes: the next deploy undoes the rollback. A shared values load
+        error returns 500 (fail closed).'
       parameters:
       - description: Instance ID
         in: path
@@ -5312,15 +7039,20 @@ paths:
     post:
       consumes:
       - application/json
-      description: Extend the expiry time of a stack instance. Uses provided ttl_minutes
-        or the instance's existing TTLMinutes.
+      description: |-
+        Extend the expiry time of a stack instance. The extend never makes the expiry earlier and never changes ttl_minutes.
+        - {"minutes": N}: adds N minutes (N > 0) to the current expires_at, or to now when the instance already expired or has no expiry time. The new expiry is capped at now + MAX_INSTANCE_TTL_DAYS (default 30 days).
+        - {"until": "<RFC 3339>"}: sets expires_at to this time. It must be after the current expiry (or after now when the expiry has passed) and not later than now + MAX_INSTANCE_TTL_DAYS (400). It works for a TTL and for a fixed stop time. Do not send it with minutes or ttl_minutes (400).
+        - Empty body: adds the instance's ttl_minutes in the same way (400 when ttl_minutes is 0).
+        - Deprecated {"ttl_minutes": N} (without minutes): the old behaviour for older clients (stackctl 0.4.0 and earlier). It sets ttl_minutes to N and expires_at to now + N, which can make the expiry earlier. The response has a Warning header; the server logs a deprecation warning.
+        An instance without TTL and without expiry time has nothing to extend (400).
       parameters:
       - description: Instance ID
         in: path
         name: id
         required: true
         type: string
-      - description: Optional TTL override
+      - description: Minutes to add, the new expiry (until), or the deprecated ttl_minutes
         in: body
         name: body
         schema:
@@ -5329,11 +7061,28 @@ paths:
       - application/json
       responses:
         "200":
-          description: OK
+          description: The instance with the new expires_at and the same computed
+            fields as GET (values_drift, names, follow state)
+          headers:
+            Warning:
+              description: Set when the deprecated ttl_minutes body is used
+              type: string
           schema:
             $ref: '#/definitions/models.StackInstance'
         "400":
           description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Caller is not the owner, an admin or a devops user
           schema:
             additionalProperties:
               type: string
@@ -5344,7 +7093,130 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
       summary: Extend instance TTL
+      tags:
+      - stack-instances
+  /api/v1/stack-instances/{id}/follow:
+    delete:
+      description: The caller stops following the instance. Unfollowing an instance
+        that the caller does not follow is not an error.
+      parameters:
+      - description: Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.followStateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "501":
+          description: Following is not configured
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Unfollow a stack instance
+      tags:
+      - stack-instances
+    post:
+      description: The caller follows the instance and gets its in-app notifications,
+        as the owner does, filtered by the notification preferences of the caller.
+        Every authenticated user who can view the instance can follow it. A repeated
+        follow is not an error. Followers get no channel (webhook) deliveries.
+      parameters:
+      - description: Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.followStateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "501":
+          description: Following is not configured
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Follow a stack instance
       tags:
       - stack-instances
   /api/v1/stack-instances/{id}/overrides:
@@ -5365,6 +7237,12 @@ paths:
             items:
               $ref: '#/definitions/models.ValueOverride'
             type: array
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
           schema:
@@ -5375,10 +7253,127 @@ paths:
       tags:
       - value-overrides
   /api/v1/stack-instances/{id}/overrides/{chartId}:
+    delete:
+      description: 'Remove the value override of one chart in a stack instance. An
+        existing override row is removed even when its chart is no longer part of
+        the definition, so stale rows can be cleaned up. Without an override the response
+        is 404: "Chart not found in this stack definition" for an unknown chart, otherwise
+        "Value override not found". The audit middleware records the delete.'
+      parameters:
+      - description: Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Chart config ID
+        in: path
+        name: chartId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete the override for a chart
+      tags:
+      - value-overrides
+    get:
+      description: Get the value override of one chart in a stack instance. chartId
+        must be a chart config of the instance's stack definition.
+      parameters:
+      - description: Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Chart config ID
+        in: path
+        name: chartId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.ValueOverride'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Instance not found, chart not found in this stack definition,
+            or no override
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get the override for a chart
+      tags:
+      - value-overrides
     put:
       consumes:
       - application/json
-      description: Upsert value overrides for a specific chart in a stack instance
+      description: Upsert value overrides for a specific chart in a stack instance.
+        chartId must be a chart config of the instance's stack definition. Empty or
+        whitespace-only values remove the override and return 204 No Content (also
+        when no override existed).
       parameters:
       - description: Instance ID
         in: path
@@ -5403,18 +7398,40 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/models.ValueOverride'
+        "204":
+          description: Override removed (empty values)
         "400":
           description: Bad Request
           schema:
             additionalProperties:
               type: string
             type: object
-        "404":
-          description: Not Found
+        "401":
+          description: Unauthorized
           schema:
             additionalProperties:
               type: string
             type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Instance not found, or chart not found in this stack definition
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
       summary: Set or update override for a chart
       tags:
       - value-overrides
@@ -5478,7 +7495,11 @@ paths:
       - stack-instances
   /api/v1/stack-instances/{id}/quota-overrides:
     delete:
-      description: Remove the per-instance resource quota override for a stack instance
+      description: Remove the per-instance resource quota override for a stack instance.
+        The backend then applies the cluster quota to the namespace of a deployed
+        instance in the background (not for a draft or cleaning instance). Without
+        a cluster quota, the namespace keeps its current ResourceQuota and LimitRange
+        until the instance is cleaned.
       parameters:
       - description: Stack Instance ID
         in: path
@@ -5554,7 +7575,9 @@ paths:
     put:
       consumes:
       - application/json
-      description: Upsert the per-instance resource quota override for a stack instance
+      description: |-
+        PUT replaces all fields of the override: a field that is not sent is cleared (an empty quantity or a missing pod_limit means no override for that field, so the cluster quota applies). To change one field, read the override with GET, change the field and send all fields. There is no PATCH.
+        Upsert the per-instance resource quota override for a stack instance. Each non-empty quantity must be a valid Kubernetes quantity (for example 500m, 2, 512Mi, 10Gi) and not negative; cpu_request must not exceed cpu_limit and memory_request must not exceed memory_limit; pod_limit must not be negative. The container_* fields (LimitRange defaultRequest, default and max per container) and ephemeral_storage_limit follow the same per-field merge: a non-empty value replaces the cluster value. Per container, request <= limit <= max, and a container default must not exceed the namespace value of the same resource. Values are trimmed. The effective quota (cluster quota of the instance's cluster merged with this override) must follow the same rules, for example "cpu_request 4 (instance override) exceeds the effective cpu_limit 2 (cluster quota)". Invalid input returns 400 with the field name. Authorization: the instance owner, admin or devops. An owner without the admin or devops role cannot set a value above the cluster quota of the instance's cluster (403, for example "cpu_limit 64 exceeds the cluster quota 16; only admin or devops can set a higher quota"); the check covers every field, also the container_* fields and ephemeral_storage_limit; a field without a cluster value has no cap, and pod_limit 0 (no limit) counts as above a cluster pod_limit. A value equal to the stored override passes, so an owner can change one field without losing an admin grant. Admin and devops may exceed the cluster quota. The check runs on write (and on clone), not on deploy. After the write, the backend applies the effective quota to the namespace of a deployed instance in the background (not for a draft or cleaning instance). The backend logs a failure, and the next deploy applies the quota.
       parameters:
       - description: Stack Instance ID
         in: path
@@ -5607,36 +7630,52 @@ paths:
     post:
       consumes:
       - application/json
-      description: Rollback all Helm releases in a stack instance to their previous
-        revision
+      description: |-
+        Without target_log_id: roll back every Helm release of the instance by one revision (helm rollback).
+        With target_log_id: restore the values of that deploy. The log must be a successful deploy of this instance with a values snapshot (404 when the log does not exist or belongs to another instance, 400 otherwise). Each chart of the target deploy is upgraded (helm upgrade --install) with the merged values of that deploy and the chart version that the deploy recorded; deploys from before the version recording use the current chart version. Charts that the target deploy did not include are left unchanged.
+        A rollback to a target restores the stored VALUES of that deploy (including the shared and locked values of that time), not the images. Image tags that are branch names can point to newer images now. A chart without a recorded version (the deploy used an empty chart version) installs the newest chart. Pre-deploy hooks do not run for a rollback; subscribe image gates to pre-rollback, which gets the same chart list (name, version, branch, image_tag) plus metadata rollback_mode, target_log_id and target_branch.
+        The pre-rollback hook runs in the background after the 202 answer, with progress streaming like pre-deploy. A rejection ends the rollback log with status error and the hook reason; the instance gets its previous status back. For a one-revision rollback the hook chart branches come from the previous successful deploy log when it recorded a branch.
+        In both modes a release stuck in pending-* is cleared before each chart, and after the rollback the instance waits for pod readiness (stabilizing) when readiness gating is configured, as for a deploy. A one-revision rollback that fails records the values of the charts that it already rolled back.
+        The rollback does not change the stored value or branch overrides. After a successful rollback the deploy preview compares against the running values; values_drift (in this response for a target, and in the deploy preview) shows that the next deploy applies the stored overrides again.
       parameters:
       - description: Instance ID
         in: path
         name: id
         required: true
         type: string
-      - description: 'Optional: {\'
+      - description: Optional rollback target
         in: body
         name: body
         schema:
-          type: object
+          $ref: '#/definitions/handlers.rollbackRequest'
       produces:
       - application/json
       responses:
         "202":
           description: Accepted
           schema:
+            $ref: '#/definitions/handlers.RollbackResponse'
+        "400":
+          description: Invalid body, no charts, or the target is not a successful
+            deploy with a values snapshot
+          schema:
             additionalProperties:
               type: string
             type: object
-        "400":
-          description: Bad Request
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Caller is not the owner, an admin or a devops user
           schema:
             additionalProperties:
               type: string
             type: object
         "404":
-          description: Not Found
+          description: Instance or target deploy log not found
           schema:
             additionalProperties:
               type: string
@@ -5719,6 +7758,12 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "403":
+          description: Caller is not the owner, an admin or a devops user
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
           schema:
@@ -5737,6 +7782,7 @@ paths:
   /api/v1/stack-instances/{id}/values:
     get:
       description: Generate and export merged values for all charts as a zip archive
+        (same layers as deploy, including cluster shared values and chart branch overrides)
       parameters:
       - description: Instance ID
         in: path
@@ -5748,6 +7794,11 @@ paths:
       responses:
         "200":
           description: ZIP archive
+          headers:
+            Content-Disposition:
+              description: attachment with a quoted filename <instance>-values.zip
+                and an RFC 5987 filename* (UTF-8) form
+              type: string
           schema:
             type: file
         "404":
@@ -5767,7 +7818,9 @@ paths:
       - stack-instances
   /api/v1/stack-instances/{id}/values/{chartId}:
     get:
-      description: Generate and export merged values.yaml for a specific chart
+      description: 'Generate and export the merged values.yaml for a specific chart:
+        cluster shared values (by priority), chart defaults, instance overrides, locked
+        template values and the chart branch override, as used by deploy.'
       parameters:
       - description: Instance ID
         in: path
@@ -5784,10 +7837,21 @@ paths:
       responses:
         "200":
           description: YAML content
+          headers:
+            Content-Disposition:
+              description: attachment with a quoted filename <instance>-<chart>-values.yaml
+                and an RFC 5987 filename* (UTF-8) form
+              type: string
           schema:
             type: string
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
-          description: Not Found
+          description: Instance not found, or chart not found in this stack definition
           schema:
             additionalProperties:
               type: string
@@ -5846,8 +7910,17 @@ paths:
     post:
       consumes:
       - application/json
-      description: Delete multiple stack instances in a single request. Processes
-        instances sequentially.
+      description: 'Delete multiple stack instances in a single request. Processes
+        instances sequentially with the rules of DELETE /stack-instances/{id}: an
+        instance with cluster resources (running, partial, stopped, error) is cleaned
+        first (Helm uninstall and namespace delete) and deleted when the clean completes
+        — its result has status "success" and the log_id of the clean. "success" with
+        a log_id means that the clean started; the row is removed when the clean finishes
+        (WebSocket message instance.deleted). A failed clean keeps the instance with
+        status error. A draft instance is deleted at once. An instance with an operation
+        in progress (checked before pre-instance-delete fires), one that a concurrent
+        delete already started, or one that a pre-instance-delete hook rejects, gets
+        status "error".'
       parameters:
       - description: Instance IDs to delete
         in: body
@@ -5967,8 +8040,11 @@ paths:
       - stack-instances
   /api/v1/stack-instances/compare:
     get:
-      description: Compare the merged values of two stack instances side-by-side,
-        per chart
+      description: 'Compare the merged values of two stack instances side-by-side,
+        per chart. The merged values use the deploy pipeline: cluster shared values,
+        chart defaults, value overrides, locked template values and chart branch overrides.
+        charts[].has_differences is true when the merged YAML differs or the chart
+        exists on one side only.'
       parameters:
       - description: Left instance ID
         in: query
@@ -5989,6 +8065,12 @@ paths:
             $ref: '#/definitions/handlers.CompareInstancesResponse'
         "400":
           description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
           schema:
             additionalProperties:
               type: string
@@ -6036,9 +8118,14 @@ paths:
     get:
       consumes:
       - application/json
-      description: List published templates for regular users, all templates for devops/admin.
-        Includes definition_count and owner_username. Supports server-side pagination.
+      description: |-
+        List published templates for regular users, all templates for devops/admin. Includes definition_count and owner_username (omitted when the owner no longer exists). Supports server-side pagination.
+        name filters by exact template name (same as the stack-definitions name filter); the response keeps the paged envelope.
       parameters:
+      - description: Filter by exact name
+        in: query
+        name: name
+        type: string
       - description: Page number (default 1)
         in: query
         minimum: 1
@@ -6070,8 +8157,9 @@ paths:
     post:
       consumes:
       - application/json
-      description: Create a new stack template (devops/admin only). May include a
-        `charts` array to register the initial chart set in the same transaction.
+      description: |-
+        Create a new stack template (devops/admin only). May include a `charts` array to register the initial chart set in the same transaction.
+        With is_published=true the template is published in the same transaction (first version snapshot; version is then required). A failed publish rolls the create back.
       parameters:
       - description: Template object (may include charts[])
         in: body
@@ -6092,13 +8180,33 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
       summary: Create a stack template
       tags:
       - templates
   /api/v1/templates/{id}:
     delete:
-      description: Delete a stack template if no definitions link to it (devops/admin
-        only)
+      consumes:
+      - application/json
+      description: Delete a stack template if no definitions link to it (template
+        owner or admin)
       parameters:
       - description: Template ID
         in: path
@@ -6110,6 +8218,18 @@ paths:
       responses:
         "204":
           description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
           schema:
@@ -6122,11 +8242,23 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
       summary: Delete a stack template
       tags:
       - templates
     get:
-      description: Get a stack template by ID, including its chart configurations
+      consumes:
+      - application/json
+      description: |-
+        Get a stack template by ID, including its chart configurations. The template fields and charts are the working copy (draft). owner_username is the username of the owner (omitted when the owner no longer exists).
+        published_version and published_version_id describe the latest published snapshot (null when there is none). has_unpublished_changes is true when the working copy differs from that snapshot (or there is no snapshot).
+        published_charts are the charts of that snapshot (what Use Template and Quick Deploy apply; null when there is none). Their IDs are valid chart_overrides keys for Use Template.
+        charts are the working copy charts only for the template owner and admins. For other users charts equals published_charts (an empty list without a snapshot), version is the published version (empty without a snapshot) and has_unpublished_changes is false, so draft information is not exposed.
       parameters:
       - description: Template ID
         in: path
@@ -6140,8 +8272,26 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/handlers.TemplateDetailResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
           schema:
             additionalProperties:
               type: string
@@ -6152,19 +8302,21 @@ paths:
     put:
       consumes:
       - application/json
-      description: Update an existing stack template (devops/admin only)
+      description: |-
+        Update the working copy (draft) of a stack template (template owner or admin). Allowed while the template is published: users keep getting the latest published snapshot until the next publish.
+        Partial update: only the fields in the body change. version is trimmed.
       parameters:
       - description: Template ID
         in: path
         name: id
         required: true
         type: string
-      - description: Template object
+      - description: Fields to change
         in: body
         name: template
         required: true
         schema:
-          $ref: '#/definitions/models.StackTemplate'
+          $ref: '#/definitions/handlers.updateTemplateRequest'
       produces:
       - application/json
       responses:
@@ -6178,8 +8330,26 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
           schema:
             additionalProperties:
               type: string
@@ -6191,7 +8361,9 @@ paths:
     post:
       consumes:
       - application/json
-      description: Add a new chart configuration to a stack template
+      description: Add a new chart configuration to the working copy (draft) of a
+        stack template. Users get the change after the next publish. Template owner
+        or admin only.
       parameters:
       - description: Template ID
         in: path
@@ -6217,8 +8389,26 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
           schema:
             additionalProperties:
               type: string
@@ -6228,7 +8418,9 @@ paths:
       - template-charts
   /api/v1/templates/{id}/charts/{chartId}:
     delete:
-      description: Remove a chart configuration from a stack template
+      description: Remove a chart configuration from the working copy (draft) of a
+        stack template. Users get the change after the next publish. Template owner
+        or admin only.
       parameters:
       - description: Template ID
         in: path
@@ -6245,8 +8437,26 @@ paths:
       responses:
         "204":
           description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
           schema:
             additionalProperties:
               type: string
@@ -6257,7 +8467,9 @@ paths:
     put:
       consumes:
       - application/json
-      description: Update a chart configuration within a stack template
+      description: Update a chart configuration in the working copy (draft) of a stack
+        template. Users get the change after the next publish. Template owner or admin
+        only.
       parameters:
       - description: Template ID
         in: path
@@ -6288,8 +8500,26 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
           schema:
             additionalProperties:
               type: string
@@ -6299,14 +8529,22 @@ paths:
       - template-charts
   /api/v1/templates/{id}/clone:
     post:
-      description: Create a new draft template that is a copy of the source (devops/admin
-        only)
+      consumes:
+      - application/json
+      description: |-
+        Create a new draft template that is a copy of the source (devops/admin only).
+        The body is optional. name sets the name of the clone (trimmed, same rules as create); the default is "<source name> (Copy)".
       parameters:
       - description: Template ID
         in: path
         name: id
         required: true
         type: string
+      - description: Clone options
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/handlers.cloneTemplateRequest'
       produces:
       - application/json
       responses:
@@ -6314,8 +8552,32 @@ paths:
           description: Created
           schema:
             $ref: '#/definitions/models.StackTemplate'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
           schema:
             additionalProperties:
               type: string
@@ -6327,19 +8589,23 @@ paths:
     post:
       consumes:
       - application/json
-      description: Create a StackDefinition and ChartConfigs from a template
+      description: |-
+        Create a StackDefinition and ChartConfigs from the latest published snapshot of a template (not the working copy). Definition names are unique per owner.
+        A template that is not published, or has no snapshot, gives 409 "Template has no published version".
+        chart_overrides replace chart default values; keys are published_charts[].id, working copy charts[].id (mapped by chart name) or chart names. Keys for charts not in the published snapshot are ignored.
       parameters:
       - description: Template ID
         in: path
         name: id
         required: true
         type: string
-      - description: Definition overrides (name, description)
+      - description: Definition name, description and optional chart_overrides (default
+          values per chart)
         in: body
         name: body
         required: true
         schema:
-          $ref: '#/definitions/models.StackDefinition'
+          $ref: '#/definitions/handlers.instantiateTemplateRequest'
       produces:
       - application/json
       responses:
@@ -6353,8 +8619,27 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: The caller already has a definition with this name, or the
+            template has no published version
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
           schema:
             additionalProperties:
               type: string
@@ -6364,22 +8649,64 @@ paths:
       - templates
   /api/v1/templates/{id}/publish:
     post:
-      description: Make a template visible to all users (devops/admin only)
+      consumes:
+      - application/json
+      description: |-
+        Store the working copy (template fields + charts) as a new version snapshot and make the template visible to all users (template owner or admin).
+        The body is optional. version (trimmed) defaults to the version of the working copy; the working copy takes the published version.
+        A version that already exists for the template gives 409 "Version x already exists".
+        When the working copy equals the latest snapshot (same content and version), no snapshot is created (snapshot_created=false) and the response is 200: publish is idempotent.
+        Use Template, Quick Deploy and definition upgrades read the latest snapshot, never the working copy.
       parameters:
       - description: Template ID
         in: path
         name: id
         required: true
         type: string
+      - description: Version and change summary (optional)
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/handlers.publishTemplateRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/models.StackTemplate'
+            $ref: '#/definitions/handlers.publishTemplateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Version already exists
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
           schema:
             additionalProperties:
               type: string
@@ -6391,8 +8718,12 @@ paths:
     post:
       consumes:
       - application/json
-      description: Instantiate a template, create an instance, set branch overrides,
-        and trigger deployment in a single call
+      description: |-
+        Instantiate a template, create an instance, set branch overrides, and trigger deployment in a single call.
+        instance_name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters).
+        Expiry: ttl_minutes (omitted: DEFAULT_INSTANCE_TTL_MINUTES; 0: no expiry) or expires_at, a fixed stop time (RFC 3339 with a time zone, in the future, not later than now + MAX_INSTANCE_TTL_DAYS). Do not send both (400).
+        The template content comes from the latest published snapshot, not the working copy. A template that is not published, or has no snapshot, gives 409 "Template has no published version".
+        The new stack definition is owned by the instance (owner_instance_id): deleting the instance deletes the definition when no other instance uses it. The definition is named after the instance; when the caller already has a definition with that name, the name gets the suffix " (2)", " (3)", ...
       parameters:
       - description: Template ID
         in: path
@@ -6418,12 +8749,29 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
           schema:
             additionalProperties:
               type: string
             type: object
+        "409":
+          description: Namespace already exists, the name is taken on the cluster
+            (UNIQUE_INSTANCE_NAMES), or the template has no published version ({error})
+          schema:
+            $ref: '#/definitions/handlers.NamespaceConflictResponse'
         "500":
           description: Internal Server Error
           schema:
@@ -6437,7 +8785,11 @@ paths:
       - templates
   /api/v1/templates/{id}/unpublish:
     post:
-      description: Hide a template from regular users (devops/admin only)
+      consumes:
+      - application/json
+      description: Hide a template from regular users (template owner or admin). Use
+        Template and Quick Deploy return 409 until the next publish. The version history
+        stays.
       parameters:
       - description: Template ID
         in: path
@@ -6451,8 +8803,26 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/models.StackTemplate'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
           schema:
             additionalProperties:
               type: string
@@ -6462,7 +8832,11 @@ paths:
       - templates
   /api/v1/templates/{id}/versions:
     get:
-      description: List all version snapshots for a template, ordered newest first
+      consumes:
+      - application/json
+      description: List all version snapshots for a template, ordered newest first.
+        The first entry is the published version that users get. created_by_username
+        is the author's username (omitted when unknown).
       parameters:
       - description: Template ID
         in: path
@@ -6476,10 +8850,16 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/models.TemplateVersion'
+              $ref: '#/definitions/handlers.templateVersionListItem'
             type: array
         "400":
           description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
           schema:
             additionalProperties:
               type: string
@@ -6501,7 +8881,9 @@ paths:
       - templates
   /api/v1/templates/{id}/versions/{versionId}:
     get:
-      description: Get a specific template version with its parsed snapshot
+      consumes:
+      - application/json
+      description: Get a specific template version with its parsed snapshot and created_by_username
       parameters:
       - description: Template ID
         in: path
@@ -6526,6 +8908,12 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
           schema:
@@ -6543,19 +8931,25 @@ paths:
       - templates
   /api/v1/templates/{id}/versions/diff:
     get:
-      description: Compare two template version snapshots side by side
+      consumes:
+      - application/json
+      description: |-
+        Compare two template version snapshots side by side. Either side may be "working" to compare the working copy (draft), for example left=<latest version ID>&right=working shows the unpublished changes.
+        Only the template owner and admins can compare the working copy (others get 403).
+        left.version and right.version are version strings; the other side fields (id, created_by, created_by_username, created_at, is_working_copy) describe the side.
+        template_diffs lists the changed template fields (name, description, category, default_branch, version) with the left and right value; chart_diffs compares the charts.
       parameters:
       - description: Template ID
         in: path
         name: id
         required: true
         type: string
-      - description: Left version ID
+      - description: Left version ID, or \
         in: query
         name: left
         required: true
         type: string
-      - description: Right version ID
+      - description: Right version ID, or \
         in: query
         name: right
         required: true
@@ -6566,10 +8960,21 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/handlers.versionDiffResponse'
         "400":
           description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
           schema:
             additionalProperties:
               type: string
@@ -6634,8 +9039,11 @@ paths:
     post:
       consumes:
       - application/json
-      description: Publish multiple stack templates in a single request, making them
-        visible to all users.
+      description: 'Publish multiple stack templates in a single request, making them
+        visible to all users. Each template is published as POST /templates/{id}/publish
+        without a body: the working copy version is used, an unchanged template creates
+        no snapshot, and a version that already exists with other content fails for
+        that template.'
       parameters:
       - description: Template IDs to publish
         in: body
@@ -6712,6 +9120,32 @@ paths:
       summary: Bulk unpublish stack templates
       tags:
       - templates
+  /api/v1/ui-config:
+    get:
+      description: 'Returns the display values of the web UI: product title, logo
+        URL and favicon URL (APP_TITLE, APP_LOGO_URL, APP_FAVICON_URL), the start
+        value of the TTL field in the create forms (default_instance_ttl_minutes,
+        DEFAULT_INSTANCE_TTL_MINUTES; 0 means no expiry), and the maximum TTL and
+        stop-time distance in days (max_instance_ttl_days, MAX_INSTANCE_TTL_DAYS).
+        Public: no authentication, so the login page can use it. An empty logo_url
+        means the built-in logo. A URL is a same-origin path or an https URL. Cached
+        for 5 minutes.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.UIConfigResponse'
+        "429":
+          description: Too Many Requests
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Web UI display config
+      tags:
+      - ui
   /api/v1/users:
     get:
       description: Returns all registered users. Admin only. PasswordHash is never
@@ -6745,7 +9179,9 @@ paths:
   /api/v1/users/{id}:
     delete:
       description: Permanently deletes a user account. Admin only. Cannot delete own
-        account.
+        account (400). The last enabled admin cannot be deleted (409). The caller
+        must still be an enabled admin in the database (403). Revokes the user's current
+        access tokens and all refresh tokens, and deletes all API keys of the user.
       parameters:
       - description: User ID
         in: path
@@ -6777,6 +9213,18 @@ paths:
             type: object
         "404":
           description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
           schema:
             additionalProperties:
               type: string
@@ -6890,7 +9338,8 @@ paths:
       - api-keys
   /api/v1/users/{id}/api-keys/{keyId}:
     delete:
-      description: Deletes the specified API key. Admin or own user only.
+      description: Deletes the specified API key. Admin or own user only. Open WebSocket
+        connections opened with the key close with code 1008.
       parameters:
       - description: User ID
         in: path
@@ -6940,8 +9389,10 @@ paths:
     put:
       consumes:
       - application/json
-      description: Disables a user account. All API keys for this user immediately
-        stop working. Admin only.
+      description: Disables a user account. Admin only. The last enabled admin cannot
+        be disabled (409). The caller must still be an enabled admin in the database
+        (403). Revokes the user's current access tokens and all refresh tokens. API
+        keys stop working while the user is disabled and work again after enable.
       parameters:
       - description: User ID
         in: path
@@ -6981,6 +9432,12 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "500":
           description: Internal Server Error
           schema:
@@ -6996,7 +9453,8 @@ paths:
     put:
       consumes:
       - application/json
-      description: Re-enables a previously disabled user account. Admin only.
+      description: Re-enables a previously disabled user account. Admin only. Access
+        tokens issued before the enable stay revoked; the user must log in again.
       parameters:
       - description: User ID
         in: path
@@ -7052,6 +9510,8 @@ paths:
       consumes:
       - application/json
       description: Resets the password for a local/service account user. Admin only.
+        Revokes the user's current access tokens and all refresh tokens. API keys
+        stay valid.
       parameters:
       - description: User ID
         in: path
@@ -7108,6 +9568,78 @@ paths:
       summary: Reset user password
       tags:
       - users
+  /api/v1/users/{id}/role:
+    put:
+      consumes:
+      - application/json
+      description: Sets the role of a local user. Admin only. The role of an SSO user
+        comes from the identity provider and cannot be changed here (409). An admin
+        cannot change their own role (403), the caller must still be an enabled admin
+        in the database (403), and the last enabled admin cannot lose the admin role
+        (409). An unchanged role is a no-op (changed=false). A change revokes the
+        user's current access tokens, all refresh tokens and open WebSocket connections,
+        so the next request needs a new login with the new role. API keys stay valid
+        and use the new role at once.
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: New role
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.ChangeRoleRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.ChangeRoleResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Change the role of a user
+      tags:
+      - users
   /health:
     get:
       description: Get API health status
@@ -7162,14 +9694,30 @@ paths:
     get:
       description: 'Upgrades the HTTP connection to a WebSocket for real-time events.
         Authenticate via one of: `Sec-WebSocket-Protocol: bearer, <jwt>` subprotocol
-        header, `Authorization: Bearer <jwt>` header, or `?token=<jwt>` query parameter
-        (the query token is redacted from access logs and traces by middleware before
-        the handler runs).'
+        header, `Authorization: Bearer <jwt>` header, `X-API-Key: sk_<key>` header,
+        or `?token=<jwt>` query parameter (the query token is redacted from access
+        logs and traces by middleware before the handler runs). An API key is accepted
+        only in the X-API-Key header, never in the query. The upgrade runs the same
+        checks as the HTTP auth: a revoked token (logout), a token issued at or before
+        a user block (user deleted, disabled or password reset), an unknown, deleted
+        or expired API key, a deleted user and a disabled user get 401. An API-key
+        upgrade counts against the per-IP API rate limit before the key lookup (429),
+        and gets 503 when the server has no free slot for an Argon2id key verify.
+        The server closes an open socket with close code 1008 when the session or
+        the API key is revoked (key deleted; user deleted, disabled, password reset
+        or role change, which also close the API-key sockets of the user although
+        HTTP API-key requests keep working), when the access token expires and when
+        the API key expires; the client must reconnect.'
       parameters:
       - description: JWT authentication token (also accepted via Authorization header
           or Sec-WebSocket-Protocol subprotocol)
         in: query
         name: token
+        type: string
+      - description: API key (sk_<key>); header only, used when no JWT is sent in
+          the subprotocol or the Authorization header
+        in: header
+        name: X-API-Key
         type: string
       responses:
         "101":
@@ -7188,6 +9736,24 @@ paths:
             type: object
         "403":
           description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "429":
+          description: Too Many Requests
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
           schema:
             additionalProperties:
               type: string

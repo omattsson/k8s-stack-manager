@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -161,4 +162,46 @@ func TestActionRegistry_Invoke_HMACSignatureSet(t *testing.T) {
 	_, err = r.Invoke(context.Background(), "x", nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, sign(gotBody, "topsecret"), gotSig)
+}
+
+func TestActionRegistry_Invoke_DoesNotFollowRedirects(t *testing.T) {
+	t.Parallel()
+
+	var otherHits atomic.Int64
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		otherHits.Add(1)
+		_, _ = io.WriteString(w, `{"leaked":true}`)
+	}))
+	t.Cleanup(other.Close)
+	// Runs after the parallel subtests (cleanups run last-in, first-out).
+	t.Cleanup(func() {
+		assert.Zero(t, otherHits.Load(), "the signed request never reaches the redirect target")
+	})
+
+	tests := []struct {
+		name string
+		code int
+	}{
+		{"302 found", http.StatusFound},
+		{"307 temporary redirect", http.StatusTemporaryRedirect},
+		{"308 permanent redirect", http.StatusPermanentRedirect},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				http.Redirect(w, req, other.URL+"/steal", tt.code)
+			}))
+			defer srv.Close()
+
+			r, err := NewActionRegistry([]ActionSubscription{{Name: "x", URL: srv.URL, Secret: "topsecret", TimeoutSeconds: 5}}, srv.Client())
+			require.NoError(t, err)
+
+			res, err := r.Invoke(context.Background(), "x", nil, nil)
+			require.NoError(t, err, "a redirect is returned as a non-2xx result")
+			assert.Equal(t, tt.code, res.StatusCode)
+			assert.NotContains(t, string(res.Body), "leaked")
+		})
+	}
 }

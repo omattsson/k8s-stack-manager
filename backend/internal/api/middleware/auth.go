@@ -1,12 +1,15 @@
 package middleware
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
+	"backend/internal/cache"
 	"backend/internal/sessionstore"
 
 	"github.com/gin-gonic/gin"
@@ -20,6 +23,7 @@ const (
 	contextKeyRole     = "role"
 	contextKeyJTI      = "jti"
 	contextKeyExpiry   = "tokenExpiry"
+	contextKeySID      = "sessionID"
 )
 
 // Claims represents the JWT claims payload.
@@ -30,17 +34,45 @@ type Claims struct {
 	Role         string `json:"role"`
 	AuthProvider string `json:"auth_provider,omitempty"`
 	Email        string `json:"email,omitempty"`
+	// SessionID is the refresh-token family of the login session ("sid").
+	// Empty for tokens outside a refresh session (for example CLI tokens).
+	SessionID string `json:"sid,omitempty"`
+	// IssuedAtMs is the issue time in Unix milliseconds ("iat_ms"). The JWT
+	// iat has one-second precision; the user blocklist compares this claim
+	// with the block time, so a login just after a password reset in the
+	// same second is not revoked. 0 for tokens issued before the claim
+	// existed.
+	IssuedAtMs int64 `json:"iat_ms,omitempty"`
 	jwt.RegisteredClaims
 }
 
-// ValidateJWT parses and validates a JWT token string, returning the claims if valid.
+// IssueTime returns the issue time of the token for the user blocklist: the
+// iat_ms claim (millisecond precision) when it is set, else the iat claim
+// truncated to whole seconds. It returns the zero time when the token has
+// neither claim.
+func (c *Claims) IssueTime() time.Time {
+	if c == nil {
+		return time.Time{}
+	}
+	if c.IssuedAtMs > 0 {
+		return time.UnixMilli(c.IssuedAtMs)
+	}
+	if c.IssuedAt != nil {
+		return c.IssuedAt.Time.Truncate(time.Second)
+	}
+	return time.Time{}
+}
+
+// ValidateJWT parses and validates a JWT token string, returning the claims if
+// valid. The token must have an exp claim: every token the app issues has one
+// (GenerateTokenWithOpts), and a token without exp would never expire.
 func ValidateJWT(tokenStr string, jwtSecret string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenStr, &Claims{}, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
 		return []byte(jwtSecret), nil
-	})
+	}, jwt.WithExpirationRequired())
 	if err != nil || !token.Valid {
 		return nil, fmt.Errorf("invalid or expired token")
 	}
@@ -59,6 +91,74 @@ func AuthRequired(jwtSecret string) gin.HandlerFunc {
 // AuthRequiredWithSessionStore returns middleware that validates JWT tokens and checks
 // the provided session store for revoked tokens. If store is nil, no revocation check is performed.
 func AuthRequiredWithSessionStore(jwtSecret string, store sessionstore.SessionStore) gin.HandlerFunc {
+	return AuthRequiredWithOptions(JWTAuthOptions{JWTSecret: jwtSecret, SessionStore: store})
+}
+
+// SessionActivityFunc records activity of a login session. sessionID is the
+// "sid" claim (refresh-token family ID). The middleware calls it outside the
+// request goroutine, so it must be safe for concurrent use.
+type SessionActivityFunc func(ctx context.Context, sessionID string, at time.Time) error
+
+// sessionActivityInterval is the minimum time between two activity writes for
+// one session. It keeps the DB write rate at one per minute per session.
+const sessionActivityInterval = time.Minute
+
+// sessionActivityTimeout bounds one activity write, so a slow database cannot
+// pile up goroutines.
+const sessionActivityTimeout = 5 * time.Second
+
+// JWTAuthOptions configures AuthRequiredWithOptions.
+type JWTAuthOptions struct {
+	JWTSecret    string
+	SessionStore sessionstore.SessionStore // nil: no revocation checks
+	// OnSessionActivity is called (throttled, async) for each authenticated
+	// request with a "sid" claim. nil: no activity tracking.
+	OnSessionActivity SessionActivityFunc
+}
+
+// sessionActivityTracker throttles OnSessionActivity calls per session.
+type sessionActivityTracker struct {
+	fn       SessionActivityFunc
+	lastSeen *cache.TTLCache[time.Time]
+}
+
+func newSessionActivityTracker(fn SessionActivityFunc) *sessionActivityTracker {
+	if fn == nil {
+		return nil
+	}
+	return &sessionActivityTracker{
+		fn:       fn,
+		lastSeen: cache.New[time.Time](2*sessionActivityInterval, sessionActivityInterval),
+	}
+}
+
+// touch records activity for sessionID at most once per interval. The write
+// runs in a goroutine with a context that the client cannot cancel and that
+// expires after sessionActivityTimeout.
+func (t *sessionActivityTracker) touch(ctx context.Context, sessionID string) {
+	if t == nil || sessionID == "" {
+		return
+	}
+	now := time.Now().UTC()
+	if prev, ok := t.lastSeen.Get(sessionID); ok && now.Sub(prev) < sessionActivityInterval {
+		return
+	}
+	t.lastSeen.Set(sessionID, now)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sessionActivityTimeout)
+	go func() {
+		defer cancel()
+		if err := t.fn(ctx, sessionID, now); err != nil {
+			slog.Warn("Failed to record session activity", "error", err)
+		}
+	}()
+}
+
+// AuthRequiredWithOptions returns JWT middleware with revocation checks and
+// optional session activity tracking.
+func AuthRequiredWithOptions(opts JWTAuthOptions) gin.HandlerFunc {
+	jwtSecret := opts.JWTSecret
+	store := opts.SessionStore
+	activity := newSessionActivityTracker(opts.OnSessionActivity)
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
@@ -78,26 +178,12 @@ func AuthRequiredWithSessionStore(jwtSecret string, store sessionstore.SessionSt
 			return
 		}
 
-		if store != nil && claims.ID != "" {
-			blocked, blockErr := store.IsTokenBlocked(c.Request.Context(), claims.ID)
-			if blockErr != nil {
-				slog.Error("Failed to check token blocklist", "jti", claims.ID, "error", blockErr)
-				// Fail open — access tokens expire in ≤15 min, don't lock everyone out on DB blip.
-			} else if blocked {
-				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Token has been revoked"})
-				return
-			}
-		}
-
-		if store != nil && claims.UserID != "" {
-			userBlocked, userBlockErr := store.IsUserBlocked(c.Request.Context(), claims.UserID)
-			if userBlockErr != nil {
-				slog.Error("Failed to check user blocklist", "user_id", claims.UserID, "error", userBlockErr)
-				// Fail open — same policy as token blocklist check
-			} else if userBlocked {
-				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Account disabled"})
-				return
-			}
+		if revokeErr := CheckRevocation(c.Request.Context(), store, claims); revokeErr != nil {
+			// 401 (not 403) so the frontend sends the user back to login.
+			// Login itself still answers 403 "Account disabled" for a
+			// disabled user.
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": RevocationMessage(revokeErr)})
+			return
 		}
 
 		c.Set(contextKeyUserID, claims.UserID)
@@ -109,8 +195,81 @@ func AuthRequiredWithSessionStore(jwtSecret string, store sessionstore.SessionSt
 		if claims.ExpiresAt != nil {
 			c.Set(contextKeyExpiry, claims.ExpiresAt.Time)
 		}
+		if claims.SessionID != "" {
+			c.Set(contextKeySID, claims.SessionID)
+			activity.touch(c.Request.Context(), claims.SessionID)
+		}
 		c.Next()
 	}
+}
+
+// Revocation errors returned by CheckRevocation.
+var (
+	// ErrTokenRevoked means the jti of the token is on the token blocklist
+	// (logout).
+	ErrTokenRevoked = errors.New("token revoked")
+	// ErrSessionRevoked means a user block covers the token: the token was
+	// issued at or before the block (user deleted, disabled or password reset).
+	ErrSessionRevoked = errors.New("session revoked")
+)
+
+// CheckRevocation checks validated claims against the session store. The JWT
+// middleware and the WebSocket upgrade both use it. It checks:
+//  1. The token blocklist (jti). A match returns ErrTokenRevoked.
+//  2. The user blocklist (user ID and issue time, see Claims.IssueTime). A
+//     block revokes tokens issued at or before the block (millisecond
+//     precision with the iat_ms claim, else the block second). A token
+//     without iat gets a zero time and counts as blocked. A match returns
+//     ErrSessionRevoked.
+//
+// A nil store or nil claims pass. On a store error the function logs the
+// error and continues (fail open): access tokens are short-lived, and a
+// database blip must not lock out every user.
+func CheckRevocation(ctx context.Context, store sessionstore.SessionStore, claims *Claims) error {
+	revoked, lookupErr := RevocationStatus(ctx, store, claims)
+	if lookupErr != nil {
+		slog.Error("Failed to check token or user blocklist",
+			"jti", claims.ID, "user_id", claims.UserID, "error", lookupErr)
+	}
+	return revoked
+}
+
+// RevocationStatus runs the checks of CheckRevocation without logging. It
+// returns the revocation (ErrTokenRevoked, ErrSessionRevoked or nil) and the
+// store errors (nil when both checks ran). A failed check counts as not
+// revoked (fail open); the other check still runs. Callers that check many
+// tokens (the WebSocket revalidation) use lookupErr to stop early.
+func RevocationStatus(ctx context.Context, store sessionstore.SessionStore, claims *Claims) (revoked error, lookupErr error) {
+	if store == nil || claims == nil {
+		return nil, nil
+	}
+	var errs []error
+	if claims.ID != "" {
+		blocked, err := store.IsTokenBlocked(ctx, claims.ID)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("token blocklist: %w", err))
+		} else if blocked {
+			return ErrTokenRevoked, errors.Join(errs...)
+		}
+	}
+	if claims.UserID != "" {
+		blocked, err := store.IsUserBlocked(ctx, claims.UserID, claims.IssueTime())
+		if err != nil {
+			errs = append(errs, fmt.Errorf("user blocklist: %w", err))
+		} else if blocked {
+			return ErrSessionRevoked, errors.Join(errs...)
+		}
+	}
+	return nil, errors.Join(errs...)
+}
+
+// RevocationMessage returns the client message for an error from
+// CheckRevocation.
+func RevocationMessage(err error) string {
+	if errors.Is(err, ErrTokenRevoked) {
+		return "Token has been revoked"
+	}
+	return "Session revoked"
 }
 
 // GenerateTokenOptions holds all parameters for JWT generation.
@@ -123,6 +282,7 @@ type GenerateTokenOptions struct {
 	Expiration   time.Duration
 	AuthProvider string // optional, included in claims when non-empty
 	Email        string // optional, included in claims when non-empty
+	SessionID    string // optional "sid" claim: refresh-token family of the session
 }
 
 // GenerateTokenWithOpts creates a signed JWT token using the provided options.
@@ -135,6 +295,8 @@ func GenerateTokenWithOpts(opts GenerateTokenOptions) (string, error) {
 		Role:         opts.Role,
 		AuthProvider: opts.AuthProvider,
 		Email:        opts.Email,
+		SessionID:    opts.SessionID,
+		IssuedAtMs:   now.UnixMilli(),
 		RegisteredClaims: jwt.RegisteredClaims{
 			ID:        uuid.New().String(),
 			ExpiresAt: jwt.NewNumericDate(now.Add(opts.Expiration)),
@@ -197,6 +359,17 @@ func GetTokenExpiryFromContext(c *gin.Context) (time.Time, bool) {
 		}
 	}
 	return time.Time{}, false
+}
+
+// GetSessionIDFromContext returns the "sid" claim set by the JWT middleware,
+// or "" for API-key auth and tokens without a session.
+func GetSessionIDFromContext(c *gin.Context) string {
+	if v, exists := c.Get(contextKeySID); exists {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
 }
 
 // GetJTIFromContext extracts the JWT ID (jti) set by AuthRequired middleware.

@@ -3,15 +3,16 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"time"
 
 	"backend/internal/api/middleware"
 	"backend/internal/database"
 	"backend/internal/models"
+	"backend/pkg/dberrors"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -37,9 +38,31 @@ type DefinitionExportBundle struct {
 
 // DefinitionExportData holds the exportable fields of a stack definition.
 type DefinitionExportData struct {
-	Name          string `json:"name"`
-	Description   string `json:"description"`
-	DefaultBranch string `json:"default_branch"`
+	// SourceTemplate is the template that the definition is linked to. The
+	// export sets it for a linked definition; the import links the new
+	// definition when the template and the version exist.
+	SourceTemplate *SourceTemplateExportData `json:"source_template,omitempty"`
+	Name           string                    `json:"name"`
+	Description    string                    `json:"description"`
+	DefaultBranch  string                    `json:"default_branch"`
+}
+
+// SourceTemplateExportData names the source template of an exported
+// definition. The import looks up the template by ID, else by exact name.
+type SourceTemplateExportData struct {
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name,omitempty"`
+	// Version is a published version of the template. Empty means the
+	// latest published version.
+	Version string `json:"version,omitempty"`
+}
+
+// definitionImportResponse is the import response: the new definition with
+// its charts, and warnings (for example a source template that could not be
+// linked).
+type definitionImportResponse struct {
+	DefinitionWithChartsResponse
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // ChartConfigExportData holds the exportable fields of a chart configuration.
@@ -62,7 +85,30 @@ type DefinitionHandler struct {
 	templateRepo      models.StackTemplateRepository
 	templateChartRepo models.TemplateChartConfigRepository
 	versionRepo       models.TemplateVersionRepository
+	userRepo          models.UserRepository
 	txRunner          database.TxRunner
+}
+
+// WithUserRepo attaches the user repository. Definition responses then
+// include owner_username, and the owner list filter accepts usernames.
+// Returns h for chaining.
+// msgDefinitionModifyForbidden is the 403 message when a caller may not
+// change a definition.
+const msgDefinitionModifyForbidden = "Only the owner, devops or admin users can change this definition"
+
+// requireDefinitionModify writes 403 and returns false unless the caller owns
+// the definition or has the devops or admin role.
+func requireDefinitionModify(c *gin.Context, def *models.StackDefinition) bool {
+	if isPrivilegedRole(c) || (def.OwnerID != "" && def.OwnerID == middleware.GetUserIDFromContext(c)) {
+		return true
+	}
+	c.JSON(http.StatusForbidden, gin.H{"error": msgDefinitionModifyForbidden})
+	return false
+}
+
+func (h *DefinitionHandler) WithUserRepo(repo models.UserRepository) *DefinitionHandler {
+	h.userRepo = repo
+	return h
 }
 
 // NewDefinitionHandler creates a new DefinitionHandler.
@@ -108,75 +154,46 @@ func NewDefinitionHandlerWithVersions(
 
 // ListDefinitions godoc
 // @Summary     List stack definitions
-// @Description List stack definitions with server-side pagination
+// @Description List stack definitions with server-side pagination, newest first. The filters name and owner combine (AND); total is the number of definitions that match.
+// @Description owner is "me" (the authenticated user), a username, or a user ID. A value in UUID form is matched as a user ID first, then as a username. An unknown username or ID gives an empty list. Each definition includes owner_username (omitted when the owner no longer exists) and chart_count (the number of charts; omitted when the count fails).
+// @Description The list is paged (default pageSize 25); with owner=me or name the total is the real number of matches, not the page size.
 // @Tags        stack-definitions
 // @Produce     json
 // @Param       name     query    string false "Filter by exact name"
+// @Param       owner    query    string false "Filter by owner: 'me', a username, or a user ID"
 // @Param       page     query    int false "Page number (default 1)"     minimum(1)
 // @Param       pageSize query    int false "Items per page (default 25, max 100)" minimum(1) maximum(100)
 // @Param       limit    query    int false "Max items to return (default 25, max 100)" minimum(1) maximum(100)
 // @Param       offset   query    int false "Number of items to skip (default 0)" minimum(0)
 // @Success     200 {object} map[string]interface{} "Paginated list with data, total, page, pageSize"
+// @Failure     400 {object} map[string]string "Owner filter is too long"
+// @Failure     401 {object} map[string]string "owner=me without an authenticated user"
 // @Failure     500 {object} map[string]string
 // @Router      /api/v1/stack-definitions [get]
 func (h *DefinitionHandler) ListDefinitions(c *gin.Context) {
-	if name := c.Query("name"); name != "" {
-		defs, err := h.definitionRepo.FindByName(name)
-		if err != nil {
-			status, message := mapError(err, entityStackDefinition)
-			c.JSON(status, gin.H{"error": message})
-			return
-		}
-		if defs == nil {
-			defs = []models.StackDefinition{}
-		}
-		c.JSON(http.StatusOK, gin.H{
-			"data":     defs,
-			"total":    len(defs),
-			"page":     1,
-			"pageSize": len(defs),
-		})
+	ownerID, ok := resolveOwnerFilter(c, h.userRepo, c.Query("owner"))
+	if !ok {
 		return
 	}
+	filter := models.StackDefinitionFilter{Name: c.Query("name"), OwnerID: ownerID}
 
-	pageSize := listPageSizeDefault
-	offset := 0
-	page := 1
+	page, pageSize, offset := listPagination(c)
 
-	if ps := c.Query("pageSize"); ps != "" {
-		if v, err := strconv.Atoi(ps); err == nil && v > 0 {
-			pageSize = v
-		}
-		if pageSize > listPageSizeMax {
-			pageSize = listPageSizeMax
-		}
-	}
-
-	if p := c.Query("page"); p != "" {
-		if v, err := strconv.Atoi(p); err == nil && v > 0 {
-			page = v
-		}
-		offset = (page - 1) * pageSize
-	} else if l := c.Query("limit"); l != "" {
-		if v, err := strconv.Atoi(l); err == nil && v > 0 {
-			pageSize = v
-			if pageSize > listPageSizeMax {
-				pageSize = listPageSizeMax
-			}
-		}
-		if o := c.Query("offset"); o != "" {
-			if v, err := strconv.Atoi(o); err == nil && v >= 0 {
-				offset = v
-			}
-		}
-	}
-
-	defs, total, err := h.definitionRepo.ListPaged(pageSize, offset)
+	defs, total, err := h.definitionRepo.ListPaged(filter, pageSize, offset)
 	if err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
+	if defs == nil {
+		defs = []models.StackDefinition{}
+	}
+	ptrs := make([]*models.StackDefinition, len(defs))
+	for i := range defs {
+		ptrs[i] = &defs[i]
+	}
+	setDefinitionOwnerNames(h.userRepo, ptrs...)
+	h.setDefinitionChartCounts(defs)
 
 	c.JSON(http.StatusOK, gin.H{
 		"data":     defs,
@@ -186,15 +203,40 @@ func (h *DefinitionHandler) ListDefinitions(c *gin.Context) {
 	})
 }
 
+// setDefinitionChartCounts sets ChartCount on each definition with one batch
+// query. On an error it logs and leaves the field out; the list still returns.
+func (h *DefinitionHandler) setDefinitionChartCounts(defs []models.StackDefinition) {
+	if len(defs) == 0 || h.chartRepo == nil {
+		return
+	}
+	ids := make([]string, len(defs))
+	for i := range defs {
+		ids[i] = defs[i].ID
+	}
+	counts, err := h.chartRepo.CountByDefinitionIDs(ids)
+	if err != nil {
+		slog.Warn("Failed to count charts for definition list", "error", err)
+		return
+	}
+	for i := range defs {
+		n := counts[defs[i].ID]
+		defs[i].ChartCount = &n
+	}
+}
+
 // CreateDefinition godoc
 // @Summary     Create a stack definition
-// @Description Create a new stack definition
+// @Description Create a new stack definition. Definition names are unique per owner. Requires the devops or admin role.
 // @Tags        stack-definitions
 // @Accept      json
 // @Produce     json
 // @Param       definition body     models.StackDefinition true "Definition object"
 // @Success     201        {object} models.StackDefinition
 // @Failure     400        {object} map[string]string
+// @Failure     401        {object} map[string]string
+// @Failure     403        {object} map[string]string
+// @Failure     409        {object} map[string]string "The owner already has a definition with this name"
+// @Failure     500        {object} map[string]string
 // @Router      /api/v1/stack-definitions [post]
 func (h *DefinitionHandler) CreateDefinition(c *gin.Context) {
 	var def models.StackDefinition
@@ -218,18 +260,26 @@ func (h *DefinitionHandler) CreateDefinition(c *gin.Context) {
 		return
 	}
 
+	// Quick deploy sets the owner instance; a user-created definition has none.
+	def.OwnerInstanceID = ""
+
+	if respondDefinitionNameTaken(c, h.definitionRepo, def.OwnerID, def.Name, "") {
+		return
+	}
+
 	if err := h.definitionRepo.Create(&def); err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
+	setDefinitionOwnerNames(h.userRepo, &def)
 	c.JSON(http.StatusCreated, def)
 }
 
 // GetDefinition godoc
 // @Summary     Get a stack definition
-// @Description Get a stack definition by ID, including its chart configurations
+// @Description Get a stack definition by ID, including its chart configurations and owner_username (omitted when the owner no longer exists)
 // @Tags        stack-definitions
 // @Produce     json
 // @Param       id  path     string true "Definition ID"
@@ -257,6 +307,7 @@ func (h *DefinitionHandler) GetDefinition(c *gin.Context) {
 		return
 	}
 
+	setDefinitionOwnerNames(h.userRepo, def)
 	c.JSON(http.StatusOK, DefinitionWithChartsResponse{
 		StackDefinition: *def,
 		Charts:          charts,
@@ -265,7 +316,7 @@ func (h *DefinitionHandler) GetDefinition(c *gin.Context) {
 
 // UpdateDefinition godoc
 // @Summary     Update a stack definition
-// @Description Update an existing stack definition
+// @Description Update an existing stack definition. A changed name must be unique for the owner of the definition.
 // @Tags        stack-definitions
 // @Accept      json
 // @Produce     json
@@ -273,7 +324,11 @@ func (h *DefinitionHandler) GetDefinition(c *gin.Context) {
 // @Param       definition body     models.StackDefinition  true "Definition object"
 // @Success     200        {object} models.StackDefinition
 // @Failure     400        {object} map[string]string
+// @Failure     401        {object} map[string]string
+// @Failure     403        {object} map[string]string "Caller is not the owner, devops or admin"
 // @Failure     404        {object} map[string]string
+// @Failure     409        {object} map[string]string "The owner already has a definition with this name"
+// @Failure     500        {object} map[string]string
 // @Router      /api/v1/stack-definitions/{id} [put]
 func (h *DefinitionHandler) UpdateDefinition(c *gin.Context) {
 	id := c.Param("id")
@@ -288,11 +343,20 @@ func (h *DefinitionHandler) UpdateDefinition(c *gin.Context) {
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
+	if !requireDefinitionModify(c, existing) {
+		return
+	}
 
 	var update models.StackDefinition
 	if err := c.ShouldBindJSON(&update); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
+	}
+
+	if update.Name != existing.Name && update.Name != "" {
+		if respondDefinitionNameTaken(c, h.definitionRepo, existing.OwnerID, update.Name, existing.ID) {
+			return
+		}
 	}
 
 	existing.Name = update.Name
@@ -311,6 +375,7 @@ func (h *DefinitionHandler) UpdateDefinition(c *gin.Context) {
 		return
 	}
 
+	setDefinitionOwnerNames(h.userRepo, existing)
 	c.JSON(http.StatusOK, existing)
 }
 
@@ -321,6 +386,7 @@ func (h *DefinitionHandler) UpdateDefinition(c *gin.Context) {
 // @Produce     json
 // @Param       id  path     string true "Definition ID"
 // @Success     204 "No Content"
+// @Failure     403 {object} map[string]string "Caller is not the owner, devops or admin"
 // @Failure     404 {object} map[string]string
 // @Failure     409 {object} map[string]string
 // @Router      /api/v1/stack-definitions/{id} [delete]
@@ -328,6 +394,16 @@ func (h *DefinitionHandler) DeleteDefinition(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": msgDefinitionIDRequired})
+		return
+	}
+
+	def, err := h.definitionRepo.FindByID(id)
+	if err != nil {
+		status, message := mapError(err, entityStackDefinition)
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+	if !requireDefinitionModify(c, def) {
 		return
 	}
 
@@ -409,18 +485,29 @@ func (h *DefinitionHandler) ExportDefinition(c *gin.Context) {
 		},
 		Charts: exportCharts,
 	}
+	if def.SourceTemplateID != "" {
+		src := &SourceTemplateExportData{ID: def.SourceTemplateID, Version: def.SourceTemplateVersion}
+		// The name lets another installation (other IDs) find the template.
+		if tmpl, err := h.templateRepo.FindByID(def.SourceTemplateID); err == nil {
+			src.Name = tmpl.Name
+		} else if !isNotFoundError(err) {
+			slog.Warn("export: failed to read source template", "template_id", def.SourceTemplateID, "error", err)
+		}
+		bundle.Definition.SourceTemplate = src
+	}
 
 	c.JSON(http.StatusOK, bundle)
 }
 
 // ImportDefinition godoc
 // @Summary     Import a stack definition
-// @Description Import a stack definition from a portable JSON bundle, creating a new definition with fresh IDs
+// @Description Import a stack definition from a portable JSON bundle, creating a new definition with fresh IDs. Definition names are unique per owner: when the caller already has a definition with the bundle name, the import uses "<name> (imported)", then "<name> (imported 2)", ... The response holds the final name (409 when no free name is found).
+// @Description definition.source_template (optional: id or name, and version) links the new definition to a template, as PUT /stack-definitions/{id}/template-link does. The import looks up the template by ID, else by name among the published templates (not case-sensitive on MySQL). When the template does not exist, is not published, the name matches more than one published template, or the version is not a published version, the import creates the definition without a link and adds a message to warnings; it does not fail.
 // @Tags        stack-definitions
 // @Accept      json
 // @Produce     json
 // @Param       bundle body     DefinitionExportBundle true "Export bundle"
-// @Success     201    {object} DefinitionWithChartsResponse
+// @Success     201    {object} definitionImportResponse
 // @Failure     400    {object} map[string]string
 // @Failure     500    {object} map[string]string
 // @Router      /api/v1/stack-definitions/import [post]
@@ -477,6 +564,29 @@ func (h *DefinitionHandler) ImportDefinition(c *gin.Context) {
 		return
 	}
 
+	// The template link never stops the import: a link that cannot be set
+	// gives a warning.
+	var warnings []string
+	templateID, templateVersion, warning := h.importTemplateLink(c.Request.Context(), bundle.Definition.SourceTemplate)
+	def.SourceTemplateID, def.SourceTemplateVersion = templateID, templateVersion
+	if warning != "" {
+		warnings = append(warnings, warning)
+	}
+
+	// Definition names are unique per owner: an existing name gets the
+	// suffix " (imported)", " (imported 2)", ...
+	finalName, nameErr := uniqueDefinitionName(h.definitionRepo, def.OwnerID, importedDefinitionName(def.Name))
+	if errors.Is(nameErr, errNoFreeDefinitionName) {
+		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("A stack definition named %q already exists for this owner", def.Name)})
+		return
+	}
+	if nameErr != nil {
+		status, message := mapError(nameErr, entityStackDefinition)
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+	def.Name = finalName
+
 	// Build chart models up front so both paths share the same data.
 	chartModels := make([]models.ChartConfig, 0, len(bundle.Charts))
 	for _, ch := range bundle.Charts {
@@ -521,20 +631,26 @@ func (h *DefinitionHandler) ImportDefinition(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusCreated, DefinitionWithChartsResponse{
-		StackDefinition: def,
-		Charts:          createdCharts,
+	c.JSON(http.StatusCreated, definitionImportResponse{
+		DefinitionWithChartsResponse: DefinitionWithChartsResponse{
+			StackDefinition: def,
+			Charts:          createdCharts,
+		},
+		Warnings: warnings,
 	})
 }
 
 // CheckUpgrade godoc
 // @Summary     Check if a template upgrade is available
-// @Description Check if the source template has a newer version than the definition's current version
+// @Description Check if the latest published snapshot of the source template has another version than the definition's current version. An unpublished template, or one without a snapshot, gives upgrade_available=false.
+// @Description chart_diffs has the shape of the version diff chart_diffs: left = the definition charts now (locked values from the current source version snapshot), right = the latest snapshot. change_type "removed" means the chart is only in the definition; the upgrade keeps it.
 // @Tags        stack-definitions
+// @Accept      json
 // @Produce     json
 // @Param       id  path     string true "Definition ID"
-// @Success     200 {object} map[string]interface{}
+// @Success     200 {object} upgradeCheckResponse
 // @Failure     400 {object} map[string]string
+// @Failure     401 {object} map[string]string
 // @Failure     404 {object} map[string]string
 // @Failure     500 {object} map[string]string
 // @Router      /api/v1/stack-definitions/{id}/check-upgrade [get]
@@ -558,23 +674,23 @@ func (h *DefinitionHandler) CheckUpgrade(c *gin.Context) {
 		return
 	}
 
-	latest, err := h.versionRepo.GetLatestByTemplate(context.Background(), def.SourceTemplateID)
+	// The upgrade target is the latest published snapshot of the template.
+	release, err := h.upgradeRelease(c.Request.Context(), def.SourceTemplateID)
 	if err != nil {
-		// No versions published yet — no upgrade.
-		c.JSON(http.StatusOK, gin.H{"upgrade_available": false})
+		if errors.Is(err, errNoPublishedVersion) {
+			// Not published, or no snapshot yet — no upgrade.
+			c.JSON(http.StatusOK, gin.H{"upgrade_available": false})
+			return
+		}
+		slog.Error("failed to read latest template version", "template_id", def.SourceTemplateID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
+	latest := release.Version
+	snapshot := release.Snapshot
 
 	if latest.Version == def.SourceTemplateVersion {
 		c.JSON(http.StatusOK, gin.H{"upgrade_available": false})
-		return
-	}
-
-	// Parse the latest snapshot to compute chart changes.
-	var snapshot models.TemplateSnapshot
-	if err := json.Unmarshal([]byte(latest.Snapshot), &snapshot); err != nil {
-		slog.Error("failed to unmarshal latest version snapshot", "version_id", latest.ID, "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
@@ -587,13 +703,119 @@ func (h *DefinitionHandler) CheckUpgrade(c *gin.Context) {
 	}
 
 	changes := computeUpgradeChanges(currentCharts, snapshot.Charts)
+	chartDiffs := h.upgradeChartDiffs(c.Request.Context(), def, currentCharts, snapshot)
 
-	c.JSON(http.StatusOK, gin.H{
-		"upgrade_available": true,
-		"current_version":   def.SourceTemplateVersion,
-		"latest_version":    latest.Version,
-		"changes":           changes,
+	c.JSON(http.StatusOK, upgradeCheckResponse{
+		UpgradeAvailable: true,
+		CurrentVersion:   def.SourceTemplateVersion,
+		LatestVersion:    latest.Version,
+		Changes:          &changes,
+		ChartDiffs:       chartDiffs,
 	})
+}
+
+// upgradeCheckResponse is the response of GET /stack-definitions/:id/check-upgrade.
+// Without an upgrade only upgrade_available (false) is set.
+type upgradeCheckResponse struct {
+	UpgradeAvailable bool             `json:"upgrade_available"`
+	CurrentVersion   string           `json:"current_version,omitempty"`
+	LatestVersion    string           `json:"latest_version,omitempty"`
+	Changes          *upgradeChanges  `json:"changes,omitempty"`
+	ChartDiffs       []chartDiffEntry `json:"chart_diffs,omitempty"`
+}
+
+// upgradeChartDiffs compares the definition charts (left) with the charts of
+// the upgrade target snapshot (right), in the shape of the version diff
+// chart_diffs. Left locked values and required flags come from the snapshot
+// of the definition's current source version; without that snapshot they are
+// taken from the target (shown as unchanged). change_type
+// "removed" means the chart is in the definition but not in the target; the
+// upgrade keeps such charts.
+func (h *DefinitionHandler) upgradeChartDiffs(ctx context.Context, def *models.StackDefinition, current []models.ChartConfig, target models.TemplateSnapshot) []chartDiffEntry {
+	sourceCharts := make(map[string]models.TemplateChartSnapshotData)
+	if versions, err := h.versionRepo.ListByTemplate(ctx, def.SourceTemplateID); err != nil {
+		slog.Warn("failed to list template versions for upgrade diff", "template_id", def.SourceTemplateID, "error", err)
+	} else {
+		for _, v := range versions { // newest first: the newest match wins
+			if v.Version != def.SourceTemplateVersion {
+				continue
+			}
+			var snap models.TemplateSnapshot
+			if err := json.Unmarshal([]byte(v.Snapshot), &snap); err == nil {
+				for _, ch := range snap.Charts {
+					sourceCharts[ch.ChartName] = ch
+				}
+			}
+			break
+		}
+	}
+
+	targetCharts := make(map[string]models.TemplateChartSnapshotData, len(target.Charts))
+	for _, ch := range target.Charts {
+		targetCharts[ch.ChartName] = ch
+	}
+
+	left := make([]models.TemplateChartSnapshotData, 0, len(current))
+	for _, ch := range current {
+		src, known := sourceCharts[ch.ChartName]
+		if !known {
+			// Unknown current locked values: take the target's, so they
+			// do not show as a change.
+			src = targetCharts[ch.ChartName]
+		}
+		left = append(left, models.TemplateChartSnapshotData{
+			ChartName:     ch.ChartName,
+			RepoURL:       ch.RepositoryURL,
+			DefaultValues: ch.DefaultValues,
+			LockedValues:  src.LockedValues,
+			IsRequired:    src.IsRequired,
+			SortOrder:     ch.DeployOrder,
+			ChartPath:     ch.ChartPath,
+			ChartVersion:  ch.ChartVersion,
+		})
+	}
+	// ApplyUpgrade keeps the definition's chart_version and chart_path when
+	// the target has none, so an empty target value is shown as unchanged.
+	currentByName := make(map[string]models.ChartConfig, len(current))
+	for _, ch := range current {
+		currentByName[ch.ChartName] = ch
+	}
+	right := make([]models.TemplateChartSnapshotData, 0, len(target.Charts))
+	for _, ch := range target.Charts {
+		if cur, ok := currentByName[ch.ChartName]; ok {
+			if ch.ChartVersion == "" {
+				ch.ChartVersion = cur.ChartVersion
+			}
+			if ch.ChartPath == "" {
+				ch.ChartPath = cur.ChartPath
+			}
+		}
+		right = append(right, ch)
+	}
+	diffs := computeChartDiffs(left, right, target.SchemaVersion >= 1)
+	if diffs == nil {
+		diffs = []chartDiffEntry{}
+	}
+	return diffs
+}
+
+// upgradeRelease returns the latest published snapshot of a template, the
+// target of definition upgrades. An unpublished template, or one without a
+// snapshot, gives errNoPublishedVersion.
+func (h *DefinitionHandler) upgradeRelease(ctx context.Context, templateID string) (*templateRelease, error) {
+	if h.templateRepo != nil {
+		tmpl, err := h.templateRepo.FindByID(templateID)
+		if err != nil {
+			if errors.Is(err, dberrors.ErrNotFound) {
+				return nil, errNoPublishedVersion
+			}
+			return nil, fmt.Errorf("find template: %w", err)
+		}
+		if !tmpl.IsPublished {
+			return nil, errNoPublishedVersion
+		}
+	}
+	return latestTemplateRelease(ctx, h.versionRepo, h.templateChartRepo, templateID)
 }
 
 // upgradeChanges describes chart-level differences for an upgrade.
@@ -648,15 +870,18 @@ func computeUpgradeChanges(defCharts []models.ChartConfig, templateCharts []mode
 
 // ApplyUpgrade godoc
 // @Summary     Apply a template upgrade to a definition
-// @Description Upgrade a definition to the latest template version, adding new charts and updating defaults
+// @Description Upgrade a definition to the latest published snapshot of its source template, adding new charts and updating defaults, repository URL, deploy order and (when the snapshot has them) chart version, chart path, source repo and build pipeline. Charts that are only in the definition stay.
+// @Description An unpublished template, or one without a snapshot, gives 409 "Template has no published version".
 // @Tags        stack-definitions
 // @Accept      json
 // @Produce     json
 // @Param       id  path     string true "Definition ID"
 // @Success     200 {object} DefinitionWithChartsResponse
 // @Failure     400 {object} map[string]string
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string "Caller is not the owner, devops or admin"
 // @Failure     404 {object} map[string]string
-// @Failure     409 {object} map[string]string
+// @Failure     409 {object} map[string]string "Already at the latest version, or no published version"
 // @Failure     500 {object} map[string]string
 // @Router      /api/v1/stack-definitions/{id}/upgrade [post]
 func (h *DefinitionHandler) ApplyUpgrade(c *gin.Context) {
@@ -673,26 +898,30 @@ func (h *DefinitionHandler) ApplyUpgrade(c *gin.Context) {
 		return
 	}
 
+	if !requireDefinitionModify(c, def) {
+		return
+	}
+
 	if def.SourceTemplateID == "" || h.versionRepo == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Definition has no source template"})
 		return
 	}
 
-	latest, err := h.versionRepo.GetLatestByTemplate(context.Background(), def.SourceTemplateID)
+	// The upgrade target is the latest published snapshot of the template.
+	release, err := h.upgradeRelease(c.Request.Context(), def.SourceTemplateID)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "No template versions available"})
+		if errors.Is(err, errNoPublishedVersion) {
+			c.JSON(http.StatusConflict, gin.H{"error": msgNoPublishedVersion})
+			return
+		}
+		slog.Error("failed to read latest template version for upgrade", "template_id", def.SourceTemplateID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
+	latest := release.Version
 
 	if latest.Version == def.SourceTemplateVersion {
 		c.JSON(http.StatusConflict, gin.H{"error": "Definition is already at the latest version"})
-		return
-	}
-
-	var snapshot models.TemplateSnapshot
-	if err := json.Unmarshal([]byte(latest.Snapshot), &snapshot); err != nil {
-		slog.Error("failed to unmarshal version snapshot for upgrade", "version_id", latest.ID, "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
@@ -712,7 +941,7 @@ func (h *DefinitionHandler) ApplyUpgrade(c *gin.Context) {
 	now := time.Now().UTC()
 
 	// Apply changes: add new required charts, update existing chart defaults.
-	for _, tch := range snapshot.Charts {
+	for _, tch := range release.Charts {
 		existing, exists := defChartMap[tch.ChartName]
 		if !exists {
 			// Add new chart from template.
@@ -720,9 +949,13 @@ func (h *DefinitionHandler) ApplyUpgrade(c *gin.Context) {
 				ID:                uuid.New().String(),
 				StackDefinitionID: def.ID,
 				ChartName:         tch.ChartName,
-				RepositoryURL:     tch.RepoURL,
+				RepositoryURL:     tch.RepositoryURL,
+				SourceRepoURL:     tch.SourceRepoURL,
+				BuildPipelineID:   tch.BuildPipelineID,
+				ChartPath:         tch.ChartPath,
+				ChartVersion:      tch.ChartVersion,
 				DefaultValues:     tch.DefaultValues,
-				DeployOrder:       tch.SortOrder,
+				DeployOrder:       tch.DeployOrder,
 				CreatedAt:         now,
 			}
 			if err := h.chartRepo.Create(&newChart); err != nil {
@@ -740,8 +973,21 @@ func (h *DefinitionHandler) ApplyUpgrade(c *gin.Context) {
 
 		// Update default values for existing charts (preserve structure, update template defaults).
 		existing.DefaultValues = tch.DefaultValues
-		existing.RepositoryURL = tch.RepoURL
-		existing.DeployOrder = tch.SortOrder
+		existing.RepositoryURL = tch.RepositoryURL
+		existing.DeployOrder = tch.DeployOrder
+		// Chart source fields follow the template when the snapshot has them.
+		if tch.ChartVersion != "" {
+			existing.ChartVersion = tch.ChartVersion
+		}
+		if tch.ChartPath != "" {
+			existing.ChartPath = tch.ChartPath
+		}
+		if tch.SourceRepoURL != "" {
+			existing.SourceRepoURL = tch.SourceRepoURL
+		}
+		if tch.BuildPipelineID != "" {
+			existing.BuildPipelineID = tch.BuildPipelineID
+		}
 		if err := h.chartRepo.Update(existing); err != nil {
 			slog.Error("failed to update chart during upgrade",
 				"chart_name", tch.ChartName,

@@ -147,10 +147,12 @@ func (g *ValuesGenerator) GenerateValues(_ context.Context, params GenerateParam
 	merged = deepMerge(merged, overrides)
 	merged = deepMerge(merged, locked)
 
-	// Apply per-chart branch override if specified.
+	// Apply per-chart branch override if specified. ImageTag follows the
+	// branch, so {{.ImageTag}} names the image of the chart's own branch.
 	vars := params.TemplateVars
 	if params.ChartBranch != "" {
 		vars.Branch = params.ChartBranch
+		vars.ImageTag = SanitizeImageTag(params.ChartBranch)
 	}
 
 	// Substitute template variables in all string values

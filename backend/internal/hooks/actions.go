@@ -16,12 +16,21 @@ const actionRequestKind = "ActionRequest"
 // ActionSubscription registers a named, RPC-style webhook reachable via
 // POST /api/v1/stack-instances/:id/actions/:name. Unlike event Subscriptions,
 // actions are explicitly invoked by API callers and may return arbitrary JSON.
+//
+// Label, Confirm and Parameters are optional UI metadata: the web UI and the
+// CLI read them from GET /api/v1/stack-instances/:id/actions. LogPath is an
+// optional path template (for example "/jobs/{job_id}/log") on the host of
+// URL; when set, the backend proxies the job log of an asynchronous action.
 type ActionSubscription struct {
-	Name           string `json:"name"`
-	URL            string `json:"url"`
-	Description    string `json:"description,omitempty"`
-	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
-	Secret         string `json:"-"`
+	Name           string            `json:"name"`
+	URL            string            `json:"url"`
+	Description    string            `json:"description,omitempty"`
+	Label          string            `json:"label,omitempty"`
+	Confirm        string            `json:"confirm,omitempty"`
+	LogPath        string            `json:"log_path,omitempty"`
+	Parameters     []ActionParameter `json:"parameters,omitempty"`
+	TimeoutSeconds int               `json:"timeout_seconds,omitempty"`
+	Secret         string            `json:"-"`
 }
 
 // ActionRequest is the JSON payload posted to action subscribers.
@@ -50,8 +59,13 @@ type ActionResult struct {
 // the current shape matches the "config-at-boot" operational model.
 type ActionRegistry struct {
 	actions map[string]ActionSubscription
-	client  httpClient
-	now     func() time.Time
+	// client sends invoke calls and job log reads. It never follows a
+	// redirect, so a signed request cannot reach another host.
+	client httpClient
+	now    func() time.Time
+	// clusterNames sets instance.cluster_name in requests
+	// (WithClusterNames); nil leaves it empty.
+	clusterNames *ClusterNameResolver
 }
 
 // NewActionRegistry validates each subscription, normalizes optional fields,
@@ -62,7 +76,7 @@ func NewActionRegistry(actions []ActionSubscription, client httpClient) (*Action
 	}
 	r := &ActionRegistry{
 		actions: make(map[string]ActionSubscription, len(actions)),
-		client:  client,
+		client:  noRedirectClient(client),
 		now:     time.Now,
 	}
 	for i, a := range actions {
@@ -103,7 +117,8 @@ func (e ErrUnknownAction) Error() string {
 // Invoke posts an ActionRequest to the subscriber and returns its raw response.
 // Returns ErrUnknownAction when name is not registered. Network/HTTP errors
 // propagate; non-2xx responses are returned as ActionResult with the status
-// and body for the caller to surface.
+// and body for the caller to surface. A redirect is not followed: the 3xx
+// response is returned like any other non-2xx response.
 //
 // Emits an OTel span "hooks.action" for each invocation and the
 // hook.action_invocations_total / hook.action_invocation_duration metrics.
@@ -126,7 +141,7 @@ func (r *ActionRegistry) Invoke(ctx context.Context, name string, instance *Inst
 		Action:     name,
 		Timestamp:  r.now(),
 		RequestID:  newRequestID(),
-		Instance:   instance,
+		Instance:   r.clusterNames.instanceRef(ctx, instance),
 		Parameters: params,
 	}
 
@@ -182,6 +197,13 @@ func (r *ActionRegistry) Invoke(ctx context.Context, name string, instance *Inst
 		respBody = []byte("null")
 	}
 
+	// A refusal (status 400 or higher) with a plain text body keeps its
+	// reason: the body becomes a JSON string. Other non-JSON refusals give a
+	// null result. A non-JSON body of another status stays an error.
+	if resp.StatusCode >= 400 && !json.Valid(respBody) {
+		respBody = plainTextActionBody(resp.Header.Get("Content-Type"), respBody)
+	}
+
 	if !json.Valid(respBody) {
 		badJSON := fmt.Errorf("action %q subscriber returned non-JSON body (%d bytes)", name, len(respBody))
 		finish(outcomeTransportError, badJSON, resp.StatusCode)
@@ -220,5 +242,16 @@ func validateAction(a *ActionSubscription) error {
 	if time.Duration(a.TimeoutSeconds)*time.Second > 10*time.Minute {
 		return fmt.Errorf("timeout_seconds must be <= 600")
 	}
-	return nil
+	if len(a.Label) > maxActionLabelLen {
+		return fmt.Errorf("label must be at most %d characters", maxActionLabelLen)
+	}
+	if len(a.Confirm) > maxActionConfirmLen {
+		return fmt.Errorf("confirm must be at most %d characters", maxActionConfirmLen)
+	}
+	if err := validateLogPath(a.LogPath); err != nil {
+		return err
+	}
+	// Copy before normalizing so the caller's slice stays unchanged.
+	a.Parameters = append([]ActionParameter(nil), a.Parameters...)
+	return validateParameters(a.Parameters)
 }

@@ -1,12 +1,14 @@
 package handlers
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
 
 	"backend/internal/api/middleware"
 	"backend/internal/models"
+	"backend/internal/notifier"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -176,7 +178,7 @@ func (h *NotificationHandler) MarkAllAsRead(c *gin.Context) {
 
 // GetPreferences godoc
 // @Summary      Get notification preferences
-// @Description  Get the authenticated user's notification preferences
+// @Description  Get the authenticated user's notification preferences. Stored preferences of unknown event types are omitted.
 // @Tags         notifications
 // @Produce      json
 // @Security     BearerAuth
@@ -194,12 +196,25 @@ func (h *NotificationHandler) GetPreferences(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, prefs)
+	c.JSON(http.StatusOK, knownPreferences(prefs))
+}
+
+// knownPreferences returns the preferences of known event types. Rows of
+// other types (stored before the API validated types) have no effect, and a
+// client that sends them back would get 400 from UpdatePreferences.
+func knownPreferences(prefs []models.NotificationPreference) []models.NotificationPreference {
+	out := make([]models.NotificationPreference, 0, len(prefs))
+	for _, p := range prefs {
+		if notifier.IsPreferenceEventType(p.EventType) {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // UpdatePreferences godoc
 // @Summary      Update notification preferences
-// @Description  Update the authenticated user's notification preferences (array of event_type + enabled)
+// @Description  Update the authenticated user's notification preferences (array of event_type + enabled). Each event_type must be a known type (the instance event types, and the system types cleanup.policy.executed, quota.warning and secret.expiring); an unknown type gives 400 and no preference is changed. The response omits stored preferences of unknown event types.
 // @Tags         notifications
 // @Accept       json
 // @Produce      json
@@ -227,6 +242,10 @@ func (h *NotificationHandler) UpdatePreferences(c *gin.Context) {
 	for _, r := range reqs {
 		if r.EventType == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "event_type is required for each preference"})
+			return
+		}
+		if !notifier.IsPreferenceEventType(r.EventType) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("unknown event type: %s", r.EventType)})
 			return
 		}
 	}
@@ -259,7 +278,7 @@ func (h *NotificationHandler) UpdatePreferences(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, prefs)
+	c.JSON(http.StatusOK, knownPreferences(prefs))
 }
 
 // generateID creates a new UUID string for notifications.

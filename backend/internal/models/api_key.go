@@ -31,11 +31,17 @@ type APIKey struct {
 type APIKeyRepository interface {
 	Create(key *APIKey) error
 	FindByID(userID, keyID string) (*APIKey, error)
+	// FindByIDs returns the keys with these IDs that exist (of any user), in
+	// no defined order. Missing IDs are not an error; no IDs return nil.
+	FindByIDs(keyIDs []string) ([]*APIKey, error)
 	// FindByPrefix performs a table scan filtered client-side; acceptable at low volume.
 	FindByPrefix(prefix string) ([]*APIKey, error)
 	ListByUser(userID string) ([]*APIKey, error)
 	UpdateLastUsed(userID, keyID string, t time.Time) error
 	Delete(userID, keyID string) error
+	// DeleteAllForUser removes every API key of the user in one statement and
+	// returns the number of deleted keys. Zero keys is not an error.
+	DeleteAllForUser(userID string) (int64, error)
 }
 
 // GenerateAPIKey creates a cryptographically random 32-byte key and returns:
@@ -97,6 +103,13 @@ func VerifyAPIKeyHash(rawKey, encodedHash string) bool {
 	}
 	hash := argon2.IDKey([]byte(rawKey), salt, 1, 64*1024, 4, 32)
 	return constantTimeEqual(hash, expectedHash)
+}
+
+// APIKeyHashIsArgon2 reports whether the stored hash uses the Argon2id
+// format. Its verify costs 64 MiB of memory and some CPU time, so callers
+// limit the concurrent verifies; a SHA-256 hash is cheap.
+func APIKeyHashIsArgon2(encodedHash string) bool {
+	return strings.HasPrefix(encodedHash, "$argon2id$")
 }
 
 func constantTimeEqual(a, b []byte) bool {

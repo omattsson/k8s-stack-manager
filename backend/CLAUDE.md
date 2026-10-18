@@ -1,51 +1,144 @@
-# Backend — Go Instructions
+# Backend: Go Instructions
 
 ## Project Layout
-Module is `backend` (see `go.mod`, Go 1.26). Use `internal/` for private packages and `pkg/` for shared utilities (`pkg/dberrors/`, `pkg/crypto/`, `pkg/utils/`). Shared test utilities live in `internal/test/test_helpers.go`.
+The module is `backend` (see `go.mod`, Go 1.26). Use `internal/` for private packages and `pkg/` for shared utilities (`pkg/dberrors/`, `pkg/crypto/`, `pkg/utils/`). Shared test utilities are in `internal/test/test_helpers.go`.
 
-Domain packages under `internal/`: `auth` (OIDC provider, PKCE), `cache` (generic in-memory TTL cache), `cluster` (ClusterRegistry, health poller, quota monitor, secret refresher), `deployer` (Helm CLI wrapper, cleanup executor, expiry stopper), `gitprovider` (Azure DevOps + GitHub + GitLab), `helm` (values deep-merge), `hooks` (outbound lifecycle webhooks with HMAC signing; see `docs/hooks.md` and `EXTENDING.md` at the repo root), `k8s` (cluster client, watcher, quotas, pod exec, scaling), `notifier` (notification dispatch + outbound channels), `scheduler` (cron cleanup policies), `sessionstore` (token blocklist + OIDC state; `SESSION_STORE=mysql` default, `memory` for tests), `telemetry` (OpenTelemetry bootstrap, DB-pool and business metrics; HTTP and auth request metrics live in `api/middleware`), `ttl` (instance expiry reaper), `websocket` (hub, clients, message types).
+Domain packages in `internal/`:
+- `auth`: OIDC provider (PKCE).
+- `cache`: generic in-memory TTL cache.
+- `cluster`: ClusterRegistry, health poller, quota monitor, secret monitor and refresher, `AccessReconciler`.
+- `deployer`: Helm CLI wrapper, cleanup executor, expiry stopper, interrupted operation recovery.
+- `gitprovider`: Azure DevOps, GitHub and GitLab.
+- `helm`: values deep-merge and template variables.
+- `hooks`: outbound lifecycle webhooks with HMAC signing and custom actions. See `docs/hooks.md` and `EXTENDING.md` in the repository root.
+- `k8s`: cluster client, watcher, quotas, pod exec, scaling, `AccessBinding`.
+- `leader`: Kubernetes Lease leader election and the leader worker group. Only the leader replica runs the background workers.
+- `notifier`: notification dispatch and outbound channels.
+- `replica`: process identity and heartbeat.
+- `scheduler`: cron cleanup policies.
+- `sessionstore`: token blocklist and OIDC state. `SESSION_STORE=mysql` is the default. Use `memory` for tests.
+- `telemetry`: OpenTelemetry bootstrap, DB-pool and business metrics. HTTP and auth request metrics are in `api/middleware`.
+- `ttl`: instance expiry reaper and expiry warner.
+- `websocket`: hub, clients, message types, fan-out.
+
+The entry point is `api/main.go`. The helpers (repositories, services, handlers, router, leader workers, HTTP servers) are in `api/bootstrap.go`.
 
 ## Handler Pattern
-The Items reference handler uses the generic `Handler` struct with repository injection. Domain handlers use dedicated structs (`InstanceHandler`, `DefinitionHandler`, `ClusterHandler`, `DashboardHandler`, `NotificationChannelHandler`, ...) with the repositories they need. Use `NewHandlerWithHub` when a handler needs to broadcast WebSocket events. Register in `internal/api/routes/routes.go` under `/api/v1`.
+- The Items reference handler uses the generic `Handler` struct with repository injection.
+- Domain handlers use dedicated structs (`InstanceHandler`, `DefinitionHandler`, `ClusterHandler`, `DashboardHandler`, `NotificationChannelHandler`, ...). Each struct has the repositories it needs.
+- Use `NewHandlerWithHub` when a handler must broadcast WebSocket events.
+- Register routes in `internal/api/routes/routes.go` under `/api/v1`.
 
 ## Repository Interface
-Generic data access through `models.Repository` with `context.Context` as first parameter. Domain-specific repositories have dedicated interfaces: some (e.g., `StackInstanceRepository`, `UserRepository`) omit the context parameter, while newer ones (e.g., `NotificationRepository`, `ResourceQuotaRepository`) take `context.Context` first — follow the interface you are implementing. Implemented by `GenericRepository` (GORM/MySQL). Factory in `internal/database/repository.go` initializes the repository based on config. New or changed list endpoints must use `ListPaged(limit, offset)` with column projection (omit TEXT fields) — never add new unbounded `List()` calls from handlers. Today only stack instances, definitions and templates use the `ListPaged` repository API; items, audit logs, notifications and delivery logs paginate through their own `limit`/`offset` parameters; users, clusters, cleanup policies, favorites and API keys return unpaged lists. Use batch methods (`CountByTemplateIDs`, `FindByIDs`) instead of N+1 loops for enrichment.
+- Generic data access uses `models.Repository` with `context.Context` as the first parameter. `GenericRepository` (GORM, MySQL) implements it. The factory in `internal/database/repository.go` builds it from the config.
+- Domain repositories have their own interfaces. Some (for example `StackInstanceRepository`, `UserRepository`) have no context parameter. Newer ones (for example `NotificationRepository`, `ResourceQuotaRepository`) take `context.Context` first. Follow the interface that you implement.
+- New or changed list endpoints must use `ListPaged(limit, offset)` with column projection (omit TEXT fields). Never add a new unbounded `List()` call from a handler.
+- Today only stack instances, definitions and templates use the `ListPaged` repository API. Items, audit logs, notifications and delivery logs paginate through their own `limit` and `offset` parameters. Users, clusters, cleanup policies, favorites and API keys return unpaged lists.
+- Use batch methods (`CountByTemplateIDs`, `FindByIDs`) instead of N+1 loops for enrichment.
 
 ## Error Handling
-- Sentinel errors: `ErrNotFound`, `ErrDuplicateKey`, `ErrValidation`, `ErrConnectionFailed`
-- Wrap with context: `NewDatabaseError("operation", err)`
-- Check with: `errors.As(err, &dbErr)` and `errors.Is(dbErr.Err, database.ErrNotFound)`
-- Items reference handler uses `handleDBError()` in `handlers/items.go` for HTTP status mapping
-- Domain handlers use `mapError()` in `handlers/errors.go` — takes `(err, entityName)` and returns `(statusCode, message)` with contextual entity names
+- Sentinel errors: `ErrNotFound`, `ErrDuplicateKey`, `ErrValidation`, `ErrConnectionFailed`, `ErrNotImplemented`.
+- Wrap errors with context: `NewDatabaseError("operation", err)`.
+- Check errors with `errors.As(err, &dbErr)` and `errors.Is(dbErr.Err, database.ErrNotFound)`.
+- The Items reference handler uses `handleDBError()` in `handlers/items.go` for the HTTP status.
+- Domain handlers use `mapError()` in `handlers/errors.go`. It takes `(err, entityName)` and returns `(statusCode, message)` with the entity name in the message.
 
 ## Testing
-- `testify/assert` — never `testing` alone for assertions
-- Table-driven tests with `t.Parallel()` on parent and subtests
-- Capture range variables: `tt := tt` before `t.Run`
-- Use `MockRepository` from `handlers/mock_repository.go` (Item type only)
-- Domain handler mocks live in `handlers/mock_domain_repositories_test.go`; session store mock in `mock_session_store_test.go`; transaction runner mock in `mock_tx_runner_test.go`
-- Test setup: `gin.SetMode(gin.TestMode)` + `httptest.NewRecorder()` + `setupTestRouter()`
-- Validate JSON responses with `gojsonschema` against schemas in `test_schemas.go`
-- Run unit tests: `go test ./... -v -short`
-- Coverage (80% threshold): `make test-coverage`
+- Use `testify/assert`. Never use `testing` alone for assertions.
+- Write table-driven tests with `t.Parallel()` in the parent test and in the subtests.
+- Capture range variables: `tt := tt` before `t.Run`.
+- Use `MockRepository` from `handlers/mock_repository.go` (Item type only).
+- Domain handler mocks are in `handlers/mock_domain_repositories_test.go`. The session store mock is in `mock_session_store_test.go`. The transaction runner mock is in `mock_tx_runner_test.go`.
+- Test setup: `gin.SetMode(gin.TestMode)`, `httptest.NewRecorder()` and `setupTestRouter()`.
+- Validate JSON responses with `gojsonschema` against the schemas in `test_schemas.go`.
+- Run unit tests: `go test ./... -v -short`.
+- Coverage (80% threshold): `make test-coverage`.
 
 ## Swagger/OpenAPI
-Every handler must have annotations: @Summary, @Description, @Tags, @Accept, @Produce, @Param, @Success, @Failure, @Router. Regenerate: `make docs`.
+Every handler needs these annotations: @Summary, @Description, @Tags, @Accept, @Produce, @Param, @Success, @Failure, @Router. Regenerate the docs with `make docs`.
 
 ## Struct Field Alignment
-Optimize field ordering for memory alignment. Place 8-byte fields before smaller fields.
+Order the fields for memory alignment. Put 8-byte fields before smaller fields.
 
 ## Configuration
-All config via env vars with `.env` fallback (godotenv). See `internal/config/config.go`. Key groups: `DB_*`, `JWT_*`, `OIDC_*`, `SESSION_STORE` / `SESSION_IDLE_TIMEOUT`, `RATE_LIMIT` (default 100/min) / `LOGIN_RATE_LIMIT` (default 10/min), `KUBECONFIG_PATH` / `KUBECONFIG_ENCRYPTION_KEY`, `HELM_BINARY`, `DEPLOYMENT_TIMEOUT`, `MAX_CONCURRENT_DEPLOYS`, `HOOKS_CONFIG_FILE`, `OTEL_ENABLED` / `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_SERVICE_NAME` / `OTEL_TRACE_SAMPLE_RATE`, `METRICS_ENABLED`.
+All configuration uses environment variables with a `.env` fallback (godotenv). See `internal/config/config.go`. Key groups:
+- `DB_*`, `JWT_*`, `OIDC_*`.
+- `SESSION_STORE`, `SESSION_IDLE_TIMEOUT`.
+- `RATE_LIMIT` (default 100 per minute), `LOGIN_RATE_LIMIT` (default 10 per minute).
+- `TRUSTED_PROXIES`: IPs or CIDRs that may set the client IP with `X-Forwarded-For` or `X-Real-IP` (`config.ParseTrustedProxies`, applied in `routes.SetupRoutes`). Empty (code default): the client IP is the TCP peer.
+- `KUBECONFIG_PATH`, `KUBECONFIG_ENCRYPTION_KEY`.
+- `IN_CLUSTER_FALLBACK_KUBECONFIG` (local development only): the kubeconfig of an in-cluster cluster when the backend does not run in a pod. Empty (default): such a cluster is unreachable; the backend never falls back to `~/.kube/config`.
+- `HELM_BINARY`, `DEPLOYMENT_TIMEOUT`, `MAX_CONCURRENT_DEPLOYS` (default 5).
+- `LOG_LEVEL`: `debug`, `info` (default), `warn` or `error`. `main` applies it to the default `slog` logger. An invalid value stops the startup.
+- `AZURE_DEVOPS_PAT`, `AZURE_DEVOPS_AUTH` (`pat` or `workload-identity`), `AZURE_DEVOPS_DEFAULT_ORG` (the organization of the provider health check), `GITHUB_TOKEN`, `GITHUB_ALLOWED_REPOSITORIES` (required with `GITHUB_TOKEN`), `GITLAB_TOKEN`, `GITLAB_BASE_URL` (an origin without a path).
+- `NAMESPACE_LABELS`: extra stack namespace labels, `k=v,k=v`.
+- `ALLOWED_CHART_REPOS`: chart repository URL prefixes (`config.ParseAllowedChartRepos`). `models.SetAllowedChartSources` sets them at startup.
+- `UNIQUE_INSTANCE_NAMES` (default false): an instance name is unique on its cluster (`handlers/instance_names.go`).
+- `DEFAULT_INSTANCE_TTL_MINUTES` (default 0): TTL of a create request without `ttl_minutes`. `MAX_INSTANCE_TTL_DAYS` (default 30, 1 to 365; another value stops the start): maximum TTL and stop-time distance (`config/instance_ttl.go`, `handlers/instance_ttl.go`).
+- `STACK_ACCESS_CLUSTER_ROLE`, `STACK_ACCESS_SERVICE_ACCOUNT` (`<namespace>/<name>`): namespace-scoped access (`k8s.AccessBinding`, in-cluster clusters only). Set both or neither. The leader worker `stack-access-reconcile` applies it to existing namespaces.
+- `GIN_MODE`: wins when set. Otherwise the mode is debug when `APP_DEBUG` is true, and release when it is false. The code default of `APP_DEBUG` is `true`. The Helm chart sets `false`.
+- `ENABLE_SWAGGER` (default false), `PPROF_ENABLED`, `PPROF_ADDR`.
+- `HOOKS_CONFIG_FILE`.
+- `OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, `OTEL_TRACE_SAMPLE_RATE`, `METRICS_ENABLED`, `METRICS_ADDR`.
+- `LEADER_ELECTION_*` (`ENABLED` default false means this process is always the leader; `LEASE_NAME`, `NAMESPACE`, `LEASE_DURATION`, `RENEW_DEADLINE`, `RETRY_PERIOD`) with `POD_NAME` and `POD_NAMESPACE`.
+- `WS_FANOUT_ENABLED`, `WS_FANOUT_POLL_INTERVAL`, `WS_FANOUT_RETENTION`.
+- `DEPLOY_LOG_RETENTION_DAYS` (180), `AUDIT_LOG_RETENTION_DAYS` (365), `NOTIFICATION_RETENTION_DAYS` (90), `DELIVERY_LOG_RETENTION_DAYS` (30), `LOG_RETENTION_INTERVAL` (1h). `0` keeps the rows forever. A value that is not a number stops the start (`config/retention.go`).
+
+## Background Workers
+- The leader-only workers are built in `api/bootstrap.go`, function `buildLeaderWorkers`. They run in a `leader.Group` for each leadership term. The workers are:
+  - TTL reaper, expiry warner, cleanup scheduler.
+  - Quota monitor, secret monitor, secret refresher.
+  - Cluster health poller, k8s status watcher.
+  - Refresh token cleanup.
+  - `stack-access-reconcile`, only when `STACK_ACCESS_*` is set.
+  - `interrupted-operation-recovery`.
+  - `ws-event-cleanup`, only when fan-out is enabled.
+  - `log-retention` (`internal/retention`), only when a `*_RETENTION_DAYS` is greater than 0 (`buildLogRetention`). It deletes old rows of `deployment_logs`, `audit_logs`, `notifications` and `notification_delivery_logs` through `RetentionRepository`, in batches of 1000 IDs (100 for `deployment_logs`: large rows) with a 100ms pause, by database time. For each existing instance it keeps the running deploy logs, the newest `deploy` or `rollback` log (any status), the newest successful `deploy` log and the two newest successful `deploy` or `rollback` logs (values drift, rollback branch). Counter `log_retention.deleted_rows_total{table}`.
+- A worker has `Run(ctx)`. It blocks until `ctx` is done. It must work again after it returned. Do not use closed stop channels or one-shot state.
+- Keep state that must survive a leader change in the database. Example: `stack_instances.expiry_warned_at`.
+- Add a new periodic job as a `leader.Worker`, not as a goroutine in `main.go`.
+- Exception: `replica.Heartbeat` runs on every replica. It writes `replica_heartbeats` every 30s. `main.go` starts it and deletes the row on shutdown.
+- The deploy manager stores the same process identity on each deploy log (`replica_id`).
+- `deployer.InterruptRecovery` (leader) ends operations that are past their `deadline_at` and whose process has no heartbeat for 2 minutes (database time).
+- `DeploymentLogRepository.Update` writes only a running log (`models.ErrDeployLogNotRunning`). Finalize through `Manager.writeFinal`.
+
+## WebSocket Fan-out
+- With `WS_FANOUT_ENABLED=true`, `websocket.Fanout` (`internal/websocket/fanout.go`) shares hub messages between replicas through `ws_events` (`WSEventRepository`).
+- Every hub send (`Broadcast`, `BroadcastToInstance`, `BroadcastToUser`) and every revocation (`DisconnectUser`, `DisconnectToken`, `DisconnectAPIKey`) acts locally and queues one row.
+- A writer goroutine inserts the rows in batches.
+- A poller delivers the rows of other origins. The origin is `POD_NAME` plus a suffix for each process.
+  - The poller skips rows older than 30s.
+  - It reads skipped IDs again for 10s (out-of-order commits). This includes the 1000 IDs below `MAX(id)` at start.
+- A remote revocation calls the local disconnect only (no new row). The revalidation of each replica never writes rows.
+- The leader worker `ws-event-cleanup` deletes old rows.
+- Send through the hub methods only. Never write `ws_events` directly. Use `BroadcastToUser` for per-user messages, not `Broadcast`.
 
 ## Middleware Order
-`routes.SetupRoutes()` applies: RequestID → RedactWSToken → RedactGitRepoQuery → HTTPMetrics (if `OTEL_ENABLED` or `METRICS_ENABLED`) → otelgin (if `OTEL_ENABLED`) → Logger → Recovery → SecurityHeaders → CORS → MaxBodySize (1 MB). The `/api/v1` group adds the API rate limiter. The authenticated group adds `CombinedAuth` (JWT + API key), `SpanEnrichUser` (if `OTEL_ENABLED`), and `NewAuditMiddleware` (if an audit logger is configured). `SetupRoutes` returns `*RateLimiters` (API + optional login limiter); call `Stop()` on shutdown.
+`routes.SetupRoutes()` applies this order: RequestID, RedactWSToken, RedactGitRepoQuery, HTTPMetrics (if `OTEL_ENABLED` or `METRICS_ENABLED`), otelgin (if `OTEL_ENABLED`), Logger, Recovery, SecurityHeaders, CORS, MaxBodySize (1 MB).
+- The `/api/v1` group adds the API rate limiter.
+- The authenticated group adds `CombinedAuth` (JWT and API key), `SpanEnrichUser` (if `OTEL_ENABLED`) and `NewAuditMiddleware` (if an audit logger is configured).
+- `SetupRoutes` returns `*RateLimiters` (API limiter and optional login limiter). Call `Stop()` on shutdown.
 
 ## Observability
-`telemetry.Init(cfg.Otel)` in `api/main.go` sets up OTLP tracing and metrics. `telemetry.StartDBMetrics` and `telemetry.StartBusinessMetrics` register gauges. `middleware/metrics.go` records HTTP metrics; `middleware/auth_metrics.go` records auth outcomes; `middleware/otel.go` enriches spans with the user. `middleware/ws_redact.go` strips `?token=` from `/ws` URLs before logging and tracing.
+- `telemetry.Init(cfg.Otel)` in `api/main.go` sets up OTLP tracing and metrics.
+- `telemetry.StartDBMetrics`, `telemetry.StartBusinessMetrics` and `telemetry.StartLeaderMetric` (`stackmanager_leader`) register gauges.
+- `internal/websocket/tracing.go` holds the hub and fan-out metrics: `websocket.fanout.events_written_total`, `events_dropped_total`, `events_delivered_total`, `events_skipped_total`, `poll_errors_total`, `delivery_lag`.
+- `middleware/metrics.go` records HTTP metrics. `middleware/auth_metrics.go` records auth outcomes. `middleware/otel.go` adds the user to spans.
+- `middleware/ws_redact.go` removes `?token=` from `/ws` URLs before logging and tracing.
 
 ## Sessions and Tokens
-Login issues a JWT (with `jti`) plus a refresh token (`models/refresh_token.go`, hashed at rest). Routes: `POST /api/v1/auth/refresh`, `/logout`, `/logout-all`. Refresh rotates the token through `RefreshTokenRepository`; reuse of a rotated token revokes the user's whole token family. Logout blocklists the access-token `jti` in `sessionstore` (`BlockToken`) and revokes the refresh token in the repository; logout-all revokes all refresh tokens. JWT auth checks `IsTokenBlocked` and fails open on store errors (log + continue). `sessionstore` also holds user blocks (`BlockUser`), OIDC state and CLI auth sessions. All auth paths (login, refresh, OIDC, API key) reject `User.Disabled`.
+- Login issues a JWT (with `jti`) and a refresh token (`models/refresh_token.go`, hashed at rest). Routes: `POST /api/v1/auth/refresh`, `/logout`, `/logout-all`.
+- Refresh rotates the token through `RefreshTokenRepository` inside a session family (`family_id`, `session_started_at`, `rotated_at`).
+- Reuse of a rotated token within `REFRESH_REUSE_GRACE` (30s) returns an access token only (no cookie, no revoke). Later reuse revokes the family.
+- Access tokens carry `sid` (the family). The JWT middleware calls `OnSessionActivity` (throttled, asynchronous), so `SESSION_IDLE_TIMEOUT` counts from the last request. `SESSION_MAX_LIFETIME` (12h) caps the family.
+- User blocks use the issue time. `IsUserBlocked(ctx, userID, iat)` rejects only tokens issued at or before the block (401).
+- Logout blocklists the `jti` of the access token in `sessionstore` (`BlockToken`) and revokes the refresh token in the repository. Logout-all revokes all refresh tokens.
+- JWT auth checks `IsTokenBlocked`. It fails open on store errors (log and continue).
+- `sessionstore` also holds user blocks (`BlockUser`), OIDC state and CLI auth sessions.
+- All auth paths (login, refresh, OIDC, API key) reject `User.Disabled`.
 
 ## OIDC Authentication
-OpenID Connect support is in `internal/auth/`. The `auth.Provider` handles OIDC discovery, authorization, token exchange and validation. CSRF-safe OIDC state (and CLI-auth state) is persisted by `sessionstore`, not `auth`. Enable via `OIDC_ENABLED=true` + related `OIDC_*` env vars in config. The `OIDCHandler` in `internal/api/handlers/oidc.go` exposes `/api/v1/auth/oidc/config`, `/authorize`, and `/callback` endpoints.
+- OpenID Connect support is in `internal/auth/`. `auth.Provider` handles OIDC discovery, authorization, token exchange and validation.
+- `sessionstore` persists the CSRF-safe OIDC state and the CLI-auth state, not `auth`.
+- Enable it with `OIDC_ENABLED=true` and the related `OIDC_*` variables.
+- `OIDCHandler` in `internal/api/handlers/oidc.go` serves `/api/v1/auth/oidc/config`, `/authorize`, `/callback`, `/cli-auth` and `/cli-token`.

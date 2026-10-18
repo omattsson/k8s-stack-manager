@@ -53,6 +53,9 @@ spec:
         container.apparmor.security.beta.kubernetes.io/backend: runtime/default
         {{- end }}
     spec:
+      {{- with .Values.backend.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
       {{- with .Values.global.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -111,6 +114,8 @@ spec:
                 name: {{ include "k8s-stack-manager.fullname" . }}-backend
             - secretRef:
                 name: {{ include "k8s-stack-manager.fullname" . }}-backend
+          env:
+            {{- include "k8s-stack-manager.backend.env" . | nindent 12 }}
           lifecycle:
             preStop:
               exec:
@@ -152,6 +157,9 @@ spec:
               mountPath: /etc/hooks
               readOnly: true
             {{- end }}
+            {{- with .Values.backend.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -175,5 +183,8 @@ spec:
         - name: hooks-config
           configMap:
             name: {{ include "k8s-stack-manager.fullname" . }}-hooks
+        {{- end }}
+        {{- with .Values.backend.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
         {{- end }}
 {{- end }}

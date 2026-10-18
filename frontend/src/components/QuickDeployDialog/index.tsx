@@ -16,8 +16,13 @@ import {
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import { templateService, clusterService } from '../../api/client';
 import TtlSelector from '../TtlSelector';
+import { useBranding } from '../../context/BrandingContext';
+import { stopTimeBounds, stopTimeError } from '../../utils/stopTime';
 import type { Cluster, StackTemplate } from '../../types';
 import { trackRecentTemplate } from '../../utils/recentTemplates';
+import { isNoPublishedVersionError, NO_PUBLISHED_VERSION_MESSAGE } from '../../utils/templateVersion';
+import { INSTANCE_NAME_RULE, validateInstanceName } from '../../utils/instanceName';
+import { describeNameConflict } from '../../utils/apiError';
 
 interface QuickDeployDialogProps {
   open: boolean;
@@ -30,7 +35,15 @@ const QuickDeployDialog = ({ open, onClose, template }: QuickDeployDialogProps) 
   const [instanceName, setInstanceName] = useState('');
   const [description, setDescription] = useState('');
   const [branch, setBranch] = useState('');
-  const [ttlMinutes, setTtlMinutes] = useState(480);
+  // null: the user has not changed the TTL field. The field shows the server
+  // default and the request leaves out ttl_minutes, so the server applies its
+  // own default (DEFAULT_INSTANCE_TTL_MINUTES).
+  const { defaultTtlMinutes, maxTtlDays } = useBranding();
+  const [ttlChoice, setTtlChoice] = useState<number | null>(null);
+  const ttlMinutes = ttlChoice ?? defaultTtlMinutes;
+  // "Custom stop time": a fixed stop time (expires_at) instead of a TTL.
+  const [stopTime, setStopTime] = useState<string | null | undefined>(undefined);
+  const stopTimeInvalid = stopTime !== undefined && stopTimeError(stopTime, stopTimeBounds(maxTtlDays)) !== null;
   const [clusterId, setClusterId] = useState('');
   const [clusters, setClusters] = useState<Cluster[]>([]);
   const [deploying, setDeploying] = useState(false);
@@ -42,7 +55,8 @@ const QuickDeployDialog = ({ open, onClose, template }: QuickDeployDialogProps) 
       setInstanceName('');
       setDescription('');
       setBranch(template?.default_branch || 'master');
-      setTtlMinutes(480);
+      setTtlChoice(null);
+      setStopTime(undefined);
       setClusterId('');
       setError(null);
       setNameError(null);
@@ -61,8 +75,9 @@ const QuickDeployDialog = ({ open, onClose, template }: QuickDeployDialogProps) 
 
   const handleDeploy = async () => {
     if (!template) return;
-    if (!instanceName.trim()) {
-      setNameError('Instance name is required');
+    const invalid = validateInstanceName(instanceName.trim());
+    if (invalid) {
+      setNameError(invalid);
       return;
     }
     setNameError(null);
@@ -75,16 +90,18 @@ const QuickDeployDialog = ({ open, onClose, template }: QuickDeployDialogProps) 
         instance_description: description.trim() || undefined,
         branch: branch.trim() || undefined,
         cluster_id: clusterId || undefined,
-        ttl_minutes: ttlMinutes,
+        ...(stopTime ? { expires_at: stopTime } : ttlChoice !== null ? { ttl_minutes: ttlChoice } : {}),
       });
       // Track in recently used templates
       trackRecentTemplate({ id: template.id, name: template.name });
       onClose();
       navigate(`/stack-instances/${result.instance.id}`);
     } catch (err: unknown) {
-      const message =
-        (err as { response?: { data?: { error?: string } } })?.response?.data?.error ||
-        'Failed to deploy. Please try again.';
+      const message = isNoPublishedVersionError(err)
+        ? NO_PUBLISHED_VERSION_MESSAGE
+        : describeNameConflict(err) ||
+          (err as { response?: { data?: { error?: string } } })?.response?.data?.error ||
+          'Failed to deploy. Please try again.';
       setError(message);
     } finally {
       setDeploying(false);
@@ -110,12 +127,14 @@ const QuickDeployDialog = ({ open, onClose, template }: QuickDeployDialogProps) 
             label="Instance Name"
             value={instanceName}
             onChange={(e) => {
-              setInstanceName(e.target.value);
-              if (nameError) setNameError(null);
+              const value = e.target.value;
+              setInstanceName(value);
+              // Validate live once the user types; an empty field is reported on submit.
+              setNameError(value.trim() ? validateInstanceName(value.trim()) : null);
             }}
             required
             error={!!nameError}
-            helperText={nameError}
+            helperText={nameError ?? INSTANCE_NAME_RULE}
             size="small"
             autoFocus
           />
@@ -134,7 +153,13 @@ const QuickDeployDialog = ({ open, onClose, template }: QuickDeployDialogProps) 
             size="small"
             helperText="Git branch to deploy"
           />
-          <TtlSelector value={ttlMinutes} onChange={setTtlMinutes} disabled={deploying} />
+          <TtlSelector
+            value={ttlMinutes}
+            onChange={setTtlChoice}
+            stopTime={stopTime}
+            onStopTimeChange={setStopTime}
+            disabled={deploying}
+          />
           {clusters.length > 1 && (
             <TextField
               select
@@ -160,7 +185,7 @@ const QuickDeployDialog = ({ open, onClose, template }: QuickDeployDialogProps) 
         <Button
           variant="contained"
           onClick={handleDeploy}
-          disabled={deploying}
+          disabled={deploying || stopTimeInvalid}
           startIcon={deploying ? <CircularProgress size={18} /> : <RocketLaunchIcon />}
         >
           {deployButtonLabel}

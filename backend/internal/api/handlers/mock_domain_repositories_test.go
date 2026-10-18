@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"backend/internal/models"
@@ -28,6 +29,8 @@ type MockUserRepository struct {
 	findErr    error
 	updateErr  error
 	createFunc func(user *models.User) error // optional override for Create; called under lock
+	// findByIDsCalls counts FindByIDs calls (batch lookup checks).
+	findByIDsCalls atomic.Int32
 }
 
 func NewMockUserRepository() *MockUserRepository {
@@ -60,7 +63,7 @@ func (m *MockUserRepository) FindByID(id string) (*models.User, error) {
 	if m.findErr != nil {
 		return nil, m.findErr
 	}
-	u, ok := m.users[id]
+	u, ok := m.lookupLocked(id)
 	if !ok {
 		return nil, errors.New("not found")
 	}
@@ -68,7 +71,22 @@ func (m *MockUserRepository) FindByID(id string) (*models.User, error) {
 	return &cp, nil
 }
 
+// lookupLocked finds a user by ID without case, as the MySQL collation does.
+// The caller holds m.mu.
+func (m *MockUserRepository) lookupLocked(id string) (*models.User, bool) {
+	if u, ok := m.users[id]; ok {
+		return u, true
+	}
+	for key, u := range m.users {
+		if strings.EqualFold(key, id) {
+			return u, true
+		}
+	}
+	return nil, false
+}
+
 func (m *MockUserRepository) FindByIDs(ids []string) (map[string]*models.User, error) {
+	m.findByIDsCalls.Add(1)
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.findErr != nil {
@@ -134,6 +152,50 @@ func (m *MockUserRepository) Update(user *models.User) error {
 	return nil
 }
 
+// UpdatePassword mirrors GORMUserRepository.UpdatePassword: only the hash.
+func (m *MockUserRepository) UpdatePassword(id, passwordHash string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.updateErr != nil {
+		return m.updateErr
+	}
+	u, ok := m.lookupLocked(id)
+	if !ok {
+		return dberrors.NewDatabaseError("update_password", dberrors.ErrNotFound)
+	}
+	u.PasswordHash = passwordHash
+	return nil
+}
+
+// UpdateProfile mirrors GORMUserRepository.UpdateProfile: only the listed
+// columns; the role only for an SSO user.
+func (m *MockUserRepository) UpdateProfile(id string, upd models.UserProfileUpdate) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.updateErr != nil {
+		return m.updateErr
+	}
+	u, ok := m.lookupLocked(id)
+	if !ok {
+		return dberrors.NewDatabaseError("update_profile", dberrors.ErrNotFound)
+	}
+	if upd.Email != nil {
+		u.Email = *upd.Email
+	}
+	if upd.DisplayName != nil {
+		u.DisplayName = *upd.DisplayName
+	}
+	if upd.LinkProvider != nil {
+		u.AuthProvider = *upd.LinkProvider
+		u.ExternalID = upd.ExternalID
+		u.PasswordHash = ""
+	}
+	if upd.Role != nil && u.AuthProvider != "" && u.AuthProvider != "local" {
+		u.Role = *upd.Role
+	}
+	return nil
+}
+
 func (m *MockUserRepository) Delete(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -176,6 +238,81 @@ func (m *MockUserRepository) ListByRoles(roles []string) ([]models.User, error) 
 		}
 	}
 	return out, nil
+}
+
+// guardLocked mirrors GORMUserRepository.guardedAdminChange: the caller must
+// be an enabled admin; it returns the target and the number of other enabled
+// admins. The caller holds m.mu.
+func (m *MockUserRepository) guardLocked(callerID, id string) (*models.User, int, error) {
+	if m.updateErr != nil {
+		return nil, 0, m.updateErr
+	}
+	caller, ok := m.lookupLocked(callerID)
+	if !ok || caller.Role != models.RoleAdmin || caller.Disabled {
+		return nil, 0, models.ErrCallerNotAdmin
+	}
+	target, ok := m.lookupLocked(id)
+	if !ok {
+		return nil, 0, dberrors.NewDatabaseError("guarded", dberrors.ErrNotFound)
+	}
+	others := 0
+	for _, u := range m.users {
+		if !strings.EqualFold(u.ID, target.ID) && u.Role == models.RoleAdmin && !u.Disabled {
+			others++
+		}
+	}
+	return target, others, nil
+}
+
+func removesLastAdmin(target *models.User, others int) bool {
+	return target.Role == models.RoleAdmin && !target.Disabled && others == 0
+}
+
+func (m *MockUserRepository) UpdateRole(callerID, id, role string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	target, others, err := m.guardLocked(callerID, id)
+	if err != nil {
+		return "", err
+	}
+	oldRole := target.Role
+	if oldRole == role {
+		return oldRole, nil
+	}
+	if role != models.RoleAdmin && removesLastAdmin(target, others) {
+		return "", models.ErrLastAdmin
+	}
+	target.Role = role
+	return oldRole, nil
+}
+
+func (m *MockUserRepository) SetDisabled(callerID, id string, disabled bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	target, others, err := m.guardLocked(callerID, id)
+	if err != nil {
+		return err
+	}
+	if disabled && removesLastAdmin(target, others) {
+		return models.ErrLastAdmin
+	}
+	target.Disabled = disabled
+	return nil
+}
+
+func (m *MockUserRepository) DeleteGuarded(callerID, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	target, others, err := m.guardLocked(callerID, id)
+	if err != nil {
+		return err
+	}
+	if removesLastAdmin(target, others) {
+		return models.ErrLastAdmin
+	}
+	delete(m.byName, target.Username)
+	delete(m.users, target.ID)
+	return nil
 }
 
 func (m *MockUserRepository) SetCreateError(err error) {
@@ -233,6 +370,10 @@ func (m *MockStackTemplateRepository) FindByID(id string) (*models.StackTemplate
 	return &cp, nil
 }
 
+func (m *MockStackTemplateRepository) FindByIDForUpdate(id string) (*models.StackTemplate, error) {
+	return m.FindByID(id)
+}
+
 func (m *MockStackTemplateRepository) Update(t *models.StackTemplate) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -272,7 +413,7 @@ func (m *MockStackTemplateRepository) List() ([]models.StackTemplate, error) {
 	return out, nil
 }
 
-func (m *MockStackTemplateRepository) ListPaged(limit, offset int) ([]models.StackTemplate, int64, error) {
+func (m *MockStackTemplateRepository) ListPaged(limit, offset int, name string) ([]models.StackTemplate, int64, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -280,7 +421,9 @@ func (m *MockStackTemplateRepository) ListPaged(limit, offset int) ([]models.Sta
 	}
 	all := make([]models.StackTemplate, 0, len(m.items))
 	for _, t := range m.items {
-		all = append(all, *t)
+		if name == "" || t.Name == name {
+			all = append(all, *t)
+		}
 	}
 	total := int64(len(all))
 	if offset >= len(all) {
@@ -293,7 +436,7 @@ func (m *MockStackTemplateRepository) ListPaged(limit, offset int) ([]models.Sta
 	return all, total, nil
 }
 
-func (m *MockStackTemplateRepository) ListPublishedPaged(limit, offset int) ([]models.StackTemplate, int64, error) {
+func (m *MockStackTemplateRepository) ListPublishedPaged(limit, offset int, name string) ([]models.StackTemplate, int64, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -301,7 +444,7 @@ func (m *MockStackTemplateRepository) ListPublishedPaged(limit, offset int) ([]m
 	}
 	var all []models.StackTemplate
 	for _, t := range m.items {
-		if t.IsPublished {
+		if t.IsPublished && (name == "" || t.Name == name) {
 			all = append(all, *t)
 		}
 	}
@@ -448,6 +591,8 @@ type MockStackDefinitionRepository struct {
 	items    map[string]*models.StackDefinition
 	err      error
 	fetchErr error
+	// namesCalls counts NamesByIDs calls (batch lookup checks).
+	namesCalls atomic.Int32
 }
 
 func NewMockStackDefinitionRepository() *MockStackDefinitionRepository {
@@ -472,10 +617,14 @@ func (m *MockStackDefinitionRepository) FindByID(id string) (*models.StackDefini
 	}
 	d, ok := m.items[id]
 	if !ok {
-		return nil, errors.New("not found")
+		return nil, dberrors.NewDatabaseError("find_by_id", dberrors.ErrNotFound)
 	}
 	cp := *d
 	return &cp, nil
+}
+
+func (m *MockStackDefinitionRepository) FindByIDForUpdate(id string) (*models.StackDefinition, error) {
+	return m.FindByID(id)
 }
 
 func (m *MockStackDefinitionRepository) FindByName(name string) ([]models.StackDefinition, error) {
@@ -506,6 +655,23 @@ func (m *MockStackDefinitionRepository) Update(d *models.StackDefinition) error 
 	return nil
 }
 
+func (m *MockStackDefinitionRepository) SetTemplateLink(id, templateID, version string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	d, ok := m.items[id]
+	if !ok {
+		return dberrors.NewDatabaseError("set_template_link", dberrors.ErrNotFound)
+	}
+	cp := *d
+	cp.SourceTemplateID, cp.SourceTemplateVersion = templateID, version
+	cp.UpdatedAt = time.Now().UTC()
+	m.items[id] = &cp
+	return nil
+}
+
 func (m *MockStackDefinitionRepository) Delete(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -532,7 +698,7 @@ func (m *MockStackDefinitionRepository) List() ([]models.StackDefinition, error)
 	return out, nil
 }
 
-func (m *MockStackDefinitionRepository) ListPaged(limit, offset int) ([]models.StackDefinition, int64, error) {
+func (m *MockStackDefinitionRepository) ListPaged(filter models.StackDefinitionFilter, limit, offset int) ([]models.StackDefinition, int64, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -540,8 +706,21 @@ func (m *MockStackDefinitionRepository) ListPaged(limit, offset int) ([]models.S
 	}
 	all := make([]models.StackDefinition, 0, len(m.items))
 	for _, d := range m.items {
+		if filter.Name != "" && d.Name != filter.Name {
+			continue
+		}
+		if filter.OwnerID != "" && d.OwnerID != filter.OwnerID {
+			continue
+		}
 		all = append(all, *d)
 	}
+	// Newest first, like the GORM repository; ID breaks ties.
+	sort.Slice(all, func(i, j int) bool {
+		if !all[i].CreatedAt.Equal(all[j].CreatedAt) {
+			return all[i].CreatedAt.After(all[j].CreatedAt)
+		}
+		return all[i].ID < all[j].ID
+	})
 	total := int64(len(all))
 	if offset >= len(all) {
 		return []models.StackDefinition{}, total, nil
@@ -606,6 +785,22 @@ func (m *MockStackDefinitionRepository) Count() (int64, error) {
 		return 0, m.err
 	}
 	return int64(len(m.items)), nil
+}
+
+func (m *MockStackDefinitionRepository) NamesByIDs(ids []string) (map[string]string, error) {
+	m.namesCalls.Add(1)
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	out := make(map[string]string, len(ids))
+	for _, id := range ids {
+		if d, ok := m.items[id]; ok {
+			out[id] = d.Name
+		}
+	}
+	return out, nil
 }
 
 func (m *MockStackDefinitionRepository) ListIDsByTemplateIDs(templateIDs []string) (map[string][]string, error) {
@@ -695,6 +890,20 @@ func (m *MockChartConfigRepository) Delete(id string) error {
 	return nil
 }
 
+func (m *MockChartConfigRepository) DeleteByDefinition(definitionID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	for id, c := range m.items {
+		if c.StackDefinitionID == definitionID {
+			delete(m.items, id)
+		}
+	}
+	return nil
+}
+
 func (m *MockChartConfigRepository) ListByDefinition(definitionID string) ([]models.ChartConfig, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -705,6 +914,23 @@ func (m *MockChartConfigRepository) ListByDefinition(definitionID string) ([]mod
 	for _, c := range m.items {
 		if c.StackDefinitionID == definitionID {
 			out = append(out, *c)
+		}
+	}
+	return out, nil
+}
+
+func (m *MockChartConfigRepository) CountByDefinitionIDs(definitionIDs []string) (map[string]int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	out := make(map[string]int)
+	for _, c := range m.items {
+		for _, id := range definitionIDs {
+			if c.StackDefinitionID == id {
+				out[id]++
+			}
 		}
 	}
 	return out, nil
@@ -724,6 +950,8 @@ type MockStackInstanceRepository struct {
 	err       error
 	fetchErr  error
 	createErr error
+	// nameLookupErr fails only FindByNameOnCluster (UNIQUE_INSTANCE_NAMES).
+	nameLookupErr error
 }
 
 func NewMockStackInstanceRepository() *MockStackInstanceRepository {
@@ -751,7 +979,7 @@ func (m *MockStackInstanceRepository) FindByID(id string) (*models.StackInstance
 	}
 	i, ok := m.items[id]
 	if !ok {
-		return nil, errors.New("not found")
+		return nil, dberrors.NewDatabaseError("find_by_id", dberrors.ErrNotFound)
 	}
 	cp := *i
 	return &cp, nil
@@ -782,6 +1010,50 @@ func (m *MockStackInstanceRepository) Update(i *models.StackInstance) error {
 		return errors.New("not found")
 	}
 	m.items[i.ID] = i
+	return nil
+}
+
+// MarkCleanStart implements models.CleanStartMarker with the conditional
+// semantics of the GORM repository. It stores a copy, so a caller's pointer
+// is not changed.
+func (m *MockStackInstanceRepository) MarkCleanStart(id string, fromStatuses []string, deleteAfterClean bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	conflict := models.ErrDeleteConflict
+	if !deleteAfterClean {
+		conflict = models.ErrCleanConflict
+	}
+	i, ok := m.items[id]
+	if !ok || (!deleteAfterClean && i.DeleteAfterClean) {
+		return conflict
+	}
+	for _, st := range fromStatuses {
+		if i.Status == st {
+			cp := *i
+			cp.Status = models.StackStatusCleaning
+			cp.ErrorMessage = ""
+			if deleteAfterClean {
+				cp.DeleteAfterClean = true
+			}
+			m.items[id] = &cp
+			return nil
+		}
+	}
+	return conflict
+}
+
+// ClearDeleteAfterClean implements models.CleanStartMarker.
+func (m *MockStackInstanceRepository) ClearDeleteAfterClean(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if i, ok := m.items[id]; ok {
+		cp := *i
+		cp.DeleteAfterClean = false
+		m.items[id] = &cp
+	}
 	return nil
 }
 
@@ -841,6 +1113,50 @@ func (m *MockStackInstanceRepository) FindByName(name string) ([]models.StackIns
 	return out, nil
 }
 
+func (m *MockStackInstanceRepository) FindByNameOnCluster(name, clusterID string, includeUnassigned bool) ([]models.StackInstance, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	if m.nameLookupErr != nil {
+		return nil, m.nameLookupErr
+	}
+	var out []models.StackInstance
+	for _, i := range m.items {
+		if !strings.EqualFold(i.Name, name) {
+			continue
+		}
+		if i.ClusterID == clusterID || (includeUnassigned && i.ClusterID == "") {
+			out = append(out, *i)
+		}
+	}
+	return out, nil
+}
+
+func (m *MockStackInstanceRepository) DuplicateInstanceNames(defaultClusterID string) ([]models.DuplicateInstanceName, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	counts := map[[2]string]int{}
+	for _, i := range m.items {
+		cid := i.ClusterID
+		if cid == "" {
+			cid = defaultClusterID
+		}
+		counts[[2]string{cid, strings.ToLower(i.Name)}]++
+	}
+	var out []models.DuplicateInstanceName
+	for k, n := range counts {
+		if n > 1 {
+			out = append(out, models.DuplicateInstanceName{ClusterID: k[0], Name: k[1], Count: n})
+		}
+	}
+	return out, nil
+}
+
 func (m *MockStackInstanceRepository) FindByCluster(clusterID string) ([]models.StackInstance, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -871,7 +1187,7 @@ func (m *MockStackInstanceRepository) CountByClusterAndOwner(clusterID, ownerID 
 	return count, nil
 }
 
-func (m *MockStackInstanceRepository) ListPaged(limit, offset int) ([]models.StackInstance, int, error) {
+func (m *MockStackInstanceRepository) ListPaged(filter models.StackInstanceFilter, limit, offset int) ([]models.StackInstance, int, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -879,8 +1195,18 @@ func (m *MockStackInstanceRepository) ListPaged(limit, offset int) ([]models.Sta
 	}
 	all := make([]models.StackInstance, 0, len(m.items))
 	for _, i := range m.items {
+		if !instanceMatchesFilter(i, filter) {
+			continue
+		}
 		all = append(all, *i)
 	}
+	// Newest first, like the GORM repository; ID breaks ties.
+	sort.Slice(all, func(a, b int) bool {
+		if !all[a].CreatedAt.Equal(all[b].CreatedAt) {
+			return all[a].CreatedAt.After(all[b].CreatedAt)
+		}
+		return all[a].ID < all[b].ID
+	})
 	total := len(all)
 	if offset > 0 && offset < total {
 		all = all[offset:]
@@ -891,6 +1217,15 @@ func (m *MockStackInstanceRepository) ListPaged(limit, offset int) ([]models.Sta
 		all = all[:limit]
 	}
 	return all, total, nil
+}
+
+// instanceMatchesFilter applies the ListPaged filter like the GORM repository.
+func instanceMatchesFilter(i *models.StackInstance, f models.StackInstanceFilter) bool {
+	return (f.Name == "" || i.Name == f.Name) &&
+		(f.Status == "" || i.Status == f.Status) &&
+		(f.ClusterID == "" || i.ClusterID == f.ClusterID) &&
+		(f.DefinitionID == "" || i.StackDefinitionID == f.DefinitionID) &&
+		(f.OwnerID == "" || i.OwnerID == f.OwnerID)
 }
 
 func (m *MockStackInstanceRepository) CountAll() (int, error) {
@@ -977,12 +1312,28 @@ func (m *MockStackInstanceRepository) ListExpiringSoon(threshold time.Duration) 
 	deadline := now.Add(threshold)
 	var out []*models.StackInstance
 	for _, i := range m.items {
-		if i.Status == models.StackStatusRunning && i.ExpiresAt != nil && i.ExpiresAt.After(now) && !i.ExpiresAt.After(deadline) {
+		if i.Status == models.StackStatusRunning && i.ExpiresAt != nil && i.ExpiresAt.After(now) && !i.ExpiresAt.After(deadline) && i.ExpiryWarnedAt == nil {
 			cp := *i
 			out = append(out, &cp)
 		}
 	}
 	return out, nil
+}
+
+// MarkExpiryWarned sets ExpiryWarnedAt when it is nil and ExpiresAt still
+// equals expiresAt, like the conditional update of the GORM repository.
+func (m *MockStackInstanceRepository) MarkExpiryWarned(id string, expiresAt, warnedAt time.Time) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return false, m.err
+	}
+	i, ok := m.items[id]
+	if !ok || i.ExpiryWarnedAt != nil || i.ExpiresAt == nil || !i.ExpiresAt.Equal(expiresAt) {
+		return false, nil
+	}
+	i.ExpiryWarnedAt = &warnedAt
+	return true, nil
 }
 
 func (m *MockStackInstanceRepository) CountByDefinitionIDs(definitionIDs []string) (map[string]int, error) {
@@ -1168,6 +1519,17 @@ func (m *MockValueOverrideRepository) Delete(id string) error {
 	return nil
 }
 
+func (m *MockValueOverrideRepository) DeleteByInstance(instanceID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id, v := range m.items {
+		if v.StackInstanceID == instanceID {
+			delete(m.items, id)
+		}
+	}
+	return nil
+}
+
 func (m *MockValueOverrideRepository) ListByInstance(instanceID string) ([]models.ValueOverride, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -1334,6 +1696,22 @@ func (m *MockAPIKeyRepository) FindByID(userID, keyID string) (*models.APIKey, e
 	return &cp, nil
 }
 
+func (m *MockAPIKeyRepository) FindByIDs(keyIDs []string) ([]*models.APIKey, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.findErr != nil {
+		return nil, m.findErr
+	}
+	var out []*models.APIKey
+	for _, id := range keyIDs {
+		if k, ok := m.keys[id]; ok {
+			cp := *k
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
 func (m *MockAPIKeyRepository) FindByPrefix(prefix string) ([]*models.APIKey, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -1405,6 +1783,37 @@ func (m *MockAPIKeyRepository) Delete(userID, keyID string) error {
 	return nil
 }
 
+// DeleteAllForUser removes every key of the user; honours deleteErr.
+func (m *MockAPIKeyRepository) DeleteAllForUser(userID string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.deleteErr != nil {
+		return 0, m.deleteErr
+	}
+	var n int64
+	for id, k := range m.keys {
+		if k.UserID != userID {
+			continue
+		}
+		if ks, exists := m.byPrefix[k.Prefix]; exists {
+			kept := ks[:0]
+			for _, entry := range ks {
+				if entry.ID != id {
+					kept = append(kept, entry)
+				}
+			}
+			if len(kept) == 0 {
+				delete(m.byPrefix, k.Prefix)
+			} else {
+				m.byPrefix[k.Prefix] = kept
+			}
+		}
+		delete(m.keys, id)
+		n++
+	}
+	return n, nil
+}
+
 func (m *MockAPIKeyRepository) SetCreateError(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1438,6 +1847,8 @@ type MockClusterRepository struct {
 	err        error
 	fetchErr   error
 	defaultErr error
+	// namesCalls counts NamesByIDs calls (batch lookup checks).
+	namesCalls atomic.Int32
 }
 
 func NewMockClusterRepository() *MockClusterRepository {
@@ -1523,6 +1934,22 @@ func (m *MockClusterRepository) CountAll() (int, error) {
 		return 0, m.err
 	}
 	return len(m.clusters), nil
+}
+
+func (m *MockClusterRepository) NamesByIDs(ids []string) (map[string]string, error) {
+	m.namesCalls.Add(1)
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	out := make(map[string]string, len(ids))
+	for _, id := range ids {
+		if cl, ok := m.clusters[id]; ok {
+			out[id] = cl.Name
+		}
+	}
+	return out, nil
 }
 
 func (m *MockClusterRepository) CountByHealthStatus(status string) (int, error) {
@@ -1702,7 +2129,10 @@ func (m *MockTemplateVersionRepository) ListByTemplate(_ context.Context, templa
 	}
 	// Sort by CreatedAt descending.
 	sort.Slice(out, func(i, j int) bool {
-		return out[i].CreatedAt.After(out[j].CreatedAt)
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.After(out[j].CreatedAt)
+		}
+		return out[i].ID > out[j].ID
 	})
 	return out, nil
 }
@@ -1715,7 +2145,7 @@ func (m *MockTemplateVersionRepository) GetByID(_ context.Context, templateID, i
 	}
 	v, ok := m.items[id]
 	if !ok || v.TemplateID != templateID {
-		return nil, errors.New("not found")
+		return nil, dberrors.NewDatabaseError("find", dberrors.ErrNotFound)
 	}
 	cp := *v
 	return &cp, nil
@@ -1730,14 +2160,15 @@ func (m *MockTemplateVersionRepository) GetLatestByTemplate(_ context.Context, t
 	var latest *models.TemplateVersion
 	for _, v := range m.items {
 		if v.TemplateID == templateID {
-			if latest == nil || v.CreatedAt.After(latest.CreatedAt) {
+			if latest == nil || v.CreatedAt.After(latest.CreatedAt) ||
+				(v.CreatedAt.Equal(latest.CreatedAt) && v.ID > latest.ID) {
 				cp := *v
 				latest = &cp
 			}
 		}
 	}
 	if latest == nil {
-		return nil, errors.New("not found")
+		return nil, dberrors.NewDatabaseError("find", dberrors.ErrNotFound)
 	}
 	return latest, nil
 }
@@ -1767,6 +2198,21 @@ func NewMockInstanceQuotaOverrideRepository() *MockInstanceQuotaOverrideReposito
 	return &MockInstanceQuotaOverrideRepository{items: make(map[string]*models.InstanceQuotaOverride)}
 }
 
+func (m *MockInstanceQuotaOverrideRepository) ListByInstanceIDs(_ context.Context, instanceIDs []string) ([]models.InstanceQuotaOverride, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	var out []models.InstanceQuotaOverride
+	for _, id := range instanceIDs {
+		if o, ok := m.items[id]; ok {
+			out = append(out, *o)
+		}
+	}
+	return out, nil
+}
+
 func (m *MockInstanceQuotaOverrideRepository) GetByInstanceID(_ context.Context, instanceID string) (*models.InstanceQuotaOverride, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -1775,7 +2221,7 @@ func (m *MockInstanceQuotaOverrideRepository) GetByInstanceID(_ context.Context,
 	}
 	o, ok := m.items[instanceID]
 	if !ok {
-		return nil, errors.New("not found")
+		return nil, dberrors.NewDatabaseError("GetByInstanceID", dberrors.ErrNotFound)
 	}
 	cp := *o
 	return &cp, nil
@@ -1807,7 +2253,7 @@ func (m *MockInstanceQuotaOverrideRepository) Delete(_ context.Context, instance
 		return m.err
 	}
 	if _, ok := m.items[instanceID]; !ok {
-		return errors.New("not found")
+		return dberrors.NewDatabaseError("Delete", dberrors.ErrNotFound)
 	}
 	delete(m.items, instanceID)
 	return nil
@@ -1817,4 +2263,93 @@ func (m *MockInstanceQuotaOverrideRepository) SetError(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.err = err
+}
+
+// ---- InstanceFollowerRepository mock ----
+
+// MockInstanceFollowerRepository is an in-memory InstanceFollowerRepository.
+type MockInstanceFollowerRepository struct {
+	mu sync.RWMutex
+	// pairs maps instance ID -> set of user IDs.
+	pairs map[string]map[string]bool
+	err   error
+}
+
+func NewMockInstanceFollowerRepository() *MockInstanceFollowerRepository {
+	return &MockInstanceFollowerRepository{pairs: make(map[string]map[string]bool)}
+}
+
+func (m *MockInstanceFollowerRepository) SetError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.err = err
+}
+
+func (m *MockInstanceFollowerRepository) Follow(_ context.Context, userID, instanceID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	if m.pairs[instanceID] == nil {
+		m.pairs[instanceID] = make(map[string]bool)
+	}
+	m.pairs[instanceID][userID] = true
+	return nil
+}
+
+func (m *MockInstanceFollowerRepository) Unfollow(_ context.Context, userID, instanceID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	delete(m.pairs[instanceID], userID)
+	return nil
+}
+
+func (m *MockInstanceFollowerRepository) FollowState(_ context.Context, userID, instanceID string) (bool, int64, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return false, 0, m.err
+	}
+	users := m.pairs[instanceID]
+	return users[userID], int64(len(users)), nil
+}
+
+func (m *MockInstanceFollowerRepository) ListUserIDsByInstance(_ context.Context, instanceID string) ([]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	ids := make([]string, 0, len(m.pairs[instanceID]))
+	for id := range m.pairs[instanceID] {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids, nil
+}
+
+func (m *MockInstanceFollowerRepository) DeleteByInstance(_ context.Context, instanceID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	delete(m.pairs, instanceID)
+	return nil
+}
+
+func (m *MockInstanceFollowerRepository) DeleteByUser(_ context.Context, userID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	for _, users := range m.pairs {
+		delete(users, userID)
+	}
+	return nil
 }

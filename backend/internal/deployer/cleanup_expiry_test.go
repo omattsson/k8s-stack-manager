@@ -81,7 +81,7 @@ func (m *mockDefinitionRepo) List() ([]models.StackDefinition, error) {
 	return out, nil
 }
 
-func (m *mockDefinitionRepo) ListPaged(limit, offset int) ([]models.StackDefinition, int64, error) {
+func (m *mockDefinitionRepo) ListPaged(_ models.StackDefinitionFilter, limit, offset int) ([]models.StackDefinition, int64, error) {
 	all, err := m.List()
 	if err != nil {
 		return nil, 0, err
@@ -125,6 +125,18 @@ func (m *mockDefinitionRepo) Count() (int64, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return int64(len(m.items)), nil
+}
+
+func (m *mockDefinitionRepo) FindByIDForUpdate(id string) (*models.StackDefinition, error) {
+	return m.FindByID(id)
+}
+
+func (m *mockDefinitionRepo) SetTemplateLink(_, _, _ string) error {
+	return nil
+}
+
+func (m *mockDefinitionRepo) NamesByIDs(_ []string) (map[string]string, error) {
+	return map[string]string{}, nil
 }
 
 func (m *mockDefinitionRepo) ListIDsByTemplateIDs(_ []string) (map[string][]string, error) {
@@ -171,6 +183,13 @@ func (m *mockChartConfigRepo) Delete(id string) error {
 	return nil
 }
 
+func (m *mockChartConfigRepo) DeleteByDefinition(defID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.items, defID)
+	return nil
+}
+
 func (m *mockChartConfigRepo) ListByDefinition(defID string) ([]models.ChartConfig, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -182,6 +201,18 @@ func (m *mockChartConfigRepo) ListByDefinition(defID string) ([]models.ChartConf
 		return nil, nil
 	}
 	return charts, nil
+}
+
+func (m *mockChartConfigRepo) CountByDefinitionIDs(defIDs []string) (map[string]int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make(map[string]int)
+	for _, id := range defIDs {
+		if n := len(m.items[id]); n > 0 {
+			out[id] = n
+		}
+	}
+	return out, nil
 }
 
 // ---- CleanupExecutor tests ----
@@ -219,14 +250,16 @@ func TestCleanupExecutor_DeleteInstance(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:    "stopped status allows delete",
+			name:    "stopped status needs the deploy manager to clean first",
 			status:  models.StackStatusStopped,
-			wantErr: false,
+			wantErr: true,
+			errMsg:  "deploy manager is needed",
 		},
 		{
-			name:    "error status allows delete",
+			name:    "error status needs the deploy manager to clean first",
 			status:  models.StackStatusError,
-			wantErr: false,
+			wantErr: true,
+			errMsg:  "deploy manager is needed",
 		},
 		{
 			name:    "running status blocks delete",
@@ -608,4 +641,21 @@ func TestExpiryStopper_StopInstance_ChartListError(t *testing.T) {
 	err := stopper.StopInstance(context.Background(), inst)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "listing charts")
+}
+
+func TestCleanupExecutor_DeleteInstance_CancelledContext(t *testing.T) {
+	t.Parallel()
+
+	instRepo := newMockInstanceRepo()
+	inst := &models.StackInstance{ID: "inst-del-cancelled", Name: "test", Status: models.StackStatusStopped}
+	require.NoError(t, instRepo.Create(inst))
+	exec := &CleanupExecutor{instanceRepo: instRepo}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := exec.DeleteInstance(ctx, inst)
+	require.ErrorIs(t, err, context.Canceled)
+
+	_, findErr := instRepo.FindByID(inst.ID)
+	assert.NoError(t, findErr, "a cancelled delete must not remove the instance")
 }

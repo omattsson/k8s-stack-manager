@@ -272,3 +272,21 @@ func TestGORMTemplateVersionRepository_GetLatestByTemplate(t *testing.T) {
 		assert.True(t, errors.Is(dbErr.Err, dberrors.ErrNotFound))
 	})
 }
+
+// TestGORMTemplateVersionRepository_EqualTimestamps checks the tie-break:
+// versions with the same created_at sort by id, descending.
+func TestGORMTemplateVersionRepository_EqualTimestamps(t *testing.T) {
+	t.Parallel()
+	repo := setupTemplateVersionRepo(t)
+	ts := time.Now().UTC().Truncate(time.Second)
+	for _, id := range []string{"a", "c", "b"} {
+		require.NoError(t, repo.Create(t.Context(), &models.TemplateVersion{ID: id, TemplateID: "t1", Version: id, Snapshot: "{}", CreatedAt: ts}))
+	}
+	list, err := repo.ListByTemplate(t.Context(), "t1")
+	require.NoError(t, err)
+	require.Len(t, list, 3)
+	assert.Equal(t, []string{"c", "b", "a"}, []string{list[0].ID, list[1].ID, list[2].ID})
+	latest, err := repo.GetLatestByTemplate(t.Context(), "t1")
+	require.NoError(t, err)
+	assert.Equal(t, "c", latest.ID)
+}

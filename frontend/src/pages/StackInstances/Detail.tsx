@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import type { ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useWebSocket } from '../../hooks/useWebSocket';
-import type { WsMessage } from '../../hooks/useWebSocket';
+import type { WsMessage, DeploymentStatusPayload } from '../../hooks/useWebSocket';
 import {
   Box,
   Typography,
@@ -17,8 +18,17 @@ import {
   Grid,
   Chip,
   Tooltip,
+  Menu,
+  MenuItem,
+  ListItemText,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogContentText,
+  DialogActions,
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
+import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
 import StatusBadge from '../../components/StatusBadge';
 import BranchSelector from '../../components/BranchSelector';
 import ConfirmDialog from '../../components/ConfirmDialog';
@@ -27,18 +37,43 @@ import DeploymentLogViewer from '../../components/DeploymentLogViewer';
 import PodStatusDisplay from '../../components/PodStatusDisplay';
 import AccessUrls from '../../components/AccessUrls';
 import FavoriteButton from '../../components/FavoriteButton';
+import FollowButton from '../../components/FollowButton';
 import { instanceService, definitionService, branchOverrideService } from '../../api/client';
-import type { StackInstance, ChartConfig, ValueOverride, DeploymentLog, NamespaceStatus } from '../../types';
+import type { RollbackResponse, StackInstance, ChartConfig, ValueOverride, ChartBranchOverride, DeploymentLog, NamespaceStatus } from '../../types';
 import YamlEditor from '../../components/YamlEditor';
 import TtlSelector from '../../components/TtlSelector';
 import useCountdown from '../../hooks/useCountdown';
 import { useNotification } from '../../context/NotificationContext';
 import LoadingState from '../../components/LoadingState';
 import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
+import { useAuth } from '../../context/AuthContext';
+import { canModifyInstance, hasAtLeastRole } from '../../utils/roles';
+import { describeApiError } from '../../utils/apiError';
+import { downloadBlob } from '../../utils/download';
+import ExtendTtlMenu from '../../components/ExtendTtlMenu';
+import { useBranding } from '../../context/BrandingContext';
+import { formatStopTime, hasFixedStopTime, stopTimeBounds, stopTimeError } from '../../utils/stopTime';
+import { useInstanceActions, actionSecondaryText } from '../../components/InstanceActionsMenu';
+import { successfulDeploys, currentDeployLogId, defaultRollbackTarget } from '../../utils/deployHistory';
+import { mergeInstanceUpdate } from '../../utils/instanceState';
+import CloneDialog from './CloneDialog';
+import RollbackDialog from './RollbackDialog';
+
+/** Statuses in which releases run, so a deploy is a redeploy and a rollback is possible. */
+const DEPLOYED_STATUSES = new Set(['running', 'partial', 'error']);
+
+/** True when both records have the same keys with the same values. */
+const sameRecord = (a: Record<string, string>, b: Record<string, string>): boolean => {
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length && keys.every((k) => b[k] === a[k]);
+};
 
 const Detail = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const userId = user?.id;
+  const userRole = user?.role;
 
   const [instance, setInstance] = useState<StackInstance | null>(null);
   const [charts, setCharts] = useState<ChartConfig[]>([]);
@@ -49,46 +84,88 @@ const Detail = () => {
   const [editedOverrides, setEditedOverrides] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  // Stop time in the TTL field: undefined (a preset), null (incomplete
+  // input) or the ISO time. It starts with the saved fixed stop time.
+  const [stopDraft, setStopDraft] = useState<string | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
-  const { showSuccess } = useNotification();
+  /** Set when an instance.deleted message for this instance arrives. */
+  const [deletedRemotely, setDeletedRemotely] = useState(false);
+  const { showSuccess, showError: showErrorToast } = useNotification();
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [exportMenuAnchor, setExportMenuAnchor] = useState<HTMLElement | null>(null);
+  /** Anchor of the header "Actions" menu (custom actions, export, clone, clean, delete). */
+  const [actionsMenuAnchor, setActionsMenuAnchor] = useState<HTMLElement | null>(null);
+  const instanceActions = useInstanceActions(id);
   const [deployPreviewOpen, setDeployPreviewOpen] = useState(false);
+  const [unsavedDeployOpen, setUnsavedDeployOpen] = useState(false);
   const [deploying, setDeploying] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [cleaning, setCleaning] = useState(false);
   const [cleanDialogOpen, setCleanDialogOpen] = useState(false);
+  const [stopDialogOpen, setStopDialogOpen] = useState(false);
   const [deployLogs, setDeployLogs] = useState<DeploymentLog[]>([]);
   const [streamingLines, setStreamingLines] = useState<Record<string, string[]>>({});
   const streamingBufferRef = useRef<Record<string, string[]>>({});
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [k8sStatus, setK8sStatus] = useState<NamespaceStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(false);
-  const [extending, setExtending] = useState(false);
+  const [cloneOpen, setCloneOpen] = useState(false);
+  const [rollbackOpen, setRollbackOpen] = useState(false);
+  const [rollbackTargetId, setRollbackTargetId] = useState<string | undefined>(undefined);
+  const [rollingBack, setRollingBack] = useState(false);
+  const [savedPendingRedeploy, setSavedPendingRedeploy] = useState(false);
+  // Counts deployment.status WebSocket messages. A fetched instance whose request
+  // started before a newer WebSocket status must not overwrite that status.
+  const wsStatusSeqRef = useRef(0);
+  // The action the user started last. The backend reports a rollback with the
+  // status "deploying", so the placeholder log uses this to name the action.
+  const pendingActionRef = useRef<DeploymentLog['action'] | null>(null);
   const initialOverridesRef = useRef<Record<string, string>>({});
   const initialBranchRef = useRef('');
+  const initialBranchOverridesRef = useRef<Record<string, string>>({});
+  // Changes after each save, so isDirty compares with the saved state again.
+  const [saveCount, setSaveCount] = useState(0);
   const isDirty = useMemo(() =>
     branch !== initialBranchRef.current
-    || JSON.stringify(editedOverrides) !== JSON.stringify(initialOverridesRef.current),
-    [branch, editedOverrides]
+    || JSON.stringify(editedOverrides) !== JSON.stringify(initialOverridesRef.current)
+    || !sameRecord(branchOverrides, initialBranchOverridesRef.current),
+    // saveCount: the saved state is in refs; a save changes them.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [branch, editedOverrides, branchOverrides, saveCount]
   );
 
   useUnsavedChanges(isDirty);
 
   useEffect(() => {
     if (!id) return;
+    // Ignore a stale response: React StrictMode (development) runs this
+    // effect twice, and the route can change before a request returns. A
+    // late response would overwrite the edits of the user (#596).
+    let stale = false;
     const fetchData = async () => {
+      // Reset the state of the previous instance (a route change): its
+      // pod request can be stale and never reset statusLoading.
       setDeployLogs([]);
       setK8sStatus(null);
+      setStatusLoading(false);
+      setError(null);
+      setLoading(true);
       try {
         const inst = await instanceService.get(id);
+        if (stale) return;
         setInstance(inst);
         setBranch(inst.branch);
 
+        // Value and branch overrides are only readable by users who may modify
+        // the instance (owner, admin, devops). Skip them for viewers to avoid 403s.
+        const mayModify = userId !== undefined && userRole !== undefined
+          && canModifyInstance({ id: userId, role: userRole }, inst);
         const [defData, overrideData, branchOverrideData] = await Promise.all([
           definitionService.get(inst.stack_definition_id),
-          instanceService.getOverrides(id),
-          branchOverrideService.list(id),
+          mayModify ? instanceService.getOverrides(id) : Promise.resolve([] as ValueOverride[]),
+          mayModify ? branchOverrideService.list(id) : Promise.resolve([] as ChartBranchOverride[]),
         ]);
+        if (stale) return;
         setCharts(defData.charts || []);
         setOverrides(overrideData || []);
 
@@ -98,6 +175,7 @@ const Detail = () => {
           boMap[bo.chart_config_id] = bo.branch;
         });
         setBranchOverrides(boMap);
+        initialBranchOverridesRef.current = { ...boMap };
 
         // Pre-populate edited overrides with existing values
         const overrideMap: Record<string, string> = {};
@@ -111,6 +189,7 @@ const Detail = () => {
         // Fetch deployment logs
         try {
           const logs = await instanceService.getDeployLog(id);
+          if (stale) return;
           setDeployLogs(logs);
         } catch { /* ignore — no logs yet */ }
 
@@ -119,29 +198,61 @@ const Detail = () => {
           try {
             setStatusLoading(true);
             const status = await instanceService.getPods(id);
+            if (stale) return;
             setK8sStatus(status);
           } catch { /* ignore */ }
-          finally { setStatusLoading(false); }
+          finally { if (!stale) setStatusLoading(false); }
         }
       } catch {
-        setError('Failed to load instance details');
+        if (!stale) setError('Failed to load instance details');
       } finally {
-        setLoading(false);
+        if (!stale) setLoading(false);
       }
     };
     fetchData();
-  }, [id]);
+    return () => {
+      stale = true;
+    };
+  }, [id, userId, userRole]);
+
+  /**
+   * Fetch the instance and store it. When a WebSocket status arrived while the
+   * request ran, keep that newer status and its error message.
+   * @param instanceId - Instance ID
+   * @param adjust - Optional change to the fetched instance before it is stored
+   */
+  const refreshInstance = useCallback(async (
+    instanceId: string,
+    adjust?: (inst: StackInstance) => StackInstance,
+  ) => {
+    const seq = wsStatusSeqRef.current;
+    const fetched = await instanceService.get(instanceId);
+    const inst = adjust ? adjust(fetched) : fetched;
+    setInstance((prev) => (prev && wsStatusSeqRef.current !== seq
+      ? { ...inst, status: prev.status, error_message: prev.error_message }
+      : inst));
+  }, []);
 
   // Live-update instance status and deploy logs via WebSocket.
   const handleWsMessage = useCallback((msg: WsMessage) => {
     if (!id) return;
-    const payload = msg.payload as { instance_id?: string; status?: string };
+    const payload = msg.payload as DeploymentStatusPayload;
     if (payload.instance_id !== id) return;
+
+    // The instance row is gone (for example a delete from another tab or by
+    // a cleanup policy). Stop showing the stale page.
+    if (msg.type === 'instance.deleted') {
+      setDeletedRemotely(true);
+      return;
+    }
 
     if (msg.type === 'deployment.status') {
       // Refresh instance data and K8s status when deployment status changes.
       const newStatus = payload.status as string;
-      setInstance((prev) => prev ? { ...prev, status: newStatus } : prev);
+      wsStatusSeqRef.current += 1;
+      // The status message carries the error message of the instance (empty
+      // when the operation clears it).
+      setInstance((prev) => prev ? { ...prev, status: newStatus, error_message: payload.error_message || undefined } : prev);
 
       // Clear stale K8s status at the start of any operation or when resources are gone.
       // The watcher will push fresh status via instance.status messages as pods come up.
@@ -156,17 +267,23 @@ const Detail = () => {
 
       // On active states, insert a placeholder log entry so streaming lines
       // have an accordion to attach to before the REST refresh completes.
-      const logId = (payload as { log_id?: string }).log_id;
-      if ((newStatus === 'deploying' || newStatus === 'stabilizing' || newStatus === 'stopping' || newStatus === 'cleaning' || newStatus === 'rolling_back') && logId) {
+      const logId = payload.log_id;
+      if ((newStatus === 'deploying' || newStatus === 'stabilizing' || newStatus === 'stopping' || newStatus === 'cleaning') && logId) {
         const actionMap: Record<string, DeploymentLog['action']> = {
-          deploying: 'deploy', stopping: 'stop', cleaning: 'clean', rolling_back: 'rollback',
+          deploying: 'deploy', stopping: 'stop', cleaning: 'clean',
         };
+        // A rollback also reports "deploying". Use the action from the message;
+        // older servers omit it, then use the action the user started here.
+        const action: DeploymentLog['action'] = payload.action
+          ?? (newStatus === 'deploying' && pendingActionRef.current === 'rollback'
+            ? 'rollback'
+            : actionMap[newStatus] || 'deploy');
         setDeployLogs((prev) => {
           if (prev.some((l) => l.id === logId)) return prev;
           return [{
             id: logId,
             stack_instance_id: id,
-            action: actionMap[newStatus] || 'deploy',
+            action,
             status: 'running' as const,
             output: '',
             started_at: new Date().toISOString(),
@@ -176,7 +293,11 @@ const Detail = () => {
 
       // Refresh deploy logs on terminal states and clear streaming lines.
       if (newStatus === 'running' || newStatus === 'partial' || newStatus === 'stopped' || newStatus === 'error' || newStatus === 'draft') {
+        // Refetch the whole instance: fields such as values_drift change when
+        // a rollback or a deploy finishes.
+        refreshInstance(id).catch(() => {});
         instanceService.getDeployLog(id).then(setDeployLogs).catch(() => {});
+        pendingActionRef.current = null;
         setStreamingLines({});
         streamingBufferRef.current = {};
         if (flushTimerRef.current) {
@@ -186,6 +307,7 @@ const Detail = () => {
         setDeploying(false);
         setStopping(false);
         setCleaning(false);
+        setRollingBack(false);
       }
     }
 
@@ -235,85 +357,151 @@ const Detail = () => {
       }
     }
 
-  }, [id]);
+  }, [id, refreshInstance]);
 
-  const { send } = useWebSocket(handleWsMessage);
+  const { subscribeInstance } = useWebSocket(handleWsMessage);
 
+  // The hook sends the subscription when the socket opens and again after
+  // each reconnect, so log lines also arrive after a page load.
   useEffect(() => {
     if (!id) return;
-    send('subscribe', { instance_id: id });
-    return () => {
-      send('unsubscribe', { instance_id: id });
-    };
-  }, [id, send]);
+    return subscribeInstance(id);
+  }, [id, subscribeInstance]);
 
-  const chartBranchTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
-
+  /**
+   * Set the branch override of a chart in the page state. Save Changes stores
+   * it. An empty branch or the instance branch removes the override.
+   */
   const handleChartBranchChange = (chartId: string, newBranch: string) => {
-    if (!id) return;
     setBranchOverrides((prev) => {
+      const next = { ...prev };
       if (!newBranch || newBranch === branch) {
-        const next = { ...prev };
         delete next[chartId];
-        return next;
+      } else {
+        next[chartId] = newBranch;
       }
-      return { ...prev, [chartId]: newBranch };
+      return next;
     });
-
-    if (chartBranchTimers.current[chartId]) {
-      clearTimeout(chartBranchTimers.current[chartId]);
-    }
-
-    chartBranchTimers.current[chartId] = setTimeout(async () => {
-      delete chartBranchTimers.current[chartId];
-      const effectiveBranch = newBranch;
-      try {
-        if (!effectiveBranch || effectiveBranch === branch) {
-          await branchOverrideService.delete(id, chartId);
-        } else {
-          await branchOverrideService.set(id, chartId, effectiveBranch);
-          showSuccess('Branch override saved');
-        }
-      } catch {
-        setError('Failed to update branch override');
-      }
-    }, 800);
   };
 
-  const handleSave = async () => {
-    if (!id || !instance) return;
+  /**
+   * Save the branch, the value overrides and the branch overrides.
+   * @returns True when all changes are saved
+   */
+  const handleSave = async (): Promise<boolean> => {
+    if (!id || !instance) return false;
     setSaving(true);
     setError(null);
+    const hadChanges = isDirty;
     try {
       // Update branch if changed
       if (branch !== instance.branch) {
-        await instanceService.update(id, { branch });
-        setInstance({ ...instance, branch });
+        const updated = await instanceService.update(id, { branch });
+        setInstance((prev) => mergeInstanceUpdate(prev, updated));
       }
-
-      // Save overrides
-      for (const [chartConfigId, values] of Object.entries(editedOverrides)) {
-        await instanceService.setOverride(id, chartConfigId, { values });
-      }
-
       initialBranchRef.current = branch;
-      initialOverridesRef.current = { ...editedOverrides };
+
+      // Save changed overrides. A cleared editor deletes an existing
+      // override instead of storing an empty one. The saved state is
+      // updated per chart, so a retry after a partial failure only sends
+      // what is still unsaved.
+      const submitted = editedOverrides;
+      const saved: Record<string, string> = { ...initialOverridesRef.current };
+      for (const [chartConfigId, values] of Object.entries(submitted)) {
+        const initial = saved[chartConfigId];
+        if (values.trim() === '') {
+          if (initial !== undefined) {
+            try {
+              await instanceService.deleteOverride(id, chartConfigId);
+            } catch (err) {
+              // 404: the override is already gone, which is the goal.
+              if ((err as { response?: { status?: number } } | null)?.response?.status !== 404) throw err;
+            }
+            delete saved[chartConfigId];
+            initialOverridesRef.current = { ...saved };
+          }
+          continue;
+        }
+        if (values !== initial) {
+          await instanceService.setOverride(id, chartConfigId, { values });
+          saved[chartConfigId] = values;
+          initialOverridesRef.current = { ...saved };
+        }
+      }
+
+      // Save changed branch overrides. An override equal to the instance
+      // branch is removed, because the chart then uses the instance branch.
+      const submittedBranches = branchOverrides;
+      const savedBranches: Record<string, string> = { ...initialBranchOverridesRef.current };
+      const branchChartIds = new Set([...Object.keys(savedBranches), ...Object.keys(submittedBranches)]);
+      for (const chartConfigId of branchChartIds) {
+        const wanted = submittedBranches[chartConfigId] && submittedBranches[chartConfigId] !== branch
+          ? submittedBranches[chartConfigId]
+          : undefined;
+        if (wanted === savedBranches[chartConfigId]) continue;
+        if (wanted) {
+          await branchOverrideService.set(id, chartConfigId, wanted);
+          savedBranches[chartConfigId] = wanted;
+        } else {
+          try {
+            await branchOverrideService.delete(id, chartConfigId);
+          } catch (err) {
+            // 404: the override is already gone, which is the goal.
+            if ((err as { response?: { status?: number } } | null)?.response?.status !== 404) throw err;
+          }
+          delete savedBranches[chartConfigId];
+        }
+        initialBranchOverridesRef.current = { ...savedBranches };
+      }
+      // Keep a branch change made while the save request ran.
+      setBranchOverrides((prev) => (prev === submittedBranches ? { ...savedBranches } : prev));
+
+      // Normalize the saved charts (drop cleared editors), but keep any
+      // edit typed while the save request ran.
+      setEditedOverrides((prev) => {
+        const next = { ...prev };
+        for (const [chartConfigId, values] of Object.entries(submitted)) {
+          if (prev[chartConfigId] !== values) continue;
+          if (chartConfigId in saved) {
+            next[chartConfigId] = saved[chartConfigId];
+          } else {
+            delete next[chartConfigId];
+          }
+        }
+        return next;
+      });
       showSuccess('Changes saved successfully');
-    } catch {
-      setError('Failed to save changes');
+      if (hadChanges && DEPLOYED_STATUSES.has(instance.status)) setSavedPendingRedeploy(true);
+      return true;
+    } catch (err) {
+      setError(await describeApiError(err, 'Failed to save changes'));
+      return false;
     } finally {
       setSaving(false);
+      setSaveCount((n) => n + 1);
     }
   };
 
-  const handleClone = async () => {
-    if (!id) return;
-    try {
-      const cloned = await instanceService.clone(id);
-      navigate(`/stack-instances/${cloned.id}`);
-    } catch {
-      setError('Failed to clone instance');
+  /**
+   * Start a deploy: open the deploy preview. With unsaved changes, first ask
+   * whether to save them, because the deploy uses the stored values.
+   */
+  const requestDeploy = () => {
+    if (isDirty) {
+      setUnsavedDeployOpen(true);
+    } else {
+      setDeployPreviewOpen(true);
     }
+  };
+
+  const handleSaveAndDeploy = async () => {
+    setUnsavedDeployOpen(false);
+    if (await handleSave()) setDeployPreviewOpen(true);
+  };
+
+  const handleCloned = (cloned: StackInstance) => {
+    setCloneOpen(false);
+    navigate(`/stack-instances/${cloned.id}`);
   };
 
   const handleDelete = async () => {
@@ -327,26 +515,26 @@ const Detail = () => {
     setDeleteOpen(false);
   };
 
-  const handleExport = async () => {
+  const handleExport = async (chart?: ChartConfig) => {
+    setExportMenuAnchor(null);
     if (!id) return;
+    const instanceName = instance?.name || id;
     try {
-      const values = await instanceService.exportValues(id);
-      const blob = new Blob([typeof values === 'string' ? values : JSON.stringify(values, null, 2)], { type: 'text/yaml' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${instance?.name || 'values'}-export.yaml`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch {
-      setError('Failed to export values');
+      const file = chart
+        ? await instanceService.exportChartValues(id, chart.id, `${instanceName}-${chart.chart_name}-values.yaml`)
+        : await instanceService.exportValues(id, instanceName);
+      downloadBlob(file.blob, file.filename);
+    } catch (err) {
+      setError(await describeApiError(err, 'Failed to export values'));
     }
   };
 
   const handleDeploy = async () => {
     if (!id) return;
+    pendingActionRef.current = 'deploy';
     setDeploying(true);
     setError(null);
+    setSavedPendingRedeploy(false);
     try {
       await instanceService.deploy(id);
       showSuccess('Deployment started');
@@ -358,8 +546,7 @@ const Detail = () => {
     }
     // Best-effort refresh — don't surface errors to the user
     try {
-      const inst = await instanceService.get(id);
-      setInstance(inst);
+      await refreshInstance(id);
     } catch (e) { console.error('Failed to refresh instance after deploy', e); }
     try {
       const logs = await instanceService.getDeployLog(id);
@@ -369,6 +556,7 @@ const Detail = () => {
 
   const handleStop = async () => {
     if (!id) return;
+    pendingActionRef.current = 'stop';
     setStopping(true);
     setError(null);
     try {
@@ -381,8 +569,7 @@ const Detail = () => {
     }
     // Best-effort refresh — don't surface errors to the user
     try {
-      const inst = await instanceService.get(id);
-      setInstance(inst);
+      await refreshInstance(id);
     } catch (e) { console.error('Failed to refresh instance after stop', e); }
     try {
       const logs = await instanceService.getDeployLog(id);
@@ -392,6 +579,7 @@ const Detail = () => {
 
   const handleClean = async () => {
     if (!id) return;
+    pendingActionRef.current = 'clean';
     setCleaning(true);
     setError(null);
     try {
@@ -404,8 +592,7 @@ const Detail = () => {
     }
     // Best-effort refresh — don't surface errors to the user
     try {
-      const inst = await instanceService.get(id);
-      setInstance(inst);
+      await refreshInstance(id);
     } catch (e) { console.error('Failed to refresh instance after clean', e); }
     try {
       const logs = await instanceService.getDeployLog(id);
@@ -420,57 +607,129 @@ const Detail = () => {
     instance?.error_message?.includes('Expired (TTL)')
   );
 
-  const handleExtend = async () => {
-    if (!id) return;
-    setExtending(true);
-    try {
-      const updated = await instanceService.extend(id);
-      setInstance(updated);
-      showSuccess('TTL extended');
-    } catch {
-      setError('Failed to extend TTL');
-    } finally {
-      setExtending(false);
-    }
+  const openRollback = (targetId?: string) => {
+    setRollbackTargetId(targetId);
+    setRollbackOpen(true);
   };
 
-  const handleTtlChange = async (ttlMinutes: number) => {
-    if (!id || !instance) return;
+  const handleRollback = async (targetLogId: string) => {
+    if (!id) return;
+    setRollbackOpen(false);
+    setRollingBack(true);
+    setError(null);
+    pendingActionRef.current = 'rollback';
+    let rollbackResult: RollbackResponse | undefined;
+    try {
+      // The API accepts the rollback (202). A hook gate rejection shows in the
+      // deployment log, not as an HTTP error.
+      const result = await instanceService.rollback(id, targetLogId);
+      rollbackResult = result;
+      const started = 'Rollback started. Follow the deployment log.';
+      showSuccess(result?.warning ? `${started} ${result.warning}` : started);
+      if (result?.values_drift !== undefined) {
+        setInstance((prev) => prev ? { ...prev, values_drift: result.values_drift } : prev);
+      }
+    } catch (err) {
+      pendingActionRef.current = null;
+      setError(await describeApiError(err, 'Failed to start rollback'));
+      setRollingBack(false);
+      return;
+    }
+    // Refetch once, in case the WebSocket misses the status change. While the
+    // rollback runs, the API can still return the old values_drift, so keep
+    // the value from the rollback response. The terminal WebSocket status
+    // refetches the instance again.
+    const responseDrift = rollbackResult?.values_drift;
+    try {
+      await refreshInstance(id, (inst) => (
+        responseDrift !== undefined && inst.values_drift !== responseDrift
+          ? { ...inst, values_drift: responseDrift }
+          : inst
+      ));
+    } catch (e) { console.error('Failed to refresh instance after rollback', e); }
+    // Best-effort log refresh — don't surface errors to the user
+    try {
+      const logs = await instanceService.getDeployLog(id);
+      setDeployLogs(logs);
+    } catch (e) { console.error('Failed to refresh deploy logs after rollback', e); }
+  };
+
+  // Show the saved fixed stop time in the TTL field after a load or a save.
+  const savedStopTime = hasFixedStopTime(instance) ? instance?.expires_at : undefined;
+  useEffect(() => {
+    setStopDraft(savedStopTime);
+  }, [savedStopTime]);
+
+  const { maxTtlDays } = useBranding();
+  const stopDraftChanged = stopDraft !== undefined && stopDraft !== savedStopTime;
+  const stopDraftError = stopDraftChanged ? stopTimeError(stopDraft, stopTimeBounds(maxTtlDays)) : null;
+
+  const handleStopTimeSave = async () => {
+    if (!id || !stopDraft || stopDraftError) return;
     setSaving(true);
     setError(null);
     try {
-      let updated: StackInstance;
-      if (ttlMinutes > 0) {
-        updated = await instanceService.extend(id, ttlMinutes);
-      } else {
-        // Clear TTL — send full instance so required fields are preserved
-        updated = await instanceService.update(id, { ...instance, ttl_minutes: 0 });
-      }
-      setInstance(updated);
-      showSuccess('TTL updated');
-    } catch {
-      setError('Failed to update TTL');
+      // A fixed stop time: ttl_minutes becomes 0, and a deploy keeps the time.
+      const updated = await instanceService.update(id, { expires_at: stopDraft });
+      setInstance((prev) => mergeInstanceUpdate(prev, updated));
+      showSuccess(`Stop time set: ${formatStopTime(updated.expires_at)}`);
+    } catch (err) {
+      setError(await describeApiError(err, 'Failed to set the stop time'));
     } finally {
       setSaving(false);
     }
   };
 
-  const getRepoUrl = (): string => {
-    if (charts.length > 0 && charts[0].source_repo_url) {
-      return charts[0].source_repo_url;
+  const handleTtlChange = async (ttlMinutes: number) => {
+    if (!id || !instance) return;
+    // Back from an unsaved stop time to the current TTL: nothing to save
+    // (a PUT would restart the TTL).
+    if (!hasFixedStopTime(instance) && ttlMinutes === (instance.ttl_minutes ?? 0)) return;
+    setSaving(true);
+    setError(null);
+    try {
+      // The update is partial. ttl_minutes > 0 sets the TTL and restarts the
+      // expiry from now; 0 clears the expiry (also a fixed stop time).
+      const updated: StackInstance = await instanceService.update(id, { ttl_minutes: ttlMinutes });
+      // Keep the follow state if the response does not have it.
+      setInstance((prev) => mergeInstanceUpdate(prev, updated));
+      showSuccess('TTL updated');
+    } catch {
+      setError('Failed to update TTL');
+      setStopDraft(savedStopTime);
+    } finally {
+      setSaving(false);
     }
-    return '';
   };
 
-  const canDeploy = instance?.status === 'draft' || instance?.status === 'stopped' || instance?.status === 'error' || instance?.status === 'partial';
+  // Source repository of the first chart that has one. The first chart can
+  // be a chart without a source repository (for example an OCI chart).
+  const getRepoUrl = (): string => charts.find((c) => c.source_repo_url)?.source_repo_url ?? '';
+
+  // The instance branch applies to all charts, so the instance-level picker
+  // lists the branches of all chart source repositories.
+  const allRepoUrls = useMemo(() => charts.map((c) => c.source_repo_url ?? ''), [charts]);
+
+  const canModify = canModifyInstance(user, instance);
+
+  const canDeploy = instance?.status === 'draft' || instance?.status === 'stopped';
+  const canRedeploy = DEPLOYED_STATUSES.has(instance?.status ?? '');
+  const deploys = useMemo(() => successfulDeploys(deployLogs), [deployLogs]);
+  const currentLogId = useMemo(() => currentDeployLogId(deployLogs), [deployLogs]);
+  const canRollback = canRedeploy && deploys.length >= 2;
   const canStop = instance?.status === 'running' || instance?.status === 'partial' || instance?.status === 'deploying' || instance?.status === 'stabilizing';
   const canClean = instance?.status === 'running' || instance?.status === 'partial' || instance?.status === 'stopped' || instance?.status === 'error';
 
   const renderStatusActions = (status: string) => (
     <>
-      {canDeploy && (
-        <Button variant="contained" color="success" onClick={() => setDeployPreviewOpen(true)} disabled={deploying}>
-          {deploying ? 'Deploying...' : 'Deploy'}
+      {(canDeploy || canRedeploy) && (
+        <Button variant="contained" color="success" onClick={requestDeploy} disabled={deploying}>
+          {deploying ? 'Deploying...' : canRedeploy ? 'Redeploy' : 'Deploy'}
+        </Button>
+      )}
+      {canRollback && (
+        <Button variant="outlined" color="warning" onClick={() => openRollback()} disabled={rollingBack}>
+          {rollingBack ? 'Rolling back...' : 'Rollback'}
         </Button>
       )}
       {status === 'stopping' && (
@@ -480,23 +739,84 @@ const Detail = () => {
         <Button variant="outlined" color="error" disabled>Cleaning...</Button>
       )}
       {canStop && (
-        <Button variant="contained" color="warning" onClick={handleStop} disabled={stopping}>
+        <Button variant="contained" color="warning" onClick={() => setStopDialogOpen(true)} disabled={stopping}>
           {stopping ? 'Stopping...' : 'Stop'}
-        </Button>
-      )}
-      {canClean && (
-        <Button variant="outlined" color="error" onClick={() => setCleanDialogOpen(true)} disabled={cleaning}>
-          {cleaning ? 'Cleaning...' : 'Clean Namespace'}
         </Button>
       )}
     </>
   );
 
+  /** Close the header "Actions" menu, then run the item action (for example open a dialog). */
+  const fromActionsMenu = (run: () => void) => () => {
+    setActionsMenuAnchor(null);
+    run();
+  };
+
+  /**
+   * Items of the header "Actions" menu, in groups with a divider between
+   * them: the custom actions of the server; export values and clone; for a
+   * user who can modify the instance, clean namespace and delete.
+   */
+  const renderActionsMenuItems = () => {
+    const items: ReactNode[] = instanceActions.actions.map((a) => (
+      <MenuItem
+        key={`action-${a.name}`}
+        disabled={!a.can_invoke}
+        onClick={fromActionsMenu(() => instanceActions.openAction(a))}
+      >
+        <ListItemText primary={a.label} secondary={actionSecondaryText(a)} />
+      </MenuItem>
+    ));
+    if (items.length > 0) items.push(<Divider key="divider-custom" />);
+    items.push(
+      <MenuItem
+        key="export"
+        aria-haspopup="menu"
+        onClick={() => {
+          // Open the export menu at the place of the Actions button.
+          const anchor = actionsMenuAnchor;
+          setActionsMenuAnchor(null);
+          setExportMenuAnchor(anchor);
+        }}
+      >
+        Export values…
+      </MenuItem>,
+      <MenuItem key="clone" onClick={fromActionsMenu(() => setCloneOpen(true))}>Clone</MenuItem>,
+    );
+    if (canModify) {
+      items.push(<Divider key="divider-danger" />);
+      if (canClean) {
+        items.push(
+          <MenuItem
+            key="clean"
+            disabled={cleaning}
+            onClick={fromActionsMenu(() => setCleanDialogOpen(true))}
+            sx={{ color: 'error.main' }}
+          >
+            Clean namespace
+          </MenuItem>,
+        );
+      }
+      items.push(
+        <MenuItem key="delete" onClick={fromActionsMenu(() => setDeleteOpen(true))} sx={{ color: 'error.main' }}>
+          Delete
+        </MenuItem>,
+      );
+    }
+    return items;
+  };
+
   const LIFECYCLE_STEPS = ['draft', 'deploying', 'stabilizing', 'running'];
 
-  const renderLifecycle = (status: string) => {
+  /**
+   * Render the status lifecycle. For an error or a partial deploy the alert
+   * also shows the error message of the instance (for example the reason of
+   * a pre-deploy hook that denied the deploy).
+   */
+  const renderLifecycle = (status: string, errorMessage?: string) => {
     const activeStep = status === 'partial' ? LIFECYCLE_STEPS.indexOf('running') : LIFECYCLE_STEPS.indexOf(status);
     const isTerminal = status === 'error' || status === 'partial' || status === 'stopped' || status === 'stopping' || status === 'cleaning';
+    const showError = (status === 'error' || status === 'partial') && !!errorMessage;
 
     return (
       <Box sx={{ mb: 2 }}>
@@ -504,6 +824,15 @@ const Detail = () => {
         {isTerminal ? (
           <Alert severity={status === 'error' ? 'error' : 'warning'} sx={{ py: 0.5 }}>
             Instance is {status}
+            {showError && (
+              <Typography
+                variant="body2"
+                data-testid="instance-error-message"
+                sx={{ mt: 0.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+              >
+                {errorMessage}
+              </Typography>
+            )}
           </Alert>
         ) : (
           <Stepper activeStep={activeStep} alternativeLabel>
@@ -517,6 +846,18 @@ const Detail = () => {
       </Box>
     );
   };
+
+  if (deletedRemotely) {
+    return (
+      <Alert
+        severity="info"
+        data-testid="instance-deleted"
+        action={<Button color="inherit" size="small" onClick={() => navigate('/')}>Back to Dashboard</Button>}
+      >
+        This stack was deleted.
+      </Alert>
+    );
+  }
 
   if (loading) {
     return <LoadingState label="Loading instance..." />;
@@ -533,13 +874,24 @@ const Detail = () => {
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
       <Paper sx={{ p: 3, mb: 3 }}>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <Box>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1 }}>
+        {/* Title block and buttons wrap instead of shrinking: with many
+            buttons the labels broke onto two lines and stretched the row. */}
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 2 }}>
+          <Box sx={{ minWidth: 0 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 2, mb: 1 }}>
               <Typography variant="h4" component="h1">
                 {instance.name}
               </Typography>
               <FavoriteButton entityType="instance" entityId={instance.id} size="medium" />
+              <FollowButton
+                instanceId={instance.id}
+                following={instance.following}
+                followerCount={instance.follower_count}
+                onChange={(state) => setInstance((prev) => prev
+                  ? { ...prev, following: state.following, follower_count: state.follower_count }
+                  : prev)}
+                onError={showErrorToast}
+              />
               <Box component="span" aria-live="polite">
                 <StatusBadge status={instance.status} />
               </Box>
@@ -551,38 +903,110 @@ const Detail = () => {
               Namespace: {instance.namespace}
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              Owner: {instance.owner_id}
+              Owner: {instance.owner_username || instance.owner_id}
             </Typography>
-            {countdown && !countdown.isExpired && (instance.status === 'running' || instance.status === 'partial') && (
+            {countdown && !countdown.isExpired && (
+              (instance.status === 'running' || instance.status === 'partial') ||
+              (hasFixedStopTime(instance) && instance.status !== 'stopped')
+            ) && (
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
                 <Chip
-                  label={`Expires in ${countdown.remaining}`}
+                  label={hasFixedStopTime(instance)
+                    ? `Stops at ${formatStopTime(instance.expires_at)}`
+                    : `Expires in ${countdown.remaining}`}
                   size="small"
                   color={countdown.isCritical ? 'error' : countdown.isWarning ? 'warning' : 'success'}
                   icon={<span>⏱</span>}
                 />
-                <Button
-                  variant="outlined"
-                  size="small"
-                  onClick={handleExtend}
-                  disabled={extending}
-                >
-                  {extending ? 'Extending...' : 'Extend'}
-                </Button>
+                {canModify && (
+                  <ExtendTtlMenu
+                    instanceId={instance.id}
+                    expiresAt={instance.expires_at}
+                    onExtended={(updated) => setInstance((prev) => mergeInstanceUpdate(prev, updated))}
+                    onError={setError}
+                  />
+                )}
               </Box>
             )}
           </Box>
-          <Box sx={{ display: 'flex', gap: 1 }}>
-            {renderStatusActions(instance.status)}
-            <Button variant="outlined" onClick={handleExport}>Export Values</Button>
-            <Button variant="outlined" onClick={handleClone}>Clone</Button>
-            <Button variant="outlined" color="error" onClick={() => setDeleteOpen(true)}>Delete</Button>
+          <Box
+            sx={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              justifyContent: 'flex-end',
+              alignItems: 'center',
+              gap: 1,
+              '& .MuiButton-root': { whiteSpace: 'nowrap', flexShrink: 0 },
+            }}
+          >
+            {canModify && renderStatusActions(instance.status)}
+            <Button
+              variant="outlined"
+              id="instance-actions-button"
+              aria-controls={actionsMenuAnchor ? 'instance-actions-menu' : undefined}
+              aria-haspopup="menu"
+              aria-expanded={actionsMenuAnchor ? 'true' : undefined}
+              endIcon={<ArrowDropDownIcon />}
+              onClick={(e) => setActionsMenuAnchor(e.currentTarget)}
+            >
+              Actions
+            </Button>
+            <Menu
+              id="instance-actions-menu"
+              anchorEl={actionsMenuAnchor}
+              open={Boolean(actionsMenuAnchor)}
+              onClose={() => setActionsMenuAnchor(null)}
+              slotProps={{ list: { 'aria-labelledby': 'instance-actions-button' } }}
+            >
+              {renderActionsMenuItems()}
+            </Menu>
+            <Menu
+              id="export-values-menu"
+              anchorEl={exportMenuAnchor}
+              open={Boolean(exportMenuAnchor)}
+              onClose={() => setExportMenuAnchor(null)}
+              slotProps={{ list: { 'aria-label': 'Export values' } }}
+            >
+              <MenuItem onClick={() => handleExport()}>All charts (ZIP)</MenuItem>
+              {charts.map((chart) => (
+                <MenuItem key={chart.id} onClick={() => handleExport(chart)}>
+                  {chart.chart_name} (YAML)
+                </MenuItem>
+              ))}
+            </Menu>
           </Box>
         </Box>
 
+        {!canModify && (
+          <Alert severity="info" sx={{ mt: 2 }}>
+            Read-only: you are not the owner of this stack.
+          </Alert>
+        )}
+
+        {instance.values_drift && (
+          <Alert severity="warning" sx={{ mt: 2 }}>
+            The running values differ from the stored overrides (after a rollback). The next deploy applies the stored overrides.
+          </Alert>
+        )}
+
+        {canModify && savedPendingRedeploy && canRedeploy && (
+          <Alert
+            severity="info"
+            sx={{ mt: 2 }}
+            onClose={() => setSavedPendingRedeploy(false)}
+            action={(
+              <Button color="inherit" size="small" onClick={requestDeploy} disabled={deploying}>
+                Redeploy
+              </Button>
+            )}
+          >
+            Saved. Redeploy to apply.
+          </Alert>
+        )}
+
         <Divider sx={{ my: 2 }} />
 
-        {renderLifecycle(instance.status)}
+        {renderLifecycle(instance.status, instance.error_message)}
 
         {(instance.status === 'running' || instance.status === 'partial' || instance.status === 'deploying' || instance.status === 'stabilizing' || instance.status === 'error' || instance.status === 'stopping' || instance.status === 'cleaning') && (
           <Box sx={{ mb: 2 }}>
@@ -592,25 +1016,41 @@ const Detail = () => {
         )}
 
         {k8sStatus && (instance.status === 'running' || instance.status === 'partial') && (
-          <AccessUrls status={k8sStatus} />
+          <AccessUrls status={k8sStatus} showPortForward={hasAtLeastRole(user?.role, 'devops')} />
         )}
 
-        <Box sx={{ maxWidth: 400 }}>
-          <Typography variant="subtitle2" gutterBottom>Branch</Typography>
+        {/* The fields have their own labels ("Branch", "TTL (Time to Live)"). */}
+        <Box sx={{ maxWidth: 400, mt: 1 }}>
           <BranchSelector
-            repoUrl={getRepoUrl()}
+            repoUrl={allRepoUrls}
             value={branch}
             onChange={setBranch}
+            disabled={!canModify}
           />
         </Box>
 
         <Box sx={{ mt: 2 }}>
-          <Typography variant="subtitle2" gutterBottom>TTL (Time to Live)</Typography>
-          <TtlSelector
-            value={instance.ttl_minutes ?? 0}
-            onChange={handleTtlChange}
-            disabled={saving}
-          />
+          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2, flexWrap: 'wrap' }}>
+            <TtlSelector
+              value={instance.ttl_minutes ?? 0}
+              onChange={handleTtlChange}
+              stopTime={stopDraft}
+              onStopTimeChange={setStopDraft}
+              acceptStopTime={savedStopTime}
+              disabled={saving || !canModify}
+            />
+            {stopDraftChanged && canModify && (
+              <Button
+                variant="contained"
+                size="small"
+                onClick={handleStopTimeSave}
+                disabled={saving || !stopDraft || stopDraftError !== null}
+                sx={{ mt: 0.5 }}
+              >
+                Save stop time
+              </Button>
+            )}
+          </Box>
         </Box>
       </Paper>
 
@@ -630,13 +1070,15 @@ const Detail = () => {
                   {chart.chart_version && ` | Version: ${chart.chart_version}`}
                 </Typography>
 
-                <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 2 }}>
-                  <Box sx={{ maxWidth: 300, flex: 1 }}>
+                {/* On a phone the chip goes below the field, so the helper text keeps its width. */}
+                <Box sx={{ mb: 2, display: 'flex', alignItems: 'flex-start', gap: 2, flexWrap: 'wrap' }}>
+                  <Box sx={{ maxWidth: 300, flex: '1 1 240px', minWidth: 0 }}>
                     <BranchSelector
                       repoUrl={chart.source_repo_url || getRepoUrl()}
                       value={branchOverrides[chart.id] || branch}
                       onChange={(newBranch) => handleChartBranchChange(chart.id, newBranch)}
                       label="Chart Branch"
+                      disabled={!canModify}
                     />
                   </Box>
                   {branchOverrides[chart.id] ? (
@@ -644,15 +1086,16 @@ const Detail = () => {
                       label={`Override: ${branchOverrides[chart.id]}`}
                       color="warning"
                       size="small"
-                      onDelete={() => handleChartBranchChange(chart.id, '')}
-                      deleteIcon={
+                      sx={{ mt: 1 }}
+                      onDelete={canModify ? () => handleChartBranchChange(chart.id, '') : undefined}
+                      deleteIcon={canModify ? (
                         <Tooltip title="Reset to instance branch">
                           <CloseIcon />
                         </Tooltip>
-                      }
+                      ) : undefined}
                     />
                   ) : (
-                    <Chip label="Using instance branch" size="small" variant="outlined" />
+                    <Chip label="Using instance branch" size="small" variant="outlined" sx={{ mt: 1 }} />
                   )}
                 </Box>
 
@@ -667,12 +1110,18 @@ const Detail = () => {
                     />
                   </Grid>
                   <Grid size={{ xs: 12, md: 6 }}>
-                    <YamlEditor
-                      label="Your Overrides"
-                      value={editedOverrides[chart.id] || ''}
-                      onChange={(val) => setEditedOverrides({ ...editedOverrides, [chart.id]: val })}
-                      height="300px"
-                    />
+                    {canModify ? (
+                      <YamlEditor
+                        label="Your Overrides"
+                        value={editedOverrides[chart.id] || ''}
+                        onChange={(val) => setEditedOverrides({ ...editedOverrides, [chart.id]: val })}
+                        height="300px"
+                      />
+                    ) : (
+                      <Alert severity="info">
+                        Overrides are visible to the owner, admins and devops users.
+                      </Alert>
+                    )}
                   </Grid>
                 </Grid>
               </Box>
@@ -686,7 +1135,12 @@ const Detail = () => {
           <Typography variant="h6" sx={{ mb: 1 }}>
             Deployment History ({deployLogs.length})
           </Typography>
-          <DeploymentLogViewer logs={deployLogs} streamingLines={streamingLines} />
+          <DeploymentLogViewer
+            logs={deployLogs}
+            streamingLines={streamingLines}
+            currentDeployLogId={currentLogId}
+            onRollbackTo={canModify && canRollback ? (log) => openRollback(log.id) : undefined}
+          />
         </Box>
       )}
 
@@ -694,9 +1148,11 @@ const Detail = () => {
         <Button variant="outlined" onClick={() => navigate('/')}>
           Back to Dashboard
         </Button>
-        <Button variant="contained" onClick={handleSave} disabled={saving}>
-          {saving ? 'Saving...' : 'Save Changes'}
-        </Button>
+        {canModify && (
+          <Button variant="contained" onClick={handleSave} disabled={saving}>
+            {saving ? 'Saving...' : 'Save Changes'}
+          </Button>
+        )}
       </Box>
 
       <ConfirmDialog
@@ -709,6 +1165,15 @@ const Detail = () => {
       />
 
       <ConfirmDialog
+        open={stopDialogOpen}
+        title="Stop Instance?"
+        message="This uninstalls all Helm releases of the instance. The namespace stays. You can deploy the instance again later."
+        onConfirm={() => { setStopDialogOpen(false); handleStop(); }}
+        onCancel={() => setStopDialogOpen(false)}
+        confirmText="Stop"
+      />
+
+      <ConfirmDialog
         open={cleanDialogOpen}
         title="Clean Namespace?"
         message="This will uninstall all Helm releases and delete the Kubernetes namespace. The instance will return to draft status. This action cannot be undone."
@@ -717,6 +1182,31 @@ const Detail = () => {
         confirmText="Clean"
       />
 
+      <Dialog
+        open={unsavedDeployOpen}
+        onClose={() => setUnsavedDeployOpen(false)}
+        aria-labelledby="unsaved-deploy-title"
+        aria-describedby="unsaved-deploy-text"
+      >
+        <DialogTitle id="unsaved-deploy-title">Unsaved changes</DialogTitle>
+        <DialogContent>
+          <DialogContentText id="unsaved-deploy-text">
+            You have unsaved changes. Save them before the deploy?
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setUnsavedDeployOpen(false)}>Cancel</Button>
+          <Button
+            onClick={() => { setUnsavedDeployOpen(false); setDeployPreviewOpen(true); }}
+          >
+            Deploy without saving
+          </Button>
+          <Button variant="contained" onClick={handleSaveAndDeploy} disabled={saving}>
+            Save and deploy
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       <DeployPreviewDialog
         open={deployPreviewOpen}
         instanceId={instance.id}
@@ -724,6 +1214,26 @@ const Detail = () => {
         onConfirm={() => { setDeployPreviewOpen(false); handleDeploy(); }}
         onClose={() => setDeployPreviewOpen(false)}
       />
+
+      {instanceActions.dialog}
+      <CloneDialog
+        open={cloneOpen}
+        source={instance}
+        onClose={() => setCloneOpen(false)}
+        onCloned={handleCloned}
+      />
+
+      {canModify && canRollback && (
+        <RollbackDialog
+          open={rollbackOpen}
+          instanceName={instance.name}
+          deploys={deploys}
+          currentLogId={currentLogId}
+          initialTargetId={rollbackTargetId ?? defaultRollbackTarget(deploys, currentLogId)?.id}
+          onConfirm={handleRollback}
+          onClose={() => setRollbackOpen(false)}
+        />
+      )}
 
     </Box>
   );

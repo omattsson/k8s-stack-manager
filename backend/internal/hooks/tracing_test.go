@@ -3,8 +3,11 @@ package hooks
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -308,3 +311,56 @@ func TestClassifyErr(t *testing.T) {
 type stringErr string
 
 func (s stringErr) Error() string { return string(s) }
+
+// spanText collects the status description and the event attributes of the
+// recorded spans.
+func spanText(spans []sdktrace.ReadOnlySpan) string {
+	var b strings.Builder
+	for _, sp := range spans {
+		b.WriteString(sp.Status().Description)
+		for _, ev := range sp.Events() {
+			b.WriteString(" " + ev.Name)
+			for _, kv := range ev.Attributes {
+				b.WriteString(" " + kv.Value.Emit())
+			}
+		}
+	}
+	return b.String()
+}
+
+func TestActionSpans_DoNotRecordSubscriberURL(t *testing.T) {
+	spanRec, _ := installTestProviders(t)
+
+	// Port 1 on localhost refuses the connection: *url.Error with the URL.
+	reg, err := NewActionRegistry([]ActionSubscription{{
+		Name: "x", URL: "http://127.0.0.1:1/private-path?key=hidden", LogPath: "/jobs/{job_id}/log", TimeoutSeconds: 2,
+	}}, nil)
+	require.NoError(t, err)
+
+	_, err = reg.Invoke(context.Background(), "x", &InstanceRef{ID: "i-1"}, nil)
+	require.Error(t, err)
+	_, err = reg.FetchJobLog(context.Background(), "x", "job-1", 0, &InstanceRef{ID: "i-1"})
+	require.Error(t, err)
+
+	spans := spanRec.Ended()
+	require.Len(t, spans, 2)
+	assert.Equal(t, "hooks.action", spans[0].Name())
+	assert.Equal(t, "hooks.action_log", spans[1].Name())
+	text := spanText(spans)
+	assert.NotContains(t, text, "http://")
+	assert.NotContains(t, text, "private-path")
+	assert.NotContains(t, text, "/jobs/")
+	assert.NotContains(t, text, "hidden")
+	assert.Contains(t, text, "connect", "the underlying cause stays in the span")
+}
+
+func TestSpanSafeError(t *testing.T) {
+	t.Parallel()
+	inner := errors.New("dial tcp 10.0.0.5:8080: connect: connection refused")
+	wrapped := fmt.Errorf("post action: %w", &url.Error{Op: "Post", URL: "http://svc.example/secret", Err: inner})
+	got := spanSafeError(wrapped)
+	assert.Equal(t, "Post: dial tcp 10.0.0.5:8080: connect: connection refused", got.Error())
+	assert.ErrorIs(t, got, inner)
+	plain := errors.New("plain")
+	assert.Equal(t, plain, spanSafeError(plain))
+}

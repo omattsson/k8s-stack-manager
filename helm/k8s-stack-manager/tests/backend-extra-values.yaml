@@ -1,0 +1,19 @@
+# Values used by `make helm-test`: backend extraEnv, extraVolumes and
+# extraVolumeMounts render into the backend Deployment.
+backend:
+  secrets:
+    JWT_SECRET: dummy-jwt-secret-for-template
+  extraEnv:
+    - name: HELM_REGISTRY_CONFIG
+      value: /etc/helm-registry/config.json
+  extraVolumes:
+    - name: helm-registry
+      secret:
+        secretName: helm-registry-config
+        items:
+          - key: .dockerconfigjson
+            path: config.json
+  extraVolumeMounts:
+    - name: helm-registry
+      mountPath: /etc/helm-registry
+      readOnly: true

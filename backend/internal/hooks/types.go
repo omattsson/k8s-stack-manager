@@ -72,6 +72,54 @@ type EventEnvelope struct {
 	Values      map[string]any         `json:"values,omitempty"`
 	Metadata    map[string]string      `json:"metadata,omitempty"`
 	Extra       map[string]any         `json:"extra,omitempty"`
+	// Trigger tells what started the operation (a user, a cleanup policy
+	// or the TTL reaper). Set for the deploy, stop, clean, rollback and
+	// delete events, and for cleanup-policy-executed.
+	Trigger *Trigger `json:"trigger,omitempty"`
+	// CleanupPolicy is the run summary of cleanup-policy-executed.
+	CleanupPolicy *CleanupPolicyRun `json:"cleanup_policy,omitempty"`
+}
+
+// Results of one instance in a cleanup policy run (CleanupPolicyInstance.Result).
+const (
+	CleanupResultSuccess = "success"
+	CleanupResultError   = "error"
+	CleanupResultDryRun  = "dry_run"
+)
+
+// CleanupPolicyRun is the payload of cleanup-policy-executed: one run of a
+// cleanup policy with at least one matching instance.
+type CleanupPolicyRun struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Action    string `json:"action"`
+	ClusterID string `json:"cluster_id"`
+	// ClusterName is the name of the cluster of ClusterID. Omitted for
+	// "all" and when the cluster is unknown.
+	ClusterName string `json:"cluster_name,omitempty"`
+	Condition   string `json:"condition,omitempty"`
+	DryRun      bool   `json:"dry_run"`
+	// Run is "scheduled" (cron) or "manual" (POST .../run).
+	Run string `json:"run"`
+	// Matched, Succeeded and Failed count all matching instances, also when
+	// Instances is cut (InstancesTruncated).
+	Matched            int                     `json:"matched"`
+	Succeeded          int                     `json:"succeeded"`
+	Failed             int                     `json:"failed"`
+	Instances          []CleanupPolicyInstance `json:"instances"`
+	InstancesTruncated bool                    `json:"instances_truncated,omitempty"`
+}
+
+// CleanupPolicyInstance is one matching instance of a cleanup policy run.
+// For stop and clean, "success" means the operation started; the result
+// comes later with stop-completed or clean-completed.
+type CleanupPolicyInstance struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+	OwnerID   string `json:"owner_id"`
+	Result    string `json:"result"`
+	Error     string `json:"error,omitempty"`
 }
 
 // InstanceRef identifies a stack instance without coupling the hooks package to models.StackInstance.
@@ -83,7 +131,10 @@ type InstanceRef struct {
 	StackDefinitionID string `json:"stack_definition_id"`
 	Branch            string `json:"branch,omitempty"`
 	ClusterID         string `json:"cluster_id,omitempty"`
-	Status            string `json:"status,omitempty"`
+	// ClusterName is the name of the cluster of ClusterID. Omitted when the
+	// cluster is unknown (deleted, no cluster_id, or the lookup failed).
+	ClusterName string `json:"cluster_name,omitempty"`
+	Status      string `json:"status,omitempty"`
 }
 
 // DeploymentRef identifies a deployment in progress.
@@ -100,6 +151,11 @@ type ChartRef struct {
 	SourceRepoURL   string `json:"source_repo_url,omitempty"`
 	BuildPipelineID string `json:"build_pipeline_id,omitempty"`
 	Branch          string `json:"branch,omitempty"`
+	// ImageTag is the Docker-safe tag of Branch, the same value as the
+	// {{.ImageTag}} template variable in the chart values. Subscribers (for
+	// example a CI trigger gate) use it so they check and build the tag that
+	// Helm deploys.
+	ImageTag string `json:"image_tag,omitempty"`
 }
 
 // HookResponse is the JSON shape subscribers return.
@@ -118,5 +174,10 @@ type Subscription struct {
 	URL            string        `json:"url"`
 	TimeoutSeconds int           `json:"timeout_seconds,omitempty"`
 	FailurePolicy  FailurePolicy `json:"failure_policy,omitempty"`
-	Secret         string        `json:"-"`
+	// Blocking applies to post-deploy only: the deployer waits for the
+	// subscriber (progress lines go to the deploy log) before the instance
+	// becomes running. Fire and FireWithProgress skip a blocking
+	// subscription for post-deploy; FireBlocking calls it.
+	Blocking bool   `json:"blocking,omitempty"`
+	Secret   string `json:"-"`
 }

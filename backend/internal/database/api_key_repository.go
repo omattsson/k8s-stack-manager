@@ -54,6 +54,25 @@ func (r *GORMAPIKeyRepository) FindByID(userID, keyID string) (*models.APIKey, e
 	return &key, nil
 }
 
+// apiKeyIDsPerQuery bounds the IN list of one FindByIDs query.
+const apiKeyIDsPerQuery = 500
+
+// FindByIDs returns the API keys with these IDs that exist, in chunks of
+// apiKeyIDsPerQuery IDs. The WebSocket revalidation uses it to check all
+// API-key sockets with few queries.
+func (r *GORMAPIKeyRepository) FindByIDs(keyIDs []string) ([]*models.APIKey, error) {
+	var out []*models.APIKey
+	for start := 0; start < len(keyIDs); start += apiKeyIDsPerQuery {
+		end := min(start+apiKeyIDsPerQuery, len(keyIDs))
+		var keys []*models.APIKey
+		if err := r.db.Where("id IN ?", keyIDs[start:end]).Find(&keys).Error; err != nil {
+			return nil, dberrors.NewDatabaseError("find_by_ids", err)
+		}
+		out = append(out, keys...)
+	}
+	return out, nil
+}
+
 // FindByPrefix returns all API keys matching the given prefix.
 func (r *GORMAPIKeyRepository) FindByPrefix(prefix string) ([]*models.APIKey, error) {
 	var keys []*models.APIKey
@@ -87,6 +106,19 @@ func (r *GORMAPIKeyRepository) UpdateLastUsed(userID, keyID string, t time.Time)
 		return dberrors.NewDatabaseError("update_last_used", dberrors.ErrNotFound)
 	}
 	return nil
+}
+
+// DeleteAllForUser removes every API key of the user with a single
+// DELETE ... WHERE user_id = ?. Zero rows is not an error.
+func (r *GORMAPIKeyRepository) DeleteAllForUser(userID string) (int64, error) {
+	if userID == "" {
+		return 0, dberrors.NewDatabaseError("delete_all_for_user", dberrors.ErrValidation)
+	}
+	result := r.db.Where("user_id = ?", userID).Delete(&models.APIKey{})
+	if result.Error != nil {
+		return 0, dberrors.NewDatabaseError("delete_all_for_user", result.Error)
+	}
+	return result.RowsAffected, nil
 }
 
 // Delete removes an API key by user ID and key ID.

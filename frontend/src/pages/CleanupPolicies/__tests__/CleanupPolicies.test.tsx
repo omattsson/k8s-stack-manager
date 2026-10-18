@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import CleanupPolicies from '../index';
@@ -158,6 +158,9 @@ describe('CleanupPolicies Page', () => {
 
     await user.click(screen.getByRole('button', { name: /add policy/i }));
     expect(screen.getByText('Create Cleanup Policy')).toBeInTheDocument();
+    // A new policy is disabled by default, with a hint
+    expect(screen.getByRole('switch', { name: 'Enabled' })).not.toBeChecked();
+    expect(screen.getByTestId('policy-enabled-hint')).toHaveTextContent(/new policy is disabled/i);
 
     // Fill in name
     const nameInput = screen.getByLabelText(/^Name/);
@@ -172,7 +175,7 @@ describe('CleanupPolicies Page', () => {
     await user.click(screen.getByRole('button', { name: /^create$/i }));
 
     await waitFor(() => {
-      expect(cleanupPolicyService.create).toHaveBeenCalled();
+      expect(cleanupPolicyService.create).toHaveBeenCalledWith(expect.objectContaining({ enabled: false, dry_run: true }));
     });
   });
 
@@ -262,6 +265,70 @@ describe('CleanupPolicies Page', () => {
         enabled: false,
       }));
     });
+  });
+
+  const renderPage = () =>
+    render(
+      <MemoryRouter>
+        <NotificationProvider>
+          <CleanupPolicies />
+        </NotificationProvider>
+      </MemoryRouter>,
+    );
+
+  it('sends only the enabled field and shows the new state', async () => {
+    const user = userEvent.setup();
+    (cleanupPolicyService.update as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...mockPolicies[0], enabled: false,
+    });
+    renderPage();
+
+    const toggle = await screen.findByRole('switch', { name: 'Toggle Idle Cleanup' });
+    expect(toggle).toBeChecked();
+    await user.click(toggle);
+
+    await waitFor(() => {
+      expect(cleanupPolicyService.update).toHaveBeenCalledWith('p1', { enabled: false });
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('switch', { name: 'Toggle Idle Cleanup' })).not.toBeChecked();
+    });
+    expect(await screen.findByText('Policy "Idle Cleanup" is disabled')).toBeInTheDocument();
+  });
+
+  it('keeps the old state and shows the API error when the toggle fails', async () => {
+    const user = userEvent.setup();
+    (cleanupPolicyService.update as ReturnType<typeof vi.fn>).mockRejectedValue({
+      response: { status: 400, data: { error: 'name is required' } },
+    });
+    renderPage();
+
+    const toggle = await screen.findByRole('switch', { name: 'Toggle Idle Cleanup' });
+    await user.click(toggle);
+
+    expect(await screen.findByText(/Failed to toggle policy \(HTTP 400: name is required\)/)).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: 'Toggle Idle Cleanup' })).toBeChecked();
+  });
+
+  it('toggles dry run from the table with an accessible switch', async () => {
+    const user = userEvent.setup();
+    (cleanupPolicyService.update as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...mockPolicies[1], dry_run: false,
+    });
+    renderPage();
+
+    const dryRun = await screen.findByRole('switch', { name: 'Dry run TTL Enforcer' });
+    expect(dryRun).toBeChecked();
+    expect(dryRun).toBeEnabled();
+    await user.click(dryRun);
+
+    await waitFor(() => {
+      expect(cleanupPolicyService.update).toHaveBeenCalledWith('p2', { dry_run: false });
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('switch', { name: 'Dry run TTL Enforcer' })).not.toBeChecked();
+    });
+    expect(await screen.findByText('Dry run is off for policy "TTL Enforcer"')).toBeInTheDocument();
   });
 
   it('shows delete confirmation and deletes policy', async () => {
@@ -461,7 +528,7 @@ describe('CleanupPolicies Page', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('Stopped, Age > 14 days')).toBeInTheDocument();
+      expect(screen.getByText('Stopped, created more than 14 days ago')).toBeInTheDocument();
     });
   });
 
@@ -514,6 +581,74 @@ describe('CleanupPolicies Page', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/name is required/i)).toBeInTheDocument();
+    });
+  });
+
+  describe('stopped_days and age_days conditions', () => {
+    const renderPage = () =>
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <CleanupPolicies />
+          </NotificationProvider>
+        </MemoryRouter>,
+      );
+
+    it.each([
+      ['stopped_days:3', 'Stopped > 3 days'],
+      ['age_days:30', 'Created more than 30 days ago'],
+    ])('shows %s as "%s"', async (condition, label) => {
+      (cleanupPolicyService.list as ReturnType<typeof vi.fn>).mockResolvedValue([{ ...mockPolicies[0], condition }]);
+      renderPage();
+      expect(await screen.findByText(label)).toBeInTheDocument();
+    });
+
+    it('stores "Stopped for X days" as stopped_days and explains age_days vs stopped_days', async () => {
+      const user = userEvent.setup();
+      (cleanupPolicyService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (cleanupPolicyService.create as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockPolicies[0], id: 'p9' });
+      renderPage();
+      await waitFor(() => {
+        expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /add policy/i }));
+      const dialog = screen.getByRole('dialog');
+      // Help lists stopped_days with an example and explains age_days.
+      expect(within(dialog).getByText('stopped_days:3')).toBeInTheDocument();
+      expect(within(dialog).getByText(/Stopped N or more days ago \(time since the stop\)/)).toBeInTheDocument();
+      expect(within(dialog).getByText(/Created more than N days ago \(creation age, not the time since the stop\)/)).toBeInTheDocument();
+
+      await user.type(within(dialog).getByLabelText(/^Name/), 'Clean stopped');
+      await user.click(within(dialog).getByRole('combobox', { name: 'Condition' }));
+      await user.click(screen.getByRole('option', { name: 'Stopped for X days' }));
+      expect(within(dialog).getByText('Stopped > 3 days')).toBeInTheDocument();
+
+      await user.click(within(dialog).getByRole('button', { name: /^create$/i }));
+      await waitFor(() => {
+        expect(cleanupPolicyService.create).toHaveBeenCalledWith(expect.objectContaining({ condition: 'stopped_days:3' }));
+      });
+    });
+
+    it('stores "Created more than X days ago" as age_days', async () => {
+      const user = userEvent.setup();
+      (cleanupPolicyService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (cleanupPolicyService.create as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockPolicies[0], id: 'p9' });
+      renderPage();
+      await waitFor(() => {
+        expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /add policy/i }));
+      const dialog = screen.getByRole('dialog');
+      await user.type(within(dialog).getByLabelText(/^Name/), 'Old stacks');
+      await user.click(within(dialog).getByRole('combobox', { name: 'Condition' }));
+      await user.click(screen.getByRole('option', { name: 'Created more than X days ago' }));
+      await user.click(within(dialog).getByRole('button', { name: /^create$/i }));
+
+      await waitFor(() => {
+        expect(cleanupPolicyService.create).toHaveBeenCalledWith(expect.objectContaining({ condition: 'age_days:30' }));
+      });
     });
   });
 });

@@ -113,7 +113,7 @@ func (r *mockInstanceRepo) FindByCluster(clusterID string) ([]models.StackInstan
 	return result, nil
 }
 func (r *mockInstanceRepo) CountByClusterAndOwner(string, string) (int, error) { return 0, nil }
-func (r *mockInstanceRepo) ListPaged(_, _ int) ([]models.StackInstance, int, error) {
+func (r *mockInstanceRepo) ListPaged(_ models.StackInstanceFilter, _, _ int) ([]models.StackInstance, int, error) {
 	return nil, 0, nil
 }
 func (r *mockInstanceRepo) CountAll() (int, error)            { return 0, nil }
@@ -123,6 +123,9 @@ func (r *mockInstanceRepo) ExistsByDefinitionAndStatus(string, string) (bool, er
 }
 func (r *mockInstanceRepo) ListExpired() ([]*models.StackInstance, error)                        { return nil, nil }
 func (r *mockInstanceRepo) ListExpiringSoon(_ time.Duration) ([]*models.StackInstance, error) { return nil, nil }
+func (*mockInstanceRepo) MarkExpiryWarned(_ string, _, _ time.Time) (bool, error) {
+	return false, nil
+}
 func (r *mockInstanceRepo) CountByDefinitionIDs(_ []string) (map[string]int, error) { return nil, nil }
 func (r *mockInstanceRepo) CountByOwnerIDs(_ []string) (map[string]int, error)      { return nil, nil }
 func (r *mockInstanceRepo) ListIDsByDefinitionIDs(_ []string) (map[string][]string, error) {

@@ -3,6 +3,7 @@ package ttl
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -25,6 +26,7 @@ type Reaper struct {
 	auditRepo    models.AuditLogRepository
 	hub          websocket.BroadcastSender
 	stopper      InstanceStopper
+	notifier     ExpiryNotifier
 	interval     time.Duration
 	stopCh       chan struct{}
 	doneCh       chan struct{}
@@ -51,11 +53,32 @@ func NewReaper(
 	}
 }
 
+// WithNotifier sets the notifier that sends "stack.expired" to the owner and
+// the followers of an expired instance. nil sends no notification.
+func (r *Reaper) WithNotifier(n ExpiryNotifier) *Reaper {
+	r.notifier = n
+	return r
+}
+
 // Start begins the periodic expiry check loop. It blocks until Stop is called
-// or the stop channel is closed. Call this in a goroutine.
+// or the stop channel is closed. Call this in a goroutine. Start and Stop
+// work once; use Run to start the reaper again after a stop.
 func (r *Reaper) Start() {
 	defer close(r.doneCh)
+	ctx, cancel := contextUntilClosed(r.stopCh)
+	defer cancel()
+	r.Run(ctx)
+}
 
+// Stop signals the reaper to shut down and waits for it to finish.
+func (r *Reaper) Stop() {
+	r.once.Do(func() { close(r.stopCh) })
+	<-r.doneCh
+}
+
+// Run runs the periodic expiry check loop until ctx is done. It blocks. Run
+// can be called again after it returned (one call per leadership term).
+func (r *Reaper) Run(ctx context.Context) {
 	ticker := time.NewTicker(r.interval)
 	defer ticker.Stop()
 
@@ -66,7 +89,7 @@ func (r *Reaper) Start() {
 
 	for {
 		select {
-		case <-r.stopCh:
+		case <-ctx.Done():
 			slog.Info("TTL reaper stopped")
 			return
 		case <-ticker.C:
@@ -75,10 +98,18 @@ func (r *Reaper) Start() {
 	}
 }
 
-// Stop signals the reaper to shut down and waits for it to finish.
-func (r *Reaper) Stop() {
-	r.once.Do(func() { close(r.stopCh) })
-	<-r.doneCh
+// contextUntilClosed returns a context that is cancelled when stopCh is
+// closed or when cancel is called.
+func contextUntilClosed(stopCh <-chan struct{}) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		select {
+		case <-stopCh:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, cancel
 }
 
 func (r *Reaper) processExpired() {
@@ -107,21 +138,25 @@ func (r *Reaper) processExpired() {
 				// Stop initiated; async process handles status transitions.
 				slog.Info("Expired instance stop initiated via deployer", "instance_id", inst.ID)
 				r.logExpiry(inst)
+				r.notifyExpired(inst, "is being stopped")
 				rMetrics.expiredTotal.Add(ctx, 1)
 				continue
 			}
 		}
 
 		// No stopper or stop failed — mark as stopped directly.
+		now := time.Now().UTC()
 		inst.Status = models.StackStatusStopped
 		inst.ErrorMessage = "Expired (TTL)"
-		inst.UpdatedAt = time.Now().UTC()
+		inst.StoppedAt = &now
+		inst.UpdatedAt = now
 		if updateErr := r.instanceRepo.Update(inst); updateErr != nil {
 			slog.Error("Failed to update expired instance", "instance_id", inst.ID, "error", updateErr)
 			continue
 		}
 
 		r.logExpiry(inst)
+		r.notifyExpired(inst, "was stopped")
 		rMetrics.expiredTotal.Add(ctx, 1)
 
 		slog.Info("Instance expired and stopped", "instance_id", inst.ID)
@@ -130,6 +165,26 @@ func (r *Reaper) processExpired() {
 	span.SetStatus(codes.Ok, "")
 	span.End()
 	rMetrics.reapDuration.Record(ctx, time.Since(start).Seconds())
+}
+
+// notifyExpired sends "stack.expired" to the owner and the followers of the
+// instance. outcome ends the message ("is being stopped" or "was stopped").
+// An instance without a TTL had a fixed stop time (expires_at). The stop
+// itself later sends "deployment.stopped" (or "stop.error"); a user can
+// switch off each type in the notification preferences.
+func (r *Reaper) notifyExpired(inst *models.StackInstance, outcome string) {
+	if r.notifier == nil {
+		return
+	}
+	cause := "expired after its TTL"
+	if inst.TTLMinutes == 0 {
+		cause = "reached its stop time"
+	}
+	msg := fmt.Sprintf("Stack %q %s and %s", inst.Name, cause, outcome)
+	if err := r.notifier.NotifyInstance(context.Background(), models.NewNotificationTarget(inst),
+		"stack.expired", "Stack expired", msg); err != nil {
+		slog.Error("Failed to send stack expired notification", "instance_id", inst.ID, "error", err)
+	}
 }
 
 // logExpiry creates an audit log entry and broadcasts a WebSocket message for an expired instance.

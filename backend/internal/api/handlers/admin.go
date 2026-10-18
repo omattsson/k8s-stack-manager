@@ -29,11 +29,16 @@ const logKeyNamespace = "namespace"
 
 // OrphanedNamespaceResponse is the JSON representation of an orphaned namespace.
 type OrphanedNamespaceResponse struct {
-	CreatedAt      time.Time           `json:"created_at"`
-	Name           string              `json:"name"`
-	Phase          string              `json:"phase"`
+	CreatedAt time.Time `json:"created_at"`
+	Name      string    `json:"name"`
+	Phase     string    `json:"phase"`
+	// HelmReleases is always an array, never null.
 	HelmReleases   []string            `json:"helm_releases"`
 	ResourceCounts *k8s.ResourceCounts `json:"resource_counts,omitempty"`
+	// Managed is true when the namespace has the label
+	// managed-by=k8s-stack-manager. An unmanaged namespace can belong to
+	// another team or tool; deleting it requires ?confirm=<namespace>.
+	Managed bool `json:"managed"`
 }
 
 // rfc1123LabelRegex matches a valid RFC1123 DNS label: starts and ends with alnum, only alnum and dashes, max 63 chars.
@@ -58,7 +63,7 @@ func NewAdminHandler(
 
 // ListOrphanedNamespaces returns all stack-* namespaces that have no matching StackInstance.
 // @Summary      List orphaned namespaces
-// @Description  Lists all Kubernetes namespaces matching the stack-* pattern that have no corresponding stack instance in the database. Pass ?details=true to include resource counts and helm releases per namespace (expensive).
+// @Description  Lists all Kubernetes namespaces matching the stack-* pattern that have no corresponding stack instance in the database. Pass ?details=true to include resource counts and helm releases per namespace (expensive). helm_releases is always an array (empty without details, without releases or when Helm fails), never null. The managed field is true when the namespace has the label managed-by=k8s-stack-manager.
 // @Tags         Admin
 // @Produce      json
 // @Param        details  query  string  false  "Include resource counts and helm releases (true/false)"
@@ -104,6 +109,7 @@ func (h *AdminHandler) ListOrphanedNamespaces(c *gin.Context) {
 					Name:      ns.Name,
 					CreatedAt: ns.CreatedAt,
 					Phase:     ns.Phase,
+					Managed:   ns.Managed,
 				}
 
 				if includeDetails {
@@ -122,6 +128,10 @@ func (h *AdminHandler) ListOrphanedNamespaces(c *gin.Context) {
 						if relErr != nil {
 							slog.Warn("Failed to list helm releases in orphaned namespace",
 								logKeyNamespace, ns.Name, "error", relErr)
+							resp.HelmReleases = []string{}
+						} else if releases == nil {
+							// A namespace without releases: [] (never null),
+							// clients read the length.
 							resp.HelmReleases = []string{}
 						} else {
 							resp.HelmReleases = releases
@@ -153,12 +163,14 @@ func (h *AdminHandler) ListOrphanedNamespaces(c *gin.Context) {
 // DeleteOrphanedNamespace removes an orphaned namespace after verifying it has no matching instance.
 // It uninstalls all Helm releases in the namespace, then deletes the K8s namespace.
 // @Summary      Delete an orphaned namespace
-// @Description  Verifies the namespace is orphaned, uninstalls all Helm releases, and deletes the Kubernetes namespace
+// @Description  Verifies the namespace is orphaned, uninstalls all Helm releases, and deletes the Kubernetes namespace. A namespace without the label managed-by=k8s-stack-manager is deleted only when the confirm query parameter is the full namespace name.
 // @Tags         Admin
 // @Produce      json
-// @Param        namespace  path  string  true  "Namespace name"
+// @Param        namespace  path   string  true   "Namespace name"
+// @Param        confirm    query  string  false  "Full namespace name; required when the namespace is not managed by k8s-stack-manager"
 // @Success      200  {object}  map[string]string
 // @Failure      400  {object}  map[string]string
+// @Failure      404  {object}  map[string]string
 // @Failure      409  {object}  map[string]string
 // @Failure      500  {object}  map[string]string
 // @Failure      503  {object}  map[string]string
@@ -208,6 +220,26 @@ func (h *AdminHandler) DeleteOrphanedNamespace(c *gin.Context) {
 		return
 	}
 
+	// The prefix alone does not prove that this application created the
+	// namespace. Without the managed-by label, the caller must confirm with
+	// the full name.
+	found, managed, err := k8sClient.GetNamespaceManaged(ctx, namespace)
+	if err != nil {
+		slog.Error("Failed to read namespace", logKeyNamespace, namespace, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		return
+	}
+	if !found {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Namespace not found"})
+		return
+	}
+	if !managed && c.Query("confirm") != namespace {
+		c.JSON(http.StatusConflict, gin.H{
+			"error": "Namespace is not managed by k8s-stack-manager. To delete it, set confirm to the full namespace name",
+		})
+		return
+	}
+
 	// Uninstall all Helm releases in the namespace (best-effort).
 	if helmExecutor != nil {
 		releases, listErr := helmExecutor.ListReleases(ctx, namespace)
@@ -216,9 +248,12 @@ func (h *AdminHandler) DeleteOrphanedNamespace(c *gin.Context) {
 				logKeyNamespace, namespace, "error", listErr)
 		} else {
 			for _, release := range releases {
+				// NoWait: this runs inside the HTTP request, and the namespace
+				// delete below removes every object anyway.
 				output, unErr := helmExecutor.Uninstall(ctx, deployer.UninstallRequest{
 					ReleaseName: release,
 					Namespace:   namespace,
+					NoWait:      true,
 				})
 				if unErr != nil {
 					slog.Warn("Failed to uninstall release during orphan cleanup",
@@ -240,6 +275,6 @@ func (h *AdminHandler) DeleteOrphanedNamespace(c *gin.Context) {
 		return
 	}
 
-	slog.Info("Orphaned namespace deleted", logKeyNamespace, namespace)
+	slog.Info("Orphaned namespace deleted", logKeyNamespace, namespace, "managed", managed)
 	c.JSON(http.StatusOK, gin.H{"message": fmt.Sprintf("Namespace %q deleted successfully", namespace)})
 }

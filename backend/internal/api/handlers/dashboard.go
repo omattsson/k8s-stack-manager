@@ -55,6 +55,7 @@ type DashboardExpiring struct {
 	ID         string     `json:"id"`
 	Name       string     `json:"name"`
 	Namespace  string     `json:"namespace"`
+	OwnerID    string     `json:"owner_id"`
 	Status     string     `json:"status"`
 	ExpiresAt  *time.Time `json:"expires_at"`
 	TTLMinutes int        `json:"ttl_minutes"`
@@ -282,6 +283,7 @@ func (h *DashboardHandler) buildExpiringSoon() ([]DashboardExpiring, error) {
 			ID:         inst.ID,
 			Name:       inst.Name,
 			Namespace:  inst.Namespace,
+			OwnerID:    inst.OwnerID,
 			Status:     inst.Status,
 			ExpiresAt:  inst.ExpiresAt,
 			TTLMinutes: inst.TTLMinutes,

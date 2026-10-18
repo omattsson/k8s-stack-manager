@@ -5,11 +5,13 @@ import ErrorBoundary from './components/ErrorBoundary';
 import { AuthProvider } from './context/AuthContext';
 import { NotificationProvider } from './context/NotificationContext';
 import { ThemeModeProvider } from './context/ThemeContext';
+import { BrandingProvider } from './context/BrandingContext';
 
 function App() {
   return (
     <ThemeModeProvider>
-      <BrowserRouter>
+      <BrandingProvider>
+        <BrowserRouter>
           <NotificationProvider>
             <AuthProvider>
               <Layout>
@@ -19,7 +21,8 @@ function App() {
               </Layout>
             </AuthProvider>
           </NotificationProvider>
-      </BrowserRouter>
+        </BrowserRouter>
+      </BrandingProvider>
     </ThemeModeProvider>
   );
 }

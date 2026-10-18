@@ -80,6 +80,10 @@ func (m *mockDeployLogRepo) ListByInstancePaginated(_ context.Context, filters m
 	return &models.DeploymentLogResult{Data: out, Total: int64(len(out))}, nil
 }
 
+func (m *mockDeployLogRepo) ListLatestByActions(_ context.Context, _ string, _ []string, _ int) ([]models.DeploymentLog, error) {
+	return nil, nil
+}
+
 func (m *mockDeployLogRepo) GetLatestByInstance(_ context.Context, instanceID string) (*models.DeploymentLog, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -138,6 +142,46 @@ func (m *mockDeployLogRepo) SummarizeBatch(ctx context.Context, instanceIDs []st
 			return nil, err
 		}
 		result[id] = summary
+	}
+	return result, nil
+}
+
+func (m *mockDeployLogRepo) SummarizeByUsers(_ context.Context, userIDs []string) (map[string]*models.DeployLogSummary, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	result := make(map[string]*models.DeployLogSummary)
+	add := func(l models.DeploymentLog) {
+		if l.Action != models.DeployActionDeploy || l.UserID == "" || !containsString(userIDs, l.UserID) {
+			return
+		}
+		s := result[l.UserID]
+		if s == nil {
+			s = &models.DeployLogSummary{UserID: l.UserID}
+			result[l.UserID] = s
+		}
+		s.DeployCount++
+		switch l.Status {
+		case models.DeployLogSuccess:
+			s.SuccessCount++
+		case models.DeployLogError:
+			s.ErrorCount++
+		}
+		ts := l.StartedAt
+		if l.CompletedAt != nil {
+			ts = *l.CompletedAt
+		}
+		if s.LastDeployAt == nil || ts.After(*s.LastDeployAt) {
+			cp := ts
+			s.LastDeployAt = &cp
+		}
+	}
+	for _, logs := range m.items {
+		for _, l := range logs {
+			add(l)
+		}
 	}
 	return result, nil
 }
@@ -429,8 +473,8 @@ func TestGetUserStats(t *testing.T) {
 				_ = instRepo.Create(&models.StackInstance{ID: "i2", StackDefinitionID: "d1", OwnerID: "u1", Status: "stopped"})
 				_ = instRepo.Create(&models.StackInstance{ID: "i3", StackDefinitionID: "d2", OwnerID: "u2", Status: "draft"})
 
-				_ = logRepo.Create(context.Background(), &models.DeploymentLog{ID: "l1", StackInstanceID: "i1", Action: "deploy", Status: "success", StartedAt: earlier})
-				_ = logRepo.Create(context.Background(), &models.DeploymentLog{ID: "l2", StackInstanceID: "i1", Action: "deploy", Status: "success", StartedAt: now, CompletedAt: &now})
+				_ = logRepo.Create(context.Background(), &models.DeploymentLog{ID: "l1", StackInstanceID: "i1", Action: "deploy", Status: "success", StartedAt: earlier, UserID: "u1"})
+				_ = logRepo.Create(context.Background(), &models.DeploymentLog{ID: "l2", StackInstanceID: "i1", Action: "deploy", Status: "success", StartedAt: now, CompletedAt: &now, UserID: "u1"})
 				_ = logRepo.Create(context.Background(), &models.DeploymentLog{ID: "l3", StackInstanceID: "i1", Action: "stop", Status: "success", StartedAt: now})
 			},
 			expectedStatus: http.StatusOK,
@@ -458,6 +502,44 @@ func TestGetUserStats(t *testing.T) {
 				assert.Equal(t, 1, bob.InstanceCount)
 				assert.Equal(t, 0, bob.DeployCount)
 				assert.Nil(t, bob.LastActive)
+			},
+		},
+		{
+			name: "deploys count for the user who started them, also after the instance is deleted",
+			setupFn: func(
+				_ *MockStackTemplateRepository,
+				_ *MockStackDefinitionRepository,
+				instRepo *MockStackInstanceRepository,
+				logRepo *mockDeployLogRepo,
+				userRepo *MockUserRepository,
+			) {
+				_ = userRepo.Create(&models.User{ID: "u1", Username: "alice"})
+				_ = userRepo.Create(&models.User{ID: "u2", Username: "bob"})
+				// Only i1 (owned by alice) still exists; "gone" was deleted.
+				_ = instRepo.Create(&models.StackInstance{ID: "i1", StackDefinitionID: "d1", OwnerID: "u1", Status: "running"})
+
+				// Bob deploys alice's instance.
+				_ = logRepo.Create(context.Background(), &models.DeploymentLog{ID: "l1", StackInstanceID: "i1", Action: "deploy", Status: "success", StartedAt: earlier, UserID: "u2"})
+				// Alice deployed an instance that no longer exists.
+				_ = logRepo.Create(context.Background(), &models.DeploymentLog{ID: "l2", StackInstanceID: "gone", Action: "deploy", Status: "error", StartedAt: now, UserID: "u1"})
+				// A system deploy has no user.
+				_ = logRepo.Create(context.Background(), &models.DeploymentLog{ID: "l3", StackInstanceID: "i1", Action: "deploy", Status: "success", StartedAt: now})
+			},
+			expectedStatus: http.StatusOK,
+			checkBody: func(t *testing.T, stats []UserStats) {
+				t.Helper()
+				byName := map[string]UserStats{}
+				for _, s := range stats {
+					byName[s.Username] = s
+				}
+				assert.Equal(t, 1, byName["alice"].InstanceCount)
+				assert.Equal(t, 1, byName["alice"].DeployCount)
+				require.NotNil(t, byName["alice"].LastActive)
+				assert.Equal(t, now, byName["alice"].LastActive.Truncate(time.Second))
+				assert.Equal(t, 0, byName["bob"].InstanceCount)
+				assert.Equal(t, 1, byName["bob"].DeployCount)
+				require.NotNil(t, byName["bob"].LastActive)
+				assert.Equal(t, earlier, byName["bob"].LastActive.Truncate(time.Second))
 			},
 		},
 	}
@@ -607,4 +689,38 @@ func TestAnalytics_RepoErrors(t *testing.T) {
 		router.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 	})
+}
+
+func TestGetOverview_DeployLogRetention(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		days int
+	}{
+		{name: "retention set", days: 180},
+		{name: "no retention", days: 0},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			gin.SetMode(gin.TestMode)
+			r := gin.New()
+			r.Use(injectAuthContext("admin-1", "admin"))
+			h := NewAnalyticsHandler(NewMockStackTemplateRepository(), NewMockStackDefinitionRepository(),
+				NewMockStackInstanceRepository(), newMockDeployLogRepo(), NewMockUserRepository()).
+				WithDeployLogRetention(tt.days)
+			r.GET("/api/v1/analytics/overview", h.GetOverview)
+
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(http.MethodGet, "/api/v1/analytics/overview", nil)
+			r.ServeHTTP(w, req)
+
+			require.Equal(t, http.StatusOK, w.Code)
+			var stats OverviewStats
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &stats))
+			assert.Equal(t, tt.days, stats.DeployLogRetentionDays)
+		})
+	}
 }

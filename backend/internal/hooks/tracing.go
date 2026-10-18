@@ -2,7 +2,10 @@ package hooks
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -71,6 +74,10 @@ func init() {
 		"hook.dispatch_duration",
 		metric.WithDescription("Per-subscriber dispatch duration (POST + wait for response)"),
 		metric.WithUnit("s"),
+		// Hook dispatch: 10 ms to 30 min (the hook timeout maximum; pre-deploy CI gates and
+		// blocking post-deploy hooks wait minutes). The OpenTelemetry default buckets (0 to 10000) are for
+		// milliseconds: in seconds every value fell into the first bucket.
+		metric.WithExplicitBucketBoundaries(0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 300, 900, 1800),
 	)
 	if err != nil {
 		otel.Handle(err)
@@ -89,6 +96,9 @@ func init() {
 		"hook.action_invocation_duration",
 		metric.WithDescription("Action-endpoint invocation duration (POST + wait for response)"),
 		metric.WithUnit("s"),
+		// Action invocation: 50 ms to 10 min (the action timeout maximum). The OpenTelemetry default buckets (0 to 10000) are for
+		// milliseconds: in seconds every value fell into the first bucket.
+		metric.WithExplicitBucketBoundaries(0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, 600),
 	)
 	if err != nil {
 		otel.Handle(err)
@@ -162,8 +172,9 @@ func startActionSpan(ctx context.Context, action, requestID string) (context.Con
 			span.SetAttributes(attribute.Int(attrStatusCode, statusCode))
 		}
 		if err != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
+			safe := spanSafeError(err)
+			span.RecordError(safe)
+			span.SetStatus(codes.Error, safe.Error())
 		} else if outcome != outcomeSuccess {
 			span.SetStatus(codes.Error, outcome)
 		} else {
@@ -183,6 +194,49 @@ func startActionSpan(ctx context.Context, action, requestID string) (context.Con
 	}
 
 	return ctx, span, finish
+}
+
+// startActionLogSpan opens a span around one job log fetch of an action.
+// It records no metrics: clients poll the job log every few seconds, and the
+// action invocation metrics count invocations only.
+// Caller MUST call finish exactly once with the resolved outcome.
+func startActionLogSpan(ctx context.Context, action, requestID string) (context.Context, trace.Span, func(outcome string, err error, statusCode int)) {
+	ctx, span := hooksTracer.Start(ctx, "hooks.action_log",
+		trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(
+			attribute.String(attrAction, action),
+			attribute.String(attrRequestID, requestID),
+		),
+	)
+
+	finish := func(outcome string, err error, statusCode int) {
+		span.SetAttributes(attribute.String(attrOutcome, outcome))
+		if statusCode > 0 {
+			span.SetAttributes(attribute.Int(attrStatusCode, statusCode))
+		}
+		if err != nil {
+			safe := spanSafeError(err)
+			span.RecordError(safe)
+			span.SetStatus(codes.Error, safe.Error())
+		} else {
+			span.SetStatus(codes.Ok, "")
+		}
+		span.End()
+	}
+
+	return ctx, span, finish
+}
+
+// spanSafeError removes the request URL from an error before it goes into a
+// span: a *url.Error (from http.Client.Do) prints the full subscriber URL.
+// The result keeps the operation and the underlying error, for example
+// "Get: dial tcp 10.0.0.5:8080: connect: connection refused".
+func spanSafeError(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		return fmt.Errorf("%s: %w", ue.Op, errors.Unwrap(ue))
+	}
+	return err
 }
 
 // injectTraceContext adds W3C traceparent (and baggage, per the global

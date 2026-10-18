@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import AdminUsers from '../index';
@@ -10,6 +10,9 @@ vi.mock('../../../../api/client', () => ({
     create: vi.fn(),
     delete: vi.fn(),
     resetPassword: vi.fn(),
+    disable: vi.fn(),
+    enable: vi.fn(),
+    changeRole: vi.fn(),
   },
   apiKeyService: {
     list: vi.fn(),
@@ -318,6 +321,176 @@ describe('AdminUsers Page', () => {
       await waitFor(() => {
         expect(screen.queryByRole('heading', { name: 'Reset Password' })).not.toBeInTheDocument();
       });
+    });
+  });
+
+  describe('account status and sign-in method', () => {
+    const renderPage = () =>
+      render(
+        <MemoryRouter>
+          <AdminUsers />
+        </MemoryRouter>
+      );
+
+    it('shows the sign-in method and the status of each user', async () => {
+      (userService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+        mockUsers[0],
+        mockUsers[1],
+        { ...mockUsers[2], disabled: true },
+      ]);
+      renderPage();
+
+      const aliceRow = (await screen.findByText('alice')).closest('tr') as HTMLElement;
+      expect(within(aliceRow).getByText('Local')).toBeInTheDocument();
+      expect(within(aliceRow).getByText('Active')).toBeInTheDocument();
+      const bobRow = screen.getByText('oidc-bob').closest('tr') as HTMLElement;
+      expect(within(bobRow).getByText('SSO')).toBeInTheDocument();
+      expect(within(bobRow).getByText('Disabled')).toBeInTheDocument();
+    });
+
+    it('disables a user after confirmation', async () => {
+      const user = userEvent.setup();
+      (userService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockUsers);
+      (userService.disable as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+      renderPage();
+
+      await user.click(await screen.findByRole('button', { name: 'Disable user alice' }));
+      const dialog = await screen.findByRole('dialog');
+      expect(within(dialog).getByText(/cannot sign in/)).toBeInTheDocument();
+      await user.click(within(dialog).getByRole('button', { name: 'Disable' }));
+
+      await waitFor(() => {
+        expect(userService.disable).toHaveBeenCalledWith('2');
+      });
+      const aliceRow = screen.getByText('alice').closest('tr') as HTMLElement;
+      expect(await within(aliceRow).findByText('Disabled')).toBeInTheDocument();
+      expect(await within(aliceRow).findByRole('button', { name: 'Enable user alice' })).toBeInTheDocument();
+    });
+
+    it('enables a disabled user without a dialog', async () => {
+      const user = userEvent.setup();
+      (userService.list as ReturnType<typeof vi.fn>).mockResolvedValue([mockUsers[0], { ...mockUsers[1], disabled: true }]);
+      (userService.enable as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+      renderPage();
+
+      await user.click(await screen.findByRole('button', { name: 'Enable user alice' }));
+      await waitFor(() => {
+        expect(userService.enable).toHaveBeenCalledWith('2');
+      });
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      const aliceRow = screen.getByText('alice').closest('tr') as HTMLElement;
+      expect(await within(aliceRow).findByText('Active')).toBeInTheDocument();
+    });
+
+    it('shows an error when the status change fails', async () => {
+      const user = userEvent.setup();
+      (userService.list as ReturnType<typeof vi.fn>).mockResolvedValue([mockUsers[0], { ...mockUsers[1], disabled: true }]);
+      (userService.enable as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('boom'));
+      renderPage();
+
+      await user.click(await screen.findByRole('button', { name: 'Enable user alice' }));
+      expect(await screen.findByText('Failed to enable user alice')).toBeInTheDocument();
+    });
+
+    it('does not allow a status change or delete on the own row', async () => {
+      (userService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockUsers);
+      renderPage();
+
+      expect(await screen.findByRole('button', { name: 'Disable user admin' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Delete user admin' })).toBeDisabled();
+    });
+  });
+
+  it('shows the server message when a delete is refused', async () => {
+    const user = userEvent.setup();
+    (userService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockUsers);
+    (userService.delete as ReturnType<typeof vi.fn>).mockRejectedValue({
+      response: { status: 409, data: { error: 'The last enabled admin cannot be demoted, disabled or deleted' } },
+    });
+    render(
+      <MemoryRouter>
+        <AdminUsers />
+      </MemoryRouter>
+    );
+    await user.click(await screen.findByRole('button', { name: 'Delete user alice' }));
+    await user.click(screen.getByRole('button', { name: /^delete$/i }));
+    expect(await screen.findByText('The last enabled admin cannot be demoted, disabled or deleted')).toBeInTheDocument();
+  });
+
+  describe('Role change', () => {
+    /** Table row of a user (the dialog also shows the username). */
+    const rowOf = (username: string): HTMLElement =>
+      screen.getAllByText(username).map((el) => el.closest('tr')).find(Boolean) as HTMLElement;
+
+    const renderPage = async () => {
+      (userService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockUsers);
+      render(
+        <MemoryRouter>
+          <AdminUsers />
+        </MemoryRouter>
+      );
+      await screen.findByText('alice');
+    };
+
+    it('shows Edit role for local users only and disables it on the own row', async () => {
+      await renderPage();
+      expect(screen.getByRole('button', { name: 'Edit role of alice' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: 'Edit role of admin' })).toBeDisabled();
+      expect(screen.queryByRole('button', { name: 'Edit role of oidc-bob' })).not.toBeInTheDocument();
+    });
+
+    it('shows the role of an SSO user read-only with a hint', async () => {
+      await renderPage();
+      const row = rowOf('oidc-bob');
+      expect(within(row).getByText('user')).toBeInTheDocument();
+      expect(within(row).getByText('managed by SSO')).toBeInTheDocument();
+      const aliceRow = rowOf('alice');
+      expect(within(aliceRow).queryByText('managed by SSO')).not.toBeInTheDocument();
+    });
+
+    it('changes the role after confirmation and updates the row', async () => {
+      const user = userEvent.setup();
+      (userService.changeRole as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: '2', old_role: 'devops', new_role: 'admin', changed: true, message: 'Role changed',
+      });
+      await renderPage();
+
+      await user.click(screen.getByRole('button', { name: 'Edit role of alice' }));
+      expect(screen.getByRole('heading', { name: 'Edit Role' })).toBeInTheDocument();
+      const submit = screen.getByRole('button', { name: 'Change Role' });
+      expect(submit).toBeDisabled(); // unchanged role
+
+      await user.click(screen.getByRole('combobox', { name: /role/i }));
+      await user.click(screen.getByRole('option', { name: 'admin' }));
+      expect(screen.getByText(/must sign in again/i)).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Change Role' }));
+
+      await waitFor(() => {
+        expect(userService.changeRole).toHaveBeenCalledWith('2', 'admin');
+      });
+      await waitFor(() => {
+        expect(screen.queryByRole('heading', { name: 'Edit Role' })).not.toBeInTheDocument();
+      });
+      const aliceRow = rowOf('alice');
+      expect(within(aliceRow).getByText('admin')).toBeInTheDocument();
+    });
+
+    it('shows the server message when the change is refused', async () => {
+      const user = userEvent.setup();
+      (userService.changeRole as ReturnType<typeof vi.fn>).mockRejectedValue({
+        response: { status: 409, data: { error: 'Cannot remove the admin role from the last enabled admin' } },
+      });
+      await renderPage();
+
+      await user.click(screen.getByRole('button', { name: 'Edit role of alice' }));
+      await user.click(screen.getByRole('combobox', { name: /role/i }));
+      await user.click(screen.getByRole('option', { name: 'user' }));
+      await user.click(screen.getByRole('button', { name: 'Change Role' }));
+
+      expect(await screen.findByText('Cannot remove the admin role from the last enabled admin')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Edit Role' })).toBeInTheDocument();
+      const aliceRow = rowOf('alice');
+      expect(within(aliceRow).getByText('devops')).toBeInTheDocument();
     });
   });
 });

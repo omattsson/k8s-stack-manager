@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -66,6 +67,45 @@ func (m *mockInstanceRepo) Update(inst *models.StackInstance) error {
 	}
 	cp := *inst
 	m.items[inst.ID] = &cp
+	return nil
+}
+
+// MarkCleanStart implements models.CleanStartMarker with the same
+// conditional semantics as the GORM repository.
+func (m *mockInstanceRepo) MarkCleanStart(id string, fromStatuses []string, deleteAfterClean bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	conflict := models.ErrDeleteConflict
+	if !deleteAfterClean {
+		conflict = models.ErrCleanConflict
+	}
+	inst, ok := m.items[id]
+	if !ok || (!deleteAfterClean && inst.DeleteAfterClean) {
+		return conflict
+	}
+	for _, st := range fromStatuses {
+		if inst.Status == st {
+			inst.Status = models.StackStatusCleaning
+			inst.ErrorMessage = ""
+			if deleteAfterClean {
+				inst.DeleteAfterClean = true
+			}
+			return nil
+		}
+	}
+	return conflict
+}
+
+// ClearDeleteAfterClean implements models.CleanStartMarker.
+func (m *mockInstanceRepo) ClearDeleteAfterClean(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if inst, ok := m.items[id]; ok {
+		inst.DeleteAfterClean = false
+	}
 	return nil
 }
 
@@ -135,7 +175,7 @@ func (m *mockInstanceRepo) CountByClusterAndOwner(clusterID, ownerID string) (in
 	return count, nil
 }
 
-func (m *mockInstanceRepo) ListPaged(_, _ int) ([]models.StackInstance, int, error) {
+func (m *mockInstanceRepo) ListPaged(_ models.StackInstanceFilter, _, _ int) ([]models.StackInstance, int, error) {
 	return nil, 0, nil
 }
 func (m *mockInstanceRepo) CountAll() (int, error)                                  { return 0, nil }
@@ -158,6 +198,9 @@ func (m *mockInstanceRepo) ListExpired() ([]*models.StackInstance, error) {
 
 func (m *mockInstanceRepo) ListExpiringSoon(_ time.Duration) ([]*models.StackInstance, error) {
 	return nil, nil
+}
+func (*mockInstanceRepo) MarkExpiryWarned(_ string, _, _ time.Time) (bool, error) {
+	return false, nil
 }
 func (m *mockInstanceRepo) ListByStatus(_ string, _ int) ([]*models.StackInstance, error) {
 	return nil, nil
@@ -212,8 +255,31 @@ func (m *mockDeployLogRepo) Update(_ context.Context, log *models.DeploymentLog)
 	if m.err != nil {
 		return m.err
 	}
+	// As the GORM repository: only a running log is written.
+	if cur, ok := m.items[log.ID]; !ok || cur.Status != models.DeployLogRunning {
+		return models.ErrDeployLogNotRunning
+	}
 	cp := *log
 	m.items[log.ID] = &cp
+	return nil
+}
+
+// ExtendDeadline implements models.DeploymentLogDeadlineExtender with the
+// rules of the GORM repository.
+func (m *mockDeployLogRepo) ExtendDeadline(_ context.Context, id string, deadline time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	cur, ok := m.items[id]
+	if !ok || cur.Status != models.DeployLogRunning {
+		return models.ErrDeployLogNotRunning
+	}
+	if cur.DeadlineAt == nil || cur.DeadlineAt.Before(deadline) {
+		d := deadline
+		cur.DeadlineAt = &d
+	}
 	return nil
 }
 
@@ -239,6 +305,28 @@ func (m *mockDeployLogRepo) ListByInstancePaginated(_ context.Context, filters m
 		}
 	}
 	return &models.DeploymentLogResult{Data: out, Total: int64(len(out))}, nil
+}
+
+func (m *mockDeployLogRepo) ListLatestByActions(_ context.Context, instanceID string, actions []string, limit int) ([]models.DeploymentLog, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var out []models.DeploymentLog
+	for _, l := range m.items {
+		if l.StackInstanceID != instanceID {
+			continue
+		}
+		for _, a := range actions {
+			if l.Action == a {
+				out = append(out, *l)
+				break
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.After(out[j].StartedAt) })
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 
 func (m *mockDeployLogRepo) GetLatestByInstance(_ context.Context, instanceID string) (*models.DeploymentLog, error) {
@@ -291,6 +379,10 @@ func (m *mockDeployLogRepo) SummarizeBatch(ctx context.Context, instanceIDs []st
 		result[id] = summary
 	}
 	return result, nil
+}
+
+func (m *mockDeployLogRepo) SummarizeByUsers(_ context.Context, _ []string) (map[string]*models.DeployLogSummary, error) {
+	return map[string]*models.DeployLogSummary{}, nil
 }
 
 func (m *mockDeployLogRepo) CountByAction(_ context.Context, _ string) (int, error) {
@@ -494,6 +586,7 @@ func TestManager_Deploy_CreatesLogAndUpdatesStatus(t *testing.T) {
 		Instance:   inst,
 		Definition: &models.StackDefinition{ID: "def-1", Name: "test-def"},
 		Charts:     []ChartDeployInfo{}, // No charts = quick finish.
+		UserID:     "user-2",
 	}
 
 	logID, err := mgr.Deploy(context.Background(), req)
@@ -506,6 +599,7 @@ func TestManager_Deploy_CreatesLogAndUpdatesStatus(t *testing.T) {
 	assert.Equal(t, models.DeployActionDeploy, log.Action)
 	assert.Equal(t, models.DeployLogRunning, log.Status)
 	assert.Equal(t, inst.ID, log.StackInstanceID)
+	assert.Equal(t, "user-2", log.UserID, "the log records who started the deploy")
 
 	// Verify instance status was updated to deploying.
 	updated, err := instanceRepo.FindByID(inst.ID)
@@ -1489,6 +1583,7 @@ type mockHelmExecutor struct {
 	uninstallFunc  func(ctx context.Context, req UninstallRequest) (string, error)
 	historyFunc    func(ctx context.Context, releaseName, namespace string, max int) ([]ReleaseRevision, error)
 	rollbackFunc   func(ctx context.Context, releaseName, namespace string, revision int) (string, error)
+	getValuesFunc  func(ctx context.Context, releaseName, namespace string, revision int) (string, error)
 	installCalls   []InstallRequest
 	uninstallCalls []UninstallRequest
 	timeout        time.Duration
@@ -1536,7 +1631,10 @@ func (m *mockHelmExecutor) Rollback(ctx context.Context, releaseName, namespace 
 	return "rolled back " + releaseName, nil
 }
 
-func (m *mockHelmExecutor) GetValues(_ context.Context, _ string, _ string, _ int) (string, error) {
+func (m *mockHelmExecutor) GetValues(ctx context.Context, releaseName, namespace string, revision int) (string, error) {
+	if m.getValuesFunc != nil {
+		return m.getValuesFunc(ctx, releaseName, namespace, revision)
+	}
 	return "", nil
 }
 
@@ -1621,7 +1719,7 @@ func TestManager_Deploy_PartialDeploy_KeepsSuccessfulCharts(t *testing.T) {
 
 	finalLog, err := logRepo.FindByID(context.Background(), logID)
 	assert.NoError(t, err)
-	assert.Equal(t, models.DeployLogError, finalLog.Status)
+	assert.Equal(t, models.DeployLogPartial, finalLog.Status, "the log status matches the instance status")
 	assert.Contains(t, finalLog.Output, "ERROR:")
 	// No rollback — successful charts are preserved.
 	assert.NotContains(t, finalLog.Output, "Rolling back")
@@ -1691,7 +1789,7 @@ func TestManager_Deploy_PartialSuccess_ContinuesOnFailure(t *testing.T) {
 
 	finalLog, err := logRepo.FindByID(context.Background(), logID)
 	assert.NoError(t, err)
-	assert.Equal(t, models.DeployLogError, finalLog.Status)
+	assert.Equal(t, models.DeployLogPartial, finalLog.Status, "the log status matches the instance status")
 	assert.Contains(t, finalLog.Output, "ERROR:")
 	// No rollback — successful charts are kept.
 	assert.NotContains(t, finalLog.Output, "Rolling back")
@@ -1764,6 +1862,7 @@ func TestManager_Clean_Success(t *testing.T) {
 	assert.Equal(t, models.StackStatusDraft, final.Status)
 	assert.Empty(t, final.ErrorMessage)
 	assert.Nil(t, final.LastDeployedAt)
+	assert.NotNil(t, final.CleanedAt, "a successful clean records cleaned_at (cleanup condition cleaned_days)")
 
 	// Verify log was updated to success.
 	finalLog, err := logRepo.FindByID(context.Background(), logID)
@@ -2214,6 +2313,13 @@ func (m *mockQuotaOverrideRepo) Delete(_ context.Context, _ string) error {
 	return nil
 }
 
+func (m *mockQuotaOverrideRepo) ListByInstanceIDs(_ context.Context, _ []string) ([]models.InstanceQuotaOverride, error) {
+	if m.err != nil || m.override == nil {
+		return nil, m.err
+	}
+	return []models.InstanceQuotaOverride{*m.override}, nil
+}
+
 func TestManager_ApplyNamespaceQuotas_SkipsWhenEmpty(t *testing.T) {
 	t.Parallel()
 
@@ -2501,6 +2607,7 @@ func TestManager_FinalizeClean_Success(t *testing.T) {
 	assert.Equal(t, models.StackStatusDraft, final.Status)
 	assert.Empty(t, final.ErrorMessage)
 	assert.Nil(t, final.LastDeployedAt)
+	assert.NotNil(t, final.CleanedAt, "a successful clean records cleaned_at (cleanup condition cleaned_days)")
 
 	finalLog, err := logRepo.FindByID(context.Background(), deployLog.ID)
 	assert.NoError(t, err)
@@ -3980,3 +4087,33 @@ func TestFinalizeDeploy_ReadinessWarning_AttachesHookMetadata(t *testing.T) {
 var _ StreamingHelmExecutor = (*streamingMockHelmExecutor)(nil)
 
 func (*mockInstanceRepo) CountByStatuses(statuses []string) (int, error) { return 0, nil }
+
+func TestUninstallWaitTimeout(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		left time.Duration // time left in the context; 0 means no deadline
+		min  time.Duration
+		max  time.Duration
+	}{
+		{name: "no deadline", left: 0, min: defaultUninstallTimeout, max: defaultUninstallTimeout},
+		{name: "long budget is capped", left: 30 * time.Minute, min: defaultUninstallTimeout, max: defaultUninstallTimeout},
+		{name: "short budget keeps the margin", left: 2 * time.Minute, min: 2*time.Minute - uninstallWaitMargin - 2*time.Second, max: 2*time.Minute - uninstallWaitMargin},
+		{name: "almost no time left", left: 5 * time.Second, min: time.Second, max: time.Second},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			if tt.left > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, tt.left)
+				defer cancel()
+			}
+			got := uninstallWaitTimeout(ctx)
+			assert.GreaterOrEqual(t, got, tt.min)
+			assert.LessOrEqual(t, got, tt.max)
+		})
+	}
+}

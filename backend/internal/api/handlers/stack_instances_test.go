@@ -6,10 +6,13 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"backend/internal/cluster"
 	"backend/internal/database"
+	"backend/internal/deployer"
 	"backend/internal/helm"
 	"backend/internal/models"
 
@@ -591,7 +594,29 @@ func TestCreateInstanceNamespaceConflict(t *testing.T) {
 func TestCloneInstanceNamespaceConflict(t *testing.T) {
 	t.Parallel()
 
-	t.Run("clone with duplicate namespace returns 409", func(t *testing.T) {
+	t.Run("generated name skips a taken namespace", func(t *testing.T) {
+		t.Parallel()
+		instRepo := NewMockStackInstanceRepository()
+		seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusRunning)
+		require.NoError(t, instRepo.Create(&models.StackInstance{
+			ID: "i-taken", StackDefinitionID: "d1", Name: "taken",
+			Namespace: "stack-stack-a-copy-bob", OwnerID: "uid-other", Branch: "master",
+			Status: models.StackStatusRunning,
+		}))
+
+		router := setupInstanceRouter(instRepo, NewMockValueOverrideRepository(), NewMockStackDefinitionRepository(), NewMockChartConfigRepository(), NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(), "uid-2", "bob", "user")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-instances/i1/clone", nil)
+		router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+		var resp models.StackInstance
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, "stack-a-copy-2", resp.Name)
+		assert.Equal(t, "stack-stack-a-copy-2-bob", resp.Namespace)
+	})
+
+	t.Run("given name with duplicate namespace returns 409", func(t *testing.T) {
 		t.Parallel()
 		instRepo := NewMockStackInstanceRepository()
 		overrideRepo := NewMockValueOverrideRepository()
@@ -604,7 +629,7 @@ func TestCloneInstanceNamespaceConflict(t *testing.T) {
 			ID:                "i-taken",
 			StackDefinitionID: "d1",
 			Name:              "taken",
-			Namespace:         "stack-stack-a-copy-bob",
+			Namespace:         "stack-my-clone-bob",
 			OwnerID:           "uid-other",
 			Branch:            "master",
 			Status:            models.StackStatusRunning,
@@ -613,7 +638,8 @@ func TestCloneInstanceNamespaceConflict(t *testing.T) {
 
 		router := setupInstanceRouter(instRepo, overrideRepo, NewMockStackDefinitionRepository(), NewMockChartConfigRepository(), NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(), "uid-2", "bob", "user")
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-instances/i1/clone", nil)
+		req, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-instances/i1/clone", bytes.NewBufferString(`{"name":"my-clone"}`))
+		req.Header.Set("Content-Type", "application/json")
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusConflict, w.Code)
@@ -1336,4 +1362,44 @@ func TestDeployPreview_SubstitutesImageTag(t *testing.T) {
 	want := helm.SanitizeImageTag(inst.Branch)
 	require.Contains(t, pending, "tag: "+want,
 		"expected sanitized image tag %q in rendered values:\n%s", want, pending)
+}
+
+func TestDeleteInstance_DraftBroadcastsInstanceDeleted(t *testing.T) {
+	t.Parallel()
+
+	instRepo := NewMockStackInstanceRepository()
+	seedInstance(t, instRepo, "i-draft", "stack-draft", "d1", "uid-1", models.StackStatusDraft)
+	hub := &MockBroadcastSender{}
+	testRegistry := cluster.NewRegistryForTest("test-cluster", nil, &noopHelmExecutor{})
+	mgr := deployer.NewManager(deployer.ManagerConfig{
+		Registry:      testRegistry,
+		InstanceRepo:  instRepo,
+		DeployLogRepo: NewMockDeploymentLogRepository(),
+		Hub:           hub,
+		MaxConcurrent: 1,
+	})
+	router := setupBulkRouter(t, instRepo, NewMockValueOverrideRepository(), NewMockStackDefinitionRepository(),
+		NewMockChartConfigRepository(), NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
+		mgr, NewMockDeploymentLogRepository(), "uid-1", "alice", "user")
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-instances/bulk/delete",
+		strings.NewReader(`{"instance_ids":["i-draft"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	found := false
+	for _, msg := range hub.Messages() {
+		var envelope struct {
+			Type    string `json:"type"`
+			Payload struct {
+				InstanceID string `json:"instance_id"`
+			} `json:"payload"`
+		}
+		if json.Unmarshal(msg, &envelope) == nil && envelope.Type == "instance.deleted" && envelope.Payload.InstanceID == "i-draft" {
+			found = true
+		}
+	}
+	assert.True(t, found, "a direct delete must broadcast instance.deleted")
 }

@@ -11,11 +11,30 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
+
+// helmTerminateGrace is how long a helm process gets after SIGTERM before it is
+// killed. On SIGTERM helm marks an in-flight install, upgrade or rollback as
+// failed. A SIGKILL leaves the release in pending-*, which blocks the next
+// operation with "another operation (install/upgrade/rollback) is in progress".
+const helmTerminateGrace = 30 * time.Second
+
+// newHelmCommand returns an exec.Cmd that stops helm with SIGTERM (not SIGKILL)
+// when ctx is done, and kills it only after helmTerminateGrace.
+func newHelmCommand(ctx context.Context, binaryPath string, args []string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, binaryPath, args...) //nolint:gosec // G204: binaryPath is admin-configured (not user input); all positional args are validated by validatePositionalArg to prevent argument injection; flag values are safe (consumed by pflag, not parsed as flags); exec.Command uses argv directly (no shell).
+	cmd.Cancel = func() error {
+		return cmd.Process.Signal(syscall.SIGTERM)
+	}
+	cmd.WaitDelay = helmTerminateGrace
+	return cmd
+}
 
 // errArgDashPrefix is returned when an argument starts with a dash, which could
 // cause the helm CLI to interpret it as a flag (argument injection).
@@ -48,12 +67,29 @@ type InstallRequest struct {
 	ValuesFile  string
 	Namespace   string
 	SkipCRDs    bool // skip CRD installation (avoids conflicts when CRDs already exist)
+	// NamespaceReady is true when the deployer already created the namespace
+	// (k8s.Client.EnsureNamespace, with its labels). Helm then gets no
+	// --create-namespace: Helm always sends a namespace create with that flag,
+	// and an admission policy that requires the managed-by label refuses it
+	// before the API server answers "already exists".
+	NamespaceReady bool
 }
+
+// defaultUninstallTimeout limits the --wait of one helm uninstall when the
+// request sets no Timeout.
+const defaultUninstallTimeout = 5 * time.Minute
 
 // UninstallRequest contains the parameters for a helm uninstall operation.
 type UninstallRequest struct {
 	ReleaseName string
 	Namespace   string
+	// Timeout limits the wait until Kubernetes has deleted the objects of the
+	// release (helm uninstall --wait --timeout). Zero means
+	// defaultUninstallTimeout.
+	Timeout time.Duration
+	// NoWait skips --wait: for a clean (the namespace delete removes every
+	// object anyway) and for the orphaned-namespace cleanup (an HTTP request).
+	NoWait bool
 }
 
 // ReleaseStatus holds parsed output from helm status.
@@ -89,7 +125,8 @@ func (h *HelmClient) Timeout() time.Duration {
 	return h.timeout
 }
 
-// Install runs: helm upgrade --install <release> <chart> -f <valuesFile> -n <namespace> --create-namespace --timeout <timeout>
+// Install runs: helm upgrade --install <release> <chart> -f <valuesFile> -n <namespace> [--create-namespace] --timeout <timeout>
+// (--create-namespace only when req.NamespaceReady is false).
 // Returns combined stdout+stderr output and error.
 func (h *HelmClient) Install(ctx context.Context, req InstallRequest) (string, error) {
 	args, err := h.buildInstallArgs(req)
@@ -118,9 +155,11 @@ func (h *HelmClient) buildInstallArgs(req InstallRequest) ([]string, error) {
 		req.ReleaseName,
 		req.ChartPath,
 		"-n", req.Namespace,
-		"--create-namespace",
-		"--timeout", h.timeout.String(),
 	}
+	if !req.NamespaceReady {
+		args = append(args, "--create-namespace")
+	}
+	args = append(args, "--timeout", h.timeout.String())
 	if req.RepoURL != "" {
 		args = append(args, "--repo", req.RepoURL)
 	}
@@ -150,11 +189,18 @@ func (h *HelmClient) buildUninstallArgs(req UninstallRequest) ([]string, error) 
 	if err := validatePositionalArg("release name", req.ReleaseName); err != nil {
 		return nil, err
 	}
-	return []string{
-		"uninstall",
-		req.ReleaseName,
-		"-n", req.Namespace,
-	}, nil
+	args := []string{"uninstall", req.ReleaseName, "-n", req.Namespace}
+	if req.NoWait {
+		return args, nil
+	}
+	timeout := req.Timeout
+	if timeout <= 0 {
+		timeout = defaultUninstallTimeout
+	}
+	// --wait: return only when Kubernetes has deleted the objects of the
+	// release. Without it, a stop ended while a PVC was still Terminating, and
+	// a deploy right after the stop missed that PVC (issue #563).
+	return append(args, "--wait", "--timeout", timeout.String()), nil
 }
 
 // Status runs: helm status <release> -n <namespace> -o json
@@ -198,7 +244,7 @@ func (h *HelmClient) ListReleases(ctx context.Context, namespace string) ([]stri
 		return nil, fmt.Errorf("helm list: %w", err)
 	}
 
-	var releases []string
+	releases := []string{}
 	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
 		line = strings.TrimSpace(line)
 		if line != "" {
@@ -311,7 +357,7 @@ func (h *HelmClient) RegistryLogin(ctx context.Context, host, username, password
 
 	slog.Info("executing helm registry login", "host", host, "username", username)
 
-	cmd := exec.CommandContext(ctx, h.binaryPath, args...) //nolint:gosec // G204: same justification as run()
+	cmd := newHelmCommand(ctx, h.binaryPath, args)
 	cmd.Stdin = strings.NewReader(password)
 
 	var combined bytes.Buffer
@@ -327,20 +373,33 @@ func (h *HelmClient) RegistryLogin(ctx context.Context, host, username, password
 	return nil
 }
 
-// run executes a helm command with the given arguments and returns the combined output.
-func (h *HelmClient) run(ctx context.Context, args []string) (string, error) {
-	// Prepend --kubeconfig flag so helm always uses the configured kubeconfig
-	// regardless of the process environment.
+// command returns the helm command for args with the kubeconfig of the
+// cluster. With a kubeconfig path, it prepends --kubeconfig, so helm always
+// uses that file regardless of the process environment. Without one (an
+// in-cluster cluster), it sets KUBECONFIG to an empty file: helm then reads
+// neither $KUBECONFIG nor ~/.kube/config and uses the service account of the
+// pod, like k8s.NewClient(""). Outside a pod it cannot reach any cluster
+// (#582).
+func (h *HelmClient) command(ctx context.Context, args []string) (*exec.Cmd, []string) {
 	if h.kubeconfig != "" {
 		args = append([]string{"--kubeconfig", h.kubeconfig}, args...)
 	}
+	cmd := newHelmCommand(ctx, h.binaryPath, args)
+	if h.kubeconfig == "" {
+		// The last value of a duplicate key wins (os/exec).
+		cmd.Env = append(os.Environ(), "KUBECONFIG="+os.DevNull)
+	}
+	return cmd, args
+}
+
+// run executes a helm command with the given arguments and returns the combined output.
+func (h *HelmClient) run(ctx context.Context, args []string) (string, error) {
+	cmd, args := h.command(ctx, args)
 
 	slog.Info("executing helm command",
 		"binary", h.binaryPath,
 		"args", args,
 	)
-
-	cmd := exec.CommandContext(ctx, h.binaryPath, args...) //nolint:gosec // G204: binaryPath is admin-configured (not user input); all positional args are validated by validatePositionalArg to prevent argument injection; flag values are safe (consumed by pflag, not parsed as flags); exec.Command uses argv directly (no shell).
 
 	var combined bytes.Buffer
 	cmd.Stdout = &combined
@@ -364,17 +423,13 @@ const maxScannerLineSize = 256 * 1024
 // Stdout and stderr are merged via io.MultiReader into a single scanner to
 // preserve deterministic line ordering (same approach as the non-streaming run()).
 func (h *HelmClient) runStreaming(ctx context.Context, args []string, onLine func(string)) (string, error) {
-	if h.kubeconfig != "" {
-		args = append([]string{"--kubeconfig", h.kubeconfig}, args...)
-	}
+	cmd, args := h.command(ctx, args)
 
 	slog.Info("executing helm command",
 		"binary", h.binaryPath,
 		"args", args,
 		"streaming", true,
 	)
-
-	cmd := exec.CommandContext(ctx, h.binaryPath, args...) //nolint:gosec // G204: same justification as run()
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

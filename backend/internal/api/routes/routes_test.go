@@ -40,15 +40,26 @@ func (s *stubUserRepo) Delete(_ string) error                                 { 
 func (s *stubUserRepo) List() ([]models.User, error)                          { return nil, nil }
 func (s *stubUserRepo) Count() (int64, error)                                 { return 0, nil }
 func (s *stubUserRepo) ListByRoles(_ []string) ([]models.User, error)         { return nil, nil }
+func (s *stubUserRepo) UpdateRole(_, _, _ string) (string, error)             { return "", nil }
+func (s *stubUserRepo) SetDisabled(_, _ string, _ bool) error                 { return nil }
+func (s *stubUserRepo) DeleteGuarded(_, _ string) error                       { return nil }
+func (s *stubUserRepo) UpdatePassword(_, _ string) error                      { return nil }
+func (s *stubUserRepo) UpdateProfile(_ string, _ models.UserProfileUpdate) error {
+	return nil
+}
 
 type stubAPIKeyRepo struct{}
 
 func (s *stubAPIKeyRepo) Create(_ *models.APIKey) error                   { return nil }
 func (s *stubAPIKeyRepo) FindByID(_, _ string) (*models.APIKey, error)    { return nil, nil }
 func (s *stubAPIKeyRepo) FindByPrefix(_ string) ([]*models.APIKey, error) { return nil, nil }
+func (s *stubAPIKeyRepo) FindByIDs(_ []string) ([]*models.APIKey, error)  { return nil, nil }
 func (s *stubAPIKeyRepo) ListByUser(_ string) ([]*models.APIKey, error)   { return nil, nil }
 func (s *stubAPIKeyRepo) UpdateLastUsed(_, _ string, _ time.Time) error   { return nil }
 func (s *stubAPIKeyRepo) Delete(_, _ string) error                        { return nil }
+func (s *stubAPIKeyRepo) DeleteAllForUser(_ string) (int64, error) {
+	return 0, nil
+}
 
 type stubAuditLogger struct{}
 
@@ -81,7 +92,6 @@ func setupMinimalRouter(t *testing.T) (*gin.Engine, *RateLimiters) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	mockRepo := handlers.NewMockRepository()
 
 	healthChecker := health.New()
 	healthChecker.SetReady(true)
@@ -91,7 +101,6 @@ func setupMinimalRouter(t *testing.T) (*gin.Engine, *RateLimiters) {
 	t.Cleanup(func() { hub.Shutdown() })
 
 	rl := SetupRoutes(router, Deps{
-		Repository:    mockRepo,
 		HealthChecker: healthChecker,
 		Config:        testConfig(),
 		Hub:           hub,
@@ -177,7 +186,6 @@ func TestSetupRoutes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	router := gin.Default()
-	mockRepo := handlers.NewMockRepository()
 
 	healthChecker := health.New()
 	healthChecker.SetReady(true)
@@ -197,7 +205,6 @@ func TestSetupRoutes(t *testing.T) {
 	defer hub.Shutdown()
 
 	rl := SetupRoutes(router, Deps{
-		Repository:    mockRepo,
 		HealthChecker: healthChecker,
 		Config:        cfg,
 		Hub:           hub,
@@ -301,7 +308,6 @@ func TestSetupRoutes_AllRouteGroupsRegistered(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	mockRepo := handlers.NewMockRepository()
 
 	healthChecker := health.New()
 	healthChecker.SetReady(true)
@@ -316,7 +322,6 @@ func TestSetupRoutes_AllRouteGroupsRegistered(t *testing.T) {
 	authHandler := handlers.NewAuthHandler(&stubUserRepo{}, &cfg.Auth, &cfg.OIDC)
 
 	rl := SetupRoutes(router, Deps{
-		Repository:    mockRepo,
 		HealthChecker: healthChecker,
 		Config:        cfg,
 		Hub:           hub,
@@ -343,11 +348,7 @@ func TestSetupRoutes_AllRouteGroupsRegistered(t *testing.T) {
 		{"GET", "/health/live"},
 		{"GET", "/health/ready"},
 		{"GET", "/api/v1/ping"},
-		{"GET", "/api/v1/items"},
-		{"POST", "/api/v1/items"},
-		{"GET", "/api/v1/items/:id"},
-		{"PUT", "/api/v1/items/:id"},
-		{"DELETE", "/api/v1/items/:id"},
+		{"GET", "/api/v1/ui-config"},
 		{"POST", "/api/v1/auth/login"},
 		{"POST", "/api/v1/auth/register"},
 		{"GET", "/api/v1/auth/me"},
@@ -364,7 +365,6 @@ func TestSetupRoutes_ProtectedRoutesReturn401(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	mockRepo := handlers.NewMockRepository()
 
 	healthChecker := health.New()
 	healthChecker.SetReady(true)
@@ -377,7 +377,6 @@ func TestSetupRoutes_ProtectedRoutesReturn401(t *testing.T) {
 	authHandler := handlers.NewAuthHandler(&stubUserRepo{}, &cfg.Auth, &cfg.OIDC)
 
 	rl := SetupRoutes(router, Deps{
-		Repository:    mockRepo,
 		HealthChecker: healthChecker,
 		Config:        cfg,
 		Hub:           hub,
@@ -409,7 +408,6 @@ func TestSetupRoutes_LoginIsPublic(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	mockRepo := handlers.NewMockRepository()
 
 	healthChecker := health.New()
 	healthChecker.SetReady(true)
@@ -422,7 +420,6 @@ func TestSetupRoutes_LoginIsPublic(t *testing.T) {
 	authHandler := handlers.NewAuthHandler(&stubUserRepo{}, &cfg.Auth, &cfg.OIDC)
 
 	rl := SetupRoutes(router, Deps{
-		Repository:    mockRepo,
 		HealthChecker: healthChecker,
 		Config:        cfg,
 		Hub:           hub,
@@ -449,7 +446,6 @@ func TestSetupRoutes_OIDCDisabled(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	mockRepo := handlers.NewMockRepository()
 
 	healthChecker := health.New()
 	healthChecker.SetReady(true)
@@ -463,7 +459,6 @@ func TestSetupRoutes_OIDCDisabled(t *testing.T) {
 
 	// OIDCHandler is nil (OIDC disabled), so the fallback config endpoint should be registered.
 	rl := SetupRoutes(router, Deps{
-		Repository:    mockRepo,
 		HealthChecker: healthChecker,
 		Config:        cfg,
 		Hub:           hub,
@@ -492,7 +487,6 @@ func TestSetupRoutes_MiddlewareOrdering(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	mockRepo := handlers.NewMockRepository()
 
 	healthChecker := health.New()
 	healthChecker.SetReady(true)
@@ -502,7 +496,6 @@ func TestSetupRoutes_MiddlewareOrdering(t *testing.T) {
 	t.Cleanup(func() { hub.Shutdown() })
 
 	rl := SetupRoutes(router, Deps{
-		Repository:    mockRepo,
 		HealthChecker: healthChecker,
 		Config:        testConfig(),
 		Hub:           hub,
@@ -526,7 +519,6 @@ func TestSetupRoutes_MaxBodySizeEnforced(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	mockRepo := handlers.NewMockRepository()
 
 	healthChecker := health.New()
 	healthChecker.SetReady(true)
@@ -536,25 +528,31 @@ func TestSetupRoutes_MaxBodySizeEnforced(t *testing.T) {
 	t.Cleanup(func() { hub.Shutdown() })
 
 	rl := SetupRoutes(router, Deps{
-		Repository:    mockRepo,
 		HealthChecker: healthChecker,
 		Config:        testConfig(),
 		Hub:           hub,
 	})
 	t.Cleanup(func() { rl.Stop() })
 
+	// A test route after SetupRoutes gets the global middleware (MaxBodySize).
+	router.POST("/api/v1/test-body", func(c *gin.Context) {
+		if _, err := io.ReadAll(c.Request.Body); err != nil {
+			c.Status(http.StatusRequestEntityTooLarge)
+			return
+		}
+		c.Status(http.StatusOK)
+	})
+
 	// Create a body larger than 1 MB.
 	largeBody := strings.Repeat("a", 1<<20+1)
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodPost, "/api/v1/items", strings.NewReader(largeBody))
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/test-body", strings.NewReader(largeBody))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(w, req)
 
-	// The handler reads the limited body and gets a read error which results
-	// in either 400 (bad JSON) or 413 (body too large). Both indicate the
-	// MaxBodySize middleware is working -- the request is NOT processed.
-	assert.Contains(t, []int{http.StatusBadRequest, http.StatusRequestEntityTooLarge}, w.Code,
-		"oversized body should be rejected")
+	// Reading the limited body fails: the MaxBodySize middleware works and
+	// the request is NOT processed.
+	assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code, "oversized body should be rejected")
 }
 
 func TestSetupRoutes_WithAllHandlersRegistersFullAPI(t *testing.T) {
@@ -562,7 +560,6 @@ func TestSetupRoutes_WithAllHandlersRegistersFullAPI(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	mockRepo := handlers.NewMockRepository()
 
 	healthChecker := health.New()
 	healthChecker.SetReady(true)
@@ -573,12 +570,11 @@ func TestSetupRoutes_WithAllHandlersRegistersFullAPI(t *testing.T) {
 
 	cfg := testConfig()
 	authHandler := handlers.NewAuthHandler(&stubUserRepo{}, &cfg.Auth, &cfg.OIDC)
-	userHandler := handlers.NewUserHandler(&stubUserRepo{})
+	userHandler := handlers.NewUserHandler(&stubUserRepo{}, nil, &stubAPIKeyRepo{})
 	apiKeyHandler := handlers.NewAPIKeyHandler(&stubAPIKeyRepo{}, &stubUserRepo{}, &cfg.Auth)
 	auditLogHandler := handlers.NewAuditLogHandler(nil)
 
 	rl := SetupRoutes(router, Deps{
-		Repository:      mockRepo,
 		HealthChecker:   healthChecker,
 		Config:          cfg,
 		Hub:             hub,
@@ -616,7 +612,6 @@ func TestSetupRoutes_NilHandlersSkipRouteRegistration(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	mockRepo := handlers.NewMockRepository()
 
 	healthChecker := health.New()
 	healthChecker.SetReady(true)
@@ -628,9 +623,8 @@ func TestSetupRoutes_NilHandlersSkipRouteRegistration(t *testing.T) {
 	cfg := testConfig()
 	authHandler := handlers.NewAuthHandler(&stubUserRepo{}, &cfg.Auth, &cfg.OIDC)
 
-	// All domain handlers are nil -- only auth/items/health should be registered.
+	// All domain handlers are nil -- only auth/health should be registered.
 	rl := SetupRoutes(router, Deps{
-		Repository:    mockRepo,
 		HealthChecker: healthChecker,
 		Config:        cfg,
 		Hub:           hub,
@@ -669,26 +663,39 @@ func TestSetupRoutes_WebSocketEndpoint(t *testing.T) {
 	assert.True(t, registeredRoutes["GET /ws"], "WebSocket endpoint should be registered at /ws")
 }
 
-func TestSetupRoutes_ItemsCRUD(t *testing.T) {
+func TestSetupRoutes_NoItemsRoutes(t *testing.T) {
 	t.Parallel()
 
+	// GitHub issue #534: the items handlers are a reference implementation
+	// only. Unauthenticated item routes let any client change data.
 	router, _ := setupMinimalRouter(t)
+	fullRouter, _ := setupFullRouter(t)
 
-	registeredRoutes := make(map[string]bool)
-	for _, r := range router.Routes() {
-		registeredRoutes[r.Method+" "+r.Path] = true
+	// Neither the minimal router nor the router with all handlers has items routes.
+	for _, rt := range append(router.Routes(), fullRouter.Routes()...) {
+		assert.False(t, strings.HasPrefix(rt.Path, "/api/v1/items"), "items route registered: %s %s", rt.Method, rt.Path)
 	}
 
-	itemRoutes := []string{
-		"GET /api/v1/items",
-		"POST /api/v1/items",
-		"GET /api/v1/items/:id",
-		"PUT /api/v1/items/:id",
-		"DELETE /api/v1/items/:id",
+	tests := []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{http.MethodGet, "/api/v1/items", ""},
+		{http.MethodPost, "/api/v1/items", `{"name":"x","price":1}`},
+		{http.MethodPut, "/api/v1/items/1", `{"name":"x","price":1}`},
+		{http.MethodDelete, "/api/v1/items/1", ""},
 	}
-
-	for _, route := range itemRoutes {
-		assert.True(t, registeredRoutes[route], "items route missing: %s", route)
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.method, func(t *testing.T) {
+			t.Parallel()
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(tt.method, tt.path, strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(w, req)
+			assert.Equal(t, http.StatusNotFound, w.Code)
+		})
 	}
 }
 
@@ -697,7 +704,6 @@ func TestSetupRoutes_RecoveryMiddleware(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	mockRepo := handlers.NewMockRepository()
 
 	healthChecker := health.New()
 	healthChecker.SetReady(true)
@@ -707,7 +713,6 @@ func TestSetupRoutes_RecoveryMiddleware(t *testing.T) {
 	t.Cleanup(func() { hub.Shutdown() })
 
 	rl := SetupRoutes(router, Deps{
-		Repository:    mockRepo,
 		HealthChecker: healthChecker,
 		Config:        testConfig(),
 		Hub:           hub,
@@ -766,7 +771,6 @@ func TestSetupRoutes_SwaggerGatedByConfig(t *testing.T) {
 
 			gin.SetMode(gin.TestMode)
 			router := gin.New()
-			mockRepo := handlers.NewMockRepository()
 
 			healthChecker := health.New()
 			healthChecker.SetReady(true)
@@ -779,7 +783,6 @@ func TestSetupRoutes_SwaggerGatedByConfig(t *testing.T) {
 			cfg.App.EnableSwagger = tt.enable
 
 			rl := SetupRoutes(router, Deps{
-				Repository:    mockRepo,
 				HealthChecker: healthChecker,
 				Config:        cfg,
 				Hub:           hub,
@@ -832,14 +835,17 @@ type stubStackTemplateRepo struct{}
 
 func (s *stubStackTemplateRepo) Create(_ *models.StackTemplate) error             { return nil }
 func (s *stubStackTemplateRepo) FindByID(_ string) (*models.StackTemplate, error) { return nil, nil }
-func (s *stubStackTemplateRepo) Update(_ *models.StackTemplate) error             { return nil }
-func (s *stubStackTemplateRepo) Delete(_ string) error                            { return nil }
-func (s *stubStackTemplateRepo) List() ([]models.StackTemplate, error)            { return nil, nil }
-func (s *stubStackTemplateRepo) ListPaged(_, _ int) ([]models.StackTemplate, int64, error) {
+func (s *stubStackTemplateRepo) FindByIDForUpdate(_ string) (*models.StackTemplate, error) {
+	return nil, nil
+}
+func (s *stubStackTemplateRepo) Update(_ *models.StackTemplate) error  { return nil }
+func (s *stubStackTemplateRepo) Delete(_ string) error                 { return nil }
+func (s *stubStackTemplateRepo) List() ([]models.StackTemplate, error) { return nil, nil }
+func (s *stubStackTemplateRepo) ListPaged(_, _ int, _ string) ([]models.StackTemplate, int64, error) {
 	return nil, 0, nil
 }
 func (s *stubStackTemplateRepo) ListPublished() ([]models.StackTemplate, error) { return nil, nil }
-func (s *stubStackTemplateRepo) ListPublishedPaged(_, _ int) ([]models.StackTemplate, int64, error) {
+func (s *stubStackTemplateRepo) ListPublishedPaged(_, _ int, _ string) ([]models.StackTemplate, int64, error) {
 	return nil, 0, nil
 }
 func (s *stubStackTemplateRepo) ListByOwner(_ string) ([]models.StackTemplate, error) {
@@ -857,9 +863,10 @@ func (s *stubStackDefinitionRepo) FindByName(_ string) ([]models.StackDefinition
 	return nil, nil
 }
 func (s *stubStackDefinitionRepo) Update(_ *models.StackDefinition) error  { return nil }
+func (s *stubStackDefinitionRepo) SetTemplateLink(_, _, _ string) error    { return nil }
 func (s *stubStackDefinitionRepo) Delete(_ string) error                   { return nil }
 func (s *stubStackDefinitionRepo) List() ([]models.StackDefinition, error) { return nil, nil }
-func (s *stubStackDefinitionRepo) ListPaged(_, _ int) ([]models.StackDefinition, int64, error) {
+func (s *stubStackDefinitionRepo) ListPaged(_ models.StackDefinitionFilter, _, _ int) ([]models.StackDefinition, int64, error) {
 	return nil, 0, nil
 }
 func (s *stubStackDefinitionRepo) ListByOwner(_ string) ([]models.StackDefinition, error) {
@@ -871,6 +878,13 @@ func (s *stubStackDefinitionRepo) ListByTemplate(_ string) ([]models.StackDefini
 func (s *stubStackDefinitionRepo) CountByTemplateIDs(_ []string) (map[string]int, error) {
 	return nil, nil
 }
+func (s *stubStackDefinitionRepo) FindByIDForUpdate(_ string) (*models.StackDefinition, error) {
+	return nil, nil
+}
+func (s *stubStackDefinitionRepo) NamesByIDs(_ []string) (map[string]string, error) {
+	return map[string]string{}, nil
+}
+
 func (s *stubStackDefinitionRepo) ListIDsByTemplateIDs(_ []string) (map[string][]string, error) {
 	return nil, nil
 }
@@ -886,7 +900,7 @@ func (s *stubStackInstanceRepo) FindByNamespace(_ string) (*models.StackInstance
 func (s *stubStackInstanceRepo) Update(_ *models.StackInstance) error  { return nil }
 func (s *stubStackInstanceRepo) Delete(_ string) error                 { return nil }
 func (s *stubStackInstanceRepo) List() ([]models.StackInstance, error) { return nil, nil }
-func (s *stubStackInstanceRepo) ListPaged(_, _ int) ([]models.StackInstance, int, error) {
+func (s *stubStackInstanceRepo) ListPaged(_ models.StackInstanceFilter, _, _ int) ([]models.StackInstance, int, error) {
 	return nil, 0, nil
 }
 func (s *stubStackInstanceRepo) ListByOwner(_ string) ([]models.StackInstance, error) {
@@ -920,6 +934,9 @@ func (s *stubStackInstanceRepo) ListExpired() ([]*models.StackInstance, error) {
 func (s *stubStackInstanceRepo) ListExpiringSoon(_ time.Duration) ([]*models.StackInstance, error) {
 	return nil, nil
 }
+func (*stubStackInstanceRepo) MarkExpiryWarned(_ string, _, _ time.Time) (bool, error) {
+	return false, nil
+}
 func (s *stubStackInstanceRepo) ListByStatus(_ string, _ int) ([]*models.StackInstance, error) {
 	return nil, nil
 }
@@ -930,7 +947,13 @@ func (s *stubChartConfigRepo) Create(_ *models.ChartConfig) error             { 
 func (s *stubChartConfigRepo) FindByID(_ string) (*models.ChartConfig, error) { return nil, nil }
 func (s *stubChartConfigRepo) Update(_ *models.ChartConfig) error             { return nil }
 func (s *stubChartConfigRepo) Delete(_ string) error                          { return nil }
+func (s *stubChartConfigRepo) DeleteByDefinition(_ string) error {
+	return nil
+}
 func (s *stubChartConfigRepo) ListByDefinition(_ string) ([]models.ChartConfig, error) {
+	return nil, nil
+}
+func (s *stubChartConfigRepo) CountByDefinitionIDs(_ []string) (map[string]int, error) {
 	return nil, nil
 }
 
@@ -950,6 +973,9 @@ type stubValueOverrideRepo struct{}
 
 func (s *stubValueOverrideRepo) Create(_ *models.ValueOverride) error             { return nil }
 func (s *stubValueOverrideRepo) FindByID(_ string) (*models.ValueOverride, error) { return nil, nil }
+func (s *stubValueOverrideRepo) DeleteByInstance(_ string) error {
+	return nil
+}
 func (s *stubValueOverrideRepo) FindByInstanceAndChart(_, _ string) (*models.ValueOverride, error) {
 	return nil, nil
 }
@@ -980,6 +1006,9 @@ func (s *stubInstanceQuotaOverrideRepo) Upsert(_ context.Context, _ *models.Inst
 	return nil
 }
 func (s *stubInstanceQuotaOverrideRepo) Delete(_ context.Context, _ string) error { return nil }
+func (s *stubInstanceQuotaOverrideRepo) ListByInstanceIDs(_ context.Context, _ []string) ([]models.InstanceQuotaOverride, error) {
+	return nil, nil
+}
 
 type stubUserFavoriteRepo struct{}
 
@@ -999,6 +1028,9 @@ func (s *stubNotificationRepo) MarkAsRead(_ context.Context, _, _ string) error 
 func (s *stubNotificationRepo) MarkAllAsRead(_ context.Context, _ string) error        { return nil }
 func (s *stubNotificationRepo) GetPreferences(_ context.Context, _ string) ([]models.NotificationPreference, error) {
 	return nil, nil
+}
+func (s *stubNotificationRepo) DisabledUserIDs(_ context.Context, _ string, _ []string) (map[string]bool, error) {
+	return map[string]bool{}, nil
 }
 func (s *stubNotificationRepo) UpdatePreference(_ context.Context, _ *models.NotificationPreference) error {
 	return nil
@@ -1064,6 +1096,9 @@ func (s *stubDeploymentLogRepo) ListByInstance(_ context.Context, _ string) ([]m
 func (s *stubDeploymentLogRepo) ListByInstancePaginated(_ context.Context, _ models.DeploymentLogFilters) (*models.DeploymentLogResult, error) {
 	return nil, nil
 }
+func (s *stubDeploymentLogRepo) ListLatestByActions(_ context.Context, _ string, _ []string, _ int) ([]models.DeploymentLog, error) {
+	return nil, nil
+}
 func (s *stubDeploymentLogRepo) GetLatestByInstance(_ context.Context, _ string) (*models.DeploymentLog, error) {
 	return nil, nil
 }
@@ -1071,6 +1106,10 @@ func (s *stubDeploymentLogRepo) SummarizeByInstance(_ context.Context, _ string)
 	return nil, nil
 }
 func (s *stubDeploymentLogRepo) SummarizeBatch(_ context.Context, _ []string) (map[string]*models.DeployLogSummary, error) {
+	return nil, nil
+}
+
+func (s *stubDeploymentLogRepo) SummarizeByUsers(_ context.Context, _ []string) (map[string]*models.DeployLogSummary, error) {
 	return nil, nil
 }
 func (s *stubDeploymentLogRepo) CountByAction(_ context.Context, _ string) (int, error) {
@@ -1094,7 +1133,7 @@ func (s *stubSessionStore) IsTokenBlocked(_ context.Context, _ string) (bool, er
 	return false, nil
 }
 func (s *stubSessionStore) BlockUser(_ context.Context, _ string, _ time.Time) error { return nil }
-func (s *stubSessionStore) IsUserBlocked(_ context.Context, _ string) (bool, error) {
+func (s *stubSessionStore) IsUserBlocked(_ context.Context, _ string, _ time.Time) (bool, error) {
 	return false, nil
 }
 func (s *stubSessionStore) UnblockUser(_ context.Context, _ string) error { return nil }
@@ -1134,7 +1173,6 @@ func setupFullRouter(t *testing.T) (*gin.Engine, *RateLimiters) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	mockRepo := handlers.NewMockRepository()
 
 	healthChecker := health.New()
 	healthChecker.SetReady(true)
@@ -1171,10 +1209,10 @@ func setupFullRouter(t *testing.T) (*gin.Engine, *RateLimiters) {
 	require.NoError(t, err)
 	gitHandler := handlers.NewGitHandler(gitRegistry)
 	auditLogHandler := handlers.NewAuditLogHandler(&stubAuditLogRepo{})
-	userHandler := handlers.NewUserHandler(userRepo)
+	userHandler := handlers.NewUserHandler(userRepo, nil, apiKeyRepo)
 	apiKeyHandler := handlers.NewAPIKeyHandler(apiKeyRepo, userRepo, &cfg.Auth)
 	adminHandler := handlers.NewAdminHandler(nil, instanceRepo)
-	branchOverrideHandler := handlers.NewBranchOverrideHandler(branchOverrideRepo, instanceRepo)
+	branchOverrideHandler := handlers.NewBranchOverrideHandler(branchOverrideRepo, instanceRepo, chartConfigRepo)
 	instanceQuotaHandler := handlers.NewInstanceQuotaOverrideHandler(&stubInstanceQuotaOverrideRepo{}, instanceRepo)
 	favoriteHandler := handlers.NewFavoriteHandler(&stubUserFavoriteRepo{})
 	analyticsHandler := handlers.NewAnalyticsHandler(templateRepo, definitionRepo, instanceRepo, deployLogRepo, userRepo)
@@ -1198,7 +1236,6 @@ func setupFullRouter(t *testing.T) (*gin.Engine, *RateLimiters) {
 	require.NoError(t, err)
 
 	rl := SetupRoutes(router, Deps{
-		Repository:                   mockRepo,
 		HealthChecker:                healthChecker,
 		Config:                       cfg,
 		Hub:                          hub,
@@ -1265,13 +1302,9 @@ func TestSetupRoutes_AllHandlers_RegistersCompleteAPI(t *testing.T) {
 		{"GET", "/health/live"},
 		{"GET", "/health/ready"},
 
-		// Ping + Items (always registered)
+		// Ping and UI config (always registered)
 		{"GET", "/api/v1/ping"},
-		{"GET", "/api/v1/items"},
-		{"POST", "/api/v1/items"},
-		{"GET", "/api/v1/items/:id"},
-		{"PUT", "/api/v1/items/:id"},
-		{"DELETE", "/api/v1/items/:id"},
+		{"GET", "/api/v1/ui-config"},
 
 		// Auth
 		{"POST", "/api/v1/auth/login"},
@@ -1327,6 +1360,7 @@ func TestSetupRoutes_AllHandlers_RegistersCompleteAPI(t *testing.T) {
 		{"DELETE", "/api/v1/stack-definitions/:id"},
 		{"GET", "/api/v1/stack-definitions/:id/check-upgrade"},
 		{"POST", "/api/v1/stack-definitions/:id/upgrade"},
+		{"PUT", "/api/v1/stack-definitions/:id/template-link"},
 		{"POST", "/api/v1/stack-definitions/:id/charts"},
 		{"GET", "/api/v1/stack-definitions/:id/charts/:chartId"},
 		{"PUT", "/api/v1/stack-definitions/:id/charts/:chartId"},
@@ -1344,13 +1378,19 @@ func TestSetupRoutes_AllHandlers_RegistersCompleteAPI(t *testing.T) {
 		{"GET", "/api/v1/stack-instances/:id/values"},
 		{"GET", "/api/v1/stack-instances/:id/values/:chartId"},
 		{"GET", "/api/v1/stack-instances/:id/overrides"},
+		{"GET", "/api/v1/stack-instances/:id/overrides/:chartId"},
 		{"PUT", "/api/v1/stack-instances/:id/overrides/:chartId"},
+		{"DELETE", "/api/v1/stack-instances/:id/overrides/:chartId"},
 		{"POST", "/api/v1/stack-instances/:id/deploy"},
 		{"GET", "/api/v1/stack-instances/:id/deploy-preview"},
 		{"POST", "/api/v1/stack-instances/:id/stop"},
 		{"POST", "/api/v1/stack-instances/:id/clean"},
+		{"GET", "/api/v1/stack-instances/:id/actions"},
 		{"POST", "/api/v1/stack-instances/:id/actions/:name"},
+		{"GET", "/api/v1/stack-instances/:id/actions/:name/jobs/:job_id/log"},
 		{"POST", "/api/v1/stack-instances/:id/extend"},
+		{"POST", "/api/v1/stack-instances/:id/follow"},
+		{"DELETE", "/api/v1/stack-instances/:id/follow"},
 		{"GET", "/api/v1/stack-instances/:id/deploy-log"},
 		{"GET", "/api/v1/stack-instances/:id/deploy-log/:logId/values"},
 		{"POST", "/api/v1/stack-instances/:id/rollback"},
@@ -1365,6 +1405,7 @@ func TestSetupRoutes_AllHandlers_RegistersCompleteAPI(t *testing.T) {
 
 		// Branch overrides
 		{"GET", "/api/v1/stack-instances/:id/branches"},
+		{"GET", "/api/v1/stack-instances/:id/branches/:chartId"},
 		{"PUT", "/api/v1/stack-instances/:id/branches/:chartId"},
 		{"DELETE", "/api/v1/stack-instances/:id/branches/:chartId"},
 
@@ -1388,6 +1429,7 @@ func TestSetupRoutes_AllHandlers_RegistersCompleteAPI(t *testing.T) {
 		{"PUT", "/api/v1/users/:id/disable"},
 		{"PUT", "/api/v1/users/:id/enable"},
 		{"PUT", "/api/v1/users/:id/password"},
+		{"PUT", "/api/v1/users/:id/role"},
 
 		// API keys
 		{"GET", "/api/v1/users/:id/api-keys"},
@@ -1488,7 +1530,6 @@ func TestSetupRoutes_OIDCDisabled_FallbackConfigOnly(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	mockRepo := handlers.NewMockRepository()
 
 	healthChecker := health.New()
 	healthChecker.SetReady(true)
@@ -1501,7 +1542,6 @@ func TestSetupRoutes_OIDCDisabled_FallbackConfigOnly(t *testing.T) {
 	authHandler := handlers.NewAuthHandler(&stubUserRepo{}, &cfg.Auth, &cfg.OIDC)
 
 	rl := SetupRoutes(router, Deps{
-		Repository:    mockRepo,
 		HealthChecker: healthChecker,
 		Config:        cfg,
 		Hub:           hub,
@@ -1556,7 +1596,6 @@ func TestSetupRoutes_LoginRateLimiterBranching(t *testing.T) {
 
 			gin.SetMode(gin.TestMode)
 			router := gin.New()
-			mockRepo := handlers.NewMockRepository()
 
 			healthChecker := health.New()
 			healthChecker.SetReady(true)
@@ -1570,7 +1609,6 @@ func TestSetupRoutes_LoginRateLimiterBranching(t *testing.T) {
 			authHandler := handlers.NewAuthHandler(&stubUserRepo{}, &cfg.Auth, &cfg.OIDC)
 
 			rl := SetupRoutes(router, Deps{
-				Repository:    mockRepo,
 				HealthChecker: healthChecker,
 				Config:        cfg,
 				Hub:           hub,
@@ -1601,7 +1639,6 @@ func TestSetupRoutes_ClusterHandlerFallbackConstruction(t *testing.T) {
 	// SetupRoutes constructs a fallback ClusterHandler internally.
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	mockRepo := handlers.NewMockRepository()
 
 	healthChecker := health.New()
 	healthChecker.SetReady(true)
@@ -1614,7 +1651,6 @@ func TestSetupRoutes_ClusterHandlerFallbackConstruction(t *testing.T) {
 	authHandler := handlers.NewAuthHandler(&stubUserRepo{}, &cfg.Auth, &cfg.OIDC)
 
 	rl := SetupRoutes(router, Deps{
-		Repository:     mockRepo,
 		HealthChecker:  healthChecker,
 		Config:         cfg,
 		Hub:            hub,
@@ -1651,7 +1687,6 @@ func TestSetupRoutes_ClusterHandlerNotRegisteredWithoutDeps(t *testing.T) {
 	// no cluster routes should be registered.
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	mockRepo := handlers.NewMockRepository()
 
 	healthChecker := health.New()
 	healthChecker.SetReady(true)
@@ -1664,7 +1699,6 @@ func TestSetupRoutes_ClusterHandlerNotRegisteredWithoutDeps(t *testing.T) {
 	authHandler := handlers.NewAuthHandler(&stubUserRepo{}, &cfg.Auth, &cfg.OIDC)
 
 	rl := SetupRoutes(router, Deps{
-		Repository:     mockRepo,
 		HealthChecker:  healthChecker,
 		Config:         cfg,
 		Hub:            hub,
@@ -1700,7 +1734,6 @@ func TestSetupRoutes_OtelMiddlewareGatedByConfig(t *testing.T) {
 
 			gin.SetMode(gin.TestMode)
 			router := gin.New()
-			mockRepo := handlers.NewMockRepository()
 
 			healthChecker := health.New()
 			healthChecker.SetReady(true)
@@ -1715,7 +1748,6 @@ func TestSetupRoutes_OtelMiddlewareGatedByConfig(t *testing.T) {
 			authHandler := handlers.NewAuthHandler(&stubUserRepo{}, &cfg.Auth, &cfg.OIDC)
 
 			rl := SetupRoutes(router, Deps{
-				Repository:    mockRepo,
 				HealthChecker: healthChecker,
 				Config:        cfg,
 				Hub:           hub,
@@ -1741,7 +1773,6 @@ func TestSetupRoutes_APIKeyRoutesWithoutUserHandler(t *testing.T) {
 	// routes should still be registered.
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	mockRepo := handlers.NewMockRepository()
 
 	healthChecker := health.New()
 	healthChecker.SetReady(true)
@@ -1755,7 +1786,6 @@ func TestSetupRoutes_APIKeyRoutesWithoutUserHandler(t *testing.T) {
 	apiKeyHandler := handlers.NewAPIKeyHandler(&stubAPIKeyRepo{}, &stubUserRepo{}, &cfg.Auth)
 
 	rl := SetupRoutes(router, Deps{
-		Repository:    mockRepo,
 		HealthChecker: healthChecker,
 		Config:        cfg,
 		Hub:           hub,
@@ -1775,6 +1805,29 @@ func TestSetupRoutes_APIKeyRoutesWithoutUserHandler(t *testing.T) {
 
 	// User management routes should NOT be registered.
 	assert.False(t, registered["GET /api/v1/users"], "user list should not be registered when UserHandler is nil")
+}
+
+// TestSetupRoutes_UIConfigIsPublic checks that GET /api/v1/ui-config needs no
+// token, also when the authenticated routes are registered.
+func TestSetupRoutes_UIConfigIsPublic(t *testing.T) {
+	t.Parallel()
+
+	router, _ := setupFullRouter(t)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/v1/ui-config", nil)
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, "public, max-age=300", w.Header().Get("Cache-Control"))
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	keys := make([]string, 0, len(body))
+	for k := range body {
+		keys = append(keys, k)
+	}
+	assert.ElementsMatch(t, []string{"title", "logo_url", "favicon_url", "default_instance_ttl_minutes", "max_instance_ttl_days"}, keys)
+	assert.NotEmpty(t, body["title"])
 }
 
 func TestSetupRoutes_SecurityHeaders(t *testing.T) {
@@ -1808,4 +1861,7 @@ func (*stubStackInstanceRepo) CountByStatuses(statuses []string) (int, error) { 
 
 func (*stubClusterRepo) CountAll() (int, error) { return 0, nil }
 
+func (*stubClusterRepo) NamesByIDs(_ []string) (map[string]string, error) {
+	return map[string]string{}, nil
+}
 func (*stubClusterRepo) CountByHealthStatus(status string) (int, error) { return 0, nil }

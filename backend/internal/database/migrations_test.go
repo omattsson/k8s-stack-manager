@@ -64,6 +64,7 @@ func setupTestDBWithAllTables(t *testing.T) *gorm.DB {
 		&models.SharedValues{},
 		&models.CleanupPolicy{},
 		&models.UserFavorite{},
+		&models.InstanceFollower{},
 	))
 	return db
 }
@@ -92,6 +93,7 @@ func TestAutoMigrate(t *testing.T) {
 			"notification_channels",
 			"notification_channel_subscriptions",
 			"notification_delivery_logs",
+			"ws_events",
 			"schema_versions",
 		}
 		for _, table := range expectedTables {

@@ -40,6 +40,9 @@ func (m *dashboardMockDeployLogRepo) ListByInstance(_ context.Context, _ string)
 func (m *dashboardMockDeployLogRepo) ListByInstancePaginated(_ context.Context, _ models.DeploymentLogFilters) (*models.DeploymentLogResult, error) {
 	return nil, nil
 }
+func (m *dashboardMockDeployLogRepo) ListLatestByActions(_ context.Context, _ string, _ []string, _ int) ([]models.DeploymentLog, error) {
+	return nil, nil
+}
 func (m *dashboardMockDeployLogRepo) GetLatestByInstance(_ context.Context, _ string) (*models.DeploymentLog, error) {
 	return nil, nil
 }
@@ -47,6 +50,10 @@ func (m *dashboardMockDeployLogRepo) SummarizeByInstance(_ context.Context, _ st
 	return nil, nil
 }
 func (m *dashboardMockDeployLogRepo) SummarizeBatch(_ context.Context, _ []string) (map[string]*models.DeployLogSummary, error) {
+	return nil, nil
+}
+
+func (m *dashboardMockDeployLogRepo) SummarizeByUsers(_ context.Context, _ []string) (map[string]*models.DeployLogSummary, error) {
 	return nil, nil
 }
 func (m *dashboardMockDeployLogRepo) CountByAction(_ context.Context, _ string) (int, error) {
@@ -219,6 +226,7 @@ func TestDashboard_ExpiringSoon(t *testing.T) {
 		ID:         "i1",
 		Name:       "expiring-stack",
 		Namespace:  "ns-1",
+		OwnerID:    "uid-alice",
 		Status:     models.StackStatusRunning,
 		ExpiresAt:  &expiresAt,
 		TTLMinutes: 60,
@@ -234,6 +242,9 @@ func TestDashboard_ExpiringSoon(t *testing.T) {
 
 	require.Len(t, resp.ExpiringSoon, 1)
 	assert.Equal(t, "expiring-stack", resp.ExpiringSoon[0].Name)
+	assert.Equal(t, "uid-alice", resp.ExpiringSoon[0].OwnerID)
+	// The frontend reads owner_id to decide if "Extend TTL" shows.
+	assert.Contains(t, w.Body.String(), `"owner_id":"uid-alice"`)
 }
 
 func TestDashboard_FailingInstances(t *testing.T) {

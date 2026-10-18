@@ -23,9 +23,16 @@ type TxRepos struct {
 	StackInstance   models.StackInstanceRepository
 	StackTemplate   models.StackTemplateRepository
 	TemplateChart   models.TemplateChartConfigRepository
+	// TemplateVersion is used by publish (snapshot + template row together).
+	TemplateVersion models.TemplateVersionRepository
 	ValueOverride   models.ValueOverrideRepository
 	BranchOverride  models.ChartBranchOverrideRepository
 	DeploymentLog   models.DeploymentLogRepository
+	// InstanceQuotaOverride is used by clone to copy the quota override.
+	InstanceQuotaOverride models.InstanceQuotaOverrideRepository
+	// InstanceFollower is used by the instance delete to delete the
+	// followers of the instance.
+	InstanceFollower models.InstanceFollowerRepository
 }
 
 // GORMTxRunner implements TxRunner using GORM database transactions.
@@ -51,9 +58,13 @@ func (r *GORMTxRunner) RunInTx(fn func(repos TxRepos) error) error {
 			StackInstance:   NewGORMStackInstanceRepository(tx),
 			StackTemplate:   NewGORMStackTemplateRepository(tx),
 			TemplateChart:   NewGORMTemplateChartConfigRepository(tx),
+			TemplateVersion: NewGORMTemplateVersionRepository(tx),
 			ValueOverride:   NewGORMValueOverrideRepository(tx),
 			BranchOverride:  NewGORMChartBranchOverrideRepository(tx),
 			DeploymentLog:   NewGORMDeploymentLogRepository(tx),
+
+			InstanceQuotaOverride: NewGORMInstanceQuotaOverrideRepository(tx),
+			InstanceFollower:      NewGORMInstanceFollowerRepository(tx),
 		}
 		return fn(repos)
 	})

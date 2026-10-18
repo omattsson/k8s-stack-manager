@@ -20,10 +20,10 @@ vi.mock('@monaco-editor/react', () => ({
   }: {
     value: string;
     onChange?: (value: string | undefined) => void;
-    options?: { readOnly?: boolean };
+    options?: { readOnly?: boolean; autoIndent?: string };
     theme?: string;
   }) => (
-    <div data-testid="monaco-editor" data-theme={theme}>
+    <div data-testid="monaco-editor" data-theme={theme} data-autoindent={options?.autoIndent}>
       <textarea
         data-testid="monaco-textarea"
         value={value}
@@ -42,6 +42,11 @@ describe('YamlEditor', () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('keeps the indentation of the current line on Enter', () => {
+    render(<YamlEditor {...defaultProps} />);
+    expect(screen.getByTestId('monaco-editor')).toHaveAttribute('data-autoindent', 'keep');
   });
 
   it('renders with initial value', () => {

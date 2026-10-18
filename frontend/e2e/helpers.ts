@@ -4,8 +4,38 @@ export const API_BASE = process.env.API_BASE_URL || 'http://localhost:8081';
 export const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin';
 
 /**
- * Ensure a default cluster exists. Creates one if none is found.
- * Returns the cluster ID so it can be cleaned up in afterAll.
+ * Mock a paged GET list endpoint with fixed items.
+ * The UI sends the list requests with `?page=...&pageSize=...`, so the route
+ * matches the path with or without a query string. It answers with the paged
+ * shape `{data, page, pageSize, total}`. Other methods go to the backend.
+ */
+export async function mockListAPI(page: Page, path: string, items: unknown[]) {
+  const escaped = path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  await page.route(new RegExp(`${escaped}(\\?.*)?$`), (route) => {
+    if (route.request().method() !== 'GET') return route.continue();
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: items,
+        page: 1,
+        pageSize: Math.max(items.length, 25),
+        total: items.length,
+      }),
+    });
+  });
+}
+
+/** Name of the shared default cluster of the e2e tests. */
+const E2E_DEFAULT_CLUSTER = 'e2e-default-cluster';
+
+/**
+ * Ensure a default cluster exists. All specs share one cluster named
+ * `e2e-default-cluster`, and no spec deletes it: the specs run in parallel
+ * workers, and a cluster that one worker deletes in afterAll can still be in
+ * use by another worker. When the cluster exists but another spec moved the
+ * default flag, the helper makes it the default again.
+ * Always returns null, so the deleteCluster calls in afterAll do nothing.
  * Accepts either a Playwright APIRequestContext (for API-level tests)
  * or a Page (for UI tests).
  */
@@ -16,29 +46,35 @@ export async function ensureDefaultCluster(
   const req = 'request' in requestOrPage ? requestOrPage.request : requestOrPage;
   const headers = { Authorization: `Bearer ${token}` };
 
-  // Check if a default cluster already exists
-  const listRes = await req.get(`${API_BASE}/api/v1/clusters`, { headers });
-  if (listRes.ok()) {
-    const clusters = await listRes.json();
-    const existing = clusters.find((c: { is_default: boolean }) => c.is_default);
-    if (existing) return null; // already have a default — nothing to clean up
-  }
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const listRes = await req.get(`${API_BASE}/api/v1/clusters`, { headers });
+    expect(listRes.ok(), `Failed to list clusters: ${listRes.status()}`).toBe(true);
+    const clusters: { id: string; name: string; is_default: boolean }[] = await listRes.json();
+    if (clusters.some((c) => c.is_default)) return null;
 
-  // Create a default cluster using in-cluster config (the backend pod's own
-  // service account). This avoids needing a real kubeconfig file and keeps the
-  // backend's health check happy since the cluster is actually reachable.
-  const createRes = await req.post(`${API_BASE}/api/v1/clusters`, {
-    headers: { ...headers, 'Content-Type': 'application/json' },
-    data: {
-      name: 'e2e-default-cluster',
-      api_server_url: 'https://kubernetes.default.svc',
-      use_in_cluster: true,
-      is_default: true,
-    },
-  });
-  expect(createRes.ok(), `Failed to create default cluster: ${createRes.status()}`).toBe(true);
-  const cluster = await createRes.json();
-  return cluster.id;
+    const shared = clusters.find((c) => c.name === E2E_DEFAULT_CLUSTER);
+    if (shared) {
+      const res = await req.post(`${API_BASE}/api/v1/clusters/${shared.id}/default`, { headers });
+      expect(res.ok(), `Failed to make ${E2E_DEFAULT_CLUSTER} the default: ${res.status()}`).toBe(true);
+      return null;
+    }
+
+    // Create the cluster with in-cluster config. Outside a pod, the backend has
+    // no cluster access unless `make test-e2e` runs with E2E_KUBECONFIG.
+    const createRes = await req.post(`${API_BASE}/api/v1/clusters`, {
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      data: {
+        name: E2E_DEFAULT_CLUSTER,
+        api_server_url: 'https://kubernetes.default.svc',
+        use_in_cluster: true,
+        is_default: true,
+      },
+    });
+    if (createRes.ok()) return null;
+    // 409: another worker created it at the same time. Look again.
+    expect(createRes.status(), `Failed to create default cluster: ${createRes.status()}`).toBe(409);
+  }
+  throw new Error(`No default cluster after 3 attempts`);
 }
 
 /**
@@ -278,7 +314,7 @@ export async function createTemplate(page: Page, name: string): Promise<string> 
   // Pick a category
   await page.getByLabel('Category').click();
   await page.getByRole('option', { name: 'Web' }).click();
-  await page.getByLabel('Version').fill('1.0.0');
+  await page.getByLabel('Version', { exact: true }).fill('1.0.0');
   await page.getByRole('button', { name: 'Save Template' }).click();
   // Wait for navigation to the preview page
   await page.waitForURL(/\/templates\/(?!new)[^/]+$/, { timeout: 10_000 });
@@ -307,7 +343,7 @@ export async function createAndPublishTemplate(page: Page, name: string): Promis
   await page.getByRole('textbox', { name: 'Description' }).fill(`E2e test template ${name}`);
   await page.getByLabel('Category').click();
   await page.getByRole('option', { name: 'Web' }).click();
-  await page.getByLabel('Version').fill('1.0.0');
+  await page.getByLabel('Version', { exact: true }).fill('1.0.0');
 
   // Add a chart
   await page.getByRole('button', { name: 'Add Chart' }).click();

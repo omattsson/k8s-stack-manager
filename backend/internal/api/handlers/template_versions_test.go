@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"backend/internal/database"
 	"backend/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -31,7 +32,13 @@ func setupTemplateVersionRouter(
 	r := gin.New()
 	r.Use(injectAuthContext(callerID, callerRole))
 
-	th, err := NewTemplateHandlerWithVersions(templateRepo, chartRepo, definitionRepo, chartConfigRepo, versionRepo, &mockHandlerTxRunner{})
+	th, err := NewTemplateHandlerWithVersions(templateRepo, chartRepo, definitionRepo, chartConfigRepo, versionRepo, &mockHandlerTxRunner{repos: database.TxRepos{
+		StackTemplate:   templateRepo,
+		TemplateChart:   chartRepo,
+		TemplateVersion: versionRepo,
+		StackDefinition: definitionRepo,
+		ChartConfig:     chartConfigRepo,
+	}})
 	require.NoError(t, err)
 	vh := NewTemplateVersionHandler(versionRepo, templateRepo)
 
@@ -498,7 +505,10 @@ func TestCheckUpgrade(t *testing.T) {
 			verRepo := NewMockTemplateVersionRepository()
 			tt.setup(defRepo, ccRepo, verRepo)
 
-			router := setupDefinitionUpgradeRouter(t, defRepo, ccRepo, NewMockStackInstanceRepository(), NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(), verRepo, "uid-1", "devops")
+			// The source template t1 is published (upgrades read its latest snapshot).
+			tmplRepo := NewMockStackTemplateRepository()
+			seedTemplate(t, tmplRepo, "t1", "T", "owner-1", true)
+			router := setupDefinitionUpgradeRouter(t, defRepo, ccRepo, NewMockStackInstanceRepository(), tmplRepo, NewMockTemplateChartConfigRepository(), verRepo, "uid-1", "devops")
 			w := httptest.NewRecorder()
 			req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-definitions/"+tt.defID+"/check-upgrade", nil)
 			router.ServeHTTP(w, req)
@@ -609,7 +619,10 @@ func TestApplyUpgrade(t *testing.T) {
 			verRepo := NewMockTemplateVersionRepository()
 			tt.setup(defRepo, ccRepo, verRepo)
 
-			router := setupDefinitionUpgradeRouter(t, defRepo, ccRepo, NewMockStackInstanceRepository(), NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(), verRepo, "uid-1", "devops")
+			// The source template t1 is published (upgrades read its latest snapshot).
+			tmplRepo := NewMockStackTemplateRepository()
+			seedTemplate(t, tmplRepo, "t1", "T", "owner-1", true)
+			router := setupDefinitionUpgradeRouter(t, defRepo, ccRepo, NewMockStackInstanceRepository(), tmplRepo, NewMockTemplateChartConfigRepository(), verRepo, "uid-1", "devops")
 			w := httptest.NewRecorder()
 			req, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-definitions/"+tt.defID+"/upgrade", bytes.NewBufferString("{}"))
 			req.Header.Set("Content-Type", "application/json")

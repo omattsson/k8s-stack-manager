@@ -10,6 +10,10 @@ data:
   {{- range $key, $value := .Values.backend.env }}
   {{ $key }}: {{ $value | quote }}
   {{- end }}
+  {{- /* Secure refresh-token cookie behind TLS; an explicit backend.env.SECURE_COOKIES (also "false") wins. */}}
+  {{- if and (not (hasKey .Values.backend.env "SECURE_COOKIES")) (eq (include "k8s-stack-manager.ingressTLSEnabled" .) "true") }}
+  SECURE_COOKIES: "true"
+  {{- end }}
   {{- if .Values.mysql.enabled }}
   DB_HOST: {{ include "k8s-stack-manager.mysql.serviceName" . | quote }}
   DB_PORT: "3306"
@@ -18,6 +22,53 @@ data:
   DB_MAX_OPEN_CONNS: "25"
   DB_MAX_IDLE_CONNS: "5"
   DB_CONN_MAX_LIFETIME: "5m"
+  {{- end }}
+  {{- /* Leader election: one replica runs the background workers. An explicit backend.env value wins. */}}
+  {{- if not (hasKey .Values.backend.env "LEADER_ELECTION_ENABLED") }}
+  LEADER_ELECTION_ENABLED: {{ .Values.backend.leaderElection.enabled | toString | quote }}
+  {{- end }}
+  {{- if not (hasKey .Values.backend.env "LEADER_ELECTION_LEASE_NAME") }}
+  LEADER_ELECTION_LEASE_NAME: {{ include "k8s-stack-manager.leaderElection.leaseName" . | quote }}
+  {{- end }}
+  {{- /* WebSocket fan-out: replicas share WebSocket messages through the ws_events table. An explicit backend.env value wins. */}}
+  {{- if not (hasKey .Values.backend.env "WS_FANOUT_ENABLED") }}
+  WS_FANOUT_ENABLED: {{ .Values.backend.wsFanout.enabled | toString | quote }}
+  {{- end }}
+  {{- if not (hasKey .Values.backend.env "WS_FANOUT_POLL_INTERVAL") }}
+  WS_FANOUT_POLL_INTERVAL: {{ .Values.backend.wsFanout.pollInterval | quote }}
+  {{- end }}
+  {{- if not (hasKey .Values.backend.env "WS_FANOUT_RETENTION") }}
+  WS_FANOUT_RETENTION: {{ .Values.backend.wsFanout.retention | quote }}
+  {{- end }}
+  {{- /* Log retention of the log tables (leader worker log-retention). An explicit backend.env value wins. The raw value goes to the backend, which refuses a value that is not a whole number. */}}
+  {{- with .Values.backend.logRetention }}
+  {{- if not (hasKey $.Values.backend.env "DEPLOY_LOG_RETENTION_DAYS") }}
+  DEPLOY_LOG_RETENTION_DAYS: {{ .deployLogDays | toString | quote }}
+  {{- end }}
+  {{- if not (hasKey $.Values.backend.env "AUDIT_LOG_RETENTION_DAYS") }}
+  AUDIT_LOG_RETENTION_DAYS: {{ .auditLogDays | toString | quote }}
+  {{- end }}
+  {{- if not (hasKey $.Values.backend.env "NOTIFICATION_RETENTION_DAYS") }}
+  NOTIFICATION_RETENTION_DAYS: {{ .notificationDays | toString | quote }}
+  {{- end }}
+  {{- if not (hasKey $.Values.backend.env "DELIVERY_LOG_RETENTION_DAYS") }}
+  DELIVERY_LOG_RETENTION_DAYS: {{ .deliveryLogDays | toString | quote }}
+  {{- end }}
+  {{- if not (hasKey $.Values.backend.env "LOG_RETENTION_INTERVAL") }}
+  LOG_RETENTION_INTERVAL: {{ .interval | quote }}
+  {{- end }}
+  {{- end }}
+  {{- /* Branding (web UI title, logo, favicon). An explicit backend.env value wins. */}}
+  {{- with .Values.branding }}
+  {{- if and .title (not (hasKey $.Values.backend.env "APP_TITLE")) }}
+  APP_TITLE: {{ .title | quote }}
+  {{- end }}
+  {{- if and .logoUrl (not (hasKey $.Values.backend.env "APP_LOGO_URL")) }}
+  APP_LOGO_URL: {{ .logoUrl | quote }}
+  {{- end }}
+  {{- if and .faviconUrl (not (hasKey $.Values.backend.env "APP_FAVICON_URL")) }}
+  APP_FAVICON_URL: {{ .faviconUrl | quote }}
+  {{- end }}
   {{- end }}
   {{- if .Values.hooks.enabled }}
   HOOKS_CONFIG_FILE: "/etc/hooks/hooks.json"
@@ -31,6 +82,52 @@ data:
   # (clusterRole, serviceAccountName, serviceAccountNamespace, optional
   # roleBindingName).
   NAMESPACE_ROLE_BINDINGS_JSON: {{ .Values.backend.namespaceRoleBindings | toJson | quote }}
+  {{- end }}
+  {{- /* Extra labels on every stack namespace: sorted key=value pairs. An explicit backend.env value wins. */}}
+  {{- with .Values.backend.namespaceLabels }}
+  {{- range $reserved := list "managed-by" "k8s-stack-manager.io/instance-name" }}
+  {{- if hasKey $.Values.backend.namespaceLabels $reserved }}
+  {{- fail (printf "backend.namespaceLabels: the key %s is reserved (the backend sets it on every stack namespace)" $reserved) }}
+  {{- end }}
+  {{- end }}
+  {{- if not (hasKey $.Values.backend.env "NAMESPACE_LABELS") }}
+  {{- $pairs := list }}
+  {{- range $k := keys . | sortAlpha }}
+  {{- $pairs = append $pairs (printf "%s=%s" $k (index $.Values.backend.namespaceLabels $k | toString)) }}
+  {{- end }}
+  NAMESPACE_LABELS: {{ join "," $pairs | quote }}
+  {{- end }}
+  {{- end }}
+  {{- /* Namespace-scoped access of the backend (backend.rbac.scope=namespace). */}}
+  {{- if and .Values.backend.serviceAccount.create (eq (.Values.backend.rbac.scope | default "namespace") "namespace") }}
+  STACK_ACCESS_CLUSTER_ROLE: {{ printf "%s-stack-access" (include "k8s-stack-manager.fullname" .) | quote }}
+  STACK_ACCESS_SERVICE_ACCOUNT: {{ printf "%s/%s-backend" .Release.Namespace (include "k8s-stack-manager.fullname" .) | quote }}
+  {{- end }}
+  {{- /* Chart repository allowlist. An explicit backend.env value wins. */}}
+  {{- if and .Values.backend.allowedChartRepos (not (hasKey .Values.backend.env "ALLOWED_CHART_REPOS")) }}
+  ALLOWED_CHART_REPOS: {{ join "," .Values.backend.allowedChartRepos | quote }}
+  {{- end }}
+  {{- /* Trusted proxies for the client IP. An explicit backend.env value wins. */}}
+  {{- if and .Values.backend.trustedProxies (not (hasKey .Values.backend.env "TRUSTED_PROXIES")) }}
+  TRUSTED_PROXIES: {{ join "," .Values.backend.trustedProxies | quote }}
+  {{- end }}
+  {{- /* Unique instance names for each cluster. An explicit backend.env value wins. */}}
+  {{- if and .Values.backend.uniqueInstanceNames (not (hasKey .Values.backend.env "UNIQUE_INSTANCE_NAMES")) }}
+  UNIQUE_INSTANCE_NAMES: "true"
+  {{- end }}
+  {{- /* Maximum TTL in days (1 to 365). An explicit backend.env value wins. */}}
+  {{- if not (hasKey .Values.backend.env "MAX_INSTANCE_TTL_DAYS") }}
+  {{- $maxTtlDays := .Values.backend.maxInstanceTtlDays }}
+  {{- if kindIs "invalid" $maxTtlDays }}{{- $maxTtlDays = 30 }}{{- end }}
+  {{- if or (not (regexMatch "^[0-9]+$" (toString $maxTtlDays))) (lt (int $maxTtlDays) 1) (gt (int $maxTtlDays) 365) }}
+  {{- fail (printf "backend.maxInstanceTtlDays must be a whole number from 1 to 365, got %v" $maxTtlDays) }}
+  {{- end }}
+  {{- /* The TTL default must fit the limit, or every create gives 400. */}}
+  {{- $defaultTtl := toString (index .Values.backend.env "DEFAULT_INSTANCE_TTL_MINUTES" | default "0") }}
+  {{- if and (regexMatch "^[0-9]+$" $defaultTtl) (gt (atoi $defaultTtl) (mul (int $maxTtlDays) 1440)) }}
+  {{- fail (printf "backend.env.DEFAULT_INSTANCE_TTL_MINUTES (%s) must not exceed backend.maxInstanceTtlDays (%v days)" $defaultTtl $maxTtlDays) }}
+  {{- end }}
+  MAX_INSTANCE_TTL_DAYS: {{ $maxTtlDays | toString | quote }}
   {{- end }}
   {{- if .Values.metrics.enabled }}
   METRICS_ENABLED: "true"

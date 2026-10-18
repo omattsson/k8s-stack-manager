@@ -22,19 +22,27 @@ type SubscriptionSpec struct {
 	URL            string        `json:"url"`
 	TimeoutSeconds int           `json:"timeout_seconds,omitempty"`
 	FailurePolicy  FailurePolicy `json:"failure_policy,omitempty"`
+	// Blocking makes the deployer wait for this post-deploy subscriber
+	// (see Subscription.Blocking). Default false.
+	Blocking bool `json:"blocking,omitempty"`
 	// SecretEnv names an environment variable that holds the HMAC secret.
 	// Leave empty to disable signature generation for this subscription.
 	SecretEnv string `json:"secret_env,omitempty"`
 }
 
 // ActionSubscriptionSpec mirrors ActionSubscription with the same secret_env
-// indirection.
+// indirection. Label, Confirm, Parameters and LogPath are optional; a config
+// without them stays valid.
 type ActionSubscriptionSpec struct {
-	Name           string `json:"name"`
-	URL            string `json:"url"`
-	Description    string `json:"description,omitempty"`
-	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
-	SecretEnv      string `json:"secret_env,omitempty"`
+	Name           string            `json:"name"`
+	URL            string            `json:"url"`
+	Description    string            `json:"description,omitempty"`
+	Label          string            `json:"label,omitempty"`
+	Confirm        string            `json:"confirm,omitempty"`
+	LogPath        string            `json:"log_path,omitempty"`
+	Parameters     []ActionParameter `json:"parameters,omitempty"`
+	TimeoutSeconds int               `json:"timeout_seconds,omitempty"`
+	SecretEnv      string            `json:"secret_env,omitempty"`
 }
 
 // LoadConfigFile reads path and materialises a Config + []ActionSubscription.
@@ -62,6 +70,7 @@ func LoadConfigFile(path string) (Config, []ActionSubscription, error) {
 			URL:            s.URL,
 			TimeoutSeconds: s.TimeoutSeconds,
 			FailurePolicy:  s.FailurePolicy,
+			Blocking:       s.Blocking,
 		}
 		if s.SecretEnv != "" {
 			sub.Secret = os.Getenv(s.SecretEnv)
@@ -81,6 +90,10 @@ func LoadConfigFile(path string) (Config, []ActionSubscription, error) {
 			Name:           a.Name,
 			URL:            a.URL,
 			Description:    a.Description,
+			Label:          a.Label,
+			Confirm:        a.Confirm,
+			LogPath:        a.LogPath,
+			Parameters:     a.Parameters,
 			TimeoutSeconds: a.TimeoutSeconds,
 		}
 		if a.SecretEnv != "" {

@@ -27,7 +27,7 @@ func (m *mockInstanceRepo) FindByNamespace(_ string) (*models.StackInstance, err
 func (m *mockInstanceRepo) Update(_ *models.StackInstance) error                   { return nil }
 func (m *mockInstanceRepo) Delete(_ string) error                                  { return nil }
 func (m *mockInstanceRepo) List() ([]models.StackInstance, error)                  { return nil, nil }
-func (m *mockInstanceRepo) ListPaged(_, _ int) ([]models.StackInstance, int, error) { return nil, 0, nil }
+func (m *mockInstanceRepo) ListPaged(_ models.StackInstanceFilter, _, _ int) ([]models.StackInstance, int, error) { return nil, 0, nil }
 func (m *mockInstanceRepo) ListByOwner(_ string) ([]models.StackInstance, error)   { return nil, nil }
 func (m *mockInstanceRepo) FindByName(_ string) ([]models.StackInstance, error)    { return nil, nil }
 func (m *mockInstanceRepo) FindByCluster(clusterID string) ([]models.StackInstance, error) {
@@ -49,6 +49,9 @@ func (m *mockInstanceRepo) ListIDsByOwnerIDs(_ []string) (map[string][]string, e
 func (m *mockInstanceRepo) ExistsByDefinitionAndStatus(_, _ string) (bool, error) { return false, nil }
 func (m *mockInstanceRepo) ListExpired() ([]*models.StackInstance, error)                        { return nil, nil }
 func (m *mockInstanceRepo) ListExpiringSoon(_ time.Duration) ([]*models.StackInstance, error) { return nil, nil }
+func (*mockInstanceRepo) MarkExpiryWarned(_ string, _, _ time.Time) (bool, error) {
+	return false, nil
+}
 func (m *mockInstanceRepo) ListByStatus(_ string, _ int) ([]*models.StackInstance, error)     { return nil, nil }
 
 func TestSecretRefresher_RefreshesRunningInstances(t *testing.T) {

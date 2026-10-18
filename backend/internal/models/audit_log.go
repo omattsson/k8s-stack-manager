@@ -2,6 +2,10 @@ package models
 
 import "time"
 
+// MaxAuditEntityIDLen is the size of audit_logs.entity_id: the RFC 1123
+// label maximum (a namespace name). A UUID has 36 characters.
+const MaxAuditEntityIDLen = 63
+
 // AuditLog records a user action for auditing purposes.
 type AuditLog struct {
 	ID         string    `json:"id" gorm:"primaryKey;size:36"`
@@ -9,7 +13,7 @@ type AuditLog struct {
 	Username   string    `json:"username" gorm:"size:100"`
 	Action     string    `json:"action" gorm:"size:100"`
 	EntityType string    `json:"entity_type" gorm:"size:100"`
-	EntityID   string    `json:"entity_id" gorm:"size:36"`
+	EntityID   string    `json:"entity_id" gorm:"size:63"` // 63: RFC 1123 label (namespace name); a UUID has 36
 	Details    string    `json:"details" gorm:"type:longtext"`
 	Timestamp  time.Time `json:"timestamp"`
 }

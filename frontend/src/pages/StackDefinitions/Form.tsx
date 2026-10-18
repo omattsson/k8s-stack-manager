@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useMemo } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Box,
@@ -17,12 +17,16 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import LockIcon from '@mui/icons-material/Lock';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import SystemUpdateAltIcon from '@mui/icons-material/SystemUpdateAlt';
+import LinkIcon from '@mui/icons-material/Link';
 import { definitionService, templateService } from '../../api/client';
 import { useNotification } from '../../context/NotificationContext';
+import { useAuth } from '../../context/AuthContext';
+import { hasAtLeastRole } from '../../utils/roles';
 import type { StackDefinition, ChartConfig, TemplateChartConfig } from '../../types';
 import YamlEditor from '../../components/YamlEditor';
 import LoadingState from '../../components/LoadingState';
 import UpgradeDialog from './UpgradeDialog';
+import TemplateLinkDialog from './TemplateLinkDialog';
 import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
 
 interface ChartFormData {
@@ -46,17 +50,66 @@ const emptyChart = (): ChartFormData => ({
   deploy_order: 0,
 });
 
+/** Map an API chart config to form data. Null fields become empty strings. */
+const toChartFormData = (c: ChartConfig): ChartFormData => ({
+  id: c.id,
+  chart_name: c.chart_name ?? '',
+  repository_url: c.repository_url ?? '',
+  source_repo_url: c.source_repo_url ?? '',
+  chart_path: c.chart_path ?? '',
+  chart_version: c.chart_version ?? '',
+  default_values: c.default_values ?? '',
+  deploy_order: c.deploy_order ?? 0,
+});
+
+interface FormValues {
+  name: string;
+  description: string;
+  defaultBranch: string;
+  charts: ChartFormData[];
+}
+
+/**
+ * Serialize the form values for the unsaved-changes check. Normalizes
+ * null/undefined to '' and ignores trailing whitespace and CRLF in YAML values,
+ * so an editor that only reformats line endings does not mark the form dirty.
+ */
+const serializeFormValues = (v: FormValues): string => {
+  const text = (s: string | null | undefined) => (s ?? '').replace(/\r\n/g, '\n').replace(/\s+$/, '');
+  return JSON.stringify({
+    name: text(v.name),
+    description: text(v.description),
+    defaultBranch: text(v.defaultBranch),
+    charts: v.charts.map((c) => ({
+      id: c.id ?? null,
+      chart_name: text(c.chart_name),
+      repository_url: text(c.repository_url),
+      source_repo_url: text(c.source_repo_url),
+      chart_path: text(c.chart_path),
+      chart_version: text(c.chart_version),
+      default_values: text(c.default_values),
+      deploy_order: Number(c.deploy_order) || 0,
+    })),
+  });
+};
+
 const Form = () => {
   const { id } = useParams<{ id: string }>();
   const isEdit = Boolean(id);
   const navigate = useNavigate();
   const { showSuccess, showError } = useNotification();
+  const { user } = useAuth();
+  // Adding or removing charts and changing a chart source (name, repository,
+  // path, version) needs devops or admin; the backend enforces the same rule.
+  const canManageCharts = hasAtLeastRole(user?.role, 'devops');
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [defaultBranch, setDefaultBranch] = useState('master');
   const [sourceTemplateId, setSourceTemplateId] = useState<string | undefined>();
   const [sourceTemplateVersion, setSourceTemplateVersion] = useState<string | undefined>();
+  const [sourceTemplateName, setSourceTemplateName] = useState<string | undefined>();
+  const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   const [charts, setCharts] = useState<ChartFormData[]>([]);
   const [templateCharts, setTemplateCharts] = useState<TemplateChartConfig[]>([]);
   const [loading, setLoading] = useState(isEdit);
@@ -65,70 +118,84 @@ const Form = () => {
   const [exporting, setExporting] = useState(false);
   const [upgradeDialogOpen, setUpgradeDialogOpen] = useState(false);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
-  const initialValuesRef = useRef({ name: '', description: '', defaultBranch: 'master', charts: [] as ChartFormData[] });
-  const isDirty = useMemo(() =>
-    name !== initialValuesRef.current.name
-    || description !== initialValuesRef.current.description
-    || defaultBranch !== initialValuesRef.current.defaultBranch
-    || JSON.stringify(charts) !== JSON.stringify(initialValuesRef.current.charts),
-    [name, description, defaultBranch, charts]
+  // Baseline for the unsaved-changes check. Kept in state (not a ref) so that
+  // isDirty recomputes when the loaded definition becomes the baseline.
+  const [baseline, setBaseline] = useState<string>(() =>
+    serializeFormValues({ name: '', description: '', defaultBranch: 'master', charts: [] }),
+  );
+  const isDirty = useMemo(
+    () => serializeFormValues({ name, description, defaultBranch, charts }) !== baseline,
+    [name, description, defaultBranch, charts, baseline],
   );
 
   useUnsavedChanges(isDirty && !saving);
 
   useEffect(() => {
     if (!id) return;
+    // Ignore a stale response: React StrictMode (development) runs this
+    // effect twice, and the route can change before a request returns. A
+    // late response would overwrite the edits of the user (#596).
+    let stale = false;
     const fetchDefinition = async () => {
       try {
         const data = await definitionService.get(id);
-        setName(data.name);
-        setDescription(data.description);
-        setDefaultBranch(data.default_branch);
+        if (stale) return;
+        const loadedCharts = (data.charts ?? []).map(toChartFormData);
+        setName(data.name ?? '');
+        setDescription(data.description ?? '');
+        setDefaultBranch(data.default_branch ?? '');
         setSourceTemplateId(data.source_template_id);
         setSourceTemplateVersion(data.source_template_version);
-        if (data.charts) {
-          setCharts(data.charts.map((c: ChartConfig) => ({
-            id: c.id,
-            chart_name: c.chart_name,
-            repository_url: c.repository_url,
-            source_repo_url: c.source_repo_url,
-            chart_path: c.chart_path,
-            chart_version: c.chart_version,
-            default_values: c.default_values,
-            deploy_order: c.deploy_order,
-          })));
-        }
+        setCharts(loadedCharts);
+        setBaseline(serializeFormValues({
+          name: data.name ?? '',
+          description: data.description ?? '',
+          defaultBranch: data.default_branch ?? '',
+          charts: loadedCharts,
+        }));
         if (data.source_template_id) {
-          try {
-            const tmpl = await templateService.get(data.source_template_id);
-            setTemplateCharts(tmpl.charts || []);
-          } catch {
-            // Template fetch is best-effort
-          }
+          await loadSourceTemplate(data.source_template_id, () => stale);
         }
-        initialValuesRef.current = {
-          name: data.name,
-          description: data.description,
-          defaultBranch: data.default_branch,
-          charts: data.charts ? data.charts.map((c: ChartConfig) => ({
-            id: c.id,
-            chart_name: c.chart_name,
-            repository_url: c.repository_url,
-            source_repo_url: c.source_repo_url,
-            chart_path: c.chart_path,
-            chart_version: c.chart_version,
-            default_values: c.default_values,
-            deploy_order: c.deploy_order,
-          })) : [],
-        };
       } catch {
-        setError('Failed to load definition');
+        if (!stale) setError('Failed to load definition');
       } finally {
-        setLoading(false);
+        if (!stale) setLoading(false);
       }
     };
     fetchDefinition();
+    return () => {
+      stale = true;
+    };
   }, [id]);
+
+  /**
+   * Loads the name and the charts of the source template (best effort).
+   * isStale tells the caller's effect that its response is stale.
+   */
+  const loadSourceTemplate = async (templateId: string, isStale: () => boolean = () => false) => {
+    try {
+      const tmpl = await templateService.get(templateId);
+      if (isStale()) return;
+      setSourceTemplateName(tmpl.name);
+      setTemplateCharts(tmpl.charts || []);
+    } catch {
+      // Template fetch is best-effort
+    }
+  };
+
+  const handleLinked = async (updated: StackDefinition) => {
+    setLinkDialogOpen(false);
+    setSourceTemplateId(updated.source_template_id || undefined);
+    setSourceTemplateVersion(updated.source_template_version || undefined);
+    setSourceTemplateName(undefined);
+    setTemplateCharts([]);
+    if (updated.source_template_id) {
+      await loadSourceTemplate(updated.source_template_id);
+      showSuccess('Template link saved');
+    } else {
+      showSuccess('Template link removed');
+    }
+  };
 
   const addChart = () => {
     setCharts([...charts, emptyChart()]);
@@ -218,6 +285,22 @@ const Form = () => {
     return <LoadingState label="Loading definition..." />;
   }
 
+  if (!isEdit && !canManageCharts) {
+    return (
+      <Box>
+        <Typography variant="h4" component="h1" gutterBottom>
+          Create Stack Definition
+        </Typography>
+        <Alert severity="info" sx={{ mb: 2 }}>
+          Only devops and admin users can create a definition. Start from a template instead.
+        </Alert>
+        <Button variant="outlined" onClick={() => navigate('/templates')}>
+          Browse Templates
+        </Button>
+      </Box>
+    );
+  }
+
   return (
     <Box>
       <Typography variant="h4" component="h1" gutterBottom>
@@ -229,6 +312,7 @@ const Form = () => {
       {sourceTemplateId && (
         <Alert severity="info" sx={{ mb: 2 }}>
           Derived from template
+          {sourceTemplateName && ` ${sourceTemplateName}`}
           {sourceTemplateVersion && ` (v${sourceTemplateVersion})`}.{' '}
           <Chip
             label="View Template"
@@ -246,7 +330,28 @@ const Form = () => {
             onClick={() => setUpgradeDialogOpen(true)}
             sx={{ cursor: 'pointer' }}
           />
+          {canManageCharts && id && (
+            <>
+              {' '}
+              <Chip
+                icon={<LinkIcon />}
+                label="Change Link"
+                size="small"
+                variant="outlined"
+                onClick={() => setLinkDialogOpen(true)}
+                sx={{ cursor: 'pointer' }}
+              />
+            </>
+          )}
         </Alert>
+      )}
+
+      {!sourceTemplateId && canManageCharts && id && !loading && (
+        <Box sx={{ mb: 2 }}>
+          <Button size="small" variant="outlined" startIcon={<LinkIcon />} onClick={() => setLinkDialogOpen(true)}>
+            Link to a Template
+          </Button>
+        </Box>
       )}
 
       <Paper sx={{ p: 3, mb: 3 }}>
@@ -280,8 +385,13 @@ const Form = () => {
       <Paper sx={{ p: 3, mb: 3 }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
           <Typography variant="h6">Charts</Typography>
-          <Button startIcon={<AddIcon />} onClick={addChart}>Add Chart</Button>
+          {canManageCharts && <Button startIcon={<AddIcon />} onClick={addChart}>Add Chart</Button>}
         </Box>
+        {!canManageCharts && (
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Only devops and admin users can add or remove charts or change a chart source.
+          </Typography>
+        )}
 
         {charts.length === 0 && (
           <Typography color="text.secondary">No charts added yet.</Typography>
@@ -305,7 +415,7 @@ const Form = () => {
                   </Tooltip>
                 )}
               </Box>
-              {!isRequired && (
+              {!isRequired && canManageCharts && (
               <IconButton onClick={() => removeChart(index)} size="small" color="error" aria-label={`Remove chart ${charts[index]?.chart_name || index + 1}`}>
                 <DeleteIcon />
               </IconButton>
@@ -313,14 +423,14 @@ const Form = () => {
             </Box>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
               <Box sx={{ display: 'flex', gap: 2 }}>
-                <TextField label="Chart Name" value={chart.chart_name} onChange={(e) => updateChart(index, 'chart_name', e.target.value)} fullWidth required size="small" />
+                <TextField label="Chart Name" value={chart.chart_name} onChange={(e) => updateChart(index, 'chart_name', e.target.value)} disabled={!canManageCharts} fullWidth required size="small" />
                 <TextField label="Deploy Order" type="number" value={chart.deploy_order} onChange={(e) => updateChart(index, 'deploy_order', Number.parseInt(e.target.value) || 0)} sx={{ width: 120 }} size="small" />
               </Box>
-              <TextField label="Repository URL" value={chart.repository_url} onChange={(e) => updateChart(index, 'repository_url', e.target.value)} fullWidth size="small" />
+              <TextField label="Repository URL" value={chart.repository_url} onChange={(e) => updateChart(index, 'repository_url', e.target.value)} disabled={!canManageCharts} fullWidth size="small" />
               <TextField label="Source Repo URL" value={chart.source_repo_url} onChange={(e) => updateChart(index, 'source_repo_url', e.target.value)} fullWidth size="small" />
               <Box sx={{ display: 'flex', gap: 2 }}>
-                <TextField label="Chart Path" value={chart.chart_path} onChange={(e) => updateChart(index, 'chart_path', e.target.value)} fullWidth size="small" />
-                <TextField label="Chart Version" value={chart.chart_version} onChange={(e) => updateChart(index, 'chart_version', e.target.value)} sx={{ width: 150 }} size="small" />
+                <TextField label="Chart Path" value={chart.chart_path} onChange={(e) => updateChart(index, 'chart_path', e.target.value)} disabled={!canManageCharts} fullWidth size="small" />
+                <TextField label="Chart Version" value={chart.chart_version} onChange={(e) => updateChart(index, 'chart_version', e.target.value)} disabled={!canManageCharts} sx={{ width: 150 }} size="small" />
               </Box>
               <Divider />
               <YamlEditor
@@ -364,6 +474,17 @@ const Form = () => {
           {saving ? 'Saving...' : 'Save Definition'}
         </Button>
       </Box>
+
+      {canManageCharts && id && (
+        <TemplateLinkDialog
+          definitionId={id}
+          open={linkDialogOpen}
+          currentTemplateId={sourceTemplateId}
+          currentVersion={sourceTemplateVersion}
+          onClose={() => setLinkDialogOpen(false)}
+          onLinked={handleLinked}
+        />
+      )}
 
       {sourceTemplateId && id && (
         <UpgradeDialog

@@ -2,7 +2,9 @@ package gitprovider
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -322,4 +324,99 @@ func (t *urlRewritingTransport) RoundTrip(req *http.Request) (*http.Response, er
 		base = http.DefaultTransport
 	}
 	return base.RoundTrip(newReq)
+}
+
+var errFederationFailed = errors.New("federation failed")
+
+func TestAzureDevOpsAuthorization(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		pat        string
+		source     TokenSource
+		wantHeader string
+		wantErr    string
+		wantKind   error
+		wantCause  error
+	}{
+		{
+			name:       "PAT uses basic auth",
+			pat:        "test-pat",
+			wantHeader: "Basic " + base64.StdEncoding.EncodeToString([]byte(":test-pat")),
+		},
+		{
+			name:       "token source uses bearer auth",
+			source:     func(context.Context) (string, error) { return "entra-token", nil },
+			wantHeader: "Bearer entra-token",
+		},
+		{
+			name:       "PAT wins over token source",
+			pat:        "test-pat",
+			source:     func(context.Context) (string, error) { return "entra-token", nil },
+			wantHeader: "Basic " + base64.StdEncoding.EncodeToString([]byte(":test-pat")),
+		},
+		{
+			name:      "token source error is returned",
+			source:    func(context.Context) (string, error) { return "", errFederationFailed },
+			wantErr:   "Azure DevOps token could not be obtained",
+			wantKind:  ErrAuthentication,
+			wantCause: errFederationFailed,
+		},
+		{
+			name:     "no credentials",
+			wantErr:  "Azure DevOps provider is not configured",
+			wantKind: ErrProviderUnavailable,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var got string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				got = r.Header.Get("Authorization")
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(azureRefsResponse{Value: []azureRef{{Name: "refs/heads/main"}}})
+			}))
+			defer server.Close()
+
+			p := newTestAzureProvider(t, server)
+			p.pat = tt.pat
+			p.tokenSource = tt.source
+
+			_, err := p.ListBranches(context.Background(), "https://dev.azure.com/myorg/myproject/_git/myrepo")
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Equal(t, tt.wantErr, err.Error(), "the message must not include the underlying error")
+				assert.ErrorIs(t, err, tt.wantKind)
+				if tt.wantCause != nil {
+					assert.ErrorIs(t, err, tt.wantCause, "the cause must stay available for logs")
+				}
+				assert.Empty(t, got, "no request without credentials")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantHeader, got)
+		})
+	}
+}
+
+func TestNewRegistry_AzureDevOpsWithTokenSource(t *testing.T) {
+	t.Parallel()
+
+	r, err := NewRegistry(Config{AzureDevOps: AzureDevOpsConfig{
+		TokenSource: func(context.Context) (string, error) { return "t", nil },
+	}})
+	require.NoError(t, err)
+	p, err := r.detectProvider("https://dev.azure.com/org/project/_git/repo")
+	require.NoError(t, err)
+	assert.Equal(t, "azure_devops", p.ProviderType())
+
+	none, err := NewRegistry(Config{})
+	require.NoError(t, err)
+	_, err = none.detectProvider("https://dev.azure.com/org/project/_git/repo")
+	require.ErrorIs(t, err, ErrProviderUnavailable)
 }

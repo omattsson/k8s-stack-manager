@@ -44,4 +44,38 @@ type NotificationRepository interface {
 	MarkAllAsRead(ctx context.Context, userID string) error
 	GetPreferences(ctx context.Context, userID string) ([]NotificationPreference, error)
 	UpdatePreference(ctx context.Context, pref *NotificationPreference) error
+	// DisabledUserIDs returns the users in userIDs that switched off the
+	// event type in their preferences, with one query. A user without a
+	// preference for the event type gets it (the default is on).
+	DisabledUserIDs(ctx context.Context, eventType string, userIDs []string) (map[string]bool, error)
+}
+
+// NotificationTarget is the stack instance of a lifecycle event. The
+// notifier uses it to find the receivers of the in-app notification (the
+// owner and the followers) and to match the channel filters.
+type NotificationTarget struct {
+	InstanceID   string
+	InstanceName string
+	OwnerID      string
+	DefinitionID string
+	ClusterID    string
+	// FollowerIDs are the followers of the instance when the caller read
+	// them before the instance was deleted (a delete also deletes the
+	// follower rows). When FollowerIDs is nil, the notifier reads them.
+	FollowerIDs []string
+}
+
+// NewNotificationTarget returns the notification target of inst.
+// FollowerIDs is nil: the notifier reads the followers.
+func NewNotificationTarget(inst *StackInstance) NotificationTarget {
+	if inst == nil {
+		return NotificationTarget{}
+	}
+	return NotificationTarget{
+		InstanceID:   inst.ID,
+		InstanceName: inst.Name,
+		OwnerID:      inst.OwnerID,
+		DefinitionID: inst.StackDefinitionID,
+		ClusterID:    inst.ClusterID,
+	}
 }

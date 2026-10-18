@@ -380,6 +380,104 @@ describe('Profile Page', () => {
     });
   });
 
+  it.each([
+    ['local', 'local'],
+    ['missing', null],
+  ])('shows the Local account chip when authProvider is %s', async (_label, authProvider) => {
+    (useAuth as ReturnType<typeof vi.fn>).mockReturnValue({
+      user: currentUser,
+      isAuthenticated: true,
+      isLoading: false,
+      login: vi.fn(),
+      logout: vi.fn(),
+      authProvider,
+      oidcConfig: { enabled: true, provider_name: 'Example IdP', local_auth_enabled: true },
+      authEmail: null,
+    });
+    (apiKeyService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    render(
+      <MemoryRouter>
+        <Profile />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Local account')).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/SSO via/)).not.toBeInTheDocument();
+  });
+
+  it('shows the SSO chip with the provider name when authProvider is oidc', async () => {
+    (useAuth as ReturnType<typeof vi.fn>).mockReturnValue({
+      user: currentUser,
+      isAuthenticated: true,
+      isLoading: false,
+      login: vi.fn(),
+      logout: vi.fn(),
+      authProvider: 'oidc',
+      oidcConfig: { enabled: true, provider_name: 'Example IdP', local_auth_enabled: true },
+      authEmail: 'alice@example.com',
+    });
+    (apiKeyService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    render(
+      <MemoryRouter>
+        <Profile />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('SSO via Example IdP')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Local account')).not.toBeInTheDocument();
+  });
+
+  it('lists every event type a user or follower can get, with stored values', async () => {
+    (apiKeyService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (notificationService.getPreferences as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { event_type: 'stack.expiring', enabled: false },
+    ]);
+    render(
+      <MemoryRouter>
+        <Profile />
+      </MemoryRouter>
+    );
+
+    const expiring = await screen.findByRole('switch', { name: 'Toggle Stack expiring soon' });
+    expect(expiring).not.toBeChecked();
+    for (const label of [
+      'Deployment timed out',
+      'Deployment partly failed',
+      'Deployment warning (post-deploy step failed)',
+      'Stack deleted',
+      'Stack stopped by a cleanup policy',
+      'Stack cleaned by a cleanup policy',
+      'Cleanup policy ran (admin and devops)',
+    ]) {
+      expect(screen.getByRole('switch', { name: `Toggle ${label}` })).toBeChecked();
+    }
+  });
+
+  it('does not list system events for role user', async () => {
+    (useAuth as ReturnType<typeof vi.fn>).mockReturnValue({
+      user: { ...currentUser, role: 'user' },
+      isAuthenticated: true,
+      isLoading: false,
+      login: vi.fn(),
+      logout: vi.fn(),
+    });
+    (apiKeyService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    render(
+      <MemoryRouter>
+        <Profile />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('switch', { name: 'Toggle Stack expiring soon' })).toBeInTheDocument();
+    expect(screen.queryByRole('switch', { name: 'Toggle Cluster quota warning (admin and devops)' })).not.toBeInTheDocument();
+  });
+
   it('toggles notification preference and saves', async () => {
     (apiKeyService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 

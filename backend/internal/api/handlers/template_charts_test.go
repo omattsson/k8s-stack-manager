@@ -199,6 +199,7 @@ func TestUpdateTemplateChart(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			templateRepo := NewMockStackTemplateRepository()
+			seedTemplate(t, templateRepo, "tmpl-1", "Template", "owner-1", false)
 			chartRepo := NewMockTemplateChartConfigRepository()
 			tt.setupChart(chartRepo)
 
@@ -226,6 +227,7 @@ func TestDeleteTemplateChart(t *testing.T) {
 	t.Run("successful delete", func(t *testing.T) {
 		t.Parallel()
 		templateRepo := NewMockStackTemplateRepository()
+		seedTemplate(t, templateRepo, "tmpl-1", "Template", "owner-1", false)
 		chartRepo := NewMockTemplateChartConfigRepository()
 		seedTemplateChart(t, chartRepo, "tc-1", "tmpl-1", "nginx")
 

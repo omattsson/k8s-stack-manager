@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { loginAsDevops, uniqueName, createAndPublishTemplate, instantiateTemplate, API_BASE, ADMIN_PASSWORD, ensureDefaultCluster, deleteCluster } from './helpers';
+import { loginAsDevops, uniqueName, API_BASE, ADMIN_PASSWORD, ensureDefaultCluster, deleteCluster } from './helpers';
 
 /**
  * Helper: login via API and return the JWT token.
@@ -448,12 +448,11 @@ test.describe('Deployment UI', () => {
     await loginAsDevops(page);
   });
 
-  test('deploy button visible on draft instance, stop button hidden', async ({ page }) => {
-    // Create prerequisite data via UI helpers.
-    const tplName = uniqueName('tpl-deploy-btn');
-    const templateId = await createAndPublishTemplate(page, tplName);
+  test('deploy button visible on draft instance, stop button hidden', async ({ page, request }) => {
+    // Create the definition through the API: the UI setup (template, publish,
+    // instantiate) took most of the 60 s test timeout under parallel load.
     const defName = uniqueName('def-deploy-btn');
-    await instantiateTemplate(page, templateId, defName);
+    await apiCreateDeployableDefinition(request, await apiLogin(request), defName);
 
     // Create instance via UI.
     const instName = uniqueName('inst-deploy-btn');
@@ -472,11 +471,11 @@ test.describe('Deployment UI', () => {
     await expect(page.getByRole('button', { name: 'Stop' })).not.toBeVisible();
   });
 
-  test('deploy button triggers deployment and shows snackbar', async ({ page }) => {
-    const tplName = uniqueName('tpl-deploy-click');
-    const templateId = await createAndPublishTemplate(page, tplName);
+  test('deploy button triggers deployment and shows snackbar', async ({ page, request }) => {
+    // Create the definition through the API: the UI setup (template, publish,
+    // instantiate) took most of the 60 s test timeout under parallel load.
     const defName = uniqueName('def-deploy-click');
-    await instantiateTemplate(page, templateId, defName);
+    await apiCreateDeployableDefinition(request, await apiLogin(request), defName);
 
     const instName = uniqueName('inst-deploy-click');
     await page.goto('/stack-instances/new');
@@ -500,11 +499,11 @@ test.describe('Deployment UI', () => {
     await expect(snackbar.first()).toBeVisible({ timeout: 10_000 });
   });
 
-  test('deployment history section appears after deploy', async ({ page }) => {
-    const tplName = uniqueName('tpl-deploy-hist');
-    const templateId = await createAndPublishTemplate(page, tplName);
+  test('deployment history section appears after deploy', async ({ page, request }) => {
+    // Create the definition through the API: the UI setup (template, publish,
+    // instantiate) took most of the 60 s test timeout under parallel load.
     const defName = uniqueName('def-deploy-hist');
-    await instantiateTemplate(page, templateId, defName);
+    await apiCreateDeployableDefinition(request, await apiLogin(request), defName);
 
     const instName = uniqueName('inst-deploy-hist');
     await page.goto('/stack-instances/new');
@@ -564,11 +563,11 @@ test.describe('Deployment UI', () => {
     await expect(page.getByText('Deployment History')).toBeVisible({ timeout: 15_000 });
   });
 
-  test('Clean Namespace button is visible for error instance', async ({ page }) => {
-    const tplName = uniqueName('tpl-clean-btn');
-    const templateId = await createAndPublishTemplate(page, tplName);
+  test('Clean namespace menu item is visible for error instance', async ({ page, request }) => {
+    // Create the definition through the API: the UI setup (template, publish,
+    // instantiate) took most of the 60 s test timeout under parallel load.
     const defName = uniqueName('def-clean-btn');
-    await instantiateTemplate(page, templateId, defName);
+    await apiCreateDeployableDefinition(request, await apiLogin(request), defName);
 
     // Create instance via UI.
     const instName = uniqueName('inst-clean-btn');
@@ -620,9 +619,10 @@ test.describe('Deployment UI', () => {
     // Reload the page so the UI reflects the error state.
     await page.reload();
 
-    // Verify Clean Namespace button is visible for error instance.
+    // Verify the Actions menu has Clean namespace for an error instance.
+    await page.getByRole('button', { name: 'Actions' }).click({ timeout: 10_000 });
     await expect(
-      page.getByRole('button', { name: 'Clean Namespace' }),
+      page.getByRole('menuitem', { name: 'Clean namespace' }),
     ).toBeVisible({ timeout: 10_000 });
   });
 });

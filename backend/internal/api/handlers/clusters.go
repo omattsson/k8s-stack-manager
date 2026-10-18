@@ -4,24 +4,29 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"backend/internal/api/middleware"
 	"backend/internal/cluster"
+	"backend/internal/k8s"
 	"backend/internal/models"
 	"backend/pkg/dberrors"
 
 	"github.com/gin-gonic/gin"
+	corev1 "k8s.io/api/core/v1"
 	apimachineryversion "k8s.io/apimachinery/pkg/version"
 )
 
 // isPrivilegedRole returns true if the caller has admin or devops role.
 func isPrivilegedRole(c *gin.Context) bool {
 	role := middleware.GetRoleFromContext(c)
-	return role == "admin" || role == "devops"
+	return role == roleAdmin || role == roleDevOps
 }
 
 // Cluster handler message constants.
@@ -82,10 +87,100 @@ type UpdateClusterRequest struct {
 
 // ClusterHandler provides CRUD endpoints for cluster management.
 type ClusterHandler struct {
-	clusterRepo  models.ClusterRepository
-	registry     *cluster.Registry
-	instanceRepo models.StackInstanceRepository
-	quotaRepo    models.ResourceQuotaRepository
+	clusterRepo       models.ClusterRepository
+	registry          *cluster.Registry
+	instanceRepo      models.StackInstanceRepository
+	quotaRepo         models.ResourceQuotaRepository
+	quotaOverrideRepo models.InstanceQuotaOverrideRepository
+	// quotaClients writes quotas to the stack namespaces (nil: no writes).
+	quotaClients quotaClientGetter
+}
+
+// WithInstanceQuotaOverrides attaches the instance quota override repository.
+// UpdateQuotas then rejects a cluster quota that conflicts with the quota
+// override of an instance on the cluster. Returns h for chaining.
+func (h *ClusterHandler) WithInstanceQuotaOverrides(repo models.InstanceQuotaOverrideRepository) *ClusterHandler {
+	h.quotaOverrideRepo = repo
+	return h
+}
+
+// maxQuotaConflictNames caps the instance names listed in a quota conflict error.
+const maxQuotaConflictNames = 10
+
+// checkOverrideConflicts validates the new cluster quota merged with the
+// quota override of every instance on the cluster (and, for the default
+// cluster, of every instance without a cluster). It returns a non-empty,
+// user-facing conflict message that lists up to maxQuotaConflictNames
+// instance names and the first rule broken, or an error when a lookup fails.
+func (h *ClusterHandler) checkOverrideConflicts(ctx context.Context, cl *models.Cluster, config *models.ResourceQuotaConfig) (string, error) {
+	if h.quotaOverrideRepo == nil || h.instanceRepo == nil {
+		return "", nil
+	}
+	instances, err := h.clusterInstances(cl)
+	if err != nil {
+		return "", err
+	}
+	if len(instances) == 0 {
+		return "", nil
+	}
+
+	ids := make([]string, 0, len(instances))
+	names := make(map[string]string, len(instances))
+	for _, inst := range instances {
+		ids = append(ids, inst.ID)
+		names[inst.ID] = inst.Name
+	}
+	overrides, err := h.quotaOverrideRepo.ListByInstanceIDs(ctx, ids)
+	if err != nil {
+		return "", fmt.Errorf("list instance quota overrides: %w", err)
+	}
+
+	// Check in instance name order so the listed names and the first
+	// conflict are deterministic.
+	sort.SliceStable(overrides, func(i, j int) bool {
+		return names[overrides[i].StackInstanceID] < names[overrides[j].StackInstanceID]
+	})
+
+	var conflicting []string
+	var firstErr error
+	var firstName string
+	for i := range overrides {
+		if vErr := models.ValidateEffectiveQuota(config, &overrides[i]); vErr != nil {
+			name := names[overrides[i].StackInstanceID]
+			conflicting = append(conflicting, name)
+			if firstErr == nil {
+				firstErr, firstName = vErr, name
+			}
+		}
+	}
+	if len(conflicting) == 0 {
+		return "", nil
+	}
+	listed := conflicting
+	more := ""
+	if len(listed) > maxQuotaConflictNames {
+		more = fmt.Sprintf(" (+%d more)", len(listed)-maxQuotaConflictNames)
+		listed = listed[:maxQuotaConflictNames]
+	}
+	return fmt.Sprintf("the quota conflicts with the quota override of %d instance(s): %s%s; first conflict (%s): %s",
+		len(conflicting), strings.Join(listed, ", "), more, firstName, firstErr.Error()), nil
+}
+
+// clusterInstances returns the instances on the cluster and, for the default
+// cluster, the instances without a cluster.
+func (h *ClusterHandler) clusterInstances(cl *models.Cluster) ([]models.StackInstance, error) {
+	instances, err := h.instanceRepo.FindByCluster(cl.ID)
+	if err != nil {
+		return nil, fmt.Errorf("list cluster instances: %w", err)
+	}
+	if cl.IsDefault {
+		unassigned, err := h.instanceRepo.FindByCluster("")
+		if err != nil {
+			return nil, fmt.Errorf("list instances without cluster: %w", err)
+		}
+		instances = append(instances, unassigned...)
+	}
+	return instances, nil
 }
 
 // NewClusterHandler creates a new ClusterHandler with the given dependencies.
@@ -113,6 +208,7 @@ func NewClusterHandlerWithQuotas(
 		registry:     registry,
 		instanceRepo: instanceRepo,
 		quotaRepo:    quotaRepo,
+		quotaClients: registryQuotaClients(registry),
 	}
 }
 
@@ -540,7 +636,7 @@ func (h *ClusterHandler) SetDefaultCluster(c *gin.Context) {
 
 // GetClusterHealthSummary godoc
 // @Summary      Get cluster health summary
-// @Description  Returns node count, CPU/memory totals, and namespace count for a cluster.
+// @Description  Returns node count, CPU/memory totals, and namespace count for a cluster. requested_cpu and requested_memory are the sums of the pod requests of scheduled, unfinished pods (not real use); omitted when the pod list fails.
 // @Tags         clusters
 // @Produce      json
 // @Security     BearerAuth
@@ -580,6 +676,15 @@ func (h *ClusterHandler) GetClusterHealthSummary(c *gin.Context) {
 		slog.Error("Failed to get cluster summary", "error", err, logKeyClusterID, id)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve cluster health"})
 		return
+	}
+
+	// Best-effort: the pod requests need a list of all pods, so only this
+	// endpoint reads them (not the dashboard).
+	if requests, reqErr := k8sClient.GetClusterRequests(c.Request.Context()); reqErr != nil {
+		slog.Warn("Failed to sum cluster pod requests", "error", reqErr, logKeyClusterID, id)
+	} else {
+		summary.RequestedCPU = k8s.FormatCPUMillis(requests.CPUMillis)
+		summary.RequestedMemory = k8s.FormatMemoryBytes(requests.MemoryBytes)
 	}
 
 	c.JSON(http.StatusOK, summary)
@@ -687,6 +792,16 @@ type UpdateQuotaRequest struct {
 	MemoryLimit   string `json:"memory_limit"`
 	StorageLimit  string `json:"storage_limit"`
 	PodLimit      int    `json:"pod_limit"`
+	// Per-container LimitRange values and the namespace ephemeral-storage total.
+	ContainerCPURequest              string `json:"container_cpu_request" example:"100m"`
+	ContainerCPULimit                string `json:"container_cpu_limit" example:"500m"`
+	ContainerCPUMax                  string `json:"container_cpu_max" example:"2"`
+	ContainerMemoryRequest           string `json:"container_memory_request" example:"128Mi"`
+	ContainerMemoryLimit             string `json:"container_memory_limit" example:"512Mi"`
+	ContainerMemoryMax               string `json:"container_memory_max" example:"4Gi"`
+	EphemeralStorageLimit            string `json:"ephemeral_storage_limit" example:"20Gi"`
+	ContainerEphemeralStorageRequest string `json:"container_ephemeral_storage_request" example:"128Mi"`
+	ContainerEphemeralStorageLimit   string `json:"container_ephemeral_storage_limit" example:"1Gi"`
 }
 
 // GetQuotas godoc
@@ -727,7 +842,7 @@ func (h *ClusterHandler) GetQuotas(c *gin.Context) {
 
 // UpdateQuotas godoc
 // @Summary      Create or update resource quota config for a cluster
-// @Description  Creates or updates the resource quota configuration for a cluster. Admin only.
+// @Description  Creates or updates the resource quota configuration for a cluster. Admin only. Each non-empty quantity must be a valid Kubernetes quantity (for example 500m, 2, 512Mi, 10Gi) and not negative; cpu_request must not exceed cpu_limit and memory_request must not exceed memory_limit; pod_limit must not be negative. The container_* fields set the LimitRange of each stack namespace (defaultRequest, default, max per container); per container, request <= limit <= max, and a container default must not exceed the namespace value of the same resource. ephemeral_storage_limit sets requests.ephemeral-storage and limits.ephemeral-storage of the namespace ResourceQuota. Without container defaults, the LimitRange uses fallback defaults (CPU 100m request / 500m limit, memory 128Mi / 512Mi, ephemeral storage 128Mi / 1Gi), capped at the namespace value and the container max; never the namespace total. Values are trimmed. Invalid input returns 400 with the field name. The quota is also checked merged with the quota override of every instance on the cluster (for the default cluster also instances without a cluster); a conflict returns 400 listing up to 10 instance names and the first rule broken. After the save, the backend applies the quota to every stack namespace on the cluster in the background: the namespace of an instance with a quota override gets the effective quota (the cluster quota merged with the override); other stack namespaces get the cluster quota. A namespace whose merged quota is not valid is skipped.
 // @Tags         clusters
 // @Accept       json
 // @Produce      json
@@ -735,6 +850,8 @@ func (h *ClusterHandler) GetQuotas(c *gin.Context) {
 // @Param        quota  body  UpdateQuotaRequest   true  "Quota configuration"
 // @Success      200  {object}  models.ResourceQuotaConfig
 // @Failure      400  {object}  map[string]string
+// @Failure      401  {object}  map[string]string
+// @Failure      403  {object}  map[string]string
 // @Failure      404  {object}  map[string]string
 // @Failure      500  {object}  map[string]string
 // @Router       /api/v1/clusters/{id}/quotas [put]
@@ -743,7 +860,8 @@ func (h *ClusterHandler) UpdateQuotas(c *gin.Context) {
 	id := c.Param("id")
 
 	// Verify cluster exists.
-	if _, err := h.clusterRepo.FindByID(id); err != nil {
+	cl, err := h.clusterRepo.FindByID(id)
+	if err != nil {
 		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -760,18 +878,41 @@ func (h *ClusterHandler) UpdateQuotas(c *gin.Context) {
 		return
 	}
 
+	// Trim the quantities: Kubernetes rejects " 1Gi" at deploy time.
 	config := &models.ResourceQuotaConfig{
 		ClusterID:     id,
-		CPURequest:    req.CPURequest,
-		CPULimit:      req.CPULimit,
-		MemoryRequest: req.MemoryRequest,
-		MemoryLimit:   req.MemoryLimit,
-		StorageLimit:  req.StorageLimit,
+		CPURequest:    strings.TrimSpace(req.CPURequest),
+		CPULimit:      strings.TrimSpace(req.CPULimit),
+		MemoryRequest: strings.TrimSpace(req.MemoryRequest),
+		MemoryLimit:   strings.TrimSpace(req.MemoryLimit),
+		StorageLimit:  strings.TrimSpace(req.StorageLimit),
 		PodLimit:      req.PodLimit,
+
+		ContainerCPURequest:              strings.TrimSpace(req.ContainerCPURequest),
+		ContainerCPULimit:                strings.TrimSpace(req.ContainerCPULimit),
+		ContainerCPUMax:                  strings.TrimSpace(req.ContainerCPUMax),
+		ContainerMemoryRequest:           strings.TrimSpace(req.ContainerMemoryRequest),
+		ContainerMemoryLimit:             strings.TrimSpace(req.ContainerMemoryLimit),
+		ContainerMemoryMax:               strings.TrimSpace(req.ContainerMemoryMax),
+		EphemeralStorageLimit:            strings.TrimSpace(req.EphemeralStorageLimit),
+		ContainerEphemeralStorageRequest: strings.TrimSpace(req.ContainerEphemeralStorageRequest),
+		ContainerEphemeralStorageLimit:   strings.TrimSpace(req.ContainerEphemeralStorageLimit),
 	}
 
 	if err := config.Validate(); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Reject a quota that breaks an existing instance quota override.
+	conflict, err := h.checkOverrideConflicts(c.Request.Context(), cl, config)
+	if err != nil {
+		slog.Error("Failed to check instance quota overrides", logKeyClusterID, id, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		return
+	}
+	if conflict != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": conflict})
 		return
 	}
 
@@ -790,23 +931,37 @@ func (h *ClusterHandler) UpdateQuotas(c *gin.Context) {
 	}
 
 	// Propagate quotas to all existing stack namespaces in this cluster.
-	if h.registry != nil {
-		go h.propagateQuotasToNamespaces(id, config)
+	if h.quotaClients != nil {
+		go h.propagateQuotasToNamespaces(cl)
 	}
 
 	c.JSON(http.StatusOK, saved)
 }
 
-// propagateQuotasToNamespaces applies the quota config to all existing stack
-// namespaces in the cluster. Runs in a background goroutine so the API
-// response is not delayed. Errors are logged but do not affect the response.
-func (h *ClusterHandler) propagateQuotasToNamespaces(clusterID string, config *models.ResourceQuotaConfig) {
+// propagateQuotasToNamespaces applies the stored cluster quota to all
+// existing stack namespaces in the cluster. The namespace of an instance gets
+// its effective quota (the cluster quota merged with the instance quota
+// override); other stack namespaces get the cluster quota. A namespace whose
+// merged quota is not valid is skipped. Each write reads the stored quotas
+// again (writeNamespaceQuota), so a quota override change during the loop is
+// not undone. Runs in a background goroutine so the API response is not
+// delayed. Errors are logged but do not affect the response.
+func (h *ClusterHandler) propagateQuotasToNamespaces(cl *models.Cluster) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
+	clusterID := cl.ID
 
-	k8sClient, err := h.registry.GetK8sClient(clusterID)
+	k8sClient, err := h.quotaClients(clusterID)
 	if err != nil {
 		slog.Error("Failed to get K8s client for quota propagation", logKeyClusterID, clusterID, "error", err)
+		return
+	}
+
+	// Without the instance list a namespace of an instance with an
+	// override would get the plain cluster quota.
+	instanceIDs, err := h.instanceNamespaces(cl)
+	if err != nil {
+		slog.Error("Failed to list instances for quota propagation", logKeyClusterID, clusterID, "error", err)
 		return
 	}
 
@@ -816,17 +971,40 @@ func (h *ClusterHandler) propagateQuotasToNamespaces(clusterID string, config *m
 		return
 	}
 
+	src := quotaSources{clusterQuotas: h.quotaRepo, overrides: h.quotaOverrideRepo}
 	for _, ns := range namespaces {
-		if err := k8sClient.EnsureResourceQuota(ctx, ns.Name, config); err != nil {
-			slog.Warn("Failed to apply resource quota to namespace", "namespace", ns.Name, logKeyClusterID, clusterID, "error", err)
+		if ns.Phase == string(corev1.NamespaceTerminating) {
 			continue
 		}
-		if err := k8sClient.EnsureLimitRange(ctx, ns.Name, config); err != nil {
-			slog.Warn("Failed to apply limit range to namespace", "namespace", ns.Name, logKeyClusterID, clusterID, "error", err)
+		instanceID := instanceIDs[ns.Name]
+		wrote, err := writeNamespaceQuota(ctx, k8sClient, src, clusterID, instanceID, ns.Name)
+		if err != nil {
+			slog.Warn("Failed to apply resource quota to namespace", "namespace", ns.Name, logKeyClusterID, clusterID, "instance_id", instanceID, "error", err)
 			continue
 		}
-		slog.Info("Applied resource quota to namespace", "namespace", ns.Name, logKeyClusterID, clusterID)
+		if wrote {
+			slog.Info("Applied resource quota to namespace", "namespace", ns.Name, logKeyClusterID, clusterID, "instance_id", instanceID)
+		}
 	}
+}
+
+// instanceNamespaces maps the namespace of each instance on the cluster to
+// the instance ID. It is empty without an instance repository.
+func (h *ClusterHandler) instanceNamespaces(cl *models.Cluster) (map[string]string, error) {
+	result := map[string]string{}
+	if h.instanceRepo == nil {
+		return result, nil
+	}
+	instances, err := h.clusterInstances(cl)
+	if err != nil {
+		return nil, err
+	}
+	for _, inst := range instances {
+		if inst.Namespace != "" {
+			result[inst.Namespace] = inst.ID
+		}
+	}
+	return result, nil
 }
 
 // DeleteQuotas godoc

@@ -49,7 +49,7 @@ func (h *CleanupPolicyHandler) ListCleanupPolicies(c *gin.Context) {
 
 // CreateCleanupPolicy godoc
 // @Summary     Create a cleanup policy
-// @Description Creates a new cleanup policy and reloads the scheduler
+// @Description Creates a new cleanup policy and reloads the scheduler. condition is a comma-separated list of key:value pairs (all must match): status:<status>; idle_days:<N> (no deploy for N days, creation time when never deployed; a running or partial instance whose expiry is in the future never matches); age_days:<N> (created more than N days ago); stopped_days:<N> (stopped, and the last stop finished N or more days ago; instances without a recorded stop time never match); cleaned_days:<N> (a draft, and the last clean finished N or more days ago; instances without a recorded clean time never match); ttl_expired; expires_within_hours:<N> (no expiry, or the expiry is at most N hours from now; an instance with a later expiry does not match).
 // @Tags        cleanup-policies
 // @Accept      json
 // @Produce     json
@@ -92,16 +92,56 @@ func (h *CleanupPolicyHandler) CreateCleanupPolicy(c *gin.Context) {
 	c.JSON(http.StatusCreated, policy)
 }
 
+// updateCleanupPolicyRequest is the body of PUT /admin/cleanup-policies/:id.
+// Only the fields that are present change (partial update). id, created_at,
+// updated_at and last_run_at are not writable.
+type updateCleanupPolicyRequest struct {
+	Name      *string `json:"name"`
+	ClusterID *string `json:"cluster_id"`
+	Action    *string `json:"action"`
+	Condition *string `json:"condition"`
+	Schedule  *string `json:"schedule"`
+	Enabled   *bool   `json:"enabled"`
+	DryRun    *bool   `json:"dry_run"`
+}
+
+// apply copies the fields that are present in the request to policy.
+func (r *updateCleanupPolicyRequest) apply(policy *models.CleanupPolicy) {
+	if r.Name != nil {
+		policy.Name = *r.Name
+	}
+	if r.ClusterID != nil {
+		policy.ClusterID = *r.ClusterID
+	}
+	if r.Action != nil {
+		policy.Action = *r.Action
+	}
+	if r.Condition != nil {
+		policy.Condition = *r.Condition
+	}
+	if r.Schedule != nil {
+		policy.Schedule = *r.Schedule
+	}
+	if r.Enabled != nil {
+		policy.Enabled = *r.Enabled
+	}
+	if r.DryRun != nil {
+		policy.DryRun = *r.DryRun
+	}
+}
+
 // UpdateCleanupPolicy godoc
 // @Summary     Update a cleanup policy
-// @Description Updates an existing cleanup policy and reloads the scheduler
+// @Description Updates an existing cleanup policy and reloads the scheduler. Partial update: only the fields in the body change (for example {"enabled": false}); the merged policy is validated. See the create endpoint for the condition syntax (status, idle_days, age_days, stopped_days, cleaned_days, ttl_expired, expires_within_hours).
 // @Tags        cleanup-policies
 // @Accept      json
 // @Produce     json
-// @Param       id     path     string               true "Policy ID"
-// @Param       policy body     models.CleanupPolicy  true "Cleanup policy"
+// @Param       id     path     string                     true "Policy ID"
+// @Param       policy body     updateCleanupPolicyRequest true "Fields to change"
 // @Success     200    {object} models.CleanupPolicy
 // @Failure     400    {object} map[string]string
+// @Failure     401    {object} map[string]string
+// @Failure     403    {object} map[string]string
 // @Failure     404    {object} map[string]string
 // @Failure     500    {object} map[string]string
 // @Router      /api/v1/admin/cleanup-policies/{id} [put]
@@ -120,28 +160,27 @@ func (h *CleanupPolicyHandler) UpdateCleanupPolicy(c *gin.Context) {
 		return
 	}
 
-	var policy models.CleanupPolicy
-	if err := c.ShouldBindJSON(&policy); err != nil {
+	var update updateCleanupPolicyRequest
+	if err := c.ShouldBindJSON(&update); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
 	}
-
-	policy.ID = id
-	policy.CreatedAt = existing.CreatedAt
-	policy.LastRunAt = existing.LastRunAt
+	// Merge into a copy, so a rejected update leaves the loaded policy as it
+	// is.
+	merged := *existing
+	policy := &merged
+	update.apply(policy)
 
 	if err := policy.Validate(); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
-
 	if _, err := scheduler.ParseCondition(policy.Condition); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	if err := h.repo.Update(&policy); err != nil {
+	if err := h.repo.Update(policy); err != nil {
 		status, msg := mapError(err, entityCleanupPolicy)
 		c.JSON(status, gin.H{"error": msg})
 		return
@@ -190,7 +229,7 @@ func (h *CleanupPolicyHandler) DeleteCleanupPolicy(c *gin.Context) {
 
 // RunCleanupPolicy godoc
 // @Summary     Run a cleanup policy manually
-// @Description Executes a cleanup policy immediately. Use ?dry_run=true to preview matches without acting.
+// @Description Executes a cleanup policy immediately and answers when the run ends. Use ?dry_run=true to preview matches without acting. Stop and clean only start the operations (fast). A delete runs the pre-instance-delete hooks per instance first, so a delete run can take up to the number of matches times (5 minutes, or the sum of the pre-instance-delete hook timeouts plus one minute when longer); use a client timeout that allows this. The run fires cleanup-policy-executed when at least one instance matched.
 // @Tags        cleanup-policies
 // @Produce     json
 // @Param       id      path  string true  "Policy ID"

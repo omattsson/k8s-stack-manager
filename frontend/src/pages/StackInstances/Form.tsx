@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Box,
   Typography,
@@ -14,7 +14,10 @@ import axios from 'axios';
 import { instanceService, definitionService, clusterService } from '../../api/client';
 import type { StackDefinition, Cluster } from '../../types';
 import TtlSelector from '../../components/TtlSelector';
+import { useBranding } from '../../context/BrandingContext';
+import { stopTimeBounds, stopTimeError } from '../../utils/stopTime';
 import LoadingState from '../../components/LoadingState';
+import { INSTANCE_NAME_MAX_LENGTH, INSTANCE_NAME_RULE, validateInstanceName } from '../../utils/instanceName';
 
 interface ConflictResponse {
   error: string;
@@ -24,6 +27,10 @@ interface ConflictResponse {
 
 const Form = () => {
   const navigate = useNavigate();
+  // ?definition=<id> (the deploy button of the Definitions list) preselects
+  // that definition when it is in the list.
+  const [searchParams] = useSearchParams();
+  const requestedDefId = searchParams.get('definition');
 
   const [definitions, setDefinitions] = useState<StackDefinition[]>([]);
   const [clusters, setClusters] = useState<Cluster[]>([]);
@@ -32,25 +39,45 @@ const Form = () => {
   const [name, setName] = useState('');
   const [branch, setBranch] = useState('master');
   const [loading, setLoading] = useState(true);
-  const [ttlMinutes, setTtlMinutes] = useState(0);
+  // null: the user has not changed the TTL field. The field shows the server
+  // default and the request leaves out ttl_minutes, so the server applies its
+  // own default (DEFAULT_INSTANCE_TTL_MINUTES).
+  const { defaultTtlMinutes, maxTtlDays } = useBranding();
+  const [ttlChoice, setTtlChoice] = useState<number | null>(null);
+  const ttlMinutes = ttlChoice ?? defaultTtlMinutes;
+  // "Custom stop time": a fixed stop time (expires_at) instead of a TTL.
+  const [stopTime, setStopTime] = useState<string | null | undefined>(undefined);
+  const stopTimeInvalid = stopTime !== undefined && stopTimeError(stopTime, stopTimeBounds(maxTtlDays)) !== null;
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
 
   useEffect(() => {
+    // Ignore a stale response: React StrictMode (development) runs this
+    // effect twice, and the route can change before a request returns. A
+    // late response would replace the definition the user picked (#596).
+    let stale = false;
     const fetchData = async () => {
       try {
-        const [defs, cls] = await Promise.all([definitionService.list(), clusterService.list()]);
-        setDefinitions(defs || []);
+        const [defs, cls] = await Promise.all([definitionService.listAll(), clusterService.list()]);
+        if (stale) return;
+        const list = defs || [];
+        setDefinitions(list);
         setClusters(cls || []);
+        if (requestedDefId && list.some((d) => d.id === requestedDefId)) {
+          setSelectedDefId(requestedDefId);
+        }
       } catch {
-        setError('Failed to load form data');
+        if (!stale) setError('Failed to load form data');
       } finally {
-        setLoading(false);
+        if (!stale) setLoading(false);
       }
     };
     fetchData();
-  }, []);
+    return () => {
+      stale = true;
+    };
+  }, [requestedDefId]);
 
   useEffect(() => {
     const def = definitions.find((d) => d.id === selectedDefId);
@@ -58,6 +85,9 @@ const Form = () => {
       setBranch(def.default_branch || 'master');
     }
   }, [selectedDefId, definitions]);
+
+  // Show the rule violation only after the user has typed something.
+  const nameError = name ? validateInstanceName(name) : null;
 
   const handleCreate = async () => {
     setError(null);
@@ -69,7 +99,7 @@ const Form = () => {
         name,
         branch,
         ...(selectedClusterId ? { cluster_id: selectedClusterId } : {}),
-        ttl_minutes: ttlMinutes,
+        ...(stopTime ? { expires_at: stopTime } : ttlChoice !== null ? { ttl_minutes: ttlChoice } : {}),
       });
       navigate(`/stack-instances/${instance.id}`);
     } catch (err) {
@@ -154,9 +184,10 @@ const Form = () => {
             onChange={(e) => setName(e.target.value)}
             required
             fullWidth
-            helperText={`${name.length}/50 characters — namespace will be auto-generated from your name and owner`}
-            error={name.length > 50}
-            slotProps={{ htmlInput: { maxLength: 50 } }}
+            helperText={nameError
+              ?? `${INSTANCE_NAME_RULE} ${name.length}/${INSTANCE_NAME_MAX_LENGTH} characters. The namespace is generated from the name and the owner.`}
+            error={nameError !== null}
+            slotProps={{ htmlInput: { maxLength: INSTANCE_NAME_MAX_LENGTH } }}
           />
 
           <TextField
@@ -166,7 +197,7 @@ const Form = () => {
             fullWidth
           />
 
-          <TtlSelector value={ttlMinutes} onChange={setTtlMinutes} />
+          <TtlSelector value={ttlMinutes} onChange={setTtlChoice} stopTime={stopTime} onStopTimeChange={setStopTime} />
 
           {clusters.length > 0 && (
             <TextField
@@ -226,7 +257,7 @@ const Form = () => {
           <Button
             variant="contained"
             onClick={handleCreate}
-            disabled={saving || !name || !selectedDefId || name.length > 50}
+            disabled={saving || !name || !selectedDefId || nameError !== null || stopTimeInvalid}
           >
             {saving ? 'Creating...' : 'Create Instance'}
           </Button>

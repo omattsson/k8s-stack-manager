@@ -72,7 +72,15 @@ func (r *SecretRefresher) Stop() {
 
 func (r *SecretRefresher) run() {
 	defer close(r.done)
+	ctx, cancel := contextUntilClosed(r.stopCh)
+	defer cancel()
+	r.Run(ctx)
+}
 
+// Run runs the secret refresher loop until ctx is done. It blocks. Run can be
+// called again after it returned (one call per leadership term). Do not
+// mix Run with Start and Stop on the same value.
+func (r *SecretRefresher) Run(ctx context.Context) {
 	r.refresh()
 
 	ticker := time.NewTicker(r.interval)
@@ -80,7 +88,7 @@ func (r *SecretRefresher) run() {
 
 	for {
 		select {
-		case <-r.stopCh:
+		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			r.refresh()

@@ -58,7 +58,7 @@ const matchesSearchAndCategory = (t: StackTemplate, search: string, category: st
   if (category !== 'All' && t.category !== category) return false;
   if (!search) return true;
   const q = search.toLowerCase();
-  return t.name.toLowerCase().includes(q) || t.description.toLowerCase().includes(q);
+  return t.name.toLowerCase().includes(q) || (t.description ?? '').toLowerCase().includes(q);
 };
 
 type BulkAction = 'delete' | 'publish' | 'unpublish';
@@ -67,6 +67,25 @@ const BULK_ACTION_LABELS: Record<BulkAction, string> = {
   delete: 'Delete',
   publish: 'Publish',
   unpublish: 'Unpublish',
+};
+
+/**
+ * Explain a per-template error of a bulk delete. Known API reasons get the
+ * next step for the user; other reasons stay as they are.
+ * @param error - The error text of one result item
+ * @returns The text to show
+ */
+export const describeBulkDeleteError = (error: string | undefined): string => {
+  const text = (error ?? '').trim();
+  if (!text) return 'Failed';
+  if (/^template is published$/i.test(text)) {
+    return 'The template is published. Unpublish it first, then delete it.';
+  }
+  const used = /^template is used by (\d+) definition\(s\)$/i.exec(text);
+  if (used) {
+    return `The template is used by ${used[1]} definition(s). Delete these definitions first.`;
+  }
+  return text;
 };
 
 interface TemplateCardProps {
@@ -113,9 +132,11 @@ const TemplateCard = ({ template, isSelected, bulkSelectionEnabled, isFavorite, 
           {!template.is_published && <Chip label="Draft" size="small" color="warning" />}
         </Box>
       </Box>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-        {template.description || 'No description'}
-      </Typography>
+      {template.description && (
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+          {template.description}
+        </Typography>
+      )}
       {template.owner_username && (
         <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
           By {template.owner_username}
@@ -185,7 +206,7 @@ const Gallery = () => {
     try {
       setLoading(true);
       const [data, favs] = await Promise.all([
-        templateService.list(),
+        templateService.listAll(),
         favoriteService.list().catch(() => []),
       ]);
       setTemplates(data || []);
@@ -275,6 +296,9 @@ const Gallery = () => {
       }
       setBulkResult(result);
       setBulkResultOpen(true);
+      // The action is done (also on partial failure): clear the selection so
+      // the toolbar does not show templates that are deleted or already changed.
+      setSelectedIds(new Set());
 
       if (result.failed === 0) {
         showSuccess(`Bulk ${bulkAction}: ${result.succeeded}/${result.total} succeeded`);
@@ -326,8 +350,12 @@ const Gallery = () => {
 
   const templatePlural = selectedTemplates.length === 1 ? '' : 's';
   const bulkActionLabel = bulkAction ? BULK_ACTION_LABELS[bulkAction] : '';
+  const selectedPublished = selectedTemplates.filter((t) => t.is_published);
+  const publishedNote = selectedPublished.length > 0
+    ? ` Published templates cannot be deleted. Unpublish them first: ${selectedPublished.map((t) => t.name).join(', ')}.`
+    : '';
   const bulkConfirmMessage = bulkAction === 'delete'
-    ? `You are about to permanently delete ${selectedTemplates.length} template${templatePlural}: ${selectedTemplates.map((t) => t.name).join(', ')}. This action cannot be undone.`
+    ? `You are about to permanently delete ${selectedTemplates.length} template${templatePlural}: ${selectedTemplates.map((t) => t.name).join(', ')}. This action cannot be undone. Only unpublished templates that no definition uses can be deleted.${publishedNote}`
     : `${bulkActionLabel} ${selectedTemplates.length} template${templatePlural}?`;
 
   return (
@@ -540,8 +568,8 @@ const Gallery = () => {
       />
 
       {/* Bulk Results Dialog */}
-      <Dialog open={bulkResultOpen} onClose={handleBulkResultClose} maxWidth="sm" fullWidth>
-        <DialogTitle>
+      <Dialog open={bulkResultOpen} onClose={handleBulkResultClose} maxWidth="sm" fullWidth aria-labelledby="bulk-template-result-title">
+        <DialogTitle id="bulk-template-result-title">
           Bulk Operation Results
         </DialogTitle>
         <DialogContent>
@@ -562,7 +590,11 @@ const Gallery = () => {
                   <ListItem key={item.template_id}>
                     <ListItemText
                       primary={item.template_name}
-                      secondary={item.status === 'error' ? item.error : 'Success'}
+                      secondary={
+                        item.status === 'error'
+                          ? (bulkAction === 'delete' ? describeBulkDeleteError(item.error) : item.error)
+                          : 'Success'
+                      }
                       slotProps={{
                         secondary: {
                           sx: { color: item.status === 'error' ? 'error.main' : 'success.main' },

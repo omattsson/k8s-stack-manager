@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"log/slog"
 	"os"
 	"reflect"
 	"testing"
@@ -30,7 +31,6 @@ func TestLoadConfig(t *testing.T) {
 			"SERVER_HOST": "localhost",
 			"SERVER_PORT": "3000",
 			"LOG_LEVEL":   "debug",
-			"LOG_FILE":    "test.log",
 		}
 
 		// Set environment variables
@@ -66,7 +66,6 @@ func TestLoadConfig(t *testing.T) {
 
 		// Check logging config
 		assert.Equal(t, "debug", config.Logging.Level)
-		assert.Equal(t, "test.log", config.Logging.File)
 	})
 
 	// Test with default values
@@ -77,7 +76,7 @@ func TestLoadConfig(t *testing.T) {
 			"DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME",
 			"DB_MAX_OPEN_CONNS", "DB_MAX_IDLE_CONNS", "DB_CONN_MAX_LIFETIME",
 			"SERVER_HOST", "SERVER_PORT", "SERVER_READ_TIMEOUT", "SERVER_WRITE_TIMEOUT", "SERVER_SHUTDOWN_TIMEOUT",
-			"LOG_LEVEL", "LOG_FILE",
+			"LOG_LEVEL",
 		}
 		for _, v := range vars {
 			os.Unsetenv(v)
@@ -111,7 +110,6 @@ func TestLoadConfig(t *testing.T) {
 		assert.Equal(t, 30*time.Second, config.Server.ShutdownTimeout)
 		// Check default logging config
 		assert.Equal(t, "info", config.Logging.Level)
-		assert.Empty(t, config.Logging.File)
 	})
 }
 
@@ -249,6 +247,27 @@ func TestConfigValidate(t *testing.T) {
 		}
 
 		assert.NoError(t, validConfig.Validate())
+	})
+
+	t.Run("AZURE_DEVOPS_AUTH values", func(t *testing.T) {
+		t.Parallel()
+		for _, tc := range []struct {
+			auth    string
+			wantErr bool
+		}{{"", false}, {"pat", false}, {"workload-identity", false}, {"oauth", true}} {
+			cfg := &config.Config{
+				App:         config.AppConfig{Name: "myapp", Environment: "production"},
+				Database:    config.DatabaseConfig{Host: "localhost", Port: "3306", User: "user", Password: "pass", DBName: "dbname", MaxOpenConns: 10, MaxIdleConns: 5, ConnMaxLifetime: time.Minute},
+				Server:      config.ServerConfig{Host: "127.0.0.1", Port: "8080", ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second, ShutdownTimeout: 10 * time.Second},
+				GitProvider: config.GitProviderConfig{AzureDevOpsAuth: tc.auth},
+			}
+			err := cfg.Validate()
+			if tc.wantErr {
+				assert.ErrorContains(t, err, "AZURE_DEVOPS_AUTH", tc.auth)
+			} else {
+				assert.NoError(t, err, tc.auth)
+			}
+		}
 	})
 
 	t.Run("invalid app config", func(t *testing.T) {
@@ -414,8 +433,50 @@ func TestAuthConfigValidate(t *testing.T) {
 			AccessTokenExpiration:  15 * time.Minute,
 			RefreshTokenExpiration: 168 * time.Hour,
 			SessionIdleTimeout:     30 * time.Minute,
+			SessionMaxLifetime:     12 * time.Hour,
+			RefreshReuseGrace:      30 * time.Second,
 		}
 		assert.NoError(t, cfg.Validate())
+	})
+
+	t.Run("session lifetime and reuse grace limits", func(t *testing.T) {
+		t.Parallel()
+		tests := []struct {
+			name        string
+			maxLifetime time.Duration
+			grace       time.Duration
+			wantErr     string
+		}{
+			{name: "max lifetime equal to access token expiration", maxLifetime: 15 * time.Minute},
+			{name: "grace zero disables", maxLifetime: 12 * time.Hour, grace: 0},
+			{name: "grace at cap", maxLifetime: 12 * time.Hour, grace: 5 * time.Minute},
+			{name: "max lifetime below access token expiration", maxLifetime: 10 * time.Minute, wantErr: "session_max_lifetime"},
+			{name: "max lifetime zero", maxLifetime: 0, wantErr: "session_max_lifetime"},
+			{name: "negative grace", maxLifetime: 12 * time.Hour, grace: -time.Second, wantErr: "refresh_reuse_grace"},
+			{name: "grace above cap", maxLifetime: 12 * time.Hour, grace: 6 * time.Minute, wantErr: "refresh_reuse_grace"},
+		}
+		for _, tt := range tests {
+			tt := tt
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				cfg := config.AuthConfig{
+					JWTSecret:              "this-is-a-long-enough-secret",
+					JWTExpiration:          24 * time.Hour,
+					AccessTokenExpiration:  15 * time.Minute,
+					RefreshTokenExpiration: 168 * time.Hour,
+					SessionIdleTimeout:     30 * time.Minute,
+					SessionMaxLifetime:     tt.maxLifetime,
+					RefreshReuseGrace:      tt.grace,
+				}
+				err := cfg.Validate()
+				if tt.wantErr == "" {
+					assert.NoError(t, err)
+					return
+				}
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+			})
+		}
 	})
 
 	t.Run("empty JWT secret fails", func(t *testing.T) {
@@ -829,4 +890,40 @@ func TestNamespaceRoleBindingsConfig(t *testing.T) {
 			tt.assert(t, cfg.Deployment.NamespaceRoleBindings)
 		})
 	}
+}
+
+func TestLogConfigSlogLevel(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		level   string
+		want    slog.Level
+		wantErr bool
+	}{
+		{"", slog.LevelInfo, false},
+		{"info", slog.LevelInfo, false},
+		{"DEBUG", slog.LevelDebug, false},
+		{" warn ", slog.LevelWarn, false},
+		{"warning", slog.LevelWarn, false},
+		{"error", slog.LevelError, false},
+		{"verbose", slog.LevelInfo, true},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.level, func(t *testing.T) {
+			t.Parallel()
+			got, err := config.LogConfig{Level: tt.level}.SlogLevel()
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestValidateRejectsInvalidLogLevel(t *testing.T) {
+	t.Setenv("LOG_LEVEL", "verbose")
+	_, err := config.LoadConfig()
+	assert.ErrorContains(t, err, "LOG_LEVEL")
 }

@@ -21,6 +21,9 @@ spec:
         container.apparmor.security.beta.kubernetes.io/mysql: runtime/default
       {{- end }}
     spec:
+      {{- with .Values.mysql.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
       securityContext:
         # MySQL entrypoint starts as root, then drops to uid 999 via gosu.
         # Do NOT set runAsNonRoot/runAsUser here — it breaks the entrypoint.

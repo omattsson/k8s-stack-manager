@@ -9,6 +9,10 @@ services:
       - OTEL_ENABLED=true
       - OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317
       - OTEL_SERVICE_NAME=k8s-stack-manager
+      # Prometheus /metrics on :9090 (config/otel/prometheus.yml scrapes it).
+      # The K8s Stack Manager Grafana dashboard reads these metrics: the OTLP
+      # path has no per-pod labels and no process or Go runtime metrics.
+      - METRICS_ENABLED=true
     depends_on:
       otel-collector:
         condition: service_healthy

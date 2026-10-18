@@ -1,27 +1,27 @@
 ---
 name: Documentation Issue
-about: Report issues with documentation
+about: Report a problem in the documentation
 title: "[DOCS] "
 labels: documentation
 assignees: ""
 ---
 
 ## Documentation Location
-<!-- Specify where the documentation issue is located (URL, file path, etc.) -->
+<!-- Give the location of the problem (URL, file path, and section). -->
 
 ## Issue Type
 - [ ] Incorrect information
 - [ ] Missing information
 - [ ] Unclear explanation
 - [ ] Outdated content
-- [ ] Formatting/structure issue
-- [ ] Other (please describe)
+- [ ] Formatting or structure problem
+- [ ] Other (describe it)
 
 ## Issue Description
-<!-- Describe what's wrong with the current documentation -->
+<!-- Describe what is wrong with the current documentation. -->
 
 ## Suggested Improvement
-<!-- Describe how the documentation should be improved -->
+<!-- Describe how to improve the documentation. -->
 
 ## Additional Context
-<!-- Add any other context about the issue here -->
+<!-- Add other information about the issue. -->

@@ -1,14 +1,15 @@
 package handlers
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"backend/internal/api/middleware"
-	"backend/internal/database"
 	"backend/internal/deployer"
-	"backend/internal/helm"
 	"backend/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -62,10 +63,6 @@ func (h *InstanceHandler) executeBulkOperation(c *gin.Context, opName string, op
 		return
 	}
 
-	userID := middleware.GetUserIDFromContext(c)
-	role := middleware.GetRoleFromContext(c)
-	isPrivileged := role == "admin" || role == "devops"
-
 	resp := BulkOperationResponse{
 		Total:   len(req.InstanceIDs),
 		Results: make([]BulkOperationResultItem, 0, len(req.InstanceIDs)),
@@ -85,8 +82,9 @@ func (h *InstanceHandler) executeBulkOperation(c *gin.Context, opName string, op
 		}
 		result.InstanceName = inst.Name
 
-		// Authorization: non-privileged users can only operate on their own instances.
-		if !isPrivileged && inst.OwnerID != userID {
+		// Authorization: same rule as the single-instance endpoints
+		// (owner, admin or devops; see canModifyInstance).
+		if !canModifyInstance(c, inst) {
 			result.Status = "error"
 			result.Error = "forbidden"
 			resp.Failed++
@@ -142,6 +140,11 @@ func (h *InstanceHandler) BulkDeploy(c *gin.Context) {
 			return "", fmt.Errorf("cannot deploy: instance is currently %s", inst.Status)
 		}
 
+		// Same rule as DeployInstance: a passed fixed stop time blocks the deploy.
+		if stopTimePassed(inst.TTLMinutes, inst.ExpiresAt, time.Now().UTC()) {
+			return "", fmt.Errorf("%s", msgStopTimePassed)
+		}
+
 		def, err := h.definitionRepo.FindByID(inst.StackDefinitionID)
 		if err != nil {
 			return "", fmt.Errorf("stack definition not found")
@@ -156,85 +159,51 @@ func (h *InstanceHandler) BulkDeploy(c *gin.Context) {
 			return "", fmt.Errorf("no charts configured for this stack definition")
 		}
 
-		// Build locked values map from template.
-		lockedMap := make(map[string]string)
-		if def.SourceTemplateID != "" && h.templateChartRepo != nil {
-			templateCharts, tcErr := h.templateChartRepo.ListByTemplate(def.SourceTemplateID)
-			if tcErr != nil {
-				return "", fmt.Errorf("failed to list template chart configs")
-			}
-			for _, tc := range templateCharts {
-				lockedMap[tc.ChartName] = tc.LockedValues
-			}
-		}
-
-		// Build overrides map.
-		overridesMap := make(map[string]string)
-		overrides, err := h.overrideRepo.ListByInstance(inst.ID)
-		if err != nil {
-			return "", fmt.Errorf("failed to list value overrides")
-		}
-		for _, ov := range overrides {
-			overridesMap[ov.ChartConfigID] = ov.Values
-		}
-
-		// Build per-chart branch override map.
-		branchMap := make(map[string]string)
-		if h.branchOverrideRepo != nil {
-			branchOverrides, boErr := h.branchOverrideRepo.List(inst.ID)
-			if boErr != nil {
-				return "", fmt.Errorf("failed to list branch overrides")
-			}
-			for _, bo := range branchOverrides {
-				branchMap[bo.ChartConfigID] = bo.Branch
-			}
-		}
-
 		if inst.Namespace == "" {
 			return "", fmt.Errorf("instance namespace is empty")
 		}
 
-		ownerName := resolveOwnerName(h.userRepo, inst.OwnerID)
-
-		templateVars := helm.TemplateVars{
-			Branch:       inst.Branch,
-			ImageTag:     helm.SanitizeImageTag(inst.Branch),
-			Namespace:    inst.Namespace,
-			InstanceName: inst.Name,
-			StackName:    def.Name,
-			Owner:        ownerName,
+		// Same values pipeline as DeployInstance: shared values, defaults,
+		// overrides, locked values and branch overrides. Fail closed.
+		valuesMap, branchMap, err := h.buildChartValuesAndBranches(c.Request.Context(), inst, def, charts)
+		if err != nil {
+			slog.Error("bulk deploy: failed to build chart values", logKeyInstanceID, inst.ID, "error", err)
+			return "", fmt.Errorf("failed to generate values")
 		}
 
-		// Generate values YAML for each chart.
 		var chartInfos []deployer.ChartDeployInfo
 		for _, ch := range charts {
-			params := helm.GenerateParams{
-				ChartName:      ch.ChartName,
-				DefaultValues:  ch.DefaultValues,
-				LockedValues:   lockedMap[ch.ChartName],
-				OverrideValues: overridesMap[ch.ID],
-				ChartBranch:    branchMap[ch.ID],
-				TemplateVars:   templateVars,
-			}
-
-			yamlData, genErr := h.valuesGen.GenerateValues(c.Request.Context(), params)
-			if genErr != nil {
-				return "", fmt.Errorf("failed to generate values")
-			}
-
 			chartInfos = append(chartInfos, deployer.ChartDeployInfo{
 				ChartConfig: ch,
-				ValuesYAML:  yamlData,
+				ValuesYAML:  []byte(valuesMap[ch.ChartName]),
+				Branch:      branchMap[ch.ID],
 			})
 		}
 
-		req := deployer.DeployRequest{
-			Instance:   inst,
-			Definition: def,
-			Charts:     chartInfos,
+		// Record the rendered values like DeployInstance, so deploy preview
+		// compares against what this deploy applied.
+		var lastDeployedValues string
+		if encoded, encErr := json.Marshal(valuesMap); encErr == nil {
+			lastDeployedValues = string(encoded)
 		}
 
-		logID, err := h.deployManager.Deploy(c.Request.Context(), req)
+		// Restart the TTL clock like DeployInstance (never earlier). Without
+		// it, a bulk deploy of an expired instance kept the old expiry and the
+		// TTL reaper stopped the instance right after the deploy.
+		if inst.TTLMinutes > 0 {
+			inst.ExpiresAt = deployExpiry(inst.ExpiresAt, inst.TTLMinutes, h.maxTTL(), time.Now().UTC())
+			_ = h.instanceRepo.Update(inst)
+		}
+
+		req := deployer.DeployRequest{
+			Instance:           inst,
+			Definition:         def,
+			Charts:             chartInfos,
+			LastDeployedValues: lastDeployedValues,
+			UserID:             middleware.GetUserIDFromContext(c),
+		}
+
+		logID, err := h.deployManager.Deploy(hookTriggerCtx(c), req)
 		if err != nil {
 			return "", fmt.Errorf("failed to start deployment")
 		}
@@ -290,7 +259,7 @@ func (h *InstanceHandler) BulkStop(c *gin.Context) {
 			})
 		}
 
-		logID, err := h.deployManager.StopWithCharts(c.Request.Context(), inst, chartInfos)
+		logID, err := h.deployManager.StopWithCharts(hookTriggerCtx(c), inst, chartInfos)
 		if err != nil {
 			return "", fmt.Errorf("failed to start stop operation")
 		}
@@ -335,7 +304,10 @@ func (h *InstanceHandler) BulkClean(c *gin.Context) {
 			return "", fmt.Errorf("failed to list chart configs")
 		}
 
-		logID, err := h.deployManager.Clean(c.Request.Context(), inst, charts)
+		logID, err := h.deployManager.Clean(hookTriggerCtx(c), inst, charts)
+		if errors.Is(err, models.ErrCleanConflict) {
+			return "", errors.New(msgCleanConflict)
+		}
 		if err != nil {
 			return "", fmt.Errorf("failed to start clean operation")
 		}
@@ -346,7 +318,7 @@ func (h *InstanceHandler) BulkClean(c *gin.Context) {
 
 // BulkDelete godoc
 // @Summary     Bulk delete stack instances
-// @Description Delete multiple stack instances in a single request. Processes instances sequentially.
+// @Description Delete multiple stack instances in a single request. Processes instances sequentially with the rules of DELETE /stack-instances/{id}: an instance with cluster resources (running, partial, stopped, error) is cleaned first (Helm uninstall and namespace delete) and deleted when the clean completes — its result has status "success" and the log_id of the clean. "success" with a log_id means that the clean started; the row is removed when the clean finishes (WebSocket message instance.deleted). A failed clean keeps the instance with status error. A draft instance is deleted at once. An instance with an operation in progress (checked before pre-instance-delete fires), one that a concurrent delete already started, or one that a pre-instance-delete hook rejects, gets status "error".
 // @Tags        stack-instances
 // @Accept      json
 // @Produce     json
@@ -357,23 +329,13 @@ func (h *InstanceHandler) BulkClean(c *gin.Context) {
 // @Failure     403     {object} map[string]string
 // @Router      /api/v1/stack-instances/bulk/delete [post]
 func (h *InstanceHandler) BulkDelete(c *gin.Context) {
-	h.executeBulkOperation(c, "delete", func(_ *gin.Context, inst *models.StackInstance) (string, error) {
-		if h.txRunner != nil {
-			// Transactional path — branch override cleanup + instance delete are atomic.
-			txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
-				if err := repos.BranchOverride.DeleteByInstance(inst.ID); err != nil {
-					return err
-				}
-				return repos.StackInstance.Delete(inst.ID)
-			})
-			if txErr != nil {
-				slog.Error("failed to delete instance in bulk operation", "instance_id", inst.ID, "error", txErr)
-				return "", fmt.Errorf("failed to delete instance")
-			}
-			return "", nil
+	h.executeBulkOperation(c, "delete", func(c *gin.Context, inst *models.StackInstance) (string, error) {
+		// The same code path as the single delete (status rules, clean
+		// first, hooks, followers, notifications).
+		logID, delErr := h.deleteInstance(c, inst)
+		if delErr != nil {
+			return "", delErr
 		}
-
-		slog.Error("txRunner not configured for BulkDelete", "instance_id", inst.ID)
-		return "", fmt.Errorf("failed to delete instance")
+		return logID, nil
 	})
 }

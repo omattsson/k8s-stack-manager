@@ -8,16 +8,18 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
+	"sort"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -27,13 +29,35 @@ import (
 type Client struct {
 	clientset  kubernetes.Interface
 	restConfig *rest.Config
+	// namespaceLabels are extra labels that EnsureNamespace sets on every
+	// stack namespace, in addition to managed-by=k8s-stack-manager
+	// (NAMESPACE_LABELS). Set once before the client is shared.
+	namespaceLabels map[string]string
+	// accessBinding, when set, is the RoleBinding that EnsureNamespace
+	// applies to every stack namespace (namespace-scoped access). Set once
+	// before the client is shared.
+	accessBinding *AccessBinding
+}
+
+// ErrInClusterUnavailable is returned by NewClient("") when the process does
+// not run in a pod (no service account token and no KUBERNETES_SERVICE_HOST).
+var ErrInClusterUnavailable = errors.New("in-cluster config is not available: the backend does not run in a pod")
+
+// InClusterAvailable reports whether the in-cluster config (the service
+// account of the pod) can be loaded.
+func InClusterAvailable() bool {
+	_, err := rest.InClusterConfig()
+	return err == nil
 }
 
 // NewClient creates a Kubernetes client.
 // When kubeconfigPath is provided, it is used directly (no in-cluster fallback)
 // so that multi-cluster routing always targets the intended cluster.
-// When kubeconfigPath is empty, it tries in-cluster config first, then the
-// default kubeconfig path (~/.kube/config).
+// When kubeconfigPath is empty, it uses only the in-cluster config (the
+// service account of the pod). Outside a pod it returns
+// ErrInClusterUnavailable: it never falls back to ~/.kube/config, which would
+// send the requests of an in-cluster cluster to the current context of the
+// person who runs the backend (#582).
 func NewClient(kubeconfigPath string) (*Client, error) {
 	var config *rest.Config
 	var err error
@@ -45,15 +69,9 @@ func NewClient(kubeconfigPath string) (*Client, error) {
 			return nil, fmt.Errorf("build kubeconfig from %s: %w", kubeconfigPath, err)
 		}
 	} else {
-		// No kubeconfig path — try in-cluster config first, then default file.
 		config, err = rest.InClusterConfig()
 		if err != nil {
-			home, _ := os.UserHomeDir()
-			defaultPath := filepath.Join(home, ".kube", "config")
-			config, err = clientcmd.BuildConfigFromFlags("", defaultPath)
-			if err != nil {
-				return nil, fmt.Errorf("build kubeconfig: %w", err)
-			}
+			return nil, fmt.Errorf("%w: %v", ErrInClusterUnavailable, err)
 		}
 	}
 
@@ -80,36 +98,135 @@ func (c *Client) RESTConfig() *rest.Config {
 	return c.restConfig
 }
 
-// EnsureNamespace creates a namespace if it doesn't exist.
-func (c *Client) EnsureNamespace(ctx context.Context, name string) error {
-	exists, err := c.NamespaceExists(ctx, name)
-	if err != nil {
-		return fmt.Errorf("check namespace %q: %w", name, err)
+// SetNamespaceLabels sets the extra labels that EnsureNamespace puts on every
+// stack namespace (NAMESPACE_LABELS). The managed-by and instance-name keys
+// are ignored: the client always sets these itself. Call it before the client
+// is shared between goroutines.
+func (c *Client) SetNamespaceLabels(labels map[string]string) {
+	if len(labels) == 0 {
+		c.namespaceLabels = nil
+		return
 	}
-	if exists {
-		slog.Debug("Namespace already exists", "namespace", name)
-		return nil
+	c.namespaceLabels = make(map[string]string, len(labels))
+	for k, v := range labels {
+		if k == ManagedByLabelKey || k == InstanceNameLabelKey {
+			continue
+		}
+		c.namespaceLabels[k] = v
+	}
+}
+
+// desiredNamespaceLabels returns the labels a stack namespace must have: the
+// extra labels, managed-by=k8s-stack-manager and, when the instance name is a
+// valid label value, k8s-stack-manager.io/instance-name=<instance name>. An
+// instance name that is not a valid label value (names from before the
+// RFC 1123 rule) gives a warning and no instance-name label. An empty
+// instance name gives no instance-name label.
+func (c *Client) desiredNamespaceLabels(namespace, instanceName string) map[string]string {
+	labels := make(map[string]string, len(c.namespaceLabels)+2)
+	for k, v := range c.namespaceLabels {
+		labels[k] = v
+	}
+	labels[ManagedByLabelKey] = ManagedByLabelValue
+	if instanceName != "" {
+		if errs := validation.IsValidLabelValue(instanceName); len(errs) == 0 {
+			labels[InstanceNameLabelKey] = instanceName
+		} else {
+			slog.Warn("Instance name is not a valid label value; namespace gets no instance-name label",
+				"namespace", namespace, "instance_name", instanceName, "label", InstanceNameLabelKey)
+		}
+	}
+	return labels
+}
+
+// EnsureNamespace creates a namespace if it doesn't exist, and makes sure the
+// namespace has the label managed-by=k8s-stack-manager, the label
+// k8s-stack-manager.io/instance-name=<instanceName> (only when instanceName is
+// a valid label value; see desiredNamespaceLabels) and the extra labels of
+// SetNamespaceLabels. A namespace that already exists without these labels
+// (for example one that `helm install --create-namespace` created) gets them
+// added; a label with a different value gets the configured value. Other
+// labels stay. Other tools select stack namespaces by the managed-by label,
+// so it must be present on every stack namespace.
+func (c *Client) EnsureNamespace(ctx context.Context, name, instanceName string) error {
+	if err := c.ensureNamespace(ctx, name, instanceName); err != nil {
+		return err
+	}
+	// With namespace-scoped access the backend has rights in the namespace
+	// only through this RoleBinding: apply it before any other object.
+	if _, err := c.ensureAccessBinding(ctx, name); err != nil {
+		return fmt.Errorf("access RoleBinding in namespace %q: %w", name, err)
+	}
+	return nil
+}
+
+// ensureNamespace creates the namespace with the desired labels, or adds the
+// missing labels to an existing namespace.
+func (c *Client) ensureNamespace(ctx context.Context, name, instanceName string) error {
+	desired := c.desiredNamespaceLabels(name, instanceName)
+	existing, err := c.clientset.CoreV1().Namespaces().Get(ctx, name, metav1.GetOptions{})
+	switch {
+	case err == nil:
+		return c.ensureNamespaceLabels(ctx, existing, desired)
+	case !k8serrors.IsNotFound(err):
+		return fmt.Errorf("check namespace %q: %w", name, err)
 	}
 
 	ns := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: name,
-			Labels: map[string]string{
-				"managed-by": "k8s-stack-manager",
-			},
+			Name:   name,
+			Labels: desired,
 		},
 	}
 
 	_, err = c.clientset.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{})
 	if err != nil {
 		if k8serrors.IsAlreadyExists(err) {
-			// Race condition: another caller created it between our check and create.
-			return nil
+			// Race condition: another caller created it between our check and
+			// create. That caller may be `helm --create-namespace`, which sets
+			// no label, so check the label again.
+			existing, getErr := c.clientset.CoreV1().Namespaces().Get(ctx, name, metav1.GetOptions{})
+			if getErr != nil {
+				return fmt.Errorf("get namespace %q: %w", name, getErr)
+			}
+			return c.ensureNamespaceLabels(ctx, existing, desired)
 		}
 		return fmt.Errorf("create namespace %q: %w", name, err)
 	}
 
 	slog.Info("Namespace created", "namespace", name)
+	return nil
+}
+
+// ensureNamespaceLabels sets the missing or different labels of desired on an
+// existing namespace with one merge patch. It never changes or removes other
+// labels.
+func (c *Client) ensureNamespaceLabels(ctx context.Context, ns *corev1.Namespace, desired map[string]string) error {
+	changed := make(map[string]string)
+	for k, v := range desired {
+		if cur, ok := ns.Labels[k]; !ok || cur != v {
+			changed[k] = v
+		}
+	}
+	if len(changed) == 0 {
+		slog.Debug("Namespace already exists", "namespace", ns.Name)
+		return nil
+	}
+	patch, err := json.Marshal(map[string]any{
+		"metadata": map[string]any{"labels": changed},
+	})
+	if err != nil {
+		return fmt.Errorf("build label patch for namespace %q: %w", ns.Name, err)
+	}
+	if _, err := c.clientset.CoreV1().Namespaces().Patch(ctx, ns.Name, types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
+		return fmt.Errorf("label namespace %q: %w", ns.Name, err)
+	}
+	keys := make([]string, 0, len(changed))
+	for k := range changed {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	slog.Info("Namespace labelled", "namespace", ns.Name, "labels", keys)
 	return nil
 }
 
@@ -151,6 +268,31 @@ func (c *Client) GetNamespacePhase(ctx context.Context, name string) (string, er
 		return "", fmt.Errorf("get namespace %q: %w", name, err)
 	}
 	return string(ns.Status.Phase), nil
+}
+
+// ManagedByLabelKey and ManagedByLabelValue form the label that marks a
+// namespace as created by k8s-stack-manager.
+const (
+	ManagedByLabelKey   = "managed-by"
+	ManagedByLabelValue = "k8s-stack-manager"
+)
+
+// InstanceNameLabelKey is the namespace label with the stack instance name.
+// Admission policies use it to match a namespace to the exact stack name (a
+// namespace name prefix is ambiguous).
+const InstanceNameLabelKey = "k8s-stack-manager.io/instance-name"
+
+// GetNamespaceManaged reports whether a namespace exists and whether it has
+// the label managed-by=k8s-stack-manager.
+func (c *Client) GetNamespaceManaged(ctx context.Context, name string) (found, managed bool, err error) {
+	ns, err := c.clientset.CoreV1().Namespaces().Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if k8serrors.IsNotFound(err) {
+			return false, false, nil
+		}
+		return false, false, fmt.Errorf("get namespace %q: %w", name, err)
+	}
+	return true, ns.Labels[ManagedByLabelKey] == ManagedByLabelValue, nil
 }
 
 // Clientset returns the underlying kubernetes.Interface for advanced operations.

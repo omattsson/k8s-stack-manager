@@ -1,0 +1,68 @@
+# Release Drafter: a draft GitHub release that lists the merged pull requests
+# since the last app release (tag vX.Y.Z), grouped by the conventional commit
+# type of the pull request title. See RELEASING.md.
+#
+# The chart releases of chart-releaser (tags k8s-stack-manager-X.Y.Z) are not
+# app releases: tag-prefix keeps them out of the version history.
+name-template: 'v$RESOLVED_VERSION'
+tag-template: 'v$RESOLVED_VERSION'
+tag-prefix: 'v'
+change-template: '- $TITLE (#$NUMBER)'
+category-template: '### $TITLE'
+change-title-escapes: '\<*_&'
+categories:
+  # The release pull request itself is no change.
+  - type: pre-exclude
+    when:
+      conventional:
+        type: chore
+        scope: release
+  - title: Security
+    exclusive: true
+    when:
+      - conventional:
+          scope: security
+      - label: security
+  - title: Features
+    exclusive: true
+    semver-increment: minor
+    when:
+      conventional:
+        type: feat
+  - title: Fixes
+    exclusive: true
+    when:
+      conventional:
+        type: fix
+  - title: Documentation
+    exclusive: true
+    when:
+      conventional:
+        type: docs
+  - title: Dependencies
+    exclusive: true
+    collapse-after: 5
+    when:
+      - conventional:
+          type: deps
+      - label: dependencies
+  # Everything else: chore, ci, test, refactor, build, untyped titles.
+  - title: Maintenance
+  # The project is before 1.0: a breaking change raises the minor version.
+  - type: version-resolver
+    semver-increment: minor
+    when:
+      conventional:
+        breaking: true
+template: |
+  ## Changes
+
+  $CHANGES
+
+  ## Upgrade notes
+
+  <!-- Before you publish: add the chart version, the stackctl version, database
+  migrations and the upgrade notes (changed defaults, removed routes). Delete
+  this section when there are none. -->
+
+  **Full changelog:** https://github.com/$OWNER/$REPOSITORY/compare/$PREVIOUS_TAG...$RESOLVED_TAG

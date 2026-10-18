@@ -2,7 +2,6 @@ package gitprovider
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -83,7 +82,7 @@ func newRegistryWithLogger(cfg Config, logger *slog.Logger) (*Registry, error) {
 		github:           newGitHubProvider(cfg.GitHub),
 	}
 
-	if cfg.AzureDevOps.PAT != "" {
+	if cfg.AzureDevOps.PAT != "" || cfg.AzureDevOps.TokenSource != nil {
 		r.azureDevOps = newAzureDevOpsProvider(cfg.AzureDevOps)
 	}
 
@@ -577,8 +576,9 @@ func (r *Registry) pingAzureDevOps(ctx context.Context, p *azureDevOpsProvider) 
 	if err != nil {
 		return fmt.Errorf("azure devops: create request: %w", err)
 	}
-	auth := base64.StdEncoding.EncodeToString([]byte(":" + p.pat))
-	req.Header.Set("Authorization", "Basic "+auth)
+	if err := p.authorize(req); err != nil {
+		return err
+	}
 
 	resp, err := p.httpClient.Do(req)
 	if err != nil {

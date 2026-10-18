@@ -28,6 +28,8 @@ import EmptyState from '../../components/EmptyState';
 import ImportDefinitionDialog from './ImportDefinitionDialog';
 import UpgradeDialog from './UpgradeDialog';
 import { useNotification } from '../../context/NotificationContext';
+import { useAuth } from '../../context/AuthContext';
+import { hasAtLeastRole } from '../../utils/roles';
 
 const List = () => {
   const [definitions, setDefinitions] = useState<StackDefinition[]>([]);
@@ -36,17 +38,21 @@ const List = () => {
   const [error, setError] = useState<string | null>(null);
   const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set());
   const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const { user } = useAuth();
+  // Creating and importing definitions needs devops or admin (the chart set
+  // decides what Helm installs); users start from a template.
+  const canCreateDefinitions = hasAtLeastRole(user?.role, 'devops');
   const [upgradeDialogDefId, setUpgradeDialogDefId] = useState<string | null>(null);
   const navigate = useNavigate();
   const { showSuccess } = useNotification();
 
   const fetchDefinitions = useCallback(async () => {
     try {
-      const data = await definitionService.list();
+      const data = await definitionService.listAll();
       setDefinitions(data || []);
       // Fetch templates and favorites in parallel (best-effort)
       const [tmplList, favs] = await Promise.all([
-        templateService.list().catch(() => [] as StackTemplate[]),
+        templateService.listAll().catch(() => [] as StackTemplate[]),
         favoriteService.list().catch(() => []),
       ]);
       const tmplMap: Record<string, StackTemplate> = {};
@@ -80,14 +86,16 @@ const List = () => {
         <Typography variant="h4" component="h1">
           Stack Definitions
         </Typography>
-        <Box sx={{ display: 'flex', gap: 1 }}>
-          <Button variant="outlined" startIcon={<FileUploadIcon />} onClick={() => setImportDialogOpen(true)}>
-            Import
-          </Button>
-          <Button variant="contained" startIcon={<AddIcon />} onClick={() => navigate('/stack-definitions/new')}>
-            Create Definition
-          </Button>
-        </Box>
+        {canCreateDefinitions && (
+          <Box sx={{ display: 'flex', gap: 1 }}>
+            <Button variant="outlined" startIcon={<FileUploadIcon />} onClick={() => setImportDialogOpen(true)}>
+              Import
+            </Button>
+            <Button variant="contained" startIcon={<AddIcon />} onClick={() => navigate('/stack-definitions/new')}>
+              Create Definition
+            </Button>
+          </Box>
+        )}
       </Box>
 
       {definitions.length === 0 ? (
@@ -136,7 +144,7 @@ const List = () => {
                     </Typography>
                   </TableCell>
                   <TableCell>{def.default_branch}</TableCell>
-                  <TableCell>{def.charts ? def.charts.length : '—'}</TableCell>
+                  <TableCell>{def.chart_count ?? def.charts?.length ?? '—'}</TableCell>
                   <TableCell>
                     {def.source_template_id ? (
                       <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center', flexWrap: 'wrap' }}>

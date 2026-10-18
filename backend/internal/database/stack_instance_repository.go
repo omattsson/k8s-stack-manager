@@ -65,16 +65,111 @@ func (r *GORMStackInstanceRepository) FindByNamespace(namespace string) (*models
 	return &instance, nil
 }
 
+// columnExpiryWarnedAt is written only by MarkExpiryWarned and by the clear
+// step in Update.
+const columnExpiryWarnedAt = "expiry_warned_at"
+
+// columnDeleteAfterClean is written only by MarkCleanStart and
+// ClearDeleteAfterClean, never by Update.
+const columnDeleteAfterClean = "delete_after_clean"
+
+// expiryMatchTolerance is the tolerance for "the same expiry time". The
+// database can store expires_at with less precision than time.Time.
+const expiryMatchTolerance = time.Second
+
 // Update persists changes to an existing stack instance.
+//
+// Update never writes expiry_warned_at: a copy of the instance that was read
+// before the expiry warning must not reset the mark. When Update changes
+// expires_at (deploy, extend, TTL change), it clears the mark in the same
+// transaction, so the new expiry time gets a new warning.
 func (r *GORMStackInstanceRepository) Update(instance *models.StackInstance) error {
 	instance.UpdatedAt = time.Now().UTC()
-	if err := r.db.Save(instance).Error; err != nil {
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		if err := clearExpiryWarningIfExpiryChanged(tx, instance); err != nil {
+			return err
+		}
+		return tx.Omit(columnExpiryWarnedAt, columnDeleteAfterClean).Save(instance).Error
+	})
+	if err != nil {
 		if isDuplicateKeyError(err) {
 			return dberrors.NewDatabaseError("update", dberrors.ErrDuplicateKey)
 		}
 		return dberrors.NewDatabaseError("update", err)
 	}
 	return nil
+}
+
+// clearExpiryWarningIfExpiryChanged clears expiry_warned_at when the stored
+// expires_at differs from instance.ExpiresAt by at least
+// expiryMatchTolerance (or one of them is NULL and the other is not).
+func clearExpiryWarningIfExpiryChanged(tx *gorm.DB, instance *models.StackInstance) error {
+	q := tx.Model(&models.StackInstance{}).
+		Where("id = ? AND expiry_warned_at IS NOT NULL", instance.ID)
+	if instance.ExpiresAt == nil {
+		q = q.Where("expires_at IS NOT NULL")
+	} else {
+		exp := instance.ExpiresAt.UTC()
+		q = q.Where("(expires_at IS NULL OR expires_at <= ? OR expires_at >= ?)",
+			exp.Add(-expiryMatchTolerance), exp.Add(expiryMatchTolerance))
+	}
+	return q.UpdateColumn(columnExpiryWarnedAt, nil).Error
+}
+
+// MarkCleanStart starts a clean with one conditional update: status
+// cleaning and an empty error message, only when the status is one of
+// fromStatuses. With deleteAfterClean it also sets delete_after_clean: of
+// two concurrent deletes only one matches, the other gets
+// models.ErrDeleteConflict. Without it the row must not have
+// delete_after_clean (a plain clean never overwrites a delete); else
+// models.ErrCleanConflict.
+func (r *GORMStackInstanceRepository) MarkCleanStart(id string, fromStatuses []string, deleteAfterClean bool) error {
+	updates := map[string]any{
+		"status":        models.StackStatusCleaning,
+		"error_message": "",
+		"updated_at":    time.Now().UTC(),
+	}
+	q := r.db.Model(&models.StackInstance{}).Where("id = ? AND status IN ?", id, fromStatuses)
+	conflict := models.ErrDeleteConflict
+	if deleteAfterClean {
+		updates[columnDeleteAfterClean] = true
+	} else {
+		q = q.Where(columnDeleteAfterClean+" = ?", false)
+		conflict = models.ErrCleanConflict
+	}
+	res := q.Updates(updates)
+	if res.Error != nil {
+		return dberrors.NewDatabaseError("mark_clean_start", res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return conflict
+	}
+	return nil
+}
+
+// ClearDeleteAfterClean clears delete_after_clean of the instance.
+func (r *GORMStackInstanceRepository) ClearDeleteAfterClean(id string) error {
+	if err := r.db.Model(&models.StackInstance{}).Where("id = ?", id).
+		UpdateColumn(columnDeleteAfterClean, false).Error; err != nil {
+		return dberrors.NewDatabaseError("clear_delete_after_clean", err)
+	}
+	return nil
+}
+
+// MarkExpiryWarned sets expiry_warned_at when the instance has no expiry
+// warning and its expires_at still matches expiresAt. The conditional update
+// makes sure that only one caller gets true, also when two replicas run the
+// expiry warner at the same time.
+func (r *GORMStackInstanceRepository) MarkExpiryWarned(id string, expiresAt, warnedAt time.Time) (bool, error) {
+	exp := expiresAt.UTC()
+	res := r.db.Model(&models.StackInstance{}).
+		Where("id = ? AND expiry_warned_at IS NULL AND expires_at > ? AND expires_at < ?",
+			id, exp.Add(-expiryMatchTolerance), exp.Add(expiryMatchTolerance)).
+		UpdateColumn(columnExpiryWarnedAt, warnedAt.UTC())
+	if res.Error != nil {
+		return false, dberrors.NewDatabaseError("mark_expiry_warned", res.Error)
+	}
+	return res.RowsAffected == 1, nil
 }
 
 // Delete removes a stack instance by ID.
@@ -103,19 +198,42 @@ func (r *GORMStackInstanceRepository) List() ([]models.StackInstance, error) {
 var listColumns = []string{
 	"id", "name", "namespace", "owner_id", "stack_definition_id",
 	"branch", "cluster_id", "status", "ttl_minutes",
-	"created_at", "updated_at", "last_deployed_at", "expires_at",
+	"created_at", "updated_at", "last_deployed_at", "expires_at", "stopped_at", "cleaned_at",
 }
 
-// ListPaged returns stack instances with limit/offset pagination and total count.
-// It selects only list-view columns, omitting large TEXT fields like error_message.
-func (r *GORMStackInstanceRepository) ListPaged(limit, offset int) ([]models.StackInstance, int, error) {
+// applyInstanceFilter adds a WHERE condition for each non-empty field of f.
+// ListPaged uses it for the count query and for the page query, so the total
+// always matches the filtered rows. Each filtered column has an index.
+func applyInstanceFilter(q *gorm.DB, f models.StackInstanceFilter) *gorm.DB {
+	if f.Name != "" {
+		q = q.Where("name = ?", f.Name)
+	}
+	if f.Status != "" {
+		q = q.Where("status = ?", f.Status)
+	}
+	if f.ClusterID != "" {
+		q = q.Where("cluster_id = ?", f.ClusterID)
+	}
+	if f.DefinitionID != "" {
+		q = q.Where("stack_definition_id = ?", f.DefinitionID)
+	}
+	if f.OwnerID != "" {
+		q = q.Where("owner_id = ?", f.OwnerID)
+	}
+	return q
+}
+
+// ListPaged returns the stack instances that match filter with limit/offset
+// pagination, and the total count of matching instances. It selects only
+// list-view columns, omitting large TEXT fields like error_message.
+func (r *GORMStackInstanceRepository) ListPaged(filter models.StackInstanceFilter, limit, offset int) ([]models.StackInstance, int, error) {
 	var total int64
-	if err := r.db.Model(&models.StackInstance{}).Count(&total).Error; err != nil {
+	if err := applyInstanceFilter(r.db.Model(&models.StackInstance{}), filter).Count(&total).Error; err != nil {
 		return nil, 0, dberrors.NewDatabaseError("count", err)
 	}
 
-	var instances []models.StackInstance
-	if err := r.db.Select(listColumns).
+	instances := []models.StackInstance{}
+	if err := applyInstanceFilter(r.db.Select(listColumns), filter).
 		Order("created_at DESC").Limit(limit).Offset(offset).Find(&instances).Error; err != nil {
 		return nil, 0, dberrors.NewDatabaseError("list_paged", err)
 	}
@@ -138,6 +256,47 @@ func (r *GORMStackInstanceRepository) FindByName(name string) ([]models.StackIns
 		return nil, dberrors.NewDatabaseError("find_by_name", err)
 	}
 	return instances, nil
+}
+
+// GORMStackInstanceRepository implements the lookup of UNIQUE_INSTANCE_NAMES.
+var _ models.InstanceNameLookup = (*GORMStackInstanceRepository)(nil)
+
+// FindByNameOnCluster returns the stack instances that use name on clusterID.
+// It compares the names without case (LOWER on both sides, so the result does
+// not depend on the column collation). With
+// includeUnassigned it also returns the instances without a cluster.
+func (r *GORMStackInstanceRepository) FindByNameOnCluster(name, clusterID string, includeUnassigned bool) ([]models.StackInstance, error) {
+	var instances []models.StackInstance
+	q := r.db.Select(listColumns).Where("LOWER(name) = LOWER(?)", name)
+	if includeUnassigned {
+		q = q.Where("(cluster_id = ? OR cluster_id = '' OR cluster_id IS NULL)", clusterID)
+	} else {
+		q = q.Where("cluster_id = ?", clusterID)
+	}
+	if err := q.Order("created_at ASC").Find(&instances).Error; err != nil {
+		return nil, dberrors.NewDatabaseError("find_by_name_on_cluster", err)
+	}
+	return instances, nil
+}
+
+// DuplicateInstanceNames returns the names that more than one instance uses on
+// the same cluster, compared without case. Instances without a cluster count
+// as defaultClusterID.
+func (r *GORMStackInstanceRepository) DuplicateInstanceNames(defaultClusterID string) ([]models.DuplicateInstanceName, error) {
+	var rows []models.DuplicateInstanceName
+	err := r.db.Raw(`SELECT cid AS cluster_id, lname AS name, COUNT(*) AS count
+		FROM (
+			SELECT CASE WHEN cluster_id IS NULL OR cluster_id = '' THEN ? ELSE cluster_id END AS cid,
+				LOWER(name) AS lname
+			FROM stack_instances
+		) AS named
+		GROUP BY cid, lname
+		HAVING COUNT(*) > 1
+		ORDER BY cid, lname`, defaultClusterID).Scan(&rows).Error
+	if err != nil {
+		return nil, dberrors.NewDatabaseError("duplicate_instance_names", err)
+	}
+	return rows, nil
 }
 
 // FindByCluster returns all stack instances targeting the given cluster.
@@ -220,12 +379,13 @@ func (r *GORMStackInstanceRepository) ListExpired() ([]*models.StackInstance, er
 }
 
 // ListExpiringSoon returns running/partial instances whose ExpiresAt is within the given
-// threshold from now (i.e., will expire soon but haven't expired yet).
+// threshold from now (i.e., will expire soon but haven't expired yet) and
+// that have no expiry warning yet (expiry_warned_at IS NULL).
 func (r *GORMStackInstanceRepository) ListExpiringSoon(threshold time.Duration) ([]*models.StackInstance, error) {
 	now := time.Now().UTC()
 	deadline := now.Add(threshold)
 	var instances []*models.StackInstance
-	if err := r.db.Where("status IN ? AND expires_at IS NOT NULL AND expires_at > ? AND expires_at <= ?",
+	if err := r.db.Where("status IN ? AND expires_at IS NOT NULL AND expires_at > ? AND expires_at <= ? AND expiry_warned_at IS NULL",
 		[]string{models.StackStatusRunning, models.StackStatusPartial}, now, deadline).
 		Order("expires_at ASC").
 		Find(&instances).Error; err != nil {

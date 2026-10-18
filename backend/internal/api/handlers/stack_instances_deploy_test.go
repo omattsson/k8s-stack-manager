@@ -142,6 +142,34 @@ func (m *MockDeploymentLogRepository) GetLatestByInstance(_ context.Context, ins
 	return latest, nil
 }
 
+func (m *MockDeploymentLogRepository) ListLatestByActions(_ context.Context, instanceID string, actions []string, limit int) ([]models.DeploymentLog, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var out []models.DeploymentLog
+	for _, log := range m.items {
+		if log.StackInstanceID != instanceID || !containsString(actions, log.Action) {
+			continue
+		}
+		cp := *log
+		cp.Output, cp.ValuesSnapshot, cp.ChartVersions = "", "", ""
+		out = append(out, cp)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.After(out[j].StartedAt) })
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func containsString(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *MockDeploymentLogRepository) SummarizeByInstance(_ context.Context, instanceID string) (*models.DeployLogSummary, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -172,6 +200,44 @@ func (m *MockDeploymentLogRepository) SummarizeBatch(ctx context.Context, instan
 			return nil, err
 		}
 		result[id] = summary
+	}
+	return result, nil
+}
+
+func (m *MockDeploymentLogRepository) SummarizeByUsers(_ context.Context, userIDs []string) (map[string]*models.DeployLogSummary, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	result := make(map[string]*models.DeployLogSummary)
+	add := func(l models.DeploymentLog) {
+		if l.Action != models.DeployActionDeploy || l.UserID == "" || !containsString(userIDs, l.UserID) {
+			return
+		}
+		s := result[l.UserID]
+		if s == nil {
+			s = &models.DeployLogSummary{UserID: l.UserID}
+			result[l.UserID] = s
+		}
+		s.DeployCount++
+		switch l.Status {
+		case models.DeployLogSuccess:
+			s.SuccessCount++
+		case models.DeployLogError:
+			s.ErrorCount++
+		}
+		ts := l.StartedAt
+		if l.CompletedAt != nil {
+			ts = *l.CompletedAt
+		}
+		if s.LastDeployAt == nil || ts.After(*s.LastDeployAt) {
+			cp := ts
+			s.LastDeployAt = &cp
+		}
+	}
+	for _, l := range m.items {
+		add(*l)
 	}
 	return result, nil
 }
@@ -1154,7 +1220,7 @@ func TestRollbackInstance(t *testing.T) {
 			wantStatus: http.StatusBadRequest,
 		},
 		{
-			name:       "optional target_log_id accepted",
+			name:       "unknown target_log_id returns 404",
 			instanceID: "i8",
 			body:       `{"target_log_id":"log-abc"}`,
 			setup: func(instRepo *MockStackInstanceRepository, defRepo *MockStackDefinitionRepository, ccRepo *MockChartConfigRepository) {
@@ -1162,7 +1228,7 @@ func TestRollbackInstance(t *testing.T) {
 				seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
 				seedChartConfig(t, ccRepo, "cc3", "d1", "postgres")
 			},
-			wantStatus: http.StatusAccepted,
+			wantStatus: http.StatusNotFound,
 		},
 	}
 

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -40,7 +41,44 @@ type QuickDeployHandler struct {
 	registry           *cluster.Registry
 	k8sWatcher         *k8s.Watcher
 	defaultTTLMinutes  int
+	maxTTLMinutes      int
 	txRunner           database.TxRunner
+	sharedValuesRepo   models.SharedValuesRepository
+	versionRepo        models.TemplateVersionRepository
+	uniqueNames        bool
+}
+
+// WithMaxTTLDays sets MAX_INSTANCE_TTL_DAYS: the maximum TTL and the maximum
+// distance of a stop time from now. A value below 1 keeps the default (30
+// days). Returns h for chaining.
+func (h *QuickDeployHandler) WithMaxTTLDays(days int) *QuickDeployHandler {
+	h.maxTTLMinutes = maxTTLMinutesFromDays(days)
+	return h
+}
+
+// WithUniqueInstanceNames turns on UNIQUE_INSTANCE_NAMES: quick deploy refuses
+// a name that another instance uses on the same cluster (409). Returns h for
+// chaining.
+func (h *QuickDeployHandler) WithUniqueInstanceNames(enabled bool) *QuickDeployHandler {
+	h.uniqueNames = enabled
+	return h
+}
+
+// WithTemplateVersions attaches the template version repository. Quick deploy
+// applies the latest published snapshot of the template; without the
+// repository every quick deploy fails with 409 (no published version).
+// Returns h for chaining.
+func (h *QuickDeployHandler) WithTemplateVersions(repo models.TemplateVersionRepository) *QuickDeployHandler {
+	h.versionRepo = repo
+	return h
+}
+
+// WithSharedValues attaches the cluster shared values repository so quick
+// deploy merges the shared values of the target cluster as the lowest values
+// layer. Returns h for chaining. Without it no shared values are applied.
+func (h *QuickDeployHandler) WithSharedValues(repo models.SharedValuesRepository) *QuickDeployHandler {
+	h.sharedValuesRepo = repo
+	return h
 }
 
 // NewQuickDeployHandler creates a new QuickDeployHandler with all required dependencies.
@@ -89,6 +127,9 @@ func NewQuickDeployHandler(
 
 // quickDeployRequest is the request body for Quick Deploy.
 type quickDeployRequest struct {
+	// ExpiresAt is a fixed stop time (RFC 3339 with a time zone). It sets
+	// ttl_minutes to 0. Do not send it with ttl_minutes.
+	ExpiresAt           *time.Time        `json:"expires_at" example:"2026-10-17T18:00:00+02:00"`
 	InstanceName        string            `json:"instance_name"`
 	InstanceDescription string            `json:"instance_description"`
 	Branch              string            `json:"branch"`
@@ -106,7 +147,11 @@ type quickDeployResponse struct {
 
 // QuickDeploy godoc
 // @Summary     Quick deploy from a template
-// @Description Instantiate a template, create an instance, set branch overrides, and trigger deployment in a single call
+// @Description Instantiate a template, create an instance, set branch overrides, and trigger deployment in a single call.
+// @Description instance_name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters).
+// @Description Expiry: ttl_minutes (omitted: DEFAULT_INSTANCE_TTL_MINUTES; 0: no expiry) or expires_at, a fixed stop time (RFC 3339 with a time zone, in the future, not later than now + MAX_INSTANCE_TTL_DAYS). Do not send both (400).
+// @Description The template content comes from the latest published snapshot, not the working copy. A template that is not published, or has no snapshot, gives 409 "Template has no published version".
+// @Description The new stack definition is owned by the instance (owner_instance_id): deleting the instance deletes the definition when no other instance uses it. The definition is named after the instance; when the caller already has a definition with that name, the name gets the suffix " (2)", " (3)", ...
 // @Tags        templates
 // @Accept      json
 // @Produce     json
@@ -114,7 +159,10 @@ type quickDeployResponse struct {
 // @Param       body body     quickDeployRequest  true "Quick deploy options"
 // @Success     202  {object} quickDeployResponse
 // @Failure     400  {object} map[string]string
+// @Failure     401  {object} map[string]string
+// @Failure     403  {object} map[string]string
 // @Failure     404  {object} map[string]string
+// @Failure     409  {object} NamespaceConflictResponse "Namespace already exists, the name is taken on the cluster (UNIQUE_INSTANCE_NAMES), or the template has no published version ({error})"
 // @Failure     500  {object} map[string]string
 // @Security    BearerAuth
 // @Router      /api/v1/templates/{id}/quick-deploy [post]
@@ -135,6 +183,10 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "instance_name is required"})
 		return
 	}
+	if err := models.ValidateInstanceName(req.InstanceName); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "instance_" + err.Error()})
+		return
+	}
 
 	// 1. Fetch and verify template.
 	tmpl, err := h.templateRepo.FindByID(templateID)
@@ -144,15 +196,23 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 		return
 	}
 
-	if !tmpl.IsPublished {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Template is not published"})
+	// Use the latest published snapshot, never the working copy.
+	release, err := usableTemplateRelease(c.Request.Context(), tmpl, h.versionRepo, h.templateChartRepo)
+	if err != nil {
+		if errors.Is(err, errNoPublishedVersion) {
+			c.JSON(http.StatusConflict, gin.H{"error": msgNoPublishedVersion})
+			return
+		}
+		slog.Error("Quick deploy: failed to read published template version", "template_id", tmpl.ID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
+	releasedDefaultBranch := release.Snapshot.Template.DefaultBranch
 
 	// Resolve branch: use request branch, fall back to template default.
 	branch := req.Branch
 	if branch == "" {
-		branch = tmpl.DefaultBranch
+		branch = releasedDefaultBranch
 	}
 	if branch == "" {
 		branch = "master"
@@ -169,19 +229,14 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 		Description:           req.InstanceDescription,
 		OwnerID:               userID,
 		SourceTemplateID:      tmpl.ID,
-		SourceTemplateVersion: tmpl.Version,
-		DefaultBranch:         tmpl.DefaultBranch,
+		SourceTemplateVersion: release.Version.Version,
+		DefaultBranch:         releasedDefaultBranch,
 		CreatedAt:             now,
 		UpdatedAt:             now,
 	}
 
-	// Fetch template charts (needed for chart config creation).
-	templateCharts, err := h.templateChartRepo.ListByTemplate(tmpl.ID)
-	if err != nil {
-		status, message := mapError(err, "Template charts")
-		c.JSON(status, gin.H{"error": message})
-		return
-	}
+	// Template charts of the published snapshot.
+	templateCharts := release.Charts
 
 	// Pre-build chart config models.
 	chartConfigs := make([]models.ChartConfig, 0, len(templateCharts))
@@ -214,26 +269,19 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 		UpdatedAt:         now,
 	}
 
-	// Apply TTL — nil means "use default", explicit 0 means "no expiry".
-	var ttl int
-	if req.TTLMinutes == nil && h.defaultTTLMinutes > 0 {
-		ttl = h.defaultTTLMinutes
-	} else if req.TTLMinutes != nil {
-		ttl = *req.TTLMinutes
+	// Apply TTL — nil means "use default", explicit 0 means "no expiry",
+	// expires_at is a fixed stop time.
+	maxTTL := h.maxTTLMinutes
+	if maxTTL <= 0 {
+		maxTTL = MaxTTLMinutes
 	}
-	if ttl < 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "TTL must not be negative"})
-		return
-	}
-	if ttl > MaxTTLMinutes {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("TTL must not exceed %d minutes (30 days)", MaxTTLMinutes)})
+	ttl, expiresAt, ttlMsg := requestedExpiry(req.TTLMinutes, req.ExpiresAt, h.defaultTTLMinutes, maxTTL, now)
+	if ttlMsg != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": ttlMsg})
 		return
 	}
 	inst.TTLMinutes = ttl
-	if ttl > 0 {
-		exp := now.Add(time.Duration(ttl) * time.Minute)
-		inst.ExpiresAt = &exp
-	}
+	inst.ExpiresAt = expiresAt
 
 	// Resolve cluster ID via registry.
 	if h.registry != nil {
@@ -268,8 +316,12 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
+	guard := instanceNameGuard{instanceRepo: h.instanceRepo, userRepo: h.userRepo, registry: h.registry}
 	if existingInst != nil {
 		suggestions := generateNameSuggestions(inst.Name)
+		if h.uniqueNames {
+			suggestions = guard.freeSuggestions(inst.Name, inst.ClusterID, username)
+		}
 		c.JSON(http.StatusConflict, NamespaceConflictResponse{
 			Error:       "namespace already exists",
 			Message:     fmt.Sprintf("Namespace %q is already in use", inst.Namespace),
@@ -277,6 +329,26 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 		})
 		return
 	}
+	if h.uniqueNames && guard.check(c, inst.Name, inst.ClusterID, "", username) {
+		return
+	}
+
+	// The definition belongs to this instance: deleting the instance deletes
+	// it when no other instance uses it. Its name is unique for the owner:
+	// an existing name gets the suffix " (2)", " (3)", ...
+	def.OwnerInstanceID = inst.ID
+	defName, nameErr := uniqueDefinitionName(h.definitionRepo, userID, numberedDefinitionName(req.InstanceName))
+	if nameErr != nil {
+		slog.Error("Quick deploy: no free definition name", "instance_name", req.InstanceName, "error", nameErr)
+		if errors.Is(nameErr, errNoFreeDefinitionName) {
+			c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("A stack definition named %q already exists for this owner", req.InstanceName)})
+			return
+		}
+		status, message := mapError(nameErr, entityStackDefinition)
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+	def.Name = defName
 
 	// Persist definition + chart configs + instance.
 	txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
@@ -296,6 +368,10 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
+
+	// Open dashboards reload their list (the deploy below also sends
+	// deployment.status, which they treat the same way).
+	h.deployManager.BroadcastInstanceCreated(inst.ID)
 
 	// 4. Set branch overrides.
 	if len(req.BranchOverrides) > 0 && h.branchOverrideRepo != nil {
@@ -318,7 +394,7 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 	}
 
 	// 5. Trigger deploy.
-	logID, deployErr := h.triggerDeploy(c, inst, def, chartConfigs, templateCharts, username)
+	logID, deployErr := h.triggerDeploy(c, inst, def, chartConfigs, username)
 
 	if deployErr != nil {
 		slog.Error("Quick deploy failed during deployment phase",
@@ -353,13 +429,15 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 	})
 }
 
-// triggerDeploy generates values and starts the deployment, mirroring DeployInstance logic.
+// triggerDeploy generates values with the shared values pipeline
+// (valuesBuilder, as DeployInstance) and starts the deployment. Any lookup
+// error (shared values, value or branch overrides, locked values) fails the
+// quick deploy; the caller then marks the instance as error.
 func (h *QuickDeployHandler) triggerDeploy(
 	c *gin.Context,
 	inst *models.StackInstance,
 	def *models.StackDefinition,
 	chartConfigs []models.ChartConfig,
-	templateCharts []models.TemplateChartConfig,
 	ownerName string,
 ) (string, error) {
 	if h.deployManager == nil {
@@ -370,72 +448,53 @@ func (h *QuickDeployHandler) triggerDeploy(
 		return "", fmt.Errorf("no charts configured for this stack definition")
 	}
 
-	// Build locked values map from template charts.
-	lockedMap := make(map[string]string)
-	for _, tc := range templateCharts {
-		lockedMap[tc.ChartName] = tc.LockedValues
+	valuesMap, branchMap, err := h.values().build(c.Request.Context(), inst, def, chartConfigs, ownerName)
+	if err != nil {
+		return "", fmt.Errorf("build chart values: %w", err)
 	}
 
-	// Build overrides map (empty for quick deploy — no value overrides yet).
-	overridesMap := make(map[string]string)
-	if h.overrideRepo != nil {
-		overrides, err := h.overrideRepo.ListByInstance(inst.ID)
-		if err == nil {
-			for _, ov := range overrides {
-				overridesMap[ov.ChartConfigID] = ov.Values
-			}
-		}
-	}
-
-	// Build per-chart branch override map.
-	branchMap := make(map[string]string)
-	if h.branchOverrideRepo != nil {
-		branchOverrides, err := h.branchOverrideRepo.List(inst.ID)
-		if err == nil {
-			for _, bo := range branchOverrides {
-				branchMap[bo.ChartConfigID] = bo.Branch
-			}
-		}
-	}
-
-	templateVars := helm.TemplateVars{
-		Branch:       inst.Branch,
-		ImageTag:     helm.SanitizeImageTag(inst.Branch),
-		Namespace:    inst.Namespace,
-		InstanceName: inst.Name,
-		StackName:    def.Name,
-		Owner:        ownerName,
-	}
-
-	var chartInfos []deployer.ChartDeployInfo
+	chartInfos := make([]deployer.ChartDeployInfo, 0, len(chartConfigs))
 	for _, ch := range chartConfigs {
-		params := helm.GenerateParams{
-			ChartName:      ch.ChartName,
-			DefaultValues:  ch.DefaultValues,
-			LockedValues:   lockedMap[ch.ChartName],
-			OverrideValues: overridesMap[ch.ID],
-			ChartBranch:    branchMap[ch.ID],
-			TemplateVars:   templateVars,
-		}
-
-		yamlData, err := h.valuesGen.GenerateValues(c.Request.Context(), params)
-		if err != nil {
-			return "", fmt.Errorf("failed to generate values for chart %s: %w", ch.ChartName, err)
-		}
-
 		chartInfos = append(chartInfos, deployer.ChartDeployInfo{
 			ChartConfig: ch,
-			ValuesYAML:  yamlData,
+			ValuesYAML:  []byte(valuesMap[ch.ChartName]),
+			Branch:      branchMap[ch.ID],
 		})
 	}
 
-	req := deployer.DeployRequest{
-		Instance:   inst,
-		Definition: def,
-		Charts:     chartInfos,
+	// Record the rendered values like DeployInstance, so deploy preview
+	// compares against what this deploy applied.
+	var lastDeployedValues string
+	if encoded, encErr := json.Marshal(valuesMap); encErr == nil {
+		lastDeployedValues = string(encoded)
 	}
 
-	return h.deployManager.Deploy(c.Request.Context(), req)
+	req := deployer.DeployRequest{
+		Instance:           inst,
+		Definition:         def,
+		Charts:             chartInfos,
+		LastDeployedValues: lastDeployedValues,
+		UserID:             middleware.GetUserIDFromContext(c),
+	}
+
+	return h.deployManager.Deploy(hookTriggerCtx(c), req)
+}
+
+// values returns the values pipeline over the handler's repositories.
+func (h *QuickDeployHandler) values() *valuesBuilder {
+	b := &valuesBuilder{
+		overrideRepo:       h.overrideRepo,
+		branchOverrideRepo: h.branchOverrideRepo,
+		templateChartRepo:  h.templateChartRepo,
+		versionRepo:        h.versionRepo,
+		userRepo:           h.userRepo,
+		valuesGen:          h.valuesGen,
+		sharedValuesRepo:   h.sharedValuesRepo,
+	}
+	if h.registry != nil {
+		b.resolver = h.registry
+	}
+	return b
 }
 
 // truncate shortens a string to maxLen runes, preserving UTF-8 boundaries.

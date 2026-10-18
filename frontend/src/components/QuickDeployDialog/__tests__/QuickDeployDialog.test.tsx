@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import QuickDeployDialog from '../index';
 import type { StackTemplate } from '../../../types';
+import { BRANDING_DEFAULTS, StaticBrandingProvider } from '../../../context/BrandingContext';
 
 const mockNavigate = vi.fn();
 vi.mock('react-router-dom', async () => {
@@ -137,6 +138,85 @@ describe('QuickDeployDialog', () => {
     });
   }, 15_000);
 
+  it('explains a 409 for a template without a published version', async () => {
+    const user = userEvent.setup();
+    (templateService.quickDeploy as ReturnType<typeof vi.fn>).mockRejectedValue({
+      response: { status: 409, data: { error: 'Template has no published version' } },
+    });
+
+    render(
+      <MemoryRouter>
+        <QuickDeployDialog open={true} onClose={vi.fn()} template={template} />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/instance name/i)).toBeInTheDocument();
+    });
+
+    await user.type(screen.getByLabelText(/instance name/i), 'new-instance');
+    await user.click(screen.getByRole('button', { name: /deploy/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(/has no published version\. ask the template owner to publish/i);
+    });
+  }, 15_000);
+
+  it('shows the owner and the free names of a 409 name conflict', async () => {
+    const user = userEvent.setup();
+    (templateService.quickDeploy as ReturnType<typeof vi.fn>).mockRejectedValue({
+      response: {
+        status: 409,
+        data: {
+          error: 'instance name already exists',
+          message: 'A stack named "demo" already exists on this cluster (owner: carol)',
+          suggestions: ['demo-3', 'demo-4'],
+        },
+      },
+    });
+
+    render(
+      <MemoryRouter>
+        <QuickDeployDialog open={true} onClose={vi.fn()} template={template} />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/instance name/i)).toBeInTheDocument();
+    });
+
+    await user.type(screen.getByLabelText(/instance name/i), 'demo');
+    await user.click(screen.getByRole('button', { name: /deploy/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'A stack named "demo" already exists on this cluster (owner: carol). Free names: demo-3, demo-4.',
+      );
+    });
+  }, 15_000);
+
+  it('validates the instance name live and blocks an invalid name', async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <QuickDeployDialog open={true} onClose={vi.fn()} template={template} />
+      </MemoryRouter>
+    );
+
+    const input = await screen.findByLabelText(/instance name/i);
+    expect(screen.getByText(/Use lowercase letters \(a-z\), digits/)).toBeInTheDocument();
+
+    await user.type(input, 'My Stack');
+    expect(screen.getByText('Use lowercase letters only')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /deploy/i }));
+    expect(templateService.quickDeploy).not.toHaveBeenCalled();
+
+    await user.clear(input);
+    await user.type(input, 'my-stack');
+    expect(screen.queryByText('Use lowercase letters only')).not.toBeInTheDocument();
+  }, 15_000);
+
   it('shows cluster dropdown when multiple clusters exist', async () => {
     (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
       { id: 'c1', name: 'Cluster A', is_default: true },
@@ -161,5 +241,51 @@ describe('QuickDeployDialog', () => {
       </MemoryRouter>
     );
     expect(container.querySelector('[role="dialog"]')).not.toBeInTheDocument();
+  });
+
+  describe('TTL default from the UI config', () => {
+    const renderWithDefault = (defaultTtlMinutes: number) =>
+      render(
+        <MemoryRouter>
+          <StaticBrandingProvider value={{ ...BRANDING_DEFAULTS, defaultTtlMinutes }}>
+            <QuickDeployDialog open={true} onClose={vi.fn()} template={template} />
+          </StaticBrandingProvider>
+        </MemoryRouter>
+      );
+
+    const deploy = async (user: ReturnType<typeof userEvent.setup>) => {
+      await user.type(screen.getByLabelText(/instance name/i), 'my-instance');
+      await user.click(screen.getByRole('button', { name: /deploy/i }));
+      await waitFor(() => expect(templateService.quickDeploy).toHaveBeenCalledTimes(1));
+      return (templateService.quickDeploy as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    };
+
+    it('shows the server default and leaves out ttl_minutes when the user does not change it', async () => {
+      const user = userEvent.setup();
+      (templateService.quickDeploy as ReturnType<typeof vi.fn>).mockResolvedValue({
+        instance: { id: 'inst-1' }, definition: { id: 'def-1' }, log_id: 'log-1',
+      });
+      renderWithDefault(240);
+      expect(screen.getByRole('combobox', { name: /ttl/i })).toHaveTextContent('4 hours');
+      const body = await deploy(user);
+      expect(body).not.toHaveProperty('ttl_minutes');
+    }, 15_000);
+
+    it('shows "No expiry" when the server default is 0', () => {
+      renderWithDefault(0);
+      expect(screen.getByRole('combobox', { name: /ttl/i })).toHaveTextContent('No expiry');
+    });
+
+    it('sends the TTL that the user picks, also "No expiry"', async () => {
+      const user = userEvent.setup();
+      (templateService.quickDeploy as ReturnType<typeof vi.fn>).mockResolvedValue({
+        instance: { id: 'inst-1' }, definition: { id: 'def-1' }, log_id: 'log-1',
+      });
+      renderWithDefault(480);
+      await user.click(screen.getByRole('combobox', { name: /ttl/i }));
+      await user.click(screen.getByRole('option', { name: 'No expiry' }));
+      const body = await deploy(user);
+      expect(body).toHaveProperty('ttl_minutes', 0);
+    }, 15_000);
   });
 });

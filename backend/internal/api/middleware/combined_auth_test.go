@@ -54,7 +54,11 @@ func (r *testAPIKeyRepo) UpdateLastUsed(userID, keyID string, t time.Time) error
 func (r *testAPIKeyRepo) Create(key *models.APIKey) error                        { return nil }
 func (r *testAPIKeyRepo) FindByID(userID, keyID string) (*models.APIKey, error)  { return nil, nil }
 func (r *testAPIKeyRepo) ListByUser(userID string) ([]*models.APIKey, error)     { return nil, nil }
+func (r *testAPIKeyRepo) FindByIDs(_ []string) ([]*models.APIKey, error)         { return nil, nil }
 func (r *testAPIKeyRepo) Delete(userID, keyID string) error                      { return nil }
+func (r *testAPIKeyRepo) DeleteAllForUser(_ string) (int64, error) {
+	return 0, nil
+}
 
 type testUserRepo struct {
 	mu    sync.RWMutex
@@ -104,6 +108,13 @@ func (r *testUserRepo) Delete(id string) error           { return nil }
 func (r *testUserRepo) List() ([]models.User, error)     { return nil, nil }
 func (r *testUserRepo) Count() (int64, error)            { return 0, nil }
 func (r *testUserRepo) ListByRoles(_ []string) ([]models.User, error) { return nil, nil }
+func (r *testUserRepo) UpdateRole(_, _, _ string) (string, error)     { return "", nil }
+func (r *testUserRepo) SetDisabled(_, _ string, _ bool) error         { return nil }
+func (r *testUserRepo) DeleteGuarded(_, _ string) error                { return nil }
+func (r *testUserRepo) UpdatePassword(_, _ string) error { return nil }
+func (r *testUserRepo) UpdateProfile(_ string, _ models.UserProfileUpdate) error {
+	return nil
+}
 
 // ---- helpers ----
 

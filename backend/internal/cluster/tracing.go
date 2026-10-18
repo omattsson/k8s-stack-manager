@@ -29,6 +29,9 @@ func initClusterMetrics() {
 		"cluster.health.check.duration",
 		metric.WithDescription("Health check latency for each cluster."),
 		metric.WithUnit("s"),
+		// Cluster health checks: 10 ms to 30 s. The OpenTelemetry default buckets (0 to 10000) are for
+		// milliseconds: in seconds every value fell into the first bucket.
+		metric.WithExplicitBucketBoundaries(0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30),
 	)
 	if err != nil {
 		otel.Handle(err)
@@ -58,6 +61,9 @@ func initClusterMetrics() {
 		"cluster.secret.refresh.duration",
 		metric.WithDescription("Duration of image pull secret refresh cycles."),
 		metric.WithUnit("s"),
+		// Pull secret refresh cycles: 100 ms to 5 min. The OpenTelemetry default buckets (0 to 10000) are for
+		// milliseconds: in seconds every value fell into the first bucket.
+		metric.WithExplicitBucketBoundaries(0.1, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300),
 	)
 	if err != nil {
 		otel.Handle(err)

@@ -1,52 +1,50 @@
-# Pull Request Template
+# Pull Request
+
+<!-- The pull request title must use the Conventional Commits format, for example "fix(deployer): clear a pending release". -->
 
 ## Description
 
-Please provide a brief description of the changes in this pull request.
+<!-- Describe the changes in this pull request in a few short sentences. -->
 
 ## Related Issue
 
-Fixes #[issue_number]
-
-<!-- Please link to the issue this PR resolves, if applicable. -->
+<!-- Link the issue that this pull request fixes, if there is one. Example: Fixes #123 -->
 
 ## Type of Change
 
-Please mark the appropriate option:
+Select the options that apply:
 
-- [ ] Bug fix (non-breaking change that fixes an issue)
-- [ ] New feature (non-breaking change that adds functionality)
-- [ ] Breaking change (fix or feature that would cause existing functionality to not work as expected)
+- [ ] Bug fix (a change that fixes an issue and does not break existing behavior)
+- [ ] New feature (a change that adds functionality and does not break existing behavior)
+- [ ] Breaking change (a fix or feature that changes existing behavior)
 - [ ] Documentation update
-- [ ] API changes
-- [ ] Test improvements
-- [ ] Dependency updates
-- [ ] Code refactoring (no functional changes)
+- [ ] API change
+- [ ] Test improvement
+- [ ] Dependency update
+- [ ] Refactoring (no functional change)
 
 ## Checklist
 
-Please review and check the following:
+- [ ] The code follows the style of the project.
+- [ ] I reviewed my own code.
+- [ ] I added comments in places that are hard to understand.
+- [ ] I updated the relevant documentation.
+- [ ] The change adds no new warnings.
+- [ ] I added tests that show that the fix or the feature works.
+- [ ] New and existing unit tests pass on my computer.
+- [ ] Changes that this pull request depends on are merged.
 
-- [ ] My code follows the code style of this project
-- [ ] I have performed a self-review of my own code
-- [ ] I have added comments to code, particularly in hard-to-understand areas
-- [ ] I have made corresponding changes to the documentation
-- [ ] My changes generate no new warnings
-- [ ] I have added tests that prove my fix is effective or that my feature works
-- [ ] New and existing unit tests pass locally with my changes
-- [ ] Any dependent changes have been merged and published
+## Screenshots (if applicable)
 
-## Screenshots (if appropriate)
-
-<!-- Add screenshots to help explain your changes if applicable -->
+<!-- Add screenshots of UI changes. -->
 
 ## Implementation Details
 
-Please provide a brief overview of how your changes were implemented.
+<!-- Describe how you implemented the change. -->
 
 ## Testing Steps
 
-Describe how reviewers can test your changes:
+Describe how a reviewer can test the change:
 
 1. Step 1
 2. Step 2
@@ -54,8 +52,8 @@ Describe how reviewers can test your changes:
 
 ## Deployment Notes
 
-Any special considerations for deployment?
+<!-- Describe special steps for a deployment, for example a migration, a new value in values.yaml, or a new environment variable. -->
 
 ## Additional Notes
 
-Any other information that you want to share about this PR.
+<!-- Add other information for the reviewers. -->

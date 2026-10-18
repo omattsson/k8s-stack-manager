@@ -140,7 +140,7 @@ test.describe('Cluster Management', () => {
     await expect(page.getByText(name)).not.toBeVisible({ timeout: 10_000 });
   });
 
-  test('create dialog requires name and API Server URL', async ({ page }) => {
+  test('create dialog requires a name', async ({ page }) => {
     await page.getByRole('button', { name: 'Add Cluster' }).click();
 
     const dialog = page.getByRole('dialog');
@@ -150,7 +150,7 @@ test.describe('Cluster Management', () => {
     await dialog.getByRole('button', { name: 'Create' }).click();
 
     // Validation error should appear in dialog
-    await expect(dialog.getByText('Name and API Server URL are required')).toBeVisible();
+    await expect(dialog.getByText('Name is required')).toBeVisible();
   });
 
   test('create dialog requires kubeconfig', async ({ page }) => {
@@ -232,6 +232,26 @@ test.describe('Cluster Management', () => {
     });
     const createdB = await respB.json();
 
+    // Mock the default switch: the real default must not move, because the
+    // specs in the other workers create instances on the default cluster.
+    // After the switch, the cluster list keeps the real rows and shows
+    // cluster B as the default.
+    let bIsDefault = false;
+    await page.route(`**/api/v1/clusters/${createdB.id}/default`, (route) => {
+      if (route.request().method() !== 'POST') return route.continue();
+      bIsDefault = true;
+      return route.fulfill({ status: 200, json: { message: 'ok' } });
+    });
+    await page.route(/\/api\/v1\/clusters$/, async (route) => {
+      if (route.request().method() !== 'GET' || !bIsDefault) return route.continue();
+      const res = await route.fetch();
+      const rows: { id: string; is_default: boolean }[] = await res.json();
+      return route.fulfill({
+        response: res,
+        json: rows.map((c) => ({ ...c, is_default: c.id === createdB.id })),
+      });
+    });
+
     try {
       await page.reload();
       await expect(page.getByText(nameA)).toBeVisible({ timeout: 10_000 });
@@ -254,17 +274,6 @@ test.describe('Cluster Management', () => {
       // Cluster B's row should no longer have the "Set as default" button
       await expect(rowBAfter.getByRole('button', { name: `Set ${nameB} as default` })).not.toBeVisible();
     } finally {
-      // Restore the original default cluster before cleanup
-      const clustersRes = await page.request.get(`${API_BASE}/api/v1/clusters`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const clusters = await clustersRes.json();
-      const original = clusters.find((c: { name: string }) => c.name === 'default');
-      if (original) {
-        await page.request.post(`${API_BASE}/api/v1/clusters/${original.id}/default`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-      }
       // Cleanup both test clusters
       await page.request.delete(`${API_BASE}/api/v1/clusters/${createdA.id}`, {
         headers: { Authorization: `Bearer ${token}` },

@@ -2,11 +2,19 @@ import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
   testDir: './e2e',
+  // Sets up the shared default cluster of the specs (see e2e/global-setup.ts).
+  globalSetup: './e2e/global-setup.ts',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 1 : (() => { const n = parseInt(process.env.PW_WORKERS ?? '', 10); return Number.isFinite(n) ? n : undefined; })(),
-  reporter: 'html',
+  // PW_WORKERS sets the worker count (also in CI); else 1 in CI and the Playwright default locally.
+  workers: (() => {
+    const n = parseInt(process.env.PW_WORKERS ?? '', 10);
+    if (Number.isFinite(n)) return n;
+    return process.env.CI ? 1 : undefined;
+  })(),
+  // In CI, never start the report server: it waits for Ctrl+C.
+  reporter: process.env.CI ? [['github'], ['html', { open: 'never' }]] : 'html',
   use: {
     baseURL: 'http://localhost:3000',
     trace: 'on-first-retry',
@@ -16,6 +24,14 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
+      testIgnore: /mobile\.spec\.ts$/,
+    },
+    {
+      // Phone layout checks (#577): page width, tappable app bar, input font size.
+      name: 'mobile',
+      // Chromium with the iPhone viewport, touch and user agent: CI installs Chromium only.
+      use: { ...devices['iPhone 13'], browserName: 'chromium' },
+      testMatch: /mobile\.spec\.ts$/,
     },
   ],
   webServer: {

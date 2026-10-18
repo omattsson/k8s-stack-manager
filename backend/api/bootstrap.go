@@ -2,6 +2,7 @@ package main
 
 import (
 	"backend/internal/api/handlers"
+	"backend/internal/api/middleware"
 	"backend/internal/api/routes"
 	"backend/internal/auth"
 	"backend/internal/cluster"
@@ -13,9 +14,12 @@ import (
 	"backend/internal/helm"
 	"backend/internal/hooks"
 	"backend/internal/k8s"
+	"backend/internal/leader"
 	"backend/internal/models"
 	"backend/internal/notifier"
 	"backend/internal/notifier/channel"
+	"backend/internal/replica"
+	"backend/internal/retention"
 	"backend/internal/scheduler"
 	"backend/internal/sessionstore"
 	"backend/internal/telemetry"
@@ -30,10 +34,14 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
 // domainServices holds all domain-layer services wired during bootstrap.
+// HealthPoller, SecretRefresher, K8sWatcher and CleanupScheduler are
+// leader-only workers: buildLeaderWorkers adds them to the leader worker
+// group, and only the leader replica runs them.
 type domainServices struct {
 	GitRegistry       *gitprovider.Registry
 	ClusterRegistry   *cluster.Registry
@@ -42,12 +50,22 @@ type domainServices struct {
 	K8sWatcher        *k8s.Watcher
 	DeployManager     *deployer.Manager
 	HookDispatcher    *hooks.Dispatcher
+	ClusterNames      *hooks.ClusterNameResolver // cluster_name for hooks and actions; nil without both
 	ActionRegistry    *hooks.ActionRegistry
 	LifecycleNotifier *notifier.Notifier
 	CleanupExecutor   *deployer.CleanupExecutor
 	CleanupScheduler  *scheduler.Scheduler
 	ValuesGen         *helm.ValuesGenerator
-	WatcherCancel     context.CancelFunc
+	// ReplicaID is the process identity of this process (replica.ProcessID):
+	// stored on each deploy log and written by Heartbeat.
+	ReplicaID string
+	// Heartbeat writes the heartbeat row of this process. Every replica
+	// starts it (main), not only the leader. Nil without a heartbeat
+	// repository.
+	Heartbeat *replica.Heartbeat
+	// InterruptRecovery is a leader-only worker: it ends the operations of
+	// stopped replicas. Nil without its repositories.
+	InterruptRecovery *deployer.InterruptRecovery
 }
 
 // handlerSet holds all HTTP handlers wired during bootstrap.
@@ -78,7 +96,6 @@ type handlerSet struct {
 
 // routerDeps holds non-handler dependencies required to wire the router.
 type routerDeps struct {
-	Repo          models.Repository
 	HealthChecker *health.HealthChecker
 	Hub           *websocket.Hub
 	SessionStore  sessionstore.SessionStore
@@ -86,13 +103,14 @@ type routerDeps struct {
 	Svc           *domainServices
 }
 
-// backgroundServices holds services started after the router is ready.
-type backgroundServices struct {
-	Reaper                    *ttl.Reaper
-	ExpiryWarner              *ttl.Warner
-	QuotaMonitor              *cluster.QuotaMonitor
-	SecretMonitor             *cluster.SecretMonitor
-	RefreshTokenCleanupCancel context.CancelFunc
+// leaderWorkers holds the background workers that only the leader replica
+// runs. Group runs all of them for one leadership term at a time.
+type leaderWorkers struct {
+	Group         *leader.Group
+	Reaper        *ttl.Reaper
+	ExpiryWarner  *ttl.Warner
+	QuotaMonitor  *cluster.QuotaMonitor
+	SecretMonitor *cluster.SecretMonitor
 }
 
 // initDatabase opens the GORM database connection and returns the generic
@@ -132,11 +150,25 @@ func buildDomainServices(
 	hub *websocket.Hub,
 	healthChecker *health.HealthChecker,
 ) (*domainServices, error) {
-	// Git provider registry.
+	// Git provider registry. Azure DevOps uses a PAT, or workload identity
+	// when AZURE_DEVOPS_AUTH=workload-identity. A workload identity that cannot
+	// be set up leaves the Azure DevOps provider off (branch listing fails with
+	// a clear error) instead of stopping the server.
+	var azdoTokenSource gitprovider.TokenSource
+	if cfg.GitProvider.AzureDevOpsAuth == "workload-identity" {
+		ts, err := gitprovider.NewWorkloadIdentityTokenSource()
+		if err != nil {
+			slog.Error("Azure DevOps workload identity is not available; branch listing is off", "error", err)
+		} else {
+			azdoTokenSource = ts
+			slog.Info("Azure DevOps branch listing uses workload identity")
+		}
+	}
 	gitRegistry, err := gitprovider.NewRegistry(gitprovider.Config{
 		AzureDevOps: gitprovider.AzureDevOpsConfig{
-			PAT:        cfg.GitProvider.AzureDevOpsPAT,
-			DefaultOrg: cfg.GitProvider.AzureDevOpsDefaultOrg,
+			PAT:         cfg.GitProvider.AzureDevOpsPAT,
+			DefaultOrg:  cfg.GitProvider.AzureDevOpsDefaultOrg,
+			TokenSource: azdoTokenSource,
 		},
 		GitHub: gitprovider.GitHubConfig{
 			Token:               cfg.GitProvider.GitHubToken,
@@ -156,18 +188,31 @@ func buildDomainServices(
 	// Auto-create default cluster from KUBECONFIG_PATH for single-cluster migration.
 	ensureDefaultCluster(repos.Cluster, repos.StackInstance, cfg)
 
+	// Chart repository allowlist (ALLOWED_CHART_REPOS): checked when chart
+	// configs are saved and again at deploy time.
+	models.SetAllowedChartSources(cfg.Deployment.AllowedChartRepos)
+	if len(cfg.Deployment.AllowedChartRepos) > 0 {
+		slog.Info("chart repository allowlist enabled", "prefixes", cfg.Deployment.AllowedChartRepos)
+	}
+
 	// Cluster registry for multi-cluster client management.
 	clusterRegistry := cluster.NewRegistry(cluster.RegistryOptions{
-		ClusterRepo: repos.Cluster,
-		HelmBinary:  cfg.Deployment.HelmBinary,
-		HelmTimeout: cfg.Deployment.DeploymentTimeout,
+		ClusterRepo:     repos.Cluster,
+		HelmBinary:      cfg.Deployment.HelmBinary,
+		HelmTimeout:     cfg.Deployment.DeploymentTimeout,
+		NamespaceLabels: cfg.Deployment.NamespaceLabels,
+		AccessBinding:   stackAccessBinding(cfg.Deployment.StackAccess),
+		// Local development only (#582); empty in a pod.
+		InClusterFallbackKubeconfig: cfg.Deployment.InClusterFallbackKubeconfig,
 	})
 
 	// Extended health checks.
 	healthChecker.AddCheck("cluster_registry", func(ctx context.Context) error {
 		return clusterRegistry.HealthCheck(ctx)
 	})
-	healthChecker.AddCheck("git_provider", func(ctx context.Context) error {
+	// Optional: the git provider only serves branch lists in the UI. An Azure
+	// DevOps or GitLab outage must not take the backend out of service.
+	healthChecker.AddOptionalCheck("git_provider", func(ctx context.Context) error {
 		return gitRegistry.HealthCheck(ctx)
 	})
 	healthChecker.AddCheck("helm", deployer.HelmHealthCheck(cfg.Deployment.HelmBinary))
@@ -178,43 +223,53 @@ func buildDomainServices(
 		return nil, fmt.Errorf("load hooks config: %w", hookErr)
 	}
 
+	// cluster_name in hook envelopes and action requests: the batch lookup
+	// that the API uses, cached and with a bounded wait.
+	var clusterNames *hooks.ClusterNameResolver
+	if len(hookCfg.Subscriptions) > 0 || len(actionSpecs) > 0 {
+		clusterNames = hooks.NewClusterNameResolver(repos.Cluster.NamesByIDs)
+	}
+
 	var hookDispatcher *hooks.Dispatcher
 	if len(hookCfg.Subscriptions) > 0 {
 		hookDispatcher, hookErr = hooks.NewDispatcher(hookCfg, http.DefaultClient)
 		if hookErr != nil {
+			clusterNames.Stop()
 			return nil, fmt.Errorf("build hooks dispatcher: %w", hookErr)
 		}
+		hookDispatcher.WithClusterNames(clusterNames)
 	}
 
 	var actionRegistry *hooks.ActionRegistry
 	if len(actionSpecs) > 0 {
 		actionRegistry, hookErr = hooks.NewActionRegistry(actionSpecs, http.DefaultClient)
 		if hookErr != nil {
+			clusterNames.Stop()
 			return nil, fmt.Errorf("build action registry: %w", hookErr)
 		}
+		actionRegistry.WithClusterNames(clusterNames)
 	}
 
 	// Cluster health poller.
+	// Leader-only worker: started by the leader worker group.
 	healthPoller := cluster.NewHealthPoller(cluster.HealthPollerConfig{
 		ClusterRepo: repos.Cluster,
 		Registry:    clusterRegistry,
 		Interval:    cfg.Deployment.ClusterHealthPollInterval,
 		Hub:         hub,
 	})
-	healthPoller.Start()
 
-	// Image pull secret refresher.
+	// Image pull secret refresher. Leader-only worker.
 	secretRefresher := cluster.NewSecretRefresher(cluster.SecretRefresherConfig{
 		ClusterRepo:  repos.Cluster,
 		InstanceRepo: repos.StackInstance,
 		Registry:     clusterRegistry,
 	})
-	secretRefresher.Start()
 
-	// K8s watcher for multi-cluster monitoring.
+	// K8s watcher for multi-cluster monitoring. Leader-only worker. On other
+	// replicas, GetStatus has no cached status and the status handler reads
+	// the cluster directly.
 	k8sWatcher := k8s.NewWatcher(clusterRegistry, repos.StackInstance, hub, 30*time.Second)
-	watcherCtx, watcherCancel := context.WithCancel(context.Background())
-	k8sWatcher.Start(watcherCtx)
 
 	var subscribedEvents []string
 	if hookDispatcher != nil {
@@ -231,7 +286,9 @@ func buildDomainServices(
 	)
 
 	// Lifecycle notifier — in-app notifications for stack events.
-	lifecycleNotifier := notifier.NewNotifier(repos.Notification, hub, repos.User)
+	// Followers of an instance get its in-app notifications too.
+	lifecycleNotifier := notifier.NewNotifier(repos.Notification, hub, repos.User).
+		WithFollowers(repos.InstanceFollower)
 
 	// Wire external channel dispatcher for webhook-based notifications.
 	if repos.NotificationChannel != nil {
@@ -253,6 +310,10 @@ func buildDomainServices(
 		})
 	}
 
+	// Process identity: the replica identity plus a random suffix per
+	// process. Deploy logs and the heartbeat row carry it.
+	replicaID := replica.ProcessID(cfg.LeaderElection.Identity)
+
 	// Deployment manager — multi-cluster deploys.
 	deployManager := deployer.NewManager(deployer.ManagerConfig{
 		Registry:                   clusterRegistry,
@@ -271,11 +332,31 @@ func buildDomainServices(
 		StabilizePollInterval:      cfg.Deployment.StabilizePollInterval,
 		Hooks:                      hookDispatcher,
 		Notifier:                   lifecycleNotifier,
+		ReplicaID:                  replicaID,
 	})
 
-	// Cleanup executor + scheduler.
+	// Recovery of operations whose replica stopped (leader-only worker) and
+	// the heartbeat of this process (every replica). Each deploy log has a
+	// deadline (its time budget, set by the deploy manager); the recovery
+	// waits for it.
+	interruptRecovery := deployer.NewInterruptRecovery(deployer.InterruptRecoveryConfig{
+		Operations: repos.InterruptedOperation,
+		Heartbeats: repos.ReplicaHeartbeat,
+		Instances:  repos.StackInstance,
+		AuditLog:   repos.AuditLog,
+		Hub:        hub,
+		Notifier:   lifecycleNotifier,
+		SelfID:     replicaID,
+	})
+	heartbeat := replica.NewHeartbeat(repos.ReplicaHeartbeat, replicaID, replica.HeartbeatInterval)
+
+	// Cleanup executor + scheduler. The scheduler runs cron jobs only on the
+	// leader replica (leader worker group).
 	cleanupExecutor := deployer.NewCleanupExecutor(deployManager, repos.StackDefinition, repos.ChartConfig, repos.StackInstance)
 	cleanupScheduler := scheduler.NewScheduler(repos.CleanupPolicy, repos.StackInstance, repos.AuditLog, cleanupExecutor, lifecycleNotifier)
+	if hookDispatcher != nil {
+		cleanupScheduler.WithHooks(hookDispatcher)
+	}
 
 	return &domainServices{
 		GitRegistry:       gitRegistry,
@@ -285,12 +366,15 @@ func buildDomainServices(
 		K8sWatcher:        k8sWatcher,
 		DeployManager:     deployManager,
 		HookDispatcher:    hookDispatcher,
+		ClusterNames:      clusterNames,
 		ActionRegistry:    actionRegistry,
 		LifecycleNotifier: lifecycleNotifier,
 		CleanupExecutor:   cleanupExecutor,
 		CleanupScheduler:  cleanupScheduler,
 		ValuesGen:         valuesGen,
-		WatcherCancel:     watcherCancel,
+		ReplicaID:         replicaID,
+		Heartbeat:         heartbeat,
+		InterruptRecovery: interruptRecovery,
 	}, nil
 }
 
@@ -305,6 +389,9 @@ func buildHandlers(
 	// Auth handler.
 	authHandler := handlers.NewAuthHandler(repos.User, &cfg.Auth, &cfg.OIDC)
 	authHandler.SetSessionStore(sessStore)
+	if hub != nil {
+		authHandler.SetWebSocketRevoker(hub)
+	}
 	if repos.RefreshToken != nil {
 		authHandler.SetRefreshTokenRepo(repos.RefreshToken)
 	}
@@ -340,9 +427,29 @@ func buildHandlers(
 	if err != nil {
 		return nil, fmt.Errorf("create definition handler: %w", err)
 	}
+	definitionHandler.WithUserRepo(repos.User)
 
 	// Template version handler.
-	templateVersionHandler := handlers.NewTemplateVersionHandler(repos.TemplateVersion, repos.StackTemplate)
+	templateVersionHandler := handlers.NewTemplateVersionHandler(repos.TemplateVersion, repos.StackTemplate).
+		WithTemplateCharts(repos.TemplateChartConfig).
+		WithUserRepo(repos.User)
+
+	// UNIQUE_INSTANCE_NAMES: an instance name is unique on its cluster.
+	if cfg.App.UniqueInstanceNames {
+		lookup, ok := repos.StackInstance.(models.InstanceNameLookup)
+		if !ok {
+			return nil, fmt.Errorf("UNIQUE_INSTANCE_NAMES: the instance repository cannot look up names on a cluster")
+		}
+		defaultClusterID := ""
+		if svc.ClusterRegistry != nil {
+			if id, resolveErr := svc.ClusterRegistry.ResolveClusterID(""); resolveErr == nil {
+				defaultClusterID = id
+			}
+		}
+		slog.Info("Instance names are unique for each cluster (UNIQUE_INSTANCE_NAMES)")
+		// One query over all instances on every replica start; small table.
+		handlers.LogDuplicateInstanceNames(lookup, defaultClusterID)
+	}
 
 	// Instance handler.
 	instanceHandler, err := handlers.NewInstanceHandlerWithDeployer(
@@ -356,7 +463,10 @@ func buildHandlers(
 	if err != nil {
 		return nil, fmt.Errorf("create instance handler: %w", err)
 	}
-	instanceHandler.WithHooks(svc.HookDispatcher).WithActions(svc.ActionRegistry).WithNotifier(svc.LifecycleNotifier)
+	instanceHandler.WithHooks(svc.HookDispatcher).WithActions(svc.ActionRegistry).WithNotifier(svc.LifecycleNotifier).WithSharedValues(repos.SharedValues).
+		WithTemplateVersions(repos.TemplateVersion).WithClusterQuotas(repos.ResourceQuota).
+		WithFollowers(repos.InstanceFollower).WithUniqueInstanceNames(cfg.App.UniqueInstanceNames).
+		WithMaxTTLDays(cfg.App.MaxInstanceTTLDays)
 
 	// Git handler.
 	gitHandler := handlers.NewGitHandler(svc.GitRegistry)
@@ -365,28 +475,33 @@ func buildHandlers(
 	auditLogHandler := handlers.NewAuditLogHandler(repos.AuditLog)
 
 	// User handler.
-	userHandler := handlers.NewUserHandler(repos.User)
+	userHandler := handlers.NewUserHandler(repos.User, repos.RefreshToken, repos.APIKey)
 	userHandler.SetSessionStore(sessStore)
-	if repos.RefreshToken != nil {
-		userHandler.SetRefreshTokenRepo(repos.RefreshToken)
-	}
 	userHandler.SetAccessTokenExpiration(cfg.Auth.AccessTokenExpiration)
 	userHandler.SetJWTExpiration(cfg.Auth.JWTExpiration)
+	if hub != nil {
+		userHandler.SetWebSocketRevoker(hub)
+	}
 
 	// API key handler.
 	apiKeyHandler := handlers.NewAPIKeyHandler(repos.APIKey, repos.User, &cfg.Auth)
+	if hub != nil {
+		apiKeyHandler.SetWebSocketRevoker(hub)
+	}
 
 	// Admin handler.
 	adminHandler := handlers.NewAdminHandler(svc.ClusterRegistry, repos.StackInstance)
 
 	// Cluster handler.
-	clusterHandler := handlers.NewClusterHandlerWithQuotas(repos.Cluster, svc.ClusterRegistry, repos.StackInstance, repos.ResourceQuota)
+	clusterHandler := handlers.NewClusterHandlerWithQuotas(repos.Cluster, svc.ClusterRegistry, repos.StackInstance, repos.ResourceQuota).
+		WithInstanceQuotaOverrides(repos.InstanceQuotaOverride)
 
 	// Branch override handler.
-	branchOverrideHandler := handlers.NewBranchOverrideHandler(repos.ChartBranchOverride, repos.StackInstance)
+	branchOverrideHandler := handlers.NewBranchOverrideHandler(repos.ChartBranchOverride, repos.StackInstance, repos.ChartConfig)
 
 	// Instance quota override handler.
-	instanceQuotaOverrideHandler := handlers.NewInstanceQuotaOverrideHandler(repos.InstanceQuotaOverride, repos.StackInstance)
+	instanceQuotaOverrideHandler := handlers.NewInstanceQuotaOverrideHandler(repos.InstanceQuotaOverride, repos.StackInstance).
+		WithClusterQuotas(repos.ResourceQuota, svc.ClusterRegistry)
 
 	// Shared values handler.
 	sharedValuesHandler := handlers.NewSharedValuesHandler(repos.SharedValues, repos.Cluster)
@@ -409,9 +524,21 @@ func buildHandlers(
 	if err != nil {
 		return nil, fmt.Errorf("create quick deploy handler: %w", err)
 	}
+	quickDeployHandler.WithSharedValues(repos.SharedValues).WithTemplateVersions(repos.TemplateVersion).
+		WithUniqueInstanceNames(cfg.App.UniqueInstanceNames).WithMaxTTLDays(cfg.App.MaxInstanceTTLDays)
+
+	// Cluster shared values are the lowest values layer of every deploy.
+	// Warn loudly if they are not wired: deploys would silently skip them.
+	if !instanceHandler.SharedValuesConfigured() {
+		slog.Warn("shared values repository not wired on the instance handler; cluster shared values are not applied to deploy, preview, export or compare")
+	}
+	if !quickDeployHandler.SharedValuesConfigured() {
+		slog.Warn("shared values repository not wired on the quick deploy handler; cluster shared values are not applied to quick deploy")
+	}
 
 	// Analytics handler.
-	analyticsHandler := handlers.NewAnalyticsHandler(repos.StackTemplate, repos.StackDefinition, repos.StackInstance, repos.DeploymentLog, repos.User)
+	analyticsHandler := handlers.NewAnalyticsHandler(repos.StackTemplate, repos.StackDefinition, repos.StackInstance, repos.DeploymentLog, repos.User).
+		WithDeployLogRetention(cfg.Retention.DeployLogDays)
 
 	// Dashboard handler.
 	dashboardHandler := handlers.NewDashboardHandler(repos.Cluster, repos.StackInstance, repos.DeploymentLog, svc.ClusterRegistry)
@@ -422,7 +549,8 @@ func buildHandlers(
 	// Notification channel handler (only when repo is available).
 	var notificationChannelHandler *handlers.NotificationChannelHandler
 	if repos.NotificationChannel != nil {
-		notificationChannelHandler = handlers.NewNotificationChannelHandler(repos.NotificationChannel)
+		notificationChannelHandler = handlers.NewNotificationChannelHandler(repos.NotificationChannel).
+			WithFilterLookups(repos.User, repos.StackDefinition, repos.Cluster)
 	}
 
 	// Auto-create admin user on startup.
@@ -454,12 +582,23 @@ func buildHandlers(
 	}, nil
 }
 
+// sessionActivityFunc returns the hook that moves the idle-timeout clock of a
+// refresh-token family forward on authenticated requests. nil repo: no hook.
+func sessionActivityFunc(repo models.RefreshTokenRepository) middleware.SessionActivityFunc {
+	if repo == nil {
+		return nil
+	}
+	return func(ctx context.Context, sessionID string, at time.Time) error {
+		return repo.TouchFamily(ctx, sessionID, at)
+	}
+}
+
 // buildRouter creates the Gin engine, wires all routes, and returns the
 // router plus the rate limiters (caller must stop them on shutdown).
 func buildRouter(cfg *config.Config, hs *handlerSet, deps routerDeps) (*gin.Engine, *routes.RateLimiters) {
+	gin.SetMode(ginMode(os.Getenv("GIN_MODE"), cfg.App.Debug))
 	router := gin.New()
 	rateLimiters := routes.SetupRoutes(router, routes.Deps{
-		Repository:                   deps.Repo,
 		HealthChecker:                deps.HealthChecker,
 		Config:                       cfg,
 		Hub:                          deps.Hub,
@@ -490,28 +629,37 @@ func buildRouter(cfg *config.Config, hs *handlerSet, deps routerDeps) (*gin.Engi
 		APIKeyRepo:                   deps.Repos.APIKey,
 		OIDCHandler:                  hs.OIDC,
 		SessionStore:                 deps.SessionStore,
+		SessionActivity:              sessionActivityFunc(deps.Repos.RefreshToken),
 		HealthVerbose:                cfg.Server.HealthVerbose,
 	})
 	return router, rateLimiters
 }
 
-// startBackgroundServices starts all background goroutines (TTL reaper, expiry
-// warner, quota monitor, secret monitor, refresh token cleanup, cleanup scheduler)
-// and returns a struct the caller can use to stop them.
-func startBackgroundServices(
+// refreshTokenCleanupInterval is how often the leader deletes expired
+// refresh tokens.
+const refreshTokenCleanupInterval = time.Hour
+
+// buildLeaderWorkers creates the background workers that run on the leader
+// replica only (TTL reaper, expiry warner, cleanup scheduler, quota and
+// secret monitors, secret refresher, cluster health poller, k8s status
+// watcher, refresh token cleanup, interrupted operation recovery). It does
+// not start them: the leader
+// election starts the group for each leadership term. Every replica runs
+// the HTTP server, the WebSocket hub and its revalidation.
+func buildLeaderWorkers(
 	svc *domainServices,
 	hs *handlerSet,
 	repos *database.RepositorySet,
 	hub *websocket.Hub,
-) (*backgroundServices, error) {
+	stopTimeout time.Duration,
+) *leaderWorkers {
 	// TTL reaper for auto-expiring stack instances.
 	expiryStopper := deployer.NewExpiryStopper(svc.DeployManager, repos.StackDefinition, repos.ChartConfig)
-	reaper := ttl.NewReaper(repos.StackInstance, repos.AuditLog, hub, expiryStopper, 60*time.Second)
-	go reaper.Start()
+	reaper := ttl.NewReaper(repos.StackInstance, repos.AuditLog, hub, expiryStopper, 60*time.Second).
+		WithNotifier(svc.LifecycleNotifier)
 
 	// TTL expiry warner — warns users before their stack expires.
 	expiryWarner := ttl.NewWarner(repos.StackInstance, svc.LifecycleNotifier, 30*time.Minute, 60*time.Second)
-	go expiryWarner.Start()
 
 	// Quota monitor — alerts admins when cluster resource usage is high.
 	quotaMonitor := cluster.NewQuotaMonitor(cluster.QuotaMonitorConfig{
@@ -521,7 +669,6 @@ func startBackgroundServices(
 		Registry:     svc.ClusterRegistry,
 		Notifier:     svc.LifecycleNotifier,
 	})
-	quotaMonitor.Start()
 
 	// Secret expiry monitor — alerts admins before secrets expire.
 	secretMonitor := cluster.NewSecretMonitor(cluster.SecretMonitorConfig{
@@ -530,40 +677,155 @@ func startBackgroundServices(
 		Registry:     svc.ClusterRegistry,
 		Notifier:     svc.LifecycleNotifier,
 	})
-	secretMonitor.Start()
 
-	// Periodically clean up expired refresh tokens (every hour).
-	refreshTokenCleanupCtx, refreshTokenCleanupCancel := context.WithCancel(context.Background())
-	go func(ctx context.Context) {
-		ticker := time.NewTicker(time.Hour)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				hs.Auth.CleanupExpiredTokens()
+	group := leader.NewGroup(stopTimeout,
+		leader.Worker{Name: "ttl-reaper", Run: reaper.Run},
+		leader.Worker{Name: "expiry-warner", Run: expiryWarner.Run},
+		leader.Worker{Name: "cleanup-scheduler", Run: svc.CleanupScheduler.Run},
+		leader.Worker{Name: "quota-monitor", Run: quotaMonitor.Run},
+		leader.Worker{Name: "secret-monitor", Run: secretMonitor.Run},
+		leader.Worker{Name: "secret-refresher", Run: svc.SecretRefresher.Run},
+		leader.Worker{Name: "cluster-health-poller", Run: svc.HealthPoller.Run},
+		leader.Worker{Name: "k8s-status-watcher", Run: svc.K8sWatcher.Run},
+		leader.Worker{Name: "refresh-token-cleanup", Run: func(ctx context.Context) {
+			// Once at the start of the term, then hourly: a leader change
+			// must not delay the cleanup by up to one interval each time.
+			hs.Auth.CleanupExpiredTokens()
+			ticker := time.NewTicker(refreshTokenCleanupInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					hs.Auth.CleanupExpiredTokens()
+				}
 			}
-		}
-	}(refreshTokenCleanupCtx)
+		}},
+	)
 
-	// Start cleanup scheduler.
-	if err := svc.CleanupScheduler.Start(); err != nil {
-		refreshTokenCleanupCancel()
-		reaper.Stop()
-		expiryWarner.Stop()
-		quotaMonitor.Stop()
-		secretMonitor.Stop()
-		return nil, fmt.Errorf("start cleanup scheduler: %w", err)
+	// Namespace-scoped access: give stack namespaces that existed before
+	// (or lost the RoleBinding) the access RoleBinding of the backend.
+	if svc.ClusterRegistry != nil && svc.ClusterRegistry.HasAccessBinding() {
+		reconciler := cluster.NewAccessReconciler(repos.Cluster, svc.ClusterRegistry, 0)
+		group.Add(leader.Worker{Name: "stack-access-reconcile", Run: reconciler.Run})
 	}
 
-	return &backgroundServices{
-		Reaper:                    reaper,
-		ExpiryWarner:              expiryWarner,
-		QuotaMonitor:              quotaMonitor,
-		SecretMonitor:             secretMonitor,
-		RefreshTokenCleanupCancel: refreshTokenCleanupCancel,
-	}, nil
+	// Ends the operations of replicas without a heartbeat. Once at the
+	// start of the term, then every minute.
+	if svc.InterruptRecovery != nil {
+		group.Add(leader.Worker{Name: "interrupted-operation-recovery", Run: svc.InterruptRecovery.Run})
+	}
+
+	return &leaderWorkers{
+		Group:         group,
+		Reaper:        reaper,
+		ExpiryWarner:  expiryWarner,
+		QuotaMonitor:  quotaMonitor,
+		SecretMonitor: secretMonitor,
+	}
+}
+
+// buildLogRetention returns the leader worker log-retention, which deletes
+// old rows of the log tables, or nil when no table has a retention (all
+// *_RETENTION_DAYS are 0).
+func buildLogRetention(cfg *config.Config, repos *database.RepositorySet) *leader.Worker {
+	if repos == nil || repos.Retention == nil || !cfg.Retention.Enabled() {
+		return nil
+	}
+	slog.Info("log retention enabled",
+		"deployment_logs_days", cfg.Retention.DeployLogDays,
+		"audit_logs_days", cfg.Retention.AuditLogDays,
+		"notifications_days", cfg.Retention.NotificationDays,
+		"delivery_logs_days", cfg.Retention.DeliveryLogDays,
+	)
+	w := retention.NewWorker(repos.Retention, cfg.Retention)
+	return &leader.Worker{Name: "log-retention", Run: w.Run}
+}
+
+// buildWSFanout creates the WebSocket fan-out between replicas when
+// WS_FANOUT_ENABLED is true. It returns the fan-out (not started) and the
+// leader-only cleanup worker for ws_events. When fan-out is disabled it
+// returns nil for both: the hub then serves its own clients only and writes
+// nothing to the database.
+func buildWSFanout(cfg *config.Config, hub *websocket.Hub, repo models.WSEventRepository) (*websocket.Fanout, *leader.Worker) {
+	// Config validation requires an identity when fan-out is on.
+	if !cfg.WSFanout.Enabled || repo == nil || cfg.LeaderElection.Identity == "" {
+		return nil, nil
+	}
+	fanout := websocket.NewFanout(hub, repo, websocket.FanoutConfig{
+		Origin:       wsFanoutOrigin(cfg.LeaderElection.Identity),
+		PollInterval: cfg.WSFanout.PollInterval,
+	})
+	if fanout == nil {
+		return nil, nil
+	}
+	cleaner := websocket.NewEventCleaner(repo, cfg.WSFanout.Retention, websocket.DefaultFanoutCleanupInterval)
+	return fanout, &leader.Worker{Name: "ws-event-cleanup", Run: cleaner.Run}
+}
+
+// wsFanoutOrigin returns the fan-out origin of this process: the replica
+// identity (POD_NAME or host name) plus a random suffix. The suffix keeps two
+// processes with the same host name (local development, a restarted pod with
+// a reused name) from skipping each other's rows. The leader election keeps
+// the plain identity. The result fits the 253-character origin column.
+func wsFanoutOrigin(identity string) string {
+	const maxIdentity = 253 - 9 // "-" + 8 hex characters
+	if len(identity) > maxIdentity {
+		identity = identity[:maxIdentity]
+	}
+	return identity + "-" + uuid.New().String()[:8]
+}
+
+// leaderConfig converts the configuration to the leader package settings.
+func leaderConfig(c config.LeaderElectionConfig) leader.Config {
+	return leader.Config{
+		Enabled:       c.Enabled,
+		LeaseName:     c.LeaseName,
+		Namespace:     c.Namespace,
+		Identity:      c.Identity,
+		LeaseDuration: c.LeaseDuration,
+		RenewDeadline: c.RenewDeadline,
+		RetryPeriod:   c.RetryPeriod,
+	}
+}
+
+// leaderRuntime runs the leader election and the leader worker group.
+type leaderRuntime struct {
+	elector *leader.Elector
+	workers *leader.Group
+	cancel  context.CancelFunc
+	done    chan struct{}
+}
+
+// startLeaderElection campaigns for the lease in a goroutine. The leader
+// starts workers for each leadership term and stops them (and waits for
+// them) when the term ends. With election disabled, this process is the
+// leader until shutdown.
+func startLeaderElection(elector *leader.Elector, workers *leader.Group) *leaderRuntime {
+	ctx, cancel := context.WithCancel(context.Background())
+	r := &leaderRuntime{elector: elector, workers: workers, cancel: cancel, done: make(chan struct{})}
+	slog.Info("Leader workers configured", "workers", workers.Names(), "election_enabled", elector.Enabled())
+	go func() {
+		defer close(r.done)
+		elector.Run(ctx, workers.Start, workers.Stop)
+	}()
+	return r
+}
+
+// Shutdown stops the leader workers first and then ends the election. The
+// leader releases the lease only after its workers stopped, so the next
+// leader does not run the same jobs at the same time.
+func (r *leaderRuntime) Shutdown(timeout time.Duration) {
+	r.workers.Close(timeout)
+	r.cancel()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-r.done:
+	case <-timer.C:
+		slog.Error("Leader election did not stop in time", "timeout", timeout)
+	}
 }
 
 // servers holds the HTTP servers started during bootstrap.
@@ -637,4 +899,30 @@ func startHTTPServer(router *gin.Engine, cfg *config.Config, tel *telemetry.Tele
 	}()
 
 	return s
+}
+
+// stackAccessBinding converts the STACK_ACCESS_* config to the k8s access
+// binding; nil when namespace-scoped access is off.
+func stackAccessBinding(sa config.StackAccessConfig) *k8s.AccessBinding {
+	if !sa.Enabled() {
+		return nil
+	}
+	return &k8s.AccessBinding{
+		ClusterRole:             sa.ClusterRole,
+		ServiceAccount:          sa.ServiceAccount,
+		ServiceAccountNamespace: sa.ServiceAccountNamespace,
+	}
+}
+
+// ginMode returns the Gin mode: GIN_MODE when it is set, else release mode
+// unless APP_DEBUG is true. Debug mode prints every route at startup and
+// warnings that are not wanted in production.
+func ginMode(envMode string, debug bool) string {
+	if envMode != "" {
+		return envMode
+	}
+	if debug {
+		return gin.DebugMode
+	}
+	return gin.ReleaseMode
 }

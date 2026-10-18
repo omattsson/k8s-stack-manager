@@ -82,3 +82,25 @@ func TestHealthChecks(t *testing.T) {
 		}
 	})
 }
+
+func TestOptionalCheckDoesNotFailReadiness(t *testing.T) {
+	t.Parallel()
+
+	h := New()
+	h.SetReady(true)
+	h.AddCheck("database", func(context.Context) error { return nil })
+	h.AddOptionalCheck("git_provider", func(context.Context) error { return errors.New("unreachable") })
+
+	st := h.CheckReadiness(context.Background())
+	if st.Status != "UP" {
+		t.Errorf("an optional check must not mark the service DOWN, got %q", st.Status)
+	}
+	if got := st.Checks["git_provider"]; got.Status != "DOWN" || got.Message != "unreachable" {
+		t.Errorf("git_provider check = %+v, want DOWN with message", got)
+	}
+
+	h.AddCheck("helm", func(context.Context) error { return errors.New("missing") })
+	if got := h.CheckReadiness(context.Background()).Status; got != "DOWN" {
+		t.Errorf("a required check must still mark DOWN, got %q", got)
+	}
+}

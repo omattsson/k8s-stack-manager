@@ -63,6 +63,37 @@ app.kubernetes.io/name: {{ include "k8s-stack-manager.fullname" . }}-frontend
 {{- end }}
 
 {{/*
+Name of the Lease for the backend leader election: backend.env
+LEADER_ELECTION_LEASE_NAME, else backend.leaderElection.leaseName, else
+"<fullname>-workers".
+*/}}
+{{- define "k8s-stack-manager.leaderElection.leaseName" -}}
+{{- if hasKey .Values.backend.env "LEADER_ELECTION_LEASE_NAME" }}
+{{- index .Values.backend.env "LEADER_ELECTION_LEASE_NAME" }}
+{{- else }}
+{{- default (printf "%s-workers" (include "k8s-stack-manager.fullname" .)) .Values.backend.leaderElection.leaseName | trunc 63 | trimSuffix "-" }}
+{{- end }}
+{{- end }}
+
+{{/*
+Backend container env: the pod name and namespace (downward API; the leader
+election identity and Lease namespace), then backend.extraEnv.
+*/}}
+{{- define "k8s-stack-manager.backend.env" -}}
+- name: POD_NAME
+  valueFrom:
+    fieldRef:
+      fieldPath: metadata.name
+- name: POD_NAMESPACE
+  valueFrom:
+    fieldRef:
+      fieldPath: metadata.namespace
+{{- with .Values.backend.extraEnv }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{/*
 Backend service names.
 */}}
 {{- define "k8s-stack-manager.backend.stableService" -}}
@@ -181,5 +212,58 @@ Validate ingress type.
 {{- $valid := list "traefik" "ingress" "none" -}}
 {{- if not (has .Values.ingress.type $valid) -}}
 {{- fail (printf "ingress.type must be one of: traefik, ingress, none (got: %s)" .Values.ingress.type) -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Return "true" when the chart ingress terminates TLS:
+- ingress.type=traefik with ingress.traefik.tls.secretName set, or
+- ingress.type=ingress with a non-empty ingress.tls list.
+TLS terminated outside the chart (for example at a load balancer) is not
+detected; set backend.env.SECURE_COOKIES explicitly in that case.
+*/}}
+{{- define "k8s-stack-manager.ingressTLSEnabled" -}}
+{{- if and (eq .Values.ingress.type "traefik") .Values.ingress.traefik.tls .Values.ingress.traefik.tls.secretName -}}
+true
+{{- else if and (eq .Values.ingress.type "ingress") .Values.ingress.tls -}}
+true
+{{- end -}}
+{{- end -}}
+
+{{/*
+Return "true" when branding.files or branding.binaryFiles has a file: the
+chart then renders the frontend branding ConfigMap and mounts it into nginx
+at /usr/share/nginx/html/branding/.
+*/}}
+{{- define "k8s-stack-manager.brandingFilesEnabled" -}}
+{{- with .Values.branding -}}
+{{- if or .files .binaryFiles -}}
+true
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Validate branding.files and branding.binaryFiles: each file name must match
+^[-._a-zA-Z0-9]+$ (a ConfigMap key, no path), and the total size of the
+files must stay at or below 900 KiB (a ConfigMap holds at most 1 MiB).
+binaryFiles count with their decoded size.
+*/}}
+{{- define "k8s-stack-manager.validateBrandingFiles" -}}
+{{- $total := 0 -}}
+{{- range $name, $content := (.Values.branding.files | default dict) -}}
+{{- if not (regexMatch "^[-._a-zA-Z0-9]+$" $name) -}}
+{{- fail (printf "branding.files: invalid file name %q (allowed: letters, digits, '-', '_', '.')" $name) -}}
+{{- end -}}
+{{- $total = add $total (len $content) -}}
+{{- end -}}
+{{- range $name, $content := (.Values.branding.binaryFiles | default dict) -}}
+{{- if not (regexMatch "^[-._a-zA-Z0-9]+$" $name) -}}
+{{- fail (printf "branding.binaryFiles: invalid file name %q (allowed: letters, digits, '-', '_', '.')" $name) -}}
+{{- end -}}
+{{- $total = add $total (len (b64dec $content)) -}}
+{{- end -}}
+{{- if gt (int $total) 921600 -}}
+{{- fail (printf "branding.files and branding.binaryFiles total %d bytes; the limit is 900 KiB (921600 bytes)" (int $total)) -}}
 {{- end -}}
 {{- end -}}

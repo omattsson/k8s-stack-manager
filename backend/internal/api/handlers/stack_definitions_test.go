@@ -114,6 +114,49 @@ func TestListDefinitions(t *testing.T) {
 		assert.Equal(t, float64(25), pageSize)
 	})
 
+	t.Run("returns chart_count per definition", func(t *testing.T) {
+		t.Parallel()
+		defRepo := NewMockStackDefinitionRepository()
+		seedDefinition(t, defRepo, "d1", "Def One", "owner-1")
+		seedDefinition(t, defRepo, "d2", "Def Two", "owner-1")
+		chartRepo := NewMockChartConfigRepository()
+		for i, name := range []string{"api", "web"} {
+			require.NoError(t, chartRepo.Create(&models.ChartConfig{ID: fmt.Sprintf("c%d", i), StackDefinitionID: "d1", ChartName: name}))
+		}
+
+		router := setupDefinitionRouter(defRepo, chartRepo, NewMockStackInstanceRepository(), "uid-1", "user")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-definitions", nil)
+		router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+		var resp struct {
+			Data []map[string]any `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		counts := map[string]any{}
+		for _, d := range resp.Data {
+			counts[d["id"].(string)] = d["chart_count"]
+		}
+		assert.Equal(t, map[string]any{"d1": float64(2), "d2": float64(0)}, counts)
+	})
+
+	t.Run("omits chart_count when the count fails", func(t *testing.T) {
+		t.Parallel()
+		defRepo := NewMockStackDefinitionRepository()
+		seedDefinition(t, defRepo, "d1", "Def One", "owner-1")
+		chartRepo := NewMockChartConfigRepository()
+		chartRepo.SetError(assert.AnError)
+
+		router := setupDefinitionRouter(defRepo, chartRepo, NewMockStackInstanceRepository(), "uid-1", "user")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-definitions", nil)
+		router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+		assert.NotContains(t, w.Body.String(), "chart_count")
+	})
+
 	t.Run("respects page and pageSize params", func(t *testing.T) {
 		t.Parallel()
 		defRepo := NewMockStackDefinitionRepository()
@@ -204,12 +247,12 @@ func TestListDefinitions(t *testing.T) {
 	t.Run("filters by name query param", func(t *testing.T) {
 		t.Parallel()
 		defRepo := NewMockStackDefinitionRepository()
-		seedDefinition(t, defRepo, "d1", "klaravik-dev", "owner-1")
-		seedDefinition(t, defRepo, "d2", "klaravik-staging", "owner-1")
+		seedDefinition(t, defRepo, "d1", "example-dev", "owner-1")
+		seedDefinition(t, defRepo, "d2", "example-staging", "owner-1")
 
 		router := setupDefinitionRouter(defRepo, NewMockChartConfigRepository(), NewMockStackInstanceRepository(), "uid-1", "user")
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-definitions?name=klaravik-dev", nil)
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-definitions?name=example-dev", nil)
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
@@ -219,13 +262,13 @@ func TestListDefinitions(t *testing.T) {
 		var data []models.StackDefinition
 		require.NoError(t, json.Unmarshal(resp["data"], &data))
 		assert.Len(t, data, 1)
-		assert.Equal(t, "klaravik-dev", data[0].Name)
+		assert.Equal(t, "example-dev", data[0].Name)
 	})
 
 	t.Run("name filter returns empty when no match", func(t *testing.T) {
 		t.Parallel()
 		defRepo := NewMockStackDefinitionRepository()
-		seedDefinition(t, defRepo, "d1", "klaravik-dev", "owner-1")
+		seedDefinition(t, defRepo, "d1", "example-dev", "owner-1")
 
 		router := setupDefinitionRouter(defRepo, NewMockChartConfigRepository(), NewMockStackInstanceRepository(), "uid-1", "user")
 		w := httptest.NewRecorder()
@@ -248,7 +291,7 @@ func TestListDefinitions(t *testing.T) {
 
 		router := setupDefinitionRouter(defRepo, NewMockChartConfigRepository(), NewMockStackInstanceRepository(), "uid-1", "user")
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-definitions?name=klaravik-dev", nil)
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-definitions?name=example-dev", nil)
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusInternalServerError, w.Code)

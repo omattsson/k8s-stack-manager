@@ -97,3 +97,48 @@ func TestGORMSharedValuesRepository_ListByCluster(t *testing.T) {
 	assert.Equal(t, "sv2", values[0].Name)
 	assert.Equal(t, "sv1", values[1].Name)
 }
+
+// TestGORMSharedValuesRepository_ListByCluster_TieBreak checks the stable
+// order for equal priorities: name (byte-wise, not the SQL collation), then ID.
+func TestGORMSharedValuesRepository_ListByCluster_TieBreak(t *testing.T) {
+	t.Parallel()
+
+	repo := setupSharedValuesRepo(t)
+	for _, sv := range []*models.SharedValues{
+		{ID: "id-c", ClusterID: "c-tie", Name: "beta", Values: "a: 1", Priority: 5},
+		{ID: "id-b", ClusterID: "c-tie", Name: "alpha", Values: "a: 2", Priority: 5},
+		{ID: "id-a", ClusterID: "c-tie", Name: "beta", Values: "a: 3", Priority: 5},
+		{ID: "id-d", ClusterID: "c-tie", Name: "zeta", Values: "a: 4", Priority: 1},
+	} {
+		require.NoError(t, repo.Create(sv))
+	}
+
+	values, err := repo.ListByCluster("c-tie")
+	require.NoError(t, err)
+	ids := make([]string, 0, len(values))
+	for _, v := range values {
+		ids = append(ids, v.ID)
+	}
+	assert.Equal(t, []string{"id-d", "id-b", "id-a", "id-c"}, ids)
+}
+
+// TestGORMSharedValuesRepository_ListByCluster_CaseOrder checks that
+// "alpha" and "Beta" with equal priority sort byte-wise in Go ("Beta" first),
+// the same order the values pipeline uses, whatever the SQL collation.
+func TestGORMSharedValuesRepository_ListByCluster_CaseOrder(t *testing.T) {
+	t.Parallel()
+
+	repo := setupSharedValuesRepo(t)
+	require.NoError(t, repo.Create(&models.SharedValues{ID: "id-1", ClusterID: "c-case", Name: "alpha", Values: "a: 1", Priority: 0}))
+	require.NoError(t, repo.Create(&models.SharedValues{ID: "id-2", ClusterID: "c-case", Name: "Beta", Values: "a: 2", Priority: 0}))
+
+	values, err := repo.ListByCluster("c-case")
+	require.NoError(t, err)
+	require.Len(t, values, 2)
+	assert.Equal(t, "Beta", values[0].Name)
+	assert.Equal(t, "alpha", values[1].Name)
+
+	again := []models.SharedValues{values[1], values[0]}
+	models.SortSharedValues(again)
+	assert.Equal(t, values, again, "repository and pipeline use the same order")
+}

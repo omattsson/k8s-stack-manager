@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import fs from 'node:fs';
 import { loginAsDevops, uniqueName, createAndPublishTemplate, instantiateTemplate, API_BASE, ADMIN_PASSWORD, ensureDefaultCluster, deleteCluster } from './helpers';
 
 test.describe('Stack Instance Management', () => {
@@ -108,11 +109,14 @@ test.describe('Stack Instance Management', () => {
       timeout: 10_000,
     });
     await expect(page.getByText('Namespace:')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Export Values' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Clone' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Delete' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Save Changes' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Back to Dashboard' })).toBeVisible();
+    // Export, clone and delete are in the Actions menu.
+    await page.getByRole('button', { name: 'Actions' }).click();
+    const actionsMenu = page.getByRole('menu', { name: 'Actions' });
+    await expect(actionsMenu.getByRole('menuitem', { name: /Export values/ })).toBeVisible();
+    await expect(actionsMenu.getByRole('menuitem', { name: 'Clone' })).toBeVisible();
+    await expect(actionsMenu.getByRole('menuitem', { name: 'Delete' })).toBeVisible();
   });
 
   test('clone an instance', async ({ page }) => {
@@ -133,8 +137,12 @@ test.describe('Stack Instance Management', () => {
 
     const originalUrl = page.url();
 
-    // Clone
-    await page.getByRole('button', { name: 'Clone' }).click();
+    // Clone: the dialog suggests "<name>-copy"
+    await page.getByRole('button', { name: 'Actions' }).click();
+    await page.getByRole('menuitem', { name: 'Clone' }).click();
+    const cloneDialog = page.getByRole('dialog', { name: 'Clone Instance' });
+    await expect(cloneDialog.getByLabel('Name')).toHaveValue(`${instName}-copy`);
+    await cloneDialog.getByRole('button', { name: 'Create Clone' }).click();
     // Wait for navigation to a DIFFERENT instance page (not the current one)
     await page.waitForURL(
       (url) => {
@@ -169,8 +177,9 @@ test.describe('Stack Instance Management', () => {
       timeout: 10_000,
     });
 
-    // Click Delete
-    await page.getByRole('button', { name: 'Delete' }).click();
+    // Click Delete in the Actions menu
+    await page.getByRole('button', { name: 'Actions' }).click();
+    await page.getByRole('menuitem', { name: 'Delete' }).click();
     // Confirm dialog appears
     await expect(page.getByText(/Are you sure you want to delete/)).toBeVisible({ timeout: 5_000 });
     // Click the confirm Delete button scoped to the dialog
@@ -344,22 +353,22 @@ test.describe('Stack Instance Management', () => {
       timeout: 10_000,
     });
 
-    // The Export Values button should be visible and clickable
-    const exportButton = page.getByRole('button', { name: 'Export Values' });
-    await expect(exportButton).toBeVisible();
-    await expect(exportButton).toBeEnabled();
+    // "Export values" in the Actions menu opens a menu: all charts as a ZIP, or one chart as YAML.
+    await page.getByRole('button', { name: 'Actions' }).click();
+    await page.getByRole('menuitem', { name: /Export values/ }).click();
+    const zipItem = page.getByRole('menuitem', { name: 'All charts (ZIP)' });
+    await expect(zipItem).toBeVisible();
 
-    // Click to trigger export — listen for a download or a snackbar response
-    const downloadPromise = page.waitForEvent('download', { timeout: 5_000 }).catch(() => null);
-    await exportButton.click();
+    const downloadPromise = page.waitForEvent('download', { timeout: 10_000 });
+    await zipItem.click();
     const download = await downloadPromise;
 
-    if (download) {
-      // Download triggered — verify the filename
-      expect(download.suggestedFilename()).toMatch(/\.yaml$/);
-    }
-    // If no download, the export may show an error for test data with no real values —
-    // that's acceptable; we've verified the button exists and is interactive.
+    expect(download.suggestedFilename()).toBe(`${instName}-values.zip`);
+    // The file is saved unchanged: a ZIP archive starts with the "PK" signature.
+    const filePath = await download.path();
+    expect(filePath).toBeTruthy();
+    const header = fs.readFileSync(filePath).subarray(0, 2).toString('latin1');
+    expect(header).toBe('PK');
   });
 
   test('TTL selector allows changing time-to-live preset', async ({ page }) => {
@@ -381,8 +390,8 @@ test.describe('Stack Instance Management', () => {
       timeout: 10_000,
     });
 
-    // The TTL selector heading should be visible
-    await expect(page.getByRole('heading', { name: 'TTL (Time to Live)' })).toBeVisible({
+    // The TTL selector should be visible
+    await expect(page.getByRole('combobox', { name: 'TTL (Time to Live)' })).toBeVisible({
       timeout: 10_000,
     });
 

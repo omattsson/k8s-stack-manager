@@ -3,6 +3,7 @@ package deployer
 import (
 	"log/slog"
 
+	"backend/internal/models"
 	"backend/internal/websocket"
 )
 
@@ -12,6 +13,9 @@ type deploymentStatusPayload struct {
 	Status       string `json:"status"`
 	LogID        string `json:"log_id"`
 	ErrorMessage string `json:"error_message,omitempty"`
+	// Action is the operation of the log: deploy, stop, clean or rollback.
+	// Omitted when unknown (older clients ignore the field).
+	Action string `json:"action,omitempty"`
 }
 
 // deploymentLogPayload is the WebSocket payload for real-time log streaming.
@@ -37,6 +41,7 @@ func (m *Manager) broadcastStatusWithError(instanceID, status, logID, errorMessa
 		Status:       status,
 		LogID:        logID,
 		ErrorMessage: errorMessage,
+		Action:       m.logAction(logID, status),
 	})
 	if err != nil {
 		slog.Error("failed to create deployment status message", "error", err)
@@ -56,9 +61,19 @@ func (m *Manager) broadcastStatusWithError(instanceID, status, logID, errorMessa
 // Uses targeted broadcast when the hub supports it, so only clients subscribed to
 // the instance receive the high-volume log output.
 func (m *Manager) broadcastLog(instanceID, logID, line string) {
+	// Keep the line for the stored output of the running operation, so a
+	// page that loads the deploy log during the operation shows it.
+	m.appendLiveOutput(logID, line)
 	if m.hub == nil {
 		return
 	}
+	// A panic in the hub must not stop the deploy goroutine or the process.
+	// The log line is lost; the deploy log in the database still has it.
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("Panic in deployment log broadcast", "instance_id", instanceID, "recover", r)
+		}
+	}()
 
 	msg, err := websocket.NewMessage("deployment.log", deploymentLogPayload{
 		InstanceID: instanceID,
@@ -83,16 +98,107 @@ func (m *Manager) broadcastLog(instanceID, logID, line string) {
 	}
 }
 
-// notifyUser sends an in-app notification to a specific user.
-// Silently returns if no notifier is configured.
-func (m *Manager) notifyUser(ownerID, instanceID, notifType, title, message string) {
+// notifyInstance sends the in-app notification of an instance event to the
+// owner and the followers of the instance. Silently returns if no notifier
+// is configured.
+func (m *Manager) notifyInstance(target models.NotificationTarget, notifType, title, message string) {
 	if m.notifier == nil {
 		return
 	}
 
-	if err := m.notifier.Notify(m.shutdownCtx, ownerID, notifType, title, message, "stack_instance", instanceID); err != nil {
+	if err := m.notifier.NotifyInstance(m.shutdownCtx, target, notifType, title, message); err != nil {
 		slog.Error("failed to create lifecycle notification",
-			"instance_id", instanceID, "type", notifType, "error", err)
+			"instance_id", target.InstanceID, "type", notifType, "error", err)
 	}
 }
 
+// followerIDs returns the followers of the instance, or nil without a
+// notifier. Call it before the instance is deleted.
+func (m *Manager) followerIDs(instanceID string) []string {
+	if m.notifier == nil {
+		return nil
+	}
+	return m.notifier.FollowerIDs(m.shutdownCtx, instanceID)
+}
+
+// logAction returns the action of logID for the status payload. A final
+// status (not one of the in-progress statuses) removes the entry.
+func (m *Manager) logAction(logID, status string) string {
+	var v any
+	var ok bool
+	switch status {
+	case models.StackStatusQueued, models.StackStatusDeploying, models.StackStatusStabilizing,
+		models.StackStatusStopping, models.StackStatusCleaning:
+		v, ok = m.logActions.Load(logID)
+	default:
+		v, ok = m.logActions.LoadAndDelete(logID)
+	}
+	if !ok {
+		return ""
+	}
+	action, _ := v.(string)
+	return action
+}
+
+// instanceCreatedPayload is the WebSocket payload of "instance.created".
+type instanceCreatedPayload struct {
+	InstanceID string `json:"instance_id"`
+}
+
+// BroadcastInstanceCreated tells all clients (all replicas through the hub
+// fan-out) that a new instance row exists (create, clone, quick deploy), so
+// an open dashboard reloads its list. The payload has only the ID: a client
+// reads the instance through the API, with its own access rules. Safe on a
+// nil Manager or a Manager without a hub.
+func (m *Manager) BroadcastInstanceCreated(instanceID string) {
+	if m == nil || m.hub == nil || instanceID == "" {
+		return
+	}
+	msg, err := websocket.NewMessage("instance.created", instanceCreatedPayload{InstanceID: instanceID})
+	if err != nil {
+		slog.Error("failed to create instance created message", "error", err)
+		return
+	}
+	data, err := msg.Bytes()
+	if err != nil {
+		slog.Error("failed to serialize instance created message", "error", err)
+		return
+	}
+	m.hub.Broadcast(data)
+}
+
+// instanceDeletedPayload is the WebSocket payload of "instance.deleted".
+type instanceDeletedPayload struct {
+	InstanceID string `json:"instance_id"`
+	LogID      string `json:"log_id,omitempty"`
+}
+
+// BroadcastInstanceDeleted tells all clients that an instance row was deleted
+// without a clean (a direct delete through the API or a cleanup policy), so an
+// open stack list removes it. Safe on a nil Manager or a Manager without a hub.
+func (m *Manager) BroadcastInstanceDeleted(instanceID string) {
+	if m == nil || instanceID == "" {
+		return
+	}
+	m.broadcastInstanceDeleted(instanceID, "")
+}
+
+// broadcastInstanceDeleted tells all clients (all replicas through the hub
+// fan-out) that the instance row was deleted after its clean, so a
+// dashboard removes the row.
+func (m *Manager) broadcastInstanceDeleted(instanceID, logID string) {
+	if m.hub == nil {
+		return
+	}
+	msg, err := websocket.NewMessage("instance.deleted", instanceDeletedPayload{InstanceID: instanceID, LogID: logID})
+	if err != nil {
+		slog.Error("failed to create instance deleted message", "error", err)
+		return
+	}
+	data, err := msg.Bytes()
+	if err != nil {
+		slog.Error("failed to serialize instance deleted message", "error", err)
+		return
+	}
+	m.hub.Broadcast(data)
+}

@@ -1,0 +1,7 @@
+# Values used by `make helm-test` for the NAMESPACE_LABELS render check.
+backend:
+  secrets:
+    JWT_SECRET: dummy-jwt-secret-for-template
+  namespaceLabels:
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/enforce: baseline

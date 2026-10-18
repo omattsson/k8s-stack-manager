@@ -46,7 +46,12 @@ import EmptyState from '../../components/EmptyState';
 import SetupWizard from '../../components/SetupWizard';
 import { useNotification } from '../../context/NotificationContext';
 import { useAuth } from '../../context/AuthContext';
+import { canModifyInstance, hasAtLeastRole } from '../../utils/roles';
 import { isSetupWizardDismissed, dismissSetupWizard } from '../../utils/setupWizard';
+
+
+// Delay before the list reloads for an instance that is not in it yet.
+const NEW_INSTANCE_RELOAD_DELAY_MS = 500;
 
 const STATUSES = ['All', 'draft', 'deploying', 'stabilizing', 'running', 'partial', 'stopped', 'error'];
 
@@ -60,9 +65,10 @@ const BULK_ACTION_LABELS: Record<BulkAction, string> = {
 };
 
 const getPrimaryUrl = (status: NamespaceStatus): string | null => {
-  // First ingress URL
+  // The ingress marked as primary (annotation k8s-stack-manager.io/primary-url),
+  // else the first ingress URL
   if (status.ingresses?.length) {
-    return status.ingresses[0].url;
+    return (status.ingresses.find((ing) => ing.primary) ?? status.ingresses[0]).url;
   }
   // First LoadBalancer external IP
   for (const chart of status.charts || []) {
@@ -111,6 +117,8 @@ const PodHealthDot = ({ status }: { status?: K8sHealthStatus }) => {
 interface InstanceCardProps {
   instance: StackInstance;
   isSelected: boolean;
+  /** Show the bulk-selection checkbox (only for instances the user may modify). */
+  selectable: boolean;
   isFavorite: boolean;
   clusterName?: string;
   url?: string;
@@ -119,7 +127,7 @@ interface InstanceCardProps {
   onNavigate: (path: string) => void;
 }
 
-const InstanceCard = ({ instance, isSelected, isFavorite, clusterName, url, k8sHealth, onToggleSelect, onNavigate }: InstanceCardProps) => (
+const InstanceCard = ({ instance, isSelected, selectable, isFavorite, clusterName, url, k8sHealth, onToggleSelect, onNavigate }: InstanceCardProps) => (
   <Card
     sx={{
       height: '100%',
@@ -133,13 +141,15 @@ const InstanceCard = ({ instance, isSelected, isFavorite, clusterName, url, k8sH
     <CardContent sx={{ flex: 1 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minWidth: 0 }}>
-          <Checkbox
-            checked={isSelected}
-            onChange={() => onToggleSelect(instance.id)}
-            onClick={(e) => e.stopPropagation()}
-            slotProps={{ input: { 'aria-label': `Select ${instance.name}` } }}
-            size="small"
-          />
+          {selectable && (
+            <Checkbox
+              checked={isSelected}
+              onChange={() => onToggleSelect(instance.id)}
+              onClick={(e) => e.stopPropagation()}
+              slotProps={{ input: { 'aria-label': `Select ${instance.name}` } }}
+              size="small"
+            />
+          )}
           <FavoriteButton entityType="instance" entityId={instance.id} size="small" initialFavorited={isFavorite} />
           <Typography variant="h6" component="h2" noWrap>
             {instance.name}
@@ -215,10 +225,12 @@ const Dashboard = () => {
   const [bulkResultOpen, setBulkResultOpen] = useState(false);
   const [bulkResult, setBulkResult] = useState<BulkOperationResponse | null>(null);
 
+  // The page searches and filters in the browser, so it loads all instances
+  // (all pages), not only the first page of the API.
   const refreshInstances = useCallback(async () => {
     try {
       const [instData, recentData] = await Promise.all([
-        instanceService.list(),
+        instanceService.listAll(),
         instanceService.recent().catch(() => [] as StackInstance[]),
       ]);
       setInstances(instData || []);
@@ -232,7 +244,7 @@ const Dashboard = () => {
     const fetchData = async () => {
       try {
         const [instData, clsData, tmplData, favData, recentData] = await Promise.all([
-          instanceService.list(),
+          instanceService.listAll(),
           clusterService.list().catch(() => [] as Cluster[]),
           templateService.list().catch(() => [] as StackTemplate[]),
           favoriteService.list().catch(() => [] as UserFavorite[]),
@@ -250,6 +262,44 @@ const Dashboard = () => {
       }
     };
     fetchData();
+  }, []);
+
+  // IDs in the list, for the WebSocket handler: an event for an unknown
+  // instance (created by another user or in another tab after the page
+  // loaded) reloads the list.
+  const instanceIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    instanceIdsRef.current = new Set(instances.map((inst) => inst.id));
+  }, [instances]);
+
+  // One reload for a burst of events (a deploy sends several status events),
+  // and at most one reload per unknown ID, so an instance that stays absent
+  // from the list does not reload it on every event.
+  const reloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reloadedForRef = useRef<Set<string>>(new Set());
+  const scheduleReload = useCallback((instanceId: string) => {
+    if (reloadedForRef.current.has(instanceId)) return;
+    reloadedForRef.current.add(instanceId);
+    if (reloadTimerRef.current) return;
+    reloadTimerRef.current = setTimeout(() => {
+      reloadTimerRef.current = null;
+      void refreshInstances();
+    }, NEW_INSTANCE_RELOAD_DELAY_MS);
+  }, [refreshInstances]);
+  // A finished deploy (status running) can change the card: the deploy time
+  // and the URL (a chart can add or change the primary Ingress). One list
+  // reload for a burst of finished deploys.
+  const finishedReloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleFinishedReload = useCallback(() => {
+    if (finishedReloadTimerRef.current) return;
+    finishedReloadTimerRef.current = setTimeout(() => {
+      finishedReloadTimerRef.current = null;
+      void refreshInstances();
+    }, NEW_INSTANCE_RELOAD_DELAY_MS);
+  }, [refreshInstances]);
+  useEffect(() => () => {
+    if (reloadTimerRef.current) clearTimeout(reloadTimerRef.current);
+    if (finishedReloadTimerRef.current) clearTimeout(finishedReloadTimerRef.current);
   }, []);
 
   // Track which instance IDs have a confirmed URL (won't retry)
@@ -310,14 +360,43 @@ const Dashboard = () => {
 
   // Live-update instance statuses via WebSocket.
   const handleWsMessage = useCallback((msg: WsMessage) => {
+    if (msg.type === 'instance.created') {
+      const payload = msg.payload as { instance_id?: string };
+      if (payload.instance_id && !instanceIdsRef.current.has(payload.instance_id)) {
+        scheduleReload(payload.instance_id);
+      }
+      return;
+    }
     if (msg.type === 'deployment.status') {
       const payload = msg.payload as { instance_id?: string; status?: string };
       if (!payload.instance_id || !payload.status) return;
+      if (!instanceIdsRef.current.has(payload.instance_id)) {
+        scheduleReload(payload.instance_id);
+        return;
+      }
+      if (payload.status === 'running') {
+        // Fetch the URL again and reload the list for the new deploy time.
+        fetchedStatusIdsRef.current.delete(payload.instance_id);
+        scheduleFinishedReload();
+      }
       setInstances((prev) =>
         prev.map((inst) =>
           inst.id === payload.instance_id ? { ...inst, status: payload.status as string } : inst
         )
       );
+    }
+    if (msg.type === 'instance.deleted') {
+      const payload = msg.payload as { instance_id?: string };
+      const deletedId = payload.instance_id;
+      if (!deletedId) return;
+      setInstances((prev) => prev.filter((inst) => inst.id !== deletedId));
+      setSelectedIds((prev) => {
+        if (!prev.has(deletedId)) return prev;
+        const next = new Set(prev);
+        next.delete(deletedId);
+        return next;
+      });
+      return;
     }
     if (msg.type === 'instance.status') {
       const payload = msg.payload as {
@@ -330,7 +409,7 @@ const Dashboard = () => {
         setInstanceHealth((prev) => ({ ...prev, [payload.instance_id!]: nextHealth }));
       }
     }
-  }, []);
+  }, [scheduleReload, scheduleFinishedReload]);
 
   useWebSocket(handleWsMessage);
 
@@ -395,6 +474,15 @@ const Dashboard = () => {
     return instances.filter((inst) => favoriteInstanceIds.has(inst.id));
   }, [instances, favoriteInstanceIds]);
 
+  // Bulk operations need the devops role (backend route guard), and each
+  // instance must be modifiable by the user (owner, admin or devops).
+  const canBulk = hasAtLeastRole(user?.role, 'devops');
+  const selectableFiltered = useMemo(
+    () => (canBulk ? filtered.filter((inst) => canModifyInstance(user, inst)) : []),
+    [canBulk, filtered, user],
+  );
+  const selectableIds = useMemo(() => new Set(selectableFiltered.map((inst) => inst.id)), [selectableFiltered]);
+
   // Bulk selection helpers
   const toggleSelect = useCallback((id: string) => {
     setSelectedIds((prev) => {
@@ -410,12 +498,12 @@ const Dashboard = () => {
 
   const toggleSelectAll = useCallback(() => {
     setSelectedIds((prev) => {
-      if (prev.size === filtered.length && filtered.length > 0) {
+      if (prev.size === selectableFiltered.length && selectableFiltered.length > 0) {
         return new Set();
       }
-      return new Set(filtered.map((inst) => inst.id));
+      return new Set(selectableFiltered.map((inst) => inst.id));
     });
-  }, [filtered]);
+  }, [selectableFiltered]);
 
   const selectedInstances = useMemo(() => {
     return instances.filter((inst) => selectedIds.has(inst.id));
@@ -506,8 +594,8 @@ const Dashboard = () => {
     );
   }
 
-  const allFilteredSelected = filtered.length > 0 && selectedIds.size === filtered.length;
-  const someFilteredSelected = selectedIds.size > 0 && selectedIds.size < filtered.length;
+  const allFilteredSelected = selectableFiltered.length > 0 && selectedIds.size === selectableFiltered.length;
+  const someFilteredSelected = selectedIds.size > 0 && selectedIds.size < selectableFiltered.length;
 
   return (
     <Box>
@@ -552,7 +640,7 @@ const Dashboard = () => {
         <Typography variant="caption" color="text.secondary" sx={{ ml: 0.5, display: { xs: 'none', md: 'inline' } }}>
           Press <Box component="kbd" sx={{ fontFamily: 'monospace', px: 0.5, border: '1px solid', borderRadius: 3, fontSize: '0.75rem' }}>/</Box> to search
         </Typography>
-        <Box sx={{ display: 'flex', gap: 1 }}>
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
           {STATUSES.map((s) => (
             <Chip
               key={s}
@@ -707,6 +795,14 @@ const Dashboard = () => {
         </Box>
       )}
 
+      {instances.length > 0 && (
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }} aria-live="polite">
+          {filtered.length === instances.length
+            ? `${instances.length} instance${instances.length === 1 ? '' : 's'}`
+            : `Showing ${filtered.length} of ${instances.length} instances`}
+        </Typography>
+      )}
+
       {filtered.length === 0 ? (
         <EmptyState
           title="No stack instances found"
@@ -720,24 +816,27 @@ const Dashboard = () => {
       ) : (
         <Box>
           {/* Select All header */}
-          <Box sx={{ display: 'flex', alignItems: 'center', mb: 1, ml: 1 }}>
-            <Checkbox
-              checked={allFilteredSelected}
-              indeterminate={someFilteredSelected}
-              onChange={toggleSelectAll}
-              slotProps={{ input: { 'aria-label': 'Select all instances' } }}
-              size="small"
-            />
-            <Typography variant="body2" color="text.secondary">
-              {allFilteredSelected ? 'Deselect all' : 'Select all'} ({filtered.length})
-            </Typography>
-          </Box>
+          {selectableFiltered.length > 0 && (
+            <Box sx={{ display: 'flex', alignItems: 'center', mb: 1, ml: 1 }}>
+              <Checkbox
+                checked={allFilteredSelected}
+                indeterminate={someFilteredSelected}
+                onChange={toggleSelectAll}
+                slotProps={{ input: { 'aria-label': 'Select all instances' } }}
+                size="small"
+              />
+              <Typography variant="body2" color="text.secondary">
+                {allFilteredSelected ? 'Deselect all' : 'Select all'} ({selectableFiltered.length})
+              </Typography>
+            </Box>
+          )}
           <Grid container spacing={3} aria-live="polite">
             {filtered.map((instance) => (
               <Grid key={instance.id} size={{ xs: 12, sm: 6, md: 4 }}>
                 <InstanceCard
                   instance={instance}
                   isSelected={selectedIds.has(instance.id)}
+                  selectable={selectableIds.has(instance.id)}
                   isFavorite={favoriteInstanceIds.has(instance.id)}
                   clusterName={instance.cluster_id ? clusterNameMap.get(instance.cluster_id) : undefined}
                   url={instanceUrls[instance.id]}
@@ -762,6 +861,11 @@ const Dashboard = () => {
               This action cannot be undone. Selected instances will be permanently deleted.
             </Alert>
           )}
+          {bulkAction === 'stop' && (
+            <Alert severity="warning" sx={{ mb: 2 }}>
+              This uninstalls all Helm releases of the selected instances. The namespaces stay.
+            </Alert>
+          )}
           <Typography variant="body1" sx={{ mb: 1 }}>
             {bulkAction ? BULK_ACTION_LABELS[bulkAction] : ''} {selectedInstances.length} instance{selectedInstances.length === 1 ? '' : 's'}:
           </Typography>
@@ -781,7 +885,7 @@ const Dashboard = () => {
           <Button
             onClick={handleBulkConfirm}
             variant="contained"
-            color={bulkAction === 'delete' ? 'error' : 'primary'}
+            color={bulkAction === 'delete' ? 'error' : bulkAction === 'stop' ? 'warning' : 'primary'}
           >
             {bulkAction ? BULK_ACTION_LABELS[bulkAction] : 'Confirm'}
           </Button>

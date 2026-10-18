@@ -40,21 +40,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
 import type { APIKey, CreateAPIKeyRequest, CreateAPIKeyResponse, NotificationPreference } from '../../types';
 import LoadingState from '../../components/LoadingState';
-
-const EVENT_TYPE_LABELS: Record<string, string> = {
-  'deployment.success': 'Deployment succeeded',
-  'deployment.error': 'Deployment failed',
-  'deployment.stopped': 'Stack stopped',
-  'stop.error': 'Stop failed',
-  'instance.created': 'Stack created',
-  'instance.deleted': 'Stack deleted',
-  'clean.completed': 'Cleanup completed',
-  'clean.error': 'Cleanup failed',
-  'rollback.completed': 'Rollback completed',
-  'rollback.error': 'Rollback failed',
-};
-
-const DEFAULT_EVENT_TYPES = Object.keys(EVENT_TYPE_LABELS);
+import { eventTypeLabel, mergePreferences } from '../../utils/notificationEventTypes';
 
 type ExpiryMode = 'preset' | 'custom';
 
@@ -145,19 +131,14 @@ const Profile = () => {
     setNotifPrefsLoading(true);
     try {
       const prefs = await notificationService.getPreferences();
-      if (prefs && prefs.length > 0) {
-        setNotifPrefs(prefs);
-      } else {
-        // Initialize with defaults (all enabled)
-        setNotifPrefs(DEFAULT_EVENT_TYPES.map((et) => ({ event_type: et, enabled: true })));
-      }
+      setNotifPrefs(mergePreferences(prefs ?? [], currentUser?.role));
     } catch {
-      // Initialize with defaults on error
-      setNotifPrefs(DEFAULT_EVENT_TYPES.map((et) => ({ event_type: et, enabled: true })));
+      // Initialize with defaults (all on) on error
+      setNotifPrefs(mergePreferences([], currentUser?.role));
     } finally {
       setNotifPrefsLoading(false);
     }
-  }, []);
+  }, [currentUser?.role]);
 
   useEffect(() => {
     fetchNotifPrefs();
@@ -257,7 +238,8 @@ const Profile = () => {
             </Box>
             <Typography color="text.secondary">Authentication:</Typography>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              {authProvider ? (
+              {/* The backend sends auth_provider "local" for local users; only other values are SSO. */}
+              {authProvider && authProvider !== 'local' ? (
                 <Chip
                   icon={<SecurityOutlinedIcon />}
                   label={`SSO via ${oidcConfig?.provider_name || authProvider}`}
@@ -406,7 +388,7 @@ const Profile = () => {
               {notifPrefs.map((pref) => (
                 <TableRow key={pref.event_type}>
                   <TableCell>
-                    {EVENT_TYPE_LABELS[pref.event_type] || pref.event_type}
+                    {eventTypeLabel(pref.event_type)}
                   </TableCell>
                   <TableCell align="right">
                     <Switch
@@ -414,7 +396,7 @@ const Profile = () => {
                       onChange={() => handleTogglePref(pref.event_type)}
                       slotProps={{
                         input: {
-                          'aria-label': `Toggle ${EVENT_TYPE_LABELS[pref.event_type] || pref.event_type}`,
+                          'aria-label': `Toggle ${eventTypeLabel(pref.event_type)}`,
                         },
                       }}
                     />

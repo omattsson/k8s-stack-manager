@@ -55,7 +55,9 @@ func (r *GORMSharedValuesRepository) Update(sv *models.SharedValues) error {
 	return r.Save(sv)
 }
 
-// ListByCluster returns all shared values for a given cluster, ordered by priority ascending.
+// ListByCluster returns all shared values for a given cluster in merge order
+// (models.SortSharedValues: priority, then name, then ID). The final sort runs
+// in Go so the order does not depend on the database collation.
 func (r *GORMSharedValuesRepository) ListByCluster(clusterID string) ([]models.SharedValues, error) {
 	var values []models.SharedValues
 	if err := r.DB.Where("cluster_id = ?", clusterID).
@@ -63,5 +65,6 @@ func (r *GORMSharedValuesRepository) ListByCluster(clusterID string) ([]models.S
 		Find(&values).Error; err != nil {
 		return nil, dberrors.NewDatabaseError("list_by_cluster", err)
 	}
+	models.SortSharedValues(values)
 	return values, nil
 }

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	k8sresource "k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
@@ -443,6 +445,38 @@ func TestGetClusterHealthSummary_Success(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
+func TestGetClusterHealthSummary_Requests(t *testing.T) {
+	t.Parallel()
+	clusterRepo := NewMockClusterRepository()
+	seedCluster(clusterRepo, "cl-1", "test-cluster")
+
+	fakeCS := fake.NewSimpleClientset(
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "stack-a"},
+			Spec: corev1.PodSpec{
+				NodeName: "node-1",
+				Containers: []corev1.Container{{Name: "app", Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{
+					corev1.ResourceCPU:    k8sresource.MustParse("1620m"),
+					corev1.ResourceMemory: k8sresource.MustParse("512Mi"),
+				}}}},
+			},
+			Status: corev1.PodStatus{Phase: corev1.PodRunning},
+		},
+	)
+	registry := cluster.NewRegistryForTest("cl-1", k8s.NewClientFromInterface(fakeCS), &mockClusterHelmExecutor{})
+	r := setupClusterRouter(clusterRepo, NewMockStackInstanceRepository(), registry, "devops")
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/clusters/cl-1/health/summary", nil)
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var summary k8s.ClusterSummary
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &summary))
+	assert.Equal(t, "1620m", summary.RequestedCPU)
+	assert.Equal(t, "512Mi", summary.RequestedMemory)
+}
+
 // ---- GetClusterNodes additional coverage ----
 
 func TestGetClusterNodes_ClusterNotFound(t *testing.T) {
@@ -734,7 +768,8 @@ func TestPropagateQuotasToNamespaces_WithNamespaces(t *testing.T) {
 	}
 
 	// Should not panic; exercises the namespace iteration and quota application.
-	h.propagateQuotasToNamespaces("cl-1", config)
+	require.NoError(t, quotaRepo.Upsert(context.Background(), config))
+	h.propagateQuotasToNamespaces(&models.Cluster{ID: "cl-1"})
 }
 
 func TestPropagateQuotasToNamespaces_NoNamespaces(t *testing.T) {
@@ -759,7 +794,8 @@ func TestPropagateQuotasToNamespaces_NoNamespaces(t *testing.T) {
 	}
 
 	// Should not panic; no stack- namespaces to iterate.
-	h.propagateQuotasToNamespaces("cl-1", config)
+	require.NoError(t, quotaRepo.Upsert(context.Background(), config))
+	h.propagateQuotasToNamespaces(&models.Cluster{ID: "cl-1"})
 }
 
 // ---- SetDefaultCluster additional coverage ----

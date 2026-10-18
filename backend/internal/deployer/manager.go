@@ -2,7 +2,6 @@ package deployer
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -47,8 +46,14 @@ type ClusterResolver interface {
 }
 
 // LifecycleNotifier creates in-app notifications for stack lifecycle events.
+// notifier.Notifier implements it.
 type LifecycleNotifier interface {
-	Notify(ctx context.Context, userID, notifType, title, message, entityType, entityID string) error
+	// NotifyInstance notifies the owner and the followers of the instance
+	// and dispatches the event to the matching channels.
+	NotifyInstance(ctx context.Context, target models.NotificationTarget, notifType, title, message string) error
+	// FollowerIDs returns the followers of the instance. Read them before
+	// an instance delete (the delete removes the follower rows).
+	FollowerIDs(ctx context.Context, instanceID string) []string
 }
 
 // Manager orchestrates asynchronous deployments with concurrency control.
@@ -65,6 +70,9 @@ type Manager struct {
 	shutdownCancel    context.CancelFunc
 	wg                sync.WaitGroup
 	shuttingDown      atomic.Bool
+	// replicaID is the process identity stored on each deploy log (see
+	// ManagerConfig.ReplicaID).
+	replicaID string
 	// Wildcard TLS secret replication (local dev). When wildcardTLSSourceSecret
 	// is empty, replication is disabled.
 	wildcardTLSSourceNS     string
@@ -78,6 +86,9 @@ type Manager struct {
 
 	stabilizeTimeout      time.Duration
 	stabilizePollInterval time.Duration
+	// podEventPollInterval is how often a deploy or rollback reads the
+	// Warning events and pod states of its namespace (see podEventWatch).
+	podEventPollInterval time.Duration
 
 	// hooks dispatches lifecycle events to user-configured webhooks.
 	// nil disables all hook dispatch.
@@ -87,9 +98,22 @@ type Manager struct {
 	// nil disables notification creation.
 	notifier LifecycleNotifier
 
-	// pendingDeletes tracks instances that should be deleted from the database
-	// after their async clean operation completes successfully.
-	pendingDeletes sync.Map
+	// logActions maps a running deployment log ID to its action (deploy,
+	// stop, clean, rollback) for the deployment.status WebSocket payload.
+	// Entries are removed with the final status broadcast.
+	logActions sync.Map
+
+	// logTriggers maps a running deployment log ID to the hooks.Trigger of
+	// its operation (user, cleanup policy, TTL). fireDeployHook adds it to
+	// the envelope. The operation goroutine removes the entry at its end.
+	logTriggers sync.Map
+
+	// liveOut holds the streamed lines of the running operations of this
+	// replica; a flusher writes them to deployment_logs.output (see
+	// live_output.go). liveOutputInterval overrides liveOutputFlushInterval
+	// (tests).
+	liveOut            liveOutputs
+	liveOutputInterval time.Duration
 }
 
 // NamespaceRoleBindingSpec describes a RoleBinding that should be applied to
@@ -152,6 +176,17 @@ type ManagerConfig struct {
 	// StabilizePollInterval controls how frequently pod readiness is checked
 	// during the stabilization window. Defaults to 5s if zero.
 	StabilizePollInterval time.Duration
+
+	// PodEventPollInterval controls how often a deploy or rollback reads the
+	// Warning events and pod states of its namespace and writes new pod
+	// problems to the deploy log. Defaults to 10s if zero.
+	PodEventPollInterval time.Duration
+
+	// ReplicaID is the process identity of this process (replica.ProcessID).
+	// Each deploy log stores it, so the leader can end the operation when
+	// this process stops without a clean shutdown (InterruptRecovery).
+	// Empty: logs get no replica ID and the recovery skips them.
+	ReplicaID string
 }
 
 // DeployRequest contains everything needed to deploy a stack instance.
@@ -160,6 +195,8 @@ type DeployRequest struct {
 	Definition         *models.StackDefinition
 	Charts             []ChartDeployInfo
 	LastDeployedValues string // JSON-serialized merged values for deploy preview
+	// UserID is the user who started the deploy; stored on the deploy log.
+	UserID string
 }
 
 // ChartDeployInfo holds chart configuration and pre-generated merged values.
@@ -204,6 +241,7 @@ func NewManager(cfg ManagerConfig) *Manager {
 		txRunner:                cfg.TxRunner,
 		quotaRepo:               cfg.QuotaRepo,
 		quotaOverrideRepo:       cfg.QuotaOverrideRepo,
+		replicaID:               cfg.ReplicaID,
 		semaphore:               make(chan struct{}, maxConcurrent),
 		shutdownCtx:             ctx,
 		shutdownCancel:          cancel,
@@ -214,17 +252,21 @@ func NewManager(cfg ManagerConfig) *Manager {
 
 		stabilizeTimeout:      cfg.StabilizeTimeout,
 		stabilizePollInterval: stabilizePoll,
+		podEventPollInterval:  cfg.PodEventPollInterval,
 
 		hooks:    cfg.Hooks,
 		notifier: cfg.Notifier,
 	}
 }
 
-// ScheduleDeleteAfterClean marks an instance for DB deletion once its async
-// clean operation finishes successfully. If the clean fails, the instance
-// remains in the database with an error status.
-func (m *Manager) ScheduleDeleteAfterClean(instanceID string) {
-	m.pendingDeletes.Store(instanceID, struct{}{})
+// clearDeleteAfterClean clears the persisted delete mark of the instance
+// (stack_instances.delete_after_clean) when the repository supports it.
+func (m *Manager) clearDeleteAfterClean(instanceID string) {
+	if marker, ok := m.instanceRepo.(models.CleanStartMarker); ok {
+		if err := marker.ClearDeleteAfterClean(instanceID); err != nil {
+			slog.Warn("failed to clear delete_after_clean", "instance_id", instanceID, "error", err)
+		}
+	}
 }
 
 // hookOpts carries optional data for fireDeployHook. Only pre-deploy hooks
@@ -234,6 +276,32 @@ type hookOpts struct {
 	Charts     []hooks.ChartRef
 	Metadata   map[string]string
 	OnProgress func(string)
+	// Trigger overrides the trigger of the deployment log (for events
+	// without a deployment log, for example a policy delete).
+	Trigger *hooks.Trigger
+}
+
+// rememberTrigger stores the trigger of the operation of logID: the trigger
+// in ctx (hooks.WithTrigger), else a user trigger.
+func (m *Manager) rememberTrigger(ctx context.Context, logID string) {
+	t, ok := hooks.TriggerFromContext(ctx)
+	if !ok || t.Type == "" {
+		t = hooks.Trigger{Type: hooks.TriggerUser}
+	}
+	m.logTriggers.Store(logID, t)
+}
+
+// triggerFor returns the trigger of the operation of logID, or nil.
+func (m *Manager) triggerFor(logID string) *hooks.Trigger {
+	if logID == "" {
+		return nil
+	}
+	v, ok := m.logTriggers.Load(logID)
+	if !ok {
+		return nil
+	}
+	t := v.(hooks.Trigger)
+	return &t
 }
 
 // fireDeployHook dispatches event to configured hook subscribers using a
@@ -248,6 +316,17 @@ func (m *Manager) fireDeployHook(ctx context.Context, event string, instance *mo
 	if m.hooks == nil || instance == nil {
 		return nil
 	}
+	env := m.hookEnvelope(instance, deploymentID, deployStartedAt, opts)
+	if opts.OnProgress != nil {
+		return m.hooks.FireWithProgress(ctx, event, env, opts.OnProgress)
+	}
+	return m.hooks.Fire(ctx, event, env)
+}
+
+// hookEnvelope builds the envelope of a deploy manager event from a snapshot
+// of instance. The trigger is opts.Trigger, else the trigger of the
+// operation of deploymentID.
+func (m *Manager) hookEnvelope(instance *models.StackInstance, deploymentID string, deployStartedAt time.Time, opts hookOpts) hooks.EventEnvelope {
 	env := hooks.EventEnvelope{
 		InstanceRef: &hooks.InstanceRef{
 			ID:                instance.ID,
@@ -261,6 +340,10 @@ func (m *Manager) fireDeployHook(ctx context.Context, event string, instance *mo
 		},
 		Charts:   opts.Charts,
 		Metadata: opts.Metadata,
+		Trigger:  opts.Trigger,
+	}
+	if env.Trigger == nil {
+		env.Trigger = m.triggerFor(deploymentID)
 	}
 	if deploymentID != "" {
 		startedAt := deployStartedAt
@@ -269,10 +352,7 @@ func (m *Manager) fireDeployHook(ctx context.Context, event string, instance *mo
 		}
 		env.Deployment = &hooks.DeploymentRef{ID: deploymentID, StartedAt: startedAt.UTC()}
 	}
-	if opts.OnProgress != nil {
-		return m.hooks.FireWithProgress(ctx, event, env, opts.OnProgress)
-	}
-	return m.hooks.Fire(ctx, event, env)
+	return env
 }
 
 // wrapStreaming checks if helm implements StreamingHelmExecutor and, if so,
@@ -368,10 +448,23 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 		StackInstanceID: req.Instance.ID,
 		Action:          models.DeployActionDeploy,
 		Status:          models.DeployLogRunning,
+		ReplicaID:       m.replicaID,
+		DeadlineAt:      m.operationDeadline(now, models.DeployActionDeploy, helmExec, len(req.Charts)),
 		StartedAt:       now,
+		ChartVersions:   chartVersionsJSON(req.Charts),
+		Branch:          req.Instance.Branch,
+		UserID:          req.UserID,
 	}
+	m.logActions.Store(logID, deployLog.Action)
 	req.Instance.Status = models.StackStatusDeploying
 	req.Instance.ErrorMessage = ""
+	// A deploy ends the stopped period (cleanup condition stopped_days) and
+	// the cleaned period (cleanup condition cleaned_days).
+	req.Instance.StoppedAt = nil
+	req.Instance.CleanedAt = nil
+	// A marker of an earlier deploy (for example after a crash) must not
+	// hide errors from the k8s status watcher.
+	req.Instance.PostDeployHookUntil = nil
 
 	if m.txRunner != nil {
 		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
@@ -399,21 +492,7 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 
 	// Build ChartRef list for the hook payload so subscribers (e.g. CI trigger
 	// gates) know which charts are being deployed and can check/trigger builds.
-	chartRefs := make([]hooks.ChartRef, 0, len(req.Charts))
-	for _, c := range req.Charts {
-		branch := c.Branch
-		if branch == "" {
-			branch = req.Instance.Branch
-		}
-		chartRefs = append(chartRefs, hooks.ChartRef{
-			Name:            c.ChartConfig.ChartName,
-			ReleaseName:     c.ChartConfig.ChartName,
-			Version:         c.ChartConfig.ChartVersion,
-			SourceRepoURL:   c.ChartConfig.SourceRepoURL,
-			BuildPipelineID: c.ChartConfig.BuildPipelineID,
-			Branch:          branch,
-		})
-	}
+	chartRefs := chartRefsFor(req.Charts, req.Instance.Branch, nil)
 	hookMeta := map[string]string{}
 	if regCfg != nil {
 		hookMeta["registry_url"] = regCfg.URL
@@ -437,6 +516,7 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 			m.broadcastLog(req.Instance.ID, logID, line)
 		},
 	}
+	m.rememberTrigger(ctx, logID)
 	m.wg.Add(1)
 	go m.executeDeploy(helmExec, k8sClient, regCfg, req.Instance, deployLog, charts, req.LastDeployedValues, preDeployOpts)
 
@@ -453,23 +533,77 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 // of the HTTP request context, and don't block the API response.
 func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg *models.RegistryConfig, instance *models.StackInstance, deployLog *models.DeploymentLog, charts []ChartDeployInfo, lastDeployedValues string, preDeployOpts hookOpts) {
 	defer m.wg.Done()
+	defer m.logTriggers.Delete(deployLog.ID)
 
 	instanceID := instance.ID
 	namespace := instance.Namespace
 
+	// Check the effective namespace quota (cluster quota + instance override)
+	// first: before the pre-deploy hook (a CI gate can wait for minutes) and
+	// before any Helm call. An invalid quota would otherwise fail later with a
+	// Kubernetes API error; fail the deploy now with a clear message. Other
+	// lookup errors are not fatal here; applyNamespaceQuotas reports them.
+	if m.quotaRepo != nil {
+		qctx, qcancel := context.WithTimeout(m.shutdownCtx, 30*time.Second)
+		_, _, _, quotaErr := m.effectiveNamespaceQuota(qctx, instanceID)
+		qcancel()
+		if errors.Is(quotaErr, ErrInvalidQuota) {
+			m.broadcastLog(instanceID, deployLog.ID, "ERROR: "+quotaErr.Error())
+			slog.Warn("deployment rejected: invalid resource quota", "instance_id", instanceID, "error", quotaErr)
+			m.finalizeDeploy(instanceID, deployLog, "ERROR: "+quotaErr.Error()+"\n", quotaErr, false, lastDeployedValues, "")
+			return
+		}
+	}
+
 	// Fire pre-deploy hook BEFORE acquiring the semaphore so a long-running
-	// hook (e.g. CI trigger gate) doesn't hold a concurrency slot.
-	if err := m.fireDeployHook(m.shutdownCtx, hooks.EventPreDeploy, instance, deployLog.ID, deployLog.StartedAt, preDeployOpts); err != nil {
-		deployErr := fmt.Errorf("pre-deploy hook: %w", err)
+	// hook (e.g. CI trigger gate) doesn't hold a concurrency slot. Progress
+	// lines go to the WebSocket log (OnProgress of Deploy) and into the
+	// deployment log output, the same as for pre-rollback.
+	progress := newHookProgress(maxHookProgressLen)
+	if broadcast := preDeployOpts.OnProgress; broadcast != nil {
+		preDeployOpts.OnProgress = func(line string) {
+			broadcast(line)
+			progress.add(line)
+		}
+	}
+	hookErr := m.fireDeployHook(m.shutdownCtx, hooks.EventPreDeploy, instance, deployLog.ID, deployLog.StartedAt, preDeployOpts)
+	hookOutput := progress.String()
+	if hookErr != nil {
+		deployErr := fmt.Errorf("pre-deploy hook: %w", hookErr)
+		// The user-safe reason: the hook name and the subscriber's deny
+		// message, or a generic text for a transport error (never the
+		// subscriber URL). It goes into the log output, so the log viewer
+		// and "stackctl stack logs" show it; finalizeDeploy puts the same
+		// text into error_message of the log and the instance.
+		reason := hooks.UserMessage(hookErr, hooks.EventPreDeploy, "deployment")
 		slog.Error("pre-deploy hook denied deployment",
-			"instance_id", instanceID, "log_id", deployLog.ID, "error", err)
-		m.finalizeDeploy(instanceID, deployLog, "", deployErr, false, lastDeployedValues, "")
+			"instance_id", instanceID, "log_id", deployLog.ID, "error", hookErr)
+		m.broadcastLog(instanceID, deployLog.ID, "ERROR: "+reason)
+		m.finalizeDeploy(instanceID, deployLog, hookOutput+"ERROR: "+reason+"\n", deployErr, false, lastDeployedValues, "")
 		return
 	}
 
-	// Acquire semaphore.
+	// A pre-deploy hook (for example a CI gate that waits for image builds)
+	// can run for many minutes. If another operation started meanwhile (a
+	// newer deployment log exists) or the status changed, do not install the
+	// charts. finalizeDeploy keeps the new status and only closes the log.
+	if owned, current := m.ownsInstance(instanceID, deployLog.ID, models.StackStatusDeploying); !owned {
+		cancelErr := fmt.Errorf("deploy cancelled: another operation changed the instance (status %s) during the pre-deploy hook", current)
+		m.broadcastLog(instanceID, deployLog.ID, "WARNING: "+cancelErr.Error())
+		slog.Warn("deploy cancelled after pre-deploy hook: instance changed",
+			"instance_id", instanceID, "log_id", deployLog.ID, "status", current)
+		m.finalizeDeploy(instanceID, deployLog, hookOutput+"WARNING: "+cancelErr.Error()+"\n", cancelErr, false, lastDeployedValues, "")
+		return
+	}
+
+	// Acquire semaphore. Blocking post-deploy subscribers run after
+	// releaseSlot, so a long subscriber does not hold a concurrency slot.
 	m.semaphore <- struct{}{}
-	defer func() { <-m.semaphore }()
+	releaseSlot := sync.OnceFunc(func() { <-m.semaphore })
+	defer releaseSlot()
+	if !m.extendDeadline(deployLog, helm, len(charts)) {
+		return
+	}
 
 	// Start a root span for the background deployment (the HTTP request context
 	// is long gone by the time this goroutine runs).
@@ -479,7 +613,7 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 		attribute.String("log.id", deployLog.ID),
 	)
 
-	var allOutput string
+	allOutput := hookOutput
 	var deployErr error
 	defer func() { finishSpan(deployErr) }()
 
@@ -497,31 +631,55 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 
 	// Use a bounded context derived from the shutdown context so that
 	// operations are cancelled both on timeout and on server shutdown.
+	// The helm timeout applies to one chart, so the whole deploy gets one
+	// timeout per chart (see deployBudget); each chart gets its own deadline
+	// in the loop below.
 	var timeout time.Duration
 	if helm != nil {
 		timeout = helm.Timeout()
 	} else {
 		timeout = 5 * time.Minute
 	}
-	ctx, cancel := context.WithTimeout(m.shutdownCtx, timeout)
+	ctx, cancel := context.WithTimeout(m.shutdownCtx, deployBudget(timeout, len(charts)))
 	defer cancel()
 
-	// Ensure the target namespace exists before any pre-install resource
-	// provisioning (wildcard TLS, pull secrets, RoleBindings). Called once
-	// here so that the individual feature blocks don't each need their own
-	// EnsureNamespace.
-	needsNS := (m.wildcardTLSSourceSecret != "" && m.wildcardTLSSourceNS != "") ||
-		regCfg != nil ||
-		len(m.namespaceRoleBindings) > 0
+	// Ensure the target namespace exists, with the label
+	// managed-by=k8s-stack-manager, the instance-name label and the
+	// NAMESPACE_LABELS labels (set on the k8s client by the cluster
+	// registry), before any chart installs and before any
+	// pre-install resource provisioning (wildcard TLS, pull secrets,
+	// RoleBindings). Always called: without it `helm --create-namespace`
+	// creates the namespace without the label, and tools that select stack
+	// namespaces by the label (for example an External Secrets
+	// ClusterExternalSecret) never see it.
 	nsReady := false
-	if needsNS && k8sClient != nil {
-		if err := k8sClient.EnsureNamespace(ctx, namespace); err != nil {
+	if k8sClient != nil {
+		if err := k8sClient.EnsureNamespace(ctx, namespace, instance.Name); err != nil {
 			slog.Warn("failed to ensure namespace for pre-install resources",
 				"instance_id", instanceID, "namespace", namespace, "error", err,
 			)
 		} else {
 			nsReady = true
 		}
+	}
+
+	// Apply the namespace ResourceQuota and LimitRange (cluster quota merged
+	// with the instance override) right after the namespace exists and
+	// before the first Helm install. Then every pod of the deploy, also a pod
+	// that a chart creates later (a scaled ReplicaSet, a restore job), meets
+	// the quota at once: a rejected pod shows in the deploy log (pod events)
+	// and the deploy ends partial or error with the quota message, not
+	// running with 0 pods. A redeploy applies the current quota the same
+	// way. When the namespace is not ready here (no k8s client, or the
+	// namespace check failed), Helm creates it and the quota is applied
+	// after the installs, as before.
+	quotaPending := m.quotaRepo != nil
+	if quotaPending && nsReady {
+		// A failed apply stays pending: the fallback after the installs
+		// tries once more.
+		warning := m.applyQuotasForDeploy(ctx, instanceID, namespace)
+		allOutput += warning
+		quotaPending = warning != ""
 	}
 
 	// Replicate the wildcard TLS secret into the target namespace before any
@@ -637,10 +795,30 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 		}
 	}
 
+	// Read the Warning events and pod states of the namespace while Helm
+	// installs the charts and while the pods stabilize: a pod that cannot be
+	// created (for example an exceeded ResourceQuota) shows in the deploy log
+	// at once, not only as a timeout at the end.
+	podWatch := m.startPodEventWatch(podProblemListerFor(k8sClient), namespace, func(line string) {
+		m.broadcastLog(instanceID, deployLog.ID, line)
+	})
+
 	var failedCharts []string
 
 	for _, chart := range charts {
 		releaseName := chart.ChartConfig.ChartName
+
+		// Check ALLOWED_CHART_REPOS again at deploy time: a chart config
+		// stored before the allowlist was set must not deploy.
+		if srcErr := models.CheckChartSource(chart.ChartConfig.RepositoryURL, chart.ChartConfig.ChartPath, chart.ChartConfig.ChartName); srcErr != nil {
+			line := fmt.Sprintf("ERROR: chart %q: %s", chart.ChartConfig.ChartName, srcErr)
+			allOutput += fmt.Sprintf("=== Chart: %s ===\n%s\n", chart.ChartConfig.ChartName, line)
+			m.broadcastLog(instanceID, deployLog.ID, line)
+			failedCharts = append(failedCharts, chart.ChartConfig.ChartName)
+			slog.Warn("chart source not allowed, skipping chart",
+				"instance_id", instanceID, "chart", chart.ChartConfig.ChartName, "error", srcErr)
+			continue
+		}
 
 		slog.Info("deploying chart",
 			"instance_id", instanceID,
@@ -663,27 +841,37 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 			valuesFile = valuesPath
 		}
 
-		chartRef := chart.ChartConfig.ChartPath
-		if chartRef == "" {
-			chartRef = chart.ChartConfig.ChartName
-		}
-		repoURL := chart.ChartConfig.RepositoryURL
-		if strings.HasPrefix(repoURL, "oci://") {
-			chartRef = strings.TrimRight(repoURL, "/") + "/" + chartRef
-			repoURL = ""
+		chartRef, repoURL := chartReference(chart.ChartConfig)
+
+		// A release left in pending-* by an earlier, interrupted deploy blocks
+		// every upgrade; remove the stuck revision first.
+		if k8sClient != nil {
+			msg, recErr := recoverPendingRelease(ctx, helm, k8sClient.Clientset(), releaseName, namespace)
+			if recErr != nil {
+				allOutput += fmt.Sprintf("WARNING: %s\n", recErr.Error())
+			} else if msg != "" {
+				allOutput += msg + "\n"
+				m.broadcastLog(instanceID, deployLog.ID, msg)
+			}
 		}
 
-		output, err := helm.Install(ctx, InstallRequest{
-			ReleaseName: releaseName,
-			ChartPath:   chartRef,
-			RepoURL:     repoURL,
-			Version:     chart.ChartConfig.ChartVersion,
-			ValuesFile:  valuesFile,
-			Namespace:   namespace,
-			SkipCRDs:    true,
+		// helm stops itself at --timeout and marks the release failed; the
+		// margin keeps this context from killing helm before that.
+		chartCtx, chartCancel := context.WithTimeout(ctx, timeout+chartTimeoutMargin)
+		output, err := helm.Install(chartCtx, InstallRequest{
+			ReleaseName:    releaseName,
+			ChartPath:      chartRef,
+			RepoURL:        repoURL,
+			Version:        chart.ChartConfig.ChartVersion,
+			ValuesFile:     valuesFile,
+			Namespace:      namespace,
+			SkipCRDs:       true,
+			NamespaceReady: nsReady,
 		})
+		chartCancel()
 
 		allOutput += fmt.Sprintf("=== Chart: %s ===\n%s\n", chart.ChartConfig.ChartName, output)
+		allOutput += podWatch.drain()
 		if !streaming {
 			m.broadcastLog(instanceID, deployLog.ID, output)
 		}
@@ -703,16 +891,10 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 		deployErr = fmt.Errorf("partial deploy — failed charts: %s", strings.Join(failedCharts, ", "))
 	}
 
-	// Apply resource quotas to the namespace if configured.
-	if len(failedCharts) < len(charts) && m.quotaRepo != nil {
-		if quotaErr := m.applyNamespaceQuotas(ctx, instanceID, namespace); quotaErr != nil {
-			slog.Warn("failed to apply resource quotas",
-				"instance_id", instanceID,
-				"namespace", namespace,
-				"error", quotaErr,
-			)
-			allOutput += fmt.Sprintf("WARNING: failed to apply resource quotas: %s\n", quotaErr.Error())
-		}
+	// Fallback: the quota was not applied before the installs (the
+	// namespace was not ready, or the apply failed). Apply it now.
+	if quotaPending && len(failedCharts) < len(charts) {
+		allOutput += m.applyQuotasForDeploy(ctx, instanceID, namespace)
 	}
 
 	// Wait for pods to become ready when at least some charts succeeded.
@@ -720,11 +902,44 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 	if deployErr == nil && m.stabilizeTimeout > 0 && k8sClient != nil {
 		if waitErr := m.awaitReadiness(k8sClient, instanceID, namespace, deployLog.ID); waitErr != nil {
 			readinessWarning = waitErr.Error()
-			allOutput += fmt.Sprintf("WARNING: %s\n", readinessWarning)
 		}
 	}
 
-	m.finalizeDeploy(instanceID, deployLog, allOutput, deployErr, len(failedCharts) > 0 && len(failedCharts) < len(charts), lastDeployedValues, readinessWarning)
+	// The pods are no longer awaited: stop reading the events. The most
+	// relevant pod problem goes into the error (and so into the instance
+	// error message) and into the readiness warning.
+	podEventLines, podEvent := podWatch.stop()
+	allOutput += podEventLines
+	deployErr = withPodEvent(deployErr, podEvent)
+	if readinessWarning != "" {
+		if podEvent != "" {
+			readinessWarning += " (pod event: " + podEvent + ")"
+		}
+		allOutput += fmt.Sprintf("WARNING: %s\n", readinessWarning)
+	}
+
+	partialDeploy := len(failedCharts) > 0 && len(failedCharts) < len(charts)
+
+	// Blocking post-deploy subscribers (for example a database restore) run
+	// after the releases are ready. The instance stays stabilizing; it gets
+	// running (and the owner "Deployment succeeded") only after they return.
+	var postDeployIgnored []hooks.IgnoredFailure
+	if (deployErr == nil || partialDeploy) && m.hooks.HasBlocking(hooks.EventPostDeploy) {
+		releaseSlot()
+		res := m.runBlockingPostDeploy(instanceID, deployLog, preDeployOpts)
+		allOutput += res.output
+		if res.cancelled != nil {
+			m.finalizeDeploy(instanceID, deployLog, allOutput, res.cancelled, false, lastDeployedValues, readinessWarning)
+			return
+		}
+		if res.err != nil {
+			deployErr = res.err
+			partialDeploy = false
+		}
+		postDeployIgnored = res.ignored
+	}
+
+	m.finalizeDeployWith(instanceID, deployLog, allOutput, deployErr, partialDeploy, lastDeployedValues, readinessWarning, postDeployIgnored)
 }
 
 // awaitReadiness polls namespace status until all deployments are healthy or the
@@ -786,6 +1001,13 @@ func (m *Manager) awaitReadiness(k8sClient *k8s.Client, instanceID, namespace, l
 // extra FindByID call. readinessWarning is non-empty when pod readiness timed
 // out (deploy still succeeds, but the hook payload includes the warning).
 func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.DeploymentLog, output string, deployErr error, partialDeploy bool, lastDeployedValues string, readinessWarning string) {
+	m.finalizeDeployWith(instanceID, deployLog, output, deployErr, partialDeploy, lastDeployedValues, readinessWarning, nil)
+}
+
+// finalizeDeployWith is finalizeDeploy with the failures of blocking
+// post-deploy subscribers that have failure_policy=ignore: each gives the
+// owner a warning notification.
+func (m *Manager) finalizeDeployWith(instanceID string, deployLog *models.DeploymentLog, output string, deployErr error, partialDeploy bool, lastDeployedValues string, readinessWarning string, postDeployIgnored []hooks.IgnoredFailure) {
 	now := time.Now().UTC()
 
 	instance, err := m.instanceRepo.FindByID(instanceID)
@@ -802,7 +1024,13 @@ func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.Deployment
 	// we were deploying/stabilizing, don't overwrite it — just finalize the log.
 	concurrentOp := instance.Status != models.StackStatusDeploying &&
 		instance.Status != models.StackStatusStabilizing
+	// A newer operation (for example a new deploy after a stop during a
+	// blocking post-deploy hook) also owns the instance now.
+	if !concurrentOp && m.newerOperation(instanceID, deployLog.ID) {
+		concurrentOp = true
+	}
 	if concurrentOp {
+		m.logActions.Delete(deployLog.ID)
 		slog.Warn("finalizeDeploy: concurrent operation changed status, skipping instance update",
 			"instance_id", instanceID,
 			"current_status", instance.Status,
@@ -812,14 +1040,17 @@ func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.Deployment
 		if deployErr != nil {
 			sanitized := sanitizeDeployError(deployErr)
 			deployLog.Status = models.DeployLogError
+			if partialDeploy {
+				deployLog.Status = models.DeployLogPartial
+			}
 			deployLog.ErrorMessage = truncateString(sanitized, maxLogErrorLen)
 		}
-		if err := m.logRepo.Update(m.shutdownCtx, deployLog); err != nil {
-			slog.Error("failed to update deploy log after concurrent op",
-				"instance_id", instanceID, "deploy_log_id", deployLog.ID, "error", err)
-		}
+		m.writeFinal(nil, deployLog, "deploy")
 		return
 	}
+
+	// The blocking post-deploy hooks (if any) have ended.
+	instance.PostDeployHookUntil = nil
 
 	if deployErr != nil && !partialDeploy {
 		sanitized := sanitizeDeployError(deployErr)
@@ -839,7 +1070,8 @@ func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.Deployment
 		instance.ErrorMessage = truncateString(sanitized, maxInstanceErrorLen)
 		instance.LastDeployedAt = &now
 		instance.LastDeployedValues = lastDeployedValues
-		deployLog.Status = models.DeployLogError
+		// The log status matches the instance status (partial, not error).
+		deployLog.Status = models.DeployLogPartial
 		deployLog.ErrorMessage = truncateString(sanitized, maxLogErrorLen)
 		deployLog.ValuesSnapshot = lastDeployedValues
 
@@ -862,28 +1094,9 @@ func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.Deployment
 		)
 	}
 
-	if m.txRunner != nil {
-		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
-			if err := repos.StackInstance.Update(instance); err != nil {
-				return fmt.Errorf("updating instance: %w", err)
-			}
-			if err := repos.DeploymentLog.Update(context.Background(), deployLog); err != nil {
-				return fmt.Errorf("updating deploy log: %w", err)
-			}
-			return nil
-		}); err != nil {
-			slog.Error("failed to finalize deploy atomically",
-				"instance_id", instanceID, "error", err)
-		}
-	} else {
-		if err := m.instanceRepo.Update(instance); err != nil {
-			slog.Error("failed to update instance after deploy",
-				"instance_id", instanceID, "deploy_log_id", deployLog.ID, "error", err)
-		}
-		if err := m.logRepo.Update(m.shutdownCtx, deployLog); err != nil {
-			slog.Error("failed to update deploy log after deploy",
-				"instance_id", instanceID, "deploy_log_id", deployLog.ID, "error", err)
-		}
+	if !m.writeFinal(instance, deployLog, "deploy") {
+		m.logActions.Delete(deployLog.ID)
+		return
 	}
 
 	// Broadcast final status.
@@ -897,25 +1110,43 @@ func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.Deployment
 	if readinessWarning != "" {
 		finalizeHookOpts.Metadata = map[string]string{"readiness": "timeout", "readiness_warning": readinessWarning}
 	}
+	if len(postDeployIgnored) > 0 {
+		if finalizeHookOpts.Metadata == nil {
+			finalizeHookOpts.Metadata = map[string]string{}
+		}
+		names := make([]string, 0, len(postDeployIgnored))
+		for _, f := range postDeployIgnored {
+			names = append(names, f.Hook)
+		}
+		finalizeHookOpts.Metadata["post_deploy_failed"] = strings.Join(names, ",")
+	}
 	_ = m.fireDeployHook(hookCtx, hooks.EventDeployFinalized, instance, deployLog.ID, deployLog.StartedAt, finalizeHookOpts)
 
+	for _, f := range postDeployIgnored {
+		m.notifyInstance(models.NewNotificationTarget(instance), "deployment.warning",
+			fmt.Sprintf("Post-deploy step %s failed", f.Hook),
+			fmt.Sprintf("Deployment of %s: %s", instance.Name, f.UserMessage(hooks.EventPostDeploy, "deployment")))
+	}
+
 	if deployErr != nil && !partialDeploy {
-		if isTimeoutError(deployErr) {
-			m.notifyUser(instance.OwnerID, instanceID, "deploy.timeout",
+		// A failed blocking post-deploy subscriber is a hook failure, also
+		// when it timed out: no deploy-timeout event.
+		if isTimeoutError(deployErr) && !isPostDeployHookError(deployErr) {
+			m.notifyInstance(models.NewNotificationTarget(instance), "deploy.timeout",
 				"Deployment timed out",
 				fmt.Sprintf("Deployment of %s exceeded the timeout threshold", instance.Name))
 			_ = m.fireDeployHook(hookCtx, hooks.EventDeployTimeout, instance, deployLog.ID, deployLog.StartedAt, hookOpts{})
 		} else {
-			m.notifyUser(instance.OwnerID, instanceID, "deployment.error",
+			m.notifyInstance(models.NewNotificationTarget(instance), "deployment.error",
 				"Deployment failed",
 				fmt.Sprintf("Deployment of %s failed: %s", instance.Name, instance.ErrorMessage))
 		}
 	} else if partialDeploy {
-		m.notifyUser(instance.OwnerID, instanceID, "deployment.partial",
+		m.notifyInstance(models.NewNotificationTarget(instance), "deployment.partial",
 			"Deployment partially succeeded",
 			fmt.Sprintf("Deployment of %s partially succeeded: %s", instance.Name, instance.ErrorMessage))
 	} else {
-		m.notifyUser(instance.OwnerID, instanceID, "deployment.success", "Deployment succeeded", fmt.Sprintf("Deployment of %s completed successfully", instance.Name))
+		m.notifyInstance(models.NewNotificationTarget(instance), "deployment.success", "Deployment succeeded", fmt.Sprintf("Deployment of %s completed successfully", instance.Name))
 	}
 }
 
@@ -962,8 +1193,11 @@ func (m *Manager) StopWithCharts(ctx context.Context, instance *models.StackInst
 		StackInstanceID: instance.ID,
 		Action:          models.DeployActionStop,
 		Status:          models.DeployLogRunning,
+		ReplicaID:       m.replicaID,
+		DeadlineAt:      m.operationDeadline(now, models.DeployActionStop, helmExec, len(charts)),
 		StartedAt:       now,
 	}
+	m.logActions.Store(logID, deployLog.Action)
 	instance.Status = models.StackStatusStopping
 	instance.ErrorMessage = ""
 
@@ -998,6 +1232,7 @@ func (m *Manager) StopWithCharts(ctx context.Context, instance *models.StackInst
 	})
 
 	// Pass deployLog into the goroutine to avoid a partition-scanning re-fetch.
+	m.rememberTrigger(ctx, logID)
 	m.wg.Add(1)
 	go m.executeStopWithCharts(helmExec, instance.ID, deployLog, instance.Namespace, sortedCharts)
 
@@ -1007,8 +1242,12 @@ func (m *Manager) StopWithCharts(ctx context.Context, instance *models.StackInst
 // executeStopWithCharts runs helm uninstall for each chart in reverse order.
 func (m *Manager) executeStopWithCharts(helm HelmExecutor, instanceID string, deployLog *models.DeploymentLog, namespace string, charts []ChartDeployInfo) {
 	defer m.wg.Done()
+	defer m.logTriggers.Delete(deployLog.ID)
 	m.semaphore <- struct{}{}
 	defer func() { <-m.semaphore }()
+	if !m.extendDeadline(deployLog, helm, len(charts)) {
+		return
+	}
 
 	_, _, finishSpan := startDeploySpan(context.Background(), "deployer.undeploy", //nolint:gosec // G118: intentional — Helm operations must outlive HTTP request; shutdown coordinated via sync.WaitGroup
 		attribute.String("instance.id", instanceID),
@@ -1046,6 +1285,7 @@ func (m *Manager) executeStopWithCharts(helm HelmExecutor, instanceID string, de
 		output, err := helm.Uninstall(ctx, UninstallRequest{
 			ReleaseName: releaseName,
 			Namespace:   namespace,
+			Timeout:     uninstallWaitTimeout(ctx),
 		})
 
 		allOutput += fmt.Sprintf("=== Chart: %s ===\n%s\n", chart.ChartConfig.ChartName, output)
@@ -1083,6 +1323,9 @@ func (m *Manager) finalizeStop(instanceID string, deployLog *models.DeploymentLo
 
 	deployLog.Output = truncateString(output, maxOutputLen)
 	deployLog.CompletedAt = &now
+	// A stop during blocking post-deploy hooks ends them; clear the marker
+	// of the k8s status watcher.
+	instance.PostDeployHookUntil = nil
 
 	if stopErr != nil {
 		sanitized := sanitizeDeployError(stopErr)
@@ -1099,6 +1342,7 @@ func (m *Manager) finalizeStop(instanceID string, deployLog *models.DeploymentLo
 	} else {
 		instance.Status = models.StackStatusStopped
 		instance.ErrorMessage = ""
+		instance.StoppedAt = &now
 		deployLog.Status = models.DeployLogSuccess
 
 		slog.Info("stop succeeded",
@@ -1107,28 +1351,9 @@ func (m *Manager) finalizeStop(instanceID string, deployLog *models.DeploymentLo
 		)
 	}
 
-	if m.txRunner != nil {
-		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
-			if err := repos.StackInstance.Update(instance); err != nil {
-				return fmt.Errorf("updating instance: %w", err)
-			}
-			if err := repos.DeploymentLog.Update(context.Background(), deployLog); err != nil {
-				return fmt.Errorf("updating deploy log: %w", err)
-			}
-			return nil
-		}); err != nil {
-			slog.Error("failed to finalize stop atomically",
-				"instance_id", instanceID, "error", err)
-		}
-	} else {
-		if err := m.instanceRepo.Update(instance); err != nil {
-			slog.Error("failed to update instance after stop",
-				"instance_id", instanceID, "deploy_log_id", deployLog.ID, "error", err)
-		}
-		if err := m.logRepo.Update(m.shutdownCtx, deployLog); err != nil {
-			slog.Error("failed to update deploy log after stop",
-				"instance_id", instanceID, "deploy_log_id", deployLog.ID, "error", err)
-		}
+	if !m.writeFinal(instance, deployLog, "stop") {
+		m.logActions.Delete(deployLog.ID)
+		return
 	}
 
 	if stopErr != nil {
@@ -1139,9 +1364,9 @@ func (m *Manager) finalizeStop(instanceID string, deployLog *models.DeploymentLo
 
 	_ = m.fireDeployHook(m.shutdownCtx, hooks.EventStopCompleted, instance, deployLog.ID, deployLog.StartedAt, hookOpts{})
 	if stopErr != nil {
-		m.notifyUser(instance.OwnerID, instanceID, "stop.error", "Stop failed", fmt.Sprintf("Stopping %s failed: %s", instance.Name, instance.ErrorMessage))
+		m.notifyInstance(models.NewNotificationTarget(instance), "stop.error", "Stop failed", fmt.Sprintf("Stopping %s failed: %s", instance.Name, instance.ErrorMessage))
 	} else {
-		m.notifyUser(instance.OwnerID, instanceID, "deployment.stopped", "Stack stopped", fmt.Sprintf("Stack %s has been stopped", instance.Name))
+		m.notifyInstance(models.NewNotificationTarget(instance), "deployment.stopped", "Stack stopped", fmt.Sprintf("Stack %s has been stopped", instance.Name))
 	}
 }
 
@@ -1160,6 +1385,22 @@ func (m *Manager) finalizeStop(instanceID string, deployLog *models.DeploymentLo
 //
 // The function keeps only the first wrapped layer (e.g. "deploying chart
 // \"nginx\"") plus a generic suffix.
+// chartTimeoutMargin is added to the helm timeout for the context of one chart,
+// so that helm reaches its own --timeout (and marks the release failed) before
+// the context stops it.
+const chartTimeoutMargin = time.Minute
+
+// deployBudget returns the timeout for a whole deploy: the helm timeout per
+// chart plus one margin. The helm timeout applies to one helm command, so one
+// shared helm timeout for all charts could stop a later chart in the middle of
+// its upgrade.
+func deployBudget(helmTimeout time.Duration, charts int) time.Duration {
+	if charts < 1 {
+		charts = 1
+	}
+	return time.Duration(charts)*helmTimeout + chartTimeoutMargin
+}
+
 func isTimeoutError(err error) bool {
 	if err == nil {
 		return false
@@ -1172,17 +1413,36 @@ func isTimeoutError(err error) bool {
 }
 
 func sanitizeDeployError(err error) string {
+	// A pod problem was added to the error: sanitize the operation error and
+	// keep the pod problem (a Kubernetes event or container state message).
+	var podErr *podEventError
+	if errors.As(err, &podErr) {
+		return sanitizeDeployError(podErr.err) + " (pod event: " + podErr.event + ")"
+	}
+
 	msg := err.Error()
+
+	// A failed pre-deploy or blocking post-deploy hook: show the
+	// subscriber's deny reason (or a generic failure text); never the raw
+	// error, which can hold the URL.
+	var hookErr *hooks.FailedError
+	if strings.HasPrefix(msg, "pre-deploy hook") && errors.As(err, &hookErr) {
+		return hooks.UserMessage(err, hooks.EventPreDeploy, "deployment")
+	}
+	if isPostDeployHookError(err) {
+		return hooks.UserMessage(err, hooks.EventPostDeploy, "deployment")
+	}
 
 	// Look for the pattern "deploying chart ..." or "uninstalling chart ..."
 	// which is the outermost fmt.Errorf wrapper in executeDeploy / executeStopWithCharts.
 	// Partial/total chart failure messages are already user-safe — pass through.
-	if strings.HasPrefix(msg, "all charts failed") || strings.HasPrefix(msg, "partial deploy") {
+	if strings.HasPrefix(msg, "all charts failed") || strings.HasPrefix(msg, "partial deploy") ||
+		errors.Is(err, ErrInvalidQuota) || errors.Is(err, ErrDeployInterrupted) {
 		return msg
 	}
 
 	for _, prefix := range []string{
-		"pre-deploy hook", "pre-rollback hook",
+		"pre-deploy hook", "pre-rollback hook", "post-deploy hook",
 		"deploying chart ", "uninstalling chart ", "deleting namespace ", "creating temp directory",
 		"scaling down ", "scaling up ", "waiting for MySQL", "running PVC cleanup",
 		"getting history for chart ", "rolling back chart ",
@@ -1207,6 +1467,35 @@ func sanitizeDeployError(err error) string {
 // background goroutine uses m.shutdownCtx instead, because it outlives the
 // HTTP request that triggered the clean.
 func (m *Manager) Clean(ctx context.Context, instance *models.StackInstance, charts []models.ChartConfig) (string, error) {
+	return m.startClean(ctx, instance, charts, false)
+}
+
+// CleanForDelete starts the clean of a delete: as Clean, and the instance
+// row is deleted when the clean succeeds. The start is one conditional
+// update in the transaction that creates the clean log: status cleaning and
+// stack_instances.delete_after_clean, only when the status is one of
+// models.CleanStatuses. Of two concurrent deletes (also on two
+// replicas) one starts the clean; the other gets models.ErrDeleteConflict.
+// The mark is in the database, so any replica that finishes the clean
+// deletes the row. A failed clean keeps the instance (status error, message
+// models.DeleteCleanFailedMessage) and clears the mark.
+func (m *Manager) CleanForDelete(ctx context.Context, instance *models.StackInstance, charts []models.ChartConfig) (string, error) {
+	return m.startClean(ctx, instance, charts, true)
+}
+
+// markCleanStart writes the start of a clean to the instance with the
+// conditional update of models.CleanStartMarker (status in
+// models.CleanStatuses; a plain clean also needs no delete mark, a delete
+// sets it). A repository without the marker gets a plain Update.
+func markCleanStart(repo models.StackInstanceRepository, instance *models.StackInstance, forDelete bool) error {
+	if marker, ok := repo.(models.CleanStartMarker); ok {
+		return marker.MarkCleanStart(instance.ID, models.CleanStatuses, forDelete)
+	}
+	instance.DeleteAfterClean = forDelete
+	return repo.Update(instance)
+}
+
+func (m *Manager) startClean(ctx context.Context, instance *models.StackInstance, charts []models.ChartConfig, forDelete bool) (string, error) {
 	// Short-circuit if the request context is already cancelled.
 	if err := ctx.Err(); err != nil {
 		return "", fmt.Errorf("request cancelled: %w", err)
@@ -1245,31 +1534,41 @@ func (m *Manager) Clean(ctx context.Context, instance *models.StackInstance, cha
 		StackInstanceID: instance.ID,
 		Action:          models.DeployActionClean,
 		Status:          models.DeployLogRunning,
+		ReplicaID:       m.replicaID,
+		DeadlineAt:      m.operationDeadline(now, models.DeployActionClean, helmExec, len(charts)),
 		StartedAt:       now,
 	}
+	m.logActions.Store(logID, deployLog.Action)
 	instance.Status = models.StackStatusCleaning
 	instance.ErrorMessage = ""
 
 	if m.txRunner != nil {
 		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
+			// The instance first: the conditional update of a delete
+			// decides before the log exists.
+			if err := markCleanStart(repos.StackInstance, instance, forDelete); err != nil {
+				return fmt.Errorf("updating instance status: %w", err)
+			}
 			if err := repos.DeploymentLog.Create(ctx, deployLog); err != nil {
 				return fmt.Errorf("creating deployment log: %w", err)
 			}
-			if err := repos.StackInstance.Update(instance); err != nil {
-				return fmt.Errorf("updating instance status: %w", err)
-			}
 			return nil
 		}); err != nil {
+			// No clean started: no action entry for the log.
+			m.logActions.Delete(logID)
 			return "", err
 		}
 	} else {
-		if err := m.logRepo.Create(ctx, deployLog); err != nil {
-			return "", fmt.Errorf("creating deployment log: %w", err)
-		}
-		if err := m.instanceRepo.Update(instance); err != nil {
+		if err := markCleanStart(m.instanceRepo, instance, forDelete); err != nil {
+			m.logActions.Delete(logID)
 			return "", fmt.Errorf("updating instance status: %w", err)
 		}
+		if err := m.logRepo.Create(ctx, deployLog); err != nil {
+			m.logActions.Delete(logID)
+			return "", fmt.Errorf("creating deployment log: %w", err)
+		}
 	}
+	instance.DeleteAfterClean = forDelete
 
 	m.broadcastStatus(instance.ID, models.StackStatusCleaning, logID)
 
@@ -1282,6 +1581,7 @@ func (m *Manager) Clean(ctx context.Context, instance *models.StackInstance, cha
 		return sortedCharts[i].ChartConfig.DeployOrder > sortedCharts[j].ChartConfig.DeployOrder
 	})
 
+	m.rememberTrigger(ctx, logID)
 	m.wg.Add(1)
 	go m.executeClean(helmExec, k8sClient, instance.ID, deployLog, instance.Namespace, sortedCharts)
 
@@ -1292,8 +1592,14 @@ func (m *Manager) Clean(ctx context.Context, instance *models.StackInstance, cha
 // deletes the Kubernetes namespace.
 func (m *Manager) executeClean(helm HelmExecutor, k8sClient *k8s.Client, instanceID string, deployLog *models.DeploymentLog, namespace string, charts []ChartDeployInfo) {
 	defer m.wg.Done()
+	defer m.logTriggers.Delete(deployLog.ID)
 	m.semaphore <- struct{}{}
 	defer func() { <-m.semaphore }()
+	if !m.extendDeadline(deployLog, helm, len(charts)) {
+		// The instance stays (status error): no delete after the clean.
+		m.clearDeleteAfterClean(instanceID)
+		return
+	}
 
 	_, _, finishSpan := startDeploySpan(context.Background(), "deployer.clean", //nolint:gosec // G118: intentional — Helm operations must outlive HTTP request; shutdown coordinated via sync.WaitGroup
 		attribute.String("instance.id", instanceID),
@@ -1332,6 +1638,9 @@ func (m *Manager) executeClean(helm HelmExecutor, k8sClient *k8s.Client, instanc
 		output, err := helm.Uninstall(ctx, UninstallRequest{
 			ReleaseName: releaseName,
 			Namespace:   namespace,
+			// The namespace delete below removes every object, so the clean
+			// does not wait for each release.
+			NoWait: true,
 		})
 
 		allOutput += fmt.Sprintf("=== Chart: %s ===\n%s\n", chart.ChartConfig.ChartName, output)
@@ -1401,11 +1710,23 @@ func (m *Manager) finalizeClean(instanceID string, deployLog *models.DeploymentL
 
 	deployLog.Output = truncateString(output, maxOutputLen)
 	deployLog.CompletedAt = &now
+	instance.PostDeployHookUntil = nil
+
+	// The delete mark is in the database (CleanForDelete), so the replica
+	// that finishes the clean deletes the row.
+	shouldDelete := instance.DeleteAfterClean
 
 	if cleanErr != nil {
 		sanitized := sanitizeDeployError(cleanErr)
 		instance.Status = models.StackStatusError
 		instance.ErrorMessage = truncateString(sanitized, maxInstanceErrorLen)
+		if shouldDelete {
+			// The instance stays: clear the mark, so a later clean does
+			// not delete it, and tell why it still exists.
+			instance.DeleteAfterClean = false
+			m.clearDeleteAfterClean(instanceID)
+			instance.ErrorMessage = truncateString(models.DeleteCleanFailedMessage+" "+sanitized, maxInstanceErrorLen)
+		}
 		deployLog.Status = models.DeployLogError
 		deployLog.ErrorMessage = truncateString(sanitized, maxLogErrorLen)
 
@@ -1418,6 +1739,8 @@ func (m *Manager) finalizeClean(instanceID string, deployLog *models.DeploymentL
 		instance.Status = models.StackStatusDraft
 		instance.ErrorMessage = ""
 		instance.LastDeployedAt = nil
+		instance.StoppedAt = nil
+		instance.CleanedAt = &now
 		deployLog.Status = models.DeployLogSuccess
 
 		slog.Info("clean succeeded",
@@ -1426,68 +1749,72 @@ func (m *Manager) finalizeClean(instanceID string, deployLog *models.DeploymentL
 		)
 	}
 
-	if m.txRunner != nil {
-		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
-			if err := repos.StackInstance.Update(instance); err != nil {
-				return fmt.Errorf("updating instance: %w", err)
-			}
-			if err := repos.DeploymentLog.Update(context.Background(), deployLog); err != nil {
-				return fmt.Errorf("updating deploy log: %w", err)
-			}
-			return nil
-		}); err != nil {
-			slog.Error("failed to finalize clean atomically",
-				"instance_id", instanceID, "error", err)
+	if !m.writeFinal(instance, deployLog, "clean") {
+		m.logActions.Delete(deployLog.ID)
+		// The instance stays (another operation owns it): no delete after
+		// the clean.
+		if shouldDelete {
+			m.clearDeleteAfterClean(instanceID)
 		}
-	} else {
-		if err := m.instanceRepo.Update(instance); err != nil {
-			slog.Error("failed to update instance after clean",
-				"instance_id", instanceID, "deploy_log_id", deployLog.ID, "error", err)
-		}
-		if err := m.logRepo.Update(m.shutdownCtx, deployLog); err != nil {
-			slog.Error("failed to update deploy log after clean",
-				"instance_id", instanceID, "deploy_log_id", deployLog.ID, "error", err)
-		}
+		return
 	}
 
-	_, shouldDelete := m.pendingDeletes.LoadAndDelete(instanceID)
-
+	// deleted is true when the clean was the first step of a delete and the
+	// instance row is gone now.
+	deleted := false
+	// The delete removes the follower rows: read the followers first, so
+	// that they get the "instance.deleted" notification.
+	target := models.NewNotificationTarget(instance)
+	if cleanErr == nil && shouldDelete {
+		target.FollowerIDs = m.followerIDs(instanceID)
+	}
 	if cleanErr != nil {
 		m.broadcastStatusWithError(instanceID, models.StackStatusError, deployLog.ID, instance.ErrorMessage)
 	} else if shouldDelete {
+		var delErr error
 		if m.txRunner != nil {
-			if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
-				if err := repos.BranchOverride.DeleteByInstance(instanceID); err != nil {
-					return fmt.Errorf("deleting branch overrides: %w", err)
-				}
-				return repos.StackInstance.Delete(instanceID)
-			}); err != nil {
-				slog.Error("failed to delete instance after clean",
-					"instance_id", instanceID, "error", err)
-				m.broadcastStatus(instanceID, models.StackStatusDraft, deployLog.ID)
-			} else {
-				slog.Info("instance deleted after clean",
-					"instance_id", instanceID, "log_id", deployLog.ID)
-			}
+			delErr = database.DeleteInstanceWithOwnedDefinition(m.txRunner, instance)
 		} else {
-			if err := m.instanceRepo.Delete(instanceID); err != nil {
-				slog.Error("failed to delete instance after clean",
-					"instance_id", instanceID, "error", err)
-			}
+			delErr = m.instanceRepo.Delete(instanceID)
+		}
+		if delErr != nil {
+			slog.Error("failed to delete instance after clean",
+				"instance_id", instanceID, "error", delErr)
+			m.clearDeleteAfterClean(instanceID)
+			m.broadcastStatus(instanceID, models.StackStatusDraft, deployLog.ID)
+		} else {
+			deleted = true
+			slog.Info("instance deleted after clean",
+				"instance_id", instanceID, "log_id", deployLog.ID)
+			// The dashboards of all users remove the row.
+			m.broadcastInstanceDeleted(instanceID, deployLog.ID)
 		}
 	} else {
 		m.broadcastStatus(instanceID, models.StackStatusDraft, deployLog.ID)
 	}
 
-	_ = m.fireDeployHook(m.shutdownCtx, hooks.EventCleanCompleted, instance, deployLog.ID, deployLog.StartedAt, hookOpts{})
+	// metadata.operation=delete tells subscribers that delete-completed
+	// follows, so a notifier can post one "deleted" message instead of two.
+	cleanOpts := hookOpts{}
+	if deleted {
+		cleanOpts.Metadata = map[string]string{"operation": "delete"}
+	}
+	_ = m.fireDeployHook(m.shutdownCtx, hooks.EventCleanCompleted, instance, deployLog.ID, deployLog.StartedAt, cleanOpts)
 
 	if cleanErr != nil {
-		m.notifyUser(instance.OwnerID, instanceID, "clean.error", "Cleanup failed", fmt.Sprintf("Cleanup of %s failed: %s", instance.Name, instance.ErrorMessage))
-	} else if shouldDelete {
-		m.notifyUser(instance.OwnerID, instanceID, "instance.deleted", "Stack deleted", fmt.Sprintf("Stack %s has been deleted", instance.Name))
+		m.notifyInstance(target, "clean.error", "Cleanup failed", fmt.Sprintf("Cleanup of %s failed: %s", instance.Name, instance.ErrorMessage))
+	} else if deleted {
+		message := fmt.Sprintf("Stack %s has been deleted", instance.Name)
+		if trigger := m.triggerFor(deployLog.ID); trigger != nil && trigger.Type == hooks.TriggerCleanupPolicy && trigger.Name != "" {
+			// The same text as the direct delete of a cleanup policy.
+			message = fmt.Sprintf("Stack %s has been deleted by cleanup policy %q", instance.Name, trigger.Name)
+		}
+		m.notifyInstance(target, "instance.deleted", "Stack deleted", message)
+		// The same events as the API delete of a draft instance.
+		_ = m.fireDeployHook(m.shutdownCtx, hooks.EventPostInstanceDelete, instance, deployLog.ID, deployLog.StartedAt, hookOpts{})
 		_ = m.fireDeployHook(m.shutdownCtx, hooks.EventDeleteCompleted, instance, deployLog.ID, deployLog.StartedAt, hookOpts{})
 	} else {
-		m.notifyUser(instance.OwnerID, instanceID, "clean.completed", "Cleanup completed", fmt.Sprintf("Stack %s has been cleaned and returned to draft", instance.Name))
+		m.notifyInstance(models.NewNotificationTarget(instance), "clean.completed", "Cleanup completed", fmt.Sprintf("Stack %s has been cleaned and returned to draft", instance.Name))
 	}
 }
 
@@ -1496,11 +1823,28 @@ type RollbackRequest struct {
 	Instance    *models.StackInstance
 	Charts      []ChartDeployInfo
 	TargetLogID string
+	// TargetValues holds the merged values YAML per chart name from the
+	// values snapshot of the target deploy log. When it is not empty, the
+	// rollback installs these values (helm upgrade --install) instead of
+	// going back one Helm revision.
+	TargetValues map[string]string
+	// TargetChartVersions holds chart name -> chart version recorded by the
+	// target deploy. A chart without a recorded version uses the version of
+	// its current chart config.
+	TargetChartVersions map[string]string
+	// TargetBranch is the branch of the target deploy. It is stored on the
+	// rollback log. Empty: the instance branch is stored.
+	TargetBranch string
 }
 
-// Rollback starts an async rollback of all charts in a stack instance to their
-// previous Helm revision. Each chart release is rolled back by one revision.
-// Returns the deployment log ID immediately.
+// Rollback starts an async rollback of a stack instance and returns the
+// deployment log ID immediately.
+//
+// Without TargetValues each chart release is rolled back by one Helm
+// revision. With TargetValues each chart is upgraded to the values snapshot
+// of the target deploy (see rollbackToTarget). After a successful rollback the
+// instance's LastDeployedValues hold the values that now run, so the deploy
+// preview compares the stored overrides against the running values.
 func (m *Manager) Rollback(ctx context.Context, req RollbackRequest) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", fmt.Errorf("request cancelled: %w", err)
@@ -1524,12 +1868,38 @@ func (m *Manager) Rollback(ctx context.Context, req RollbackRequest) (string, er
 		return "", fmt.Errorf("getting cluster clients: helm executor is nil")
 	}
 
-	logID := uuid.New().String()
-
-	if err := m.fireDeployHook(ctx, hooks.EventPreRollback, req.Instance, logID, time.Time{}, hookOpts{}); err != nil {
-		return "", fmt.Errorf("pre-rollback hook: %w", err)
+	// The k8s client is optional for a rollback: it is used to clear a stuck
+	// pending release before an upgrade and for readiness gating.
+	k8sClient, k8sErr := m.registry.GetK8sClient(clusterID)
+	if k8sErr != nil {
+		slog.Warn("failed to get k8s client for rollback, skipping pending-release recovery and readiness gating",
+			"cluster_id", clusterID, "error", k8sErr)
+		k8sClient = nil
+	}
+	regCfg, regErr := m.registry.GetRegistryConfig(clusterID)
+	if regErr != nil {
+		slog.Warn("failed to get registry config for rollback, skipping registry login",
+			"cluster_id", clusterID, "error", regErr)
+		regCfg = nil
 	}
 
+	var target *rollbackTarget
+	if len(req.TargetValues) > 0 {
+		// The target rollback installs charts, so OCI registries need a login.
+		target = &rollbackTarget{values: req.TargetValues, versions: req.TargetChartVersions, regCfg: regCfg}
+	}
+
+	// pre-rollback carries the same chart list as pre-deploy (name, version,
+	// branch, image_tag), so a gate (for example a CI image gate) can check
+	// the images that the rollback uses. Build it before the rollback log
+	// exists, so the previous revision lookup does not see that log.
+	var previousBranch string
+	if target == nil {
+		previousBranch = m.previousRevisionBranch(ctx, req.Instance.ID)
+	}
+	preRollbackOpts := rollbackHookOpts(req, regCfg, previousBranch)
+
+	logID := uuid.New().String()
 	now := time.Now().UTC()
 
 	deployLog := &models.DeploymentLog{
@@ -1537,9 +1907,19 @@ func (m *Manager) Rollback(ctx context.Context, req RollbackRequest) (string, er
 		StackInstanceID: req.Instance.ID,
 		Action:          models.DeployActionRollback,
 		Status:          models.DeployLogRunning,
+		ReplicaID:       m.replicaID,
+		DeadlineAt:      m.operationDeadline(now, models.DeployActionRollback, helmExec, len(req.Charts)),
 		StartedAt:       now,
 		TargetLogID:     req.TargetLogID,
+		Branch:          req.Instance.Branch,
 	}
+	m.logActions.Store(logID, deployLog.Action)
+	if req.TargetBranch != "" {
+		deployLog.Branch = req.TargetBranch
+	} else if previousBranch != "" {
+		deployLog.Branch = previousBranch
+	}
+	prevStatus, prevError := req.Instance.Status, req.Instance.ErrorMessage
 	req.Instance.Status = models.StackStatusDeploying
 	req.Instance.ErrorMessage = ""
 
@@ -1572,17 +1952,68 @@ func (m *Manager) Rollback(ctx context.Context, req RollbackRequest) (string, er
 		return charts[i].ChartConfig.DeployOrder < charts[j].ChartConfig.DeployOrder
 	})
 
+	// The pre-rollback hook fires in the goroutine (as pre-deploy does), with
+	// progress streaming, so a long gate does not block the API response.
+	m.rememberTrigger(ctx, logID)
 	m.wg.Add(1)
-	go m.executeRollback(helmExec, req.Instance.ID, deployLog, req.Instance.Namespace, charts)
+	go m.executeRollback(rollbackJob{
+		helm:       helmExec,
+		k8sClient:  k8sClient,
+		instance:   *req.Instance,
+		deployLog:  deployLog,
+		charts:     charts,
+		target:     target,
+		hookOpts:   preRollbackOpts,
+		prevStatus: prevStatus,
+		prevError:  prevError,
+	})
 
 	return logID, nil
 }
 
-// executeRollback rolls back each chart release by one Helm revision.
-func (m *Manager) executeRollback(helm HelmExecutor, instanceID string, deployLog *models.DeploymentLog, namespace string, charts []ChartDeployInfo) {
+// executeRollback fires the pre-rollback hook, then rolls back each chart
+// release by one Helm revision, or to the values of the target deploy when
+// job.target is not nil. A nil job.k8sClient disables pending-release
+// recovery and readiness gating.
+func (m *Manager) executeRollback(job rollbackJob) {
 	defer m.wg.Done()
+	defer m.logTriggers.Delete(job.deployLog.ID)
+
+	instanceID := job.instance.ID
+	namespace := job.instance.Namespace
+	deployLog := job.deployLog
+	charts := job.charts
+	k8sClient := job.k8sClient
+
+	// Fire pre-rollback before acquiring the semaphore so a long-running gate
+	// does not hold a concurrency slot. Progress lines go to the WebSocket
+	// log and into the rollback log output.
+	progress := newHookProgress(maxHookProgressLen)
+	opts := job.hookOpts
+	opts.OnProgress = func(line string) {
+		m.broadcastLog(instanceID, deployLog.ID, line)
+		progress.add(line)
+	}
+	hookErr := m.fireDeployHook(m.shutdownCtx, hooks.EventPreRollback, &job.instance, deployLog.ID, deployLog.StartedAt, opts)
+	allOutput := progress.String()
+	if hookErr != nil {
+		m.finalizeRollbackRejected(job, allOutput, hookErr)
+		return
+	}
+
+	// Another operation (a stop, clean or deploy) during a long hook wins:
+	// do not touch the releases or the instance.
+	if owned, current := m.ownsInstance(instanceID, deployLog.ID, models.StackStatusDeploying); !owned {
+		reason := fmt.Sprintf("rollback cancelled: another operation changed the instance (status %s) during the pre-rollback hook", current)
+		m.finalizeRollbackCancelled(instanceID, deployLog, allOutput, reason)
+		return
+	}
+
 	m.semaphore <- struct{}{}
 	defer func() { <-m.semaphore }()
+	if !m.extendDeadline(deployLog, job.helm, len(charts)) {
+		return
+	}
 
 	_, _, finishSpan := startDeploySpan(context.Background(), "deployer.rollback", //nolint:gosec // G118: intentional — Helm operations must outlive HTTP request
 		attribute.String("instance.id", instanceID),
@@ -1590,11 +2021,16 @@ func (m *Manager) executeRollback(helm HelmExecutor, instanceID string, deployLo
 		attribute.String("log.id", deployLog.ID),
 	)
 
-	var allOutput string
 	var rollbackErr error
 	defer func() { finishSpan(rollbackErr) }()
 
-	helm, streaming := m.wrapStreaming(helm, instanceID, deployLog.ID)
+	helm, streaming := m.wrapStreaming(job.helm, instanceID, deployLog.ID)
+
+	// As for a deploy: report pod problems while Helm and the readiness
+	// wait run.
+	podWatch := m.startPodEventWatch(podProblemListerFor(k8sClient), namespace, func(line string) {
+		m.broadcastLog(instanceID, deployLog.ID, line)
+	})
 
 	var timeout time.Duration
 	if helm != nil {
@@ -1602,9 +2038,24 @@ func (m *Manager) executeRollback(helm HelmExecutor, instanceID string, deployLo
 	} else {
 		timeout = 5 * time.Minute
 	}
-	ctx, cancel := context.WithTimeout(m.shutdownCtx, timeout)
+	if job.target != nil {
+		// One helm timeout per chart, as for a deploy.
+		ctx, cancel := context.WithTimeout(m.shutdownCtx, deployBudget(timeout, len(charts)))
+		defer cancel()
+		output, applied, err := m.rollbackToTarget(ctx, helm, k8sClient, streaming, instanceID, job.instance.Name, deployLog, namespace, charts, job.target)
+		rollbackErr = err
+		readiness := m.rollbackReadiness(k8sClient, instanceID, namespace, deployLog.ID, rollbackErr)
+		podEventLines, podEvent := podWatch.stop()
+		rollbackErr = withPodEvent(rollbackErr, podEvent)
+		output = allOutput + output + podEventLines + readiness
+		m.finalizeRollback(instanceID, deployLog, output, rollbackErr, applied)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(m.shutdownCtx, deployBudget(timeout, len(charts)))
 	defer cancel()
 
+	var rolledBack []ChartDeployInfo
 	for _, chart := range charts {
 		releaseName := chart.ChartConfig.ChartName
 
@@ -1614,6 +2065,21 @@ func (m *Manager) executeRollback(helm HelmExecutor, instanceID string, deployLo
 			"namespace", namespace,
 		)
 
+		// A release left in pending-* blocks the rollback; remove the stuck
+		// revision first (as deploy does). The removed revision was the one
+		// to undo, so the rollback then goes to the now-current revision.
+		recovered := false
+		if k8sClient != nil {
+			msg, recErr := recoverPendingRelease(ctx, helm, k8sClient.Clientset(), releaseName, namespace)
+			if recErr != nil {
+				allOutput += fmt.Sprintf("WARNING: %s\n", recErr.Error())
+			} else if msg != "" {
+				recovered = true
+				allOutput += msg + "\n"
+				m.broadcastLog(instanceID, deployLog.ID, msg)
+			}
+		}
+
 		// Query Helm history to find the current revision, then roll back by one.
 		revisions, err := helm.History(ctx, releaseName, namespace, 2)
 		if err != nil {
@@ -1622,17 +2088,23 @@ func (m *Manager) executeRollback(helm HelmExecutor, instanceID string, deployLo
 			break
 		}
 
-		if len(revisions) < 2 {
+		if len(revisions) == 0 || (len(revisions) < 2 && !recovered) {
 			allOutput += fmt.Sprintf("=== Chart: %s === (skipped: only %d revision)\n", releaseName, len(revisions))
 			continue
 		}
 
 		// Helm history returns revisions sorted ascending (oldest first).
-		// With max=2 we get [previous, current]; index 0 is the rollback target.
+		// With max=2 we get [previous, current]; index 0 is the rollback
+		// target. After a pending revision was removed, the current revision
+		// (the last one) is the target.
 		targetRevision := revisions[0].Revision
+		if recovered {
+			targetRevision = revisions[len(revisions)-1].Revision
+		}
 
 		output, err := helm.Rollback(ctx, releaseName, namespace, targetRevision)
 		allOutput += fmt.Sprintf("=== Chart: %s (→ rev %d) ===\n%s\n", releaseName, targetRevision, output)
+		allOutput += podWatch.drain()
 		if !streaming {
 			m.broadcastLog(instanceID, deployLog.ID, output)
 		}
@@ -1642,43 +2114,46 @@ func (m *Manager) executeRollback(helm HelmExecutor, instanceID string, deployLo
 			allOutput += fmt.Sprintf("ERROR: %s\n", rollbackErr.Error())
 			break
 		}
+		rolledBack = append(rolledBack, chart)
 	}
 
-	// Collect post-rollback values for snapshot.
-	var valuesSnapshot string
-	if rollbackErr == nil {
-		valuesSnapshot = m.collectChartValues(context.Background(), helm, namespace, charts) //nolint:gosec // G118: intentional — must outlive HTTP request
+	// Collect the post-rollback values (helm get values). After a failure,
+	// collect the charts that were already rolled back, so the deploy preview
+	// compares against what runs.
+	collect := charts
+	if rollbackErr != nil {
+		collect = rolledBack
 	}
+	running := m.collectChartValues(context.Background(), helm, namespace, collect) //nolint:gosec // G118: intentional — must outlive HTTP request
+	readiness := m.rollbackReadiness(k8sClient, instanceID, namespace, deployLog.ID, rollbackErr)
+	podEventLines, podEvent := podWatch.stop()
+	rollbackErr = withPodEvent(rollbackErr, podEvent)
+	allOutput += podEventLines + readiness
 
-	m.finalizeRollback(instanceID, deployLog, allOutput, rollbackErr, valuesSnapshot)
+	m.finalizeRollback(instanceID, deployLog, allOutput, rollbackErr, running)
 }
 
-// collectChartValues gathers the current Helm values for all charts and returns
-// them as a JSON string for storage in the deployment log values snapshot.
-func (m *Manager) collectChartValues(ctx context.Context, helm HelmExecutor, namespace string, charts []ChartDeployInfo) string {
-	allValues := make(map[string]interface{})
+// collectChartValues returns the current user-supplied values YAML of each
+// chart release (helm get values -o yaml), keyed by chart name. This is the
+// same format as the deploy values snapshot. Releases whose values cannot be
+// read are left out.
+func (m *Manager) collectChartValues(ctx context.Context, helm HelmExecutor, namespace string, charts []ChartDeployInfo) map[string]string {
+	values := make(map[string]string, len(charts))
 	for _, chart := range charts {
 		vals, err := helm.GetValues(ctx, chart.ChartConfig.ChartName, namespace, 0)
-		if err != nil {
+		if err != nil || strings.TrimSpace(vals) == "" {
 			continue
 		}
-		var parsed interface{}
-		if jsonErr := json.Unmarshal([]byte(vals), &parsed); jsonErr == nil {
-			allValues[chart.ChartConfig.ChartName] = parsed
-		}
+		values[chart.ChartConfig.ChartName] = vals
 	}
-	if len(allValues) == 0 {
-		return ""
-	}
-	data, err := json.Marshal(allValues)
-	if err != nil {
-		return ""
-	}
-	return string(data)
+	return values
 }
 
-// finalizeRollback updates the instance and deployment log with the final rollback status.
-func (m *Manager) finalizeRollback(instanceID string, deployLog *models.DeploymentLog, output string, rollbackErr error, valuesSnapshot string) {
+// finalizeRollback updates the instance and deployment log with the final
+// rollback status. On success, applied (chart name -> values YAML that now
+// run) is merged into the instance's LastDeployedValues, and the merged
+// values become the values snapshot of the rollback log.
+func (m *Manager) finalizeRollback(instanceID string, deployLog *models.DeploymentLog, output string, rollbackErr error, applied map[string]string) {
 	now := time.Now().UTC()
 
 	instance, err := m.instanceRepo.FindByID(instanceID)
@@ -1691,12 +2166,29 @@ func (m *Manager) finalizeRollback(instanceID string, deployLog *models.Deployme
 	deployLog.Output = truncateString(output, maxOutputLen)
 	deployLog.CompletedAt = &now
 
+	// If another operation (stop, clean, deploy) started during the
+	// rollback, keep its status (and stopped_at); only close the rollback log.
+	if owned, current := m.ownsInstance(instanceID, deployLog.ID, models.StackStatusDeploying, models.StackStatusStabilizing); !owned {
+		slog.Warn("finalizeRollback: another operation changed the instance, skipping instance update",
+			"instance_id", instanceID, "current_status", current)
+		m.finalizeRollbackCancelled(instanceID, deployLog, output,
+			fmt.Sprintf("rollback result not applied to the instance: another operation changed it (status %s)", current))
+		return
+	}
+
+	instance.PostDeployHookUntil = nil
 	if rollbackErr != nil {
 		sanitized := sanitizeDeployError(rollbackErr)
 		instance.Status = models.StackStatusError
 		instance.ErrorMessage = truncateString(sanitized, maxInstanceErrorLen)
 		deployLog.Status = models.DeployLogError
 		deployLog.ErrorMessage = truncateString(sanitized, maxLogErrorLen)
+		// Charts that were upgraded before the error run their new values;
+		// record them so the deploy preview compares against reality. The
+		// failed log keeps no values snapshot.
+		if len(applied) > 0 {
+			instance.LastDeployedValues = mergeRunningValues(instance.LastDeployedValues, applied)
+		}
 
 		slog.Error("rollback failed",
 			"instance_id", instanceID,
@@ -1707,11 +2199,14 @@ func (m *Manager) finalizeRollback(instanceID string, deployLog *models.Deployme
 		instance.Status = models.StackStatusRunning
 		instance.ErrorMessage = ""
 		instance.LastDeployedAt = &now
+		// The instance runs again, so the cleaned period ends (cleaned_days).
+		instance.CleanedAt = nil
 		deployLog.Status = models.DeployLogSuccess
 
-		if valuesSnapshot != "" {
-			instance.LastDeployedValues = valuesSnapshot
-			deployLog.ValuesSnapshot = valuesSnapshot
+		if len(applied) > 0 {
+			running := mergeRunningValues(instance.LastDeployedValues, applied)
+			instance.LastDeployedValues = running
+			deployLog.ValuesSnapshot = running
 		}
 
 		slog.Info("rollback succeeded",
@@ -1720,28 +2215,9 @@ func (m *Manager) finalizeRollback(instanceID string, deployLog *models.Deployme
 		)
 	}
 
-	if m.txRunner != nil {
-		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
-			if err := repos.StackInstance.Update(instance); err != nil {
-				return fmt.Errorf("updating instance: %w", err)
-			}
-			if err := repos.DeploymentLog.Update(context.Background(), deployLog); err != nil {
-				return fmt.Errorf("updating deploy log: %w", err)
-			}
-			return nil
-		}); err != nil {
-			slog.Error("failed to finalize rollback atomically",
-				"instance_id", instanceID, "error", err)
-		}
-	} else {
-		if err := m.instanceRepo.Update(instance); err != nil {
-			slog.Error("failed to update instance after rollback",
-				"instance_id", instanceID, "deploy_log_id", deployLog.ID, "error", err)
-		}
-		if err := m.logRepo.Update(m.shutdownCtx, deployLog); err != nil {
-			slog.Error("failed to update deploy log after rollback",
-				"instance_id", instanceID, "deploy_log_id", deployLog.ID, "error", err)
-		}
+	if !m.writeFinal(instance, deployLog, "rollback") {
+		m.logActions.Delete(deployLog.ID)
+		return
 	}
 
 	if rollbackErr != nil {
@@ -1751,54 +2227,45 @@ func (m *Manager) finalizeRollback(instanceID string, deployLog *models.Deployme
 	}
 
 	hookCtx := m.shutdownCtx
-	_ = m.fireDeployHook(hookCtx, hooks.EventRollbackCompleted, instance, deployLog.ID, deployLog.StartedAt, hookOpts{})
+	outcome := rollbackOutcomeSucceeded
+	if rollbackErr != nil {
+		outcome = rollbackOutcomeFailed
+	}
+	_ = m.fireDeployHook(hookCtx, hooks.EventRollbackCompleted, instance, deployLog.ID, deployLog.StartedAt, outcomeOpts(outcome))
 	if rollbackErr == nil {
 		_ = m.fireDeployHook(hookCtx, hooks.EventPostRollback, instance, deployLog.ID, deployLog.StartedAt, hookOpts{})
-		m.notifyUser(instance.OwnerID, instanceID, "rollback.completed", "Rollback completed", fmt.Sprintf("Stack %s has been rolled back successfully", instance.Name))
+		m.notifyInstance(models.NewNotificationTarget(instance), "rollback.completed", "Rollback completed", fmt.Sprintf("Stack %s has been rolled back successfully", instance.Name))
 	} else {
-		m.notifyUser(instance.OwnerID, instanceID, "rollback.error", "Rollback failed", fmt.Sprintf("Rollback of %s failed: %s", instance.Name, instance.ErrorMessage))
+		m.notifyInstance(models.NewNotificationTarget(instance), "rollback.error", "Rollback failed", fmt.Sprintf("Rollback of %s failed: %s", instance.Name, instance.ErrorMessage))
 	}
 }
 
+// applyQuotasForDeploy applies the namespace ResourceQuota and LimitRange
+// for a deploy or a rollback (applyNamespaceQuotas). A failure is not fatal:
+// it is logged and returned as a WARNING line for the deploy log output.
+// Success (also an empty quota, which applies nothing) returns "".
+func (m *Manager) applyQuotasForDeploy(ctx context.Context, instanceID, namespace string) string {
+	if err := m.applyNamespaceQuotas(ctx, instanceID, namespace); err != nil {
+		slog.Warn("failed to apply resource quotas",
+			"instance_id", instanceID,
+			"namespace", namespace,
+			"error", err,
+		)
+		return fmt.Sprintf("WARNING: failed to apply resource quotas: %s\n", err.Error())
+	}
+	return ""
+}
 
-// truncateString returns s truncated to maxLen characters. If truncation
-// occurs, the last three characters are replaced with "..." to signal that
-// the string was cut.
 // applyNamespaceQuotas fetches the quota config for the instance's cluster and
 // applies ResourceQuota + LimitRange to the namespace via the K8s API.
 func (m *Manager) applyNamespaceQuotas(ctx context.Context, instanceID, namespace string) error {
-	// Look up the instance to get its cluster ID.
-	instance, err := m.instanceRepo.FindByID(instanceID)
+	clusterID, effectiveQuota, hasOverride, err := m.effectiveNamespaceQuota(ctx, instanceID)
 	if err != nil {
-		return fmt.Errorf("finding instance: %w", err)
-	}
-
-	clusterID, err := m.registry.ResolveClusterID(instance.ClusterID)
-	if err != nil {
-		return fmt.Errorf("resolving cluster: %w", err)
-	}
-
-	// Get cluster-level defaults. If none configured, start with an empty base.
-	clusterQuota, err := m.quotaRepo.GetByClusterID(ctx, clusterID)
-	if err != nil {
-		clusterQuota = &models.ResourceQuotaConfig{}
-	}
-
-	// Merge per-instance overrides on top of cluster defaults.
-	effectiveQuota := clusterQuota
-	hasOverride := false
-	if m.quotaOverrideRepo != nil {
-		override, overrideErr := m.quotaOverrideRepo.GetByInstanceID(ctx, instanceID)
-		if overrideErr == nil && override != nil {
-			effectiveQuota = mergeQuotaOverride(clusterQuota, override)
-			hasOverride = true
-		}
+		return err
 	}
 
 	// If the effective quota is completely empty, skip.
-	if effectiveQuota.CPURequest == "" && effectiveQuota.CPULimit == "" &&
-		effectiveQuota.MemoryRequest == "" && effectiveQuota.MemoryLimit == "" &&
-		effectiveQuota.StorageLimit == "" && effectiveQuota.PodLimit == 0 {
+	if effectiveQuota.IsEmpty() {
 		return nil
 	}
 
@@ -1826,32 +2293,59 @@ func (m *Manager) applyNamespaceQuotas(ctx context.Context, instanceID, namespac
 	return nil
 }
 
-// mergeQuotaOverride applies per-instance overrides on top of cluster defaults.
-// Non-empty override fields replace the cluster default; empty/nil fields fall
-// back to the cluster value.
-func mergeQuotaOverride(cluster *models.ResourceQuotaConfig, override *models.InstanceQuotaOverride) *models.ResourceQuotaConfig {
-	merged := *cluster // copy
-	if override.CPURequest != "" {
-		merged.CPURequest = override.CPURequest
+// ErrInvalidQuota wraps every effective quota validation error. Its message
+// ("invalid resource quota: <field, value, source>") is user-safe, so
+// sanitizeDeployError passes it through.
+var ErrInvalidQuota = errors.New("invalid resource quota")
+
+// effectiveNamespaceQuota returns the resolved cluster ID and the quota that
+// applies to the instance namespace: the cluster quota (empty when none is
+// configured or the lookup fails) merged with the instance override. It
+// validates the merged quota (models.ValidateEffectiveQuota) and returns an
+// ErrInvalidQuota error naming the field and its source when
+// it is not valid, so a bad quota fails with a clear message instead of a
+// Kubernetes API error.
+func (m *Manager) effectiveNamespaceQuota(ctx context.Context, instanceID string) (string, *models.ResourceQuotaConfig, bool, error) {
+	instance, err := m.instanceRepo.FindByID(instanceID)
+	if err != nil {
+		return "", nil, false, fmt.Errorf("finding instance: %w", err)
 	}
-	if override.CPULimit != "" {
-		merged.CPULimit = override.CPULimit
+
+	clusterID, err := m.registry.ResolveClusterID(instance.ClusterID)
+	if err != nil {
+		return "", nil, false, fmt.Errorf("resolving cluster: %w", err)
 	}
-	if override.MemoryRequest != "" {
-		merged.MemoryRequest = override.MemoryRequest
+
+	// Get cluster-level defaults. If none configured, start with an empty base.
+	clusterQuota, err := m.quotaRepo.GetByClusterID(ctx, clusterID)
+	if err != nil || clusterQuota == nil {
+		clusterQuota = &models.ResourceQuotaConfig{}
 	}
-	if override.MemoryLimit != "" {
-		merged.MemoryLimit = override.MemoryLimit
+
+	var override *models.InstanceQuotaOverride
+	if m.quotaOverrideRepo != nil {
+		ov, overrideErr := m.quotaOverrideRepo.GetByInstanceID(ctx, instanceID)
+		if overrideErr == nil && ov != nil {
+			override = ov
+		}
 	}
-	if override.StorageLimit != "" {
-		merged.StorageLimit = override.StorageLimit
+
+	if err := models.ValidateEffectiveQuota(clusterQuota, override); err != nil {
+		return clusterID, nil, override != nil, fmt.Errorf("%w: %w", ErrInvalidQuota, err)
 	}
-	if override.PodLimit != nil {
-		merged.PodLimit = *override.PodLimit
-	}
-	return &merged
+	return clusterID, mergeQuotaOverride(clusterQuota, override), override != nil, nil
 }
 
+// mergeQuotaOverride applies per-instance overrides on top of cluster defaults.
+// Non-empty override fields replace the cluster default; empty/nil fields fall
+// back to the cluster value. See models.MergeQuotaOverride.
+func mergeQuotaOverride(cluster *models.ResourceQuotaConfig, override *models.InstanceQuotaOverride) *models.ResourceQuotaConfig {
+	return models.MergeQuotaOverride(cluster, override)
+}
+
+// truncateString returns s truncated to maxLen characters. If truncation
+// occurs, the last three characters are replaced with "..." to signal that
+// the string was cut.
 func truncateString(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
@@ -1860,4 +2354,28 @@ func truncateString(s string, maxLen int) string {
 		return s[:maxLen]
 	}
 	return s[:maxLen-3] + "..."
+}
+
+// uninstallWaitMargin is the time that a stop keeps after the helm --wait of
+// one release, so that helm ends with its own timeout error instead of being
+// killed when the stop context ends.
+const uninstallWaitMargin = 10 * time.Second
+
+// uninstallWaitTimeout returns the --timeout of one helm uninstall in a stop:
+// the time left in ctx minus uninstallWaitMargin, at most
+// defaultUninstallTimeout, at least one second. Without a deadline it returns
+// defaultUninstallTimeout.
+func uninstallWaitTimeout(ctx context.Context) time.Duration {
+	dl, ok := ctx.Deadline()
+	if !ok {
+		return defaultUninstallTimeout
+	}
+	t := time.Until(dl) - uninstallWaitMargin
+	if t > defaultUninstallTimeout {
+		return defaultUninstallTimeout
+	}
+	if t < time.Second {
+		return time.Second
+	}
+	return t
 }

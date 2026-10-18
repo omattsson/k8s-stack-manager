@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import NotificationChannels from '../index';
 import { NotificationProvider } from '../../../../context/NotificationContext';
@@ -17,9 +18,24 @@ vi.mock('../../../../api/client', () => ({
     deliveryLogs: vi.fn(),
     eventTypes: vi.fn(),
   },
+  userService: { list: vi.fn() },
+  instanceService: { listAll: vi.fn() },
+  definitionService: { listAll: vi.fn() },
+  clusterService: { list: vi.fn() },
 }));
 
-import { notificationChannelService } from '../../../../api/client';
+const mockAuth = vi.hoisted(() => ({ role: 'devops' }));
+vi.mock('../../../../context/AuthContext', () => ({
+  useAuth: () => ({ user: { id: 'me', username: 'me', role: mockAuth.role } }),
+}));
+
+import {
+  notificationChannelService,
+  userService,
+  instanceService,
+  definitionService,
+  clusterService,
+} from '../../../../api/client';
 
 const mockChannels = [
   {
@@ -55,6 +71,20 @@ function renderPage() {
 describe('NotificationChannels Page', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockAuth.role = 'devops';
+    vi.mocked(userService.list).mockResolvedValue([
+      { id: 'u1', username: 'alice', display_name: 'Alice', role: 'user', auth_provider: 'local', disabled: false, service_account: false, created_at: '', updated_at: '' },
+    ]);
+    vi.mocked(instanceService.listAll).mockResolvedValue([
+      { id: 'i1', owner_id: 'u2', owner_username: 'bob', name: 'a', stack_definition_id: 'd1', namespace: 'n', branch: 'master', status: 'running', created_at: '', updated_at: '' },
+      { id: 'i2', owner_id: 'u2', owner_username: 'bob', name: 'b', stack_definition_id: 'd1', namespace: 'n2', branch: 'master', status: 'running', created_at: '', updated_at: '' },
+    ]);
+    vi.mocked(definitionService.listAll).mockResolvedValue([
+      { id: 'd1', name: 'Full stack' } as never,
+    ]);
+    vi.mocked(clusterService.list).mockResolvedValue([
+      { id: 'c1', name: 'dev-cluster' } as never,
+    ]);
   });
 
   afterEach(() => {
@@ -82,6 +112,35 @@ describe('NotificationChannels Page', () => {
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Notification Channels');
     // Verify Create button
     expect(screen.getByRole('button', { name: /create channel/i })).toBeInTheDocument();
+  });
+
+  it('shows a success toast when the Enabled switch changes', async () => {
+    const user = userEvent.setup();
+    (notificationChannelService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockChannels);
+    vi.mocked(notificationChannelService.update).mockResolvedValue({ ...mockChannels[0], enabled: false });
+    renderPage();
+
+    const toggle = await screen.findByRole('switch', { name: 'Toggle slack-prod' });
+    await user.click(toggle);
+
+    await waitFor(() => {
+      expect(notificationChannelService.update).toHaveBeenCalledWith('ch1', { enabled: false });
+    });
+    expect(await screen.findByText('Channel "slack-prod" is disabled')).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: 'Toggle slack-prod' })).not.toBeChecked();
+  });
+
+  it('shows an error toast and keeps the state when the Enabled switch fails', async () => {
+    const user = userEvent.setup();
+    (notificationChannelService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockChannels);
+    vi.mocked(notificationChannelService.update).mockRejectedValue(new Error('Network error'));
+    renderPage();
+
+    const toggle = await screen.findByRole('switch', { name: 'Toggle teams-dev' });
+    await user.click(toggle);
+
+    expect(await screen.findByText(/failed to toggle channel/i)).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: 'Toggle teams-dev' })).not.toBeChecked();
   });
 
   it('shows empty state when no channels exist', async () => {
@@ -120,5 +179,196 @@ describe('NotificationChannels Page', () => {
     expect(screen.getByRole('button', { name: /test slack-prod/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /delete slack-prod/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /edit teams-dev/i })).toBeInTheDocument();
+  });
+
+  it('shows "All instances" or a filter summary in the list', async () => {
+    vi.mocked(notificationChannelService.list).mockResolvedValue([
+      mockChannels[0],
+      { ...mockChannels[1], filters: { instance_name_patterns: ['rdbtest-*'], cluster_ids: ['c1'] } },
+    ]);
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('channel-filters-ch1')).toHaveTextContent('All instances');
+    });
+    expect(screen.getByTestId('channel-filters-ch2')).toHaveTextContent('Names: rdbtest-*; Clusters: 1');
+  });
+
+  it('creates a channel with filters from the Filters section', async () => {
+    const user = userEvent.setup();
+    vi.mocked(notificationChannelService.list).mockResolvedValue([]);
+    vi.mocked(notificationChannelService.create).mockResolvedValue({ ...mockChannels[0], warnings: [] });
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /create channel/i }));
+    const dialog = await screen.findByRole('dialog');
+    await user.type(within(dialog).getByLabelText(/^name/i), 'team-a');
+    await user.type(within(dialog).getByLabelText(/webhook url/i), 'https://hooks.example.com/a');
+    await user.type(within(dialog).getByLabelText(/instance name patterns/i), 'RdbTest-*{Enter}');
+
+    // Devops users pick owners from the stack owners (GET /users is admin-only).
+    await user.click(within(dialog).getByLabelText(/owners/i));
+    await user.click(await screen.findByRole('option', { name: 'bob' }));
+    await user.click(within(dialog).getByLabelText(/clusters/i));
+    await user.click(await screen.findByRole('option', { name: 'dev-cluster' }));
+
+    await user.click(within(dialog).getByRole('button', { name: 'Create' }));
+
+    await waitFor(() => {
+      expect(notificationChannelService.create).toHaveBeenCalledWith({
+        name: 'team-a',
+        webhook_url: 'https://hooks.example.com/a',
+        enabled: true,
+        format: 'generic',
+        filters: { instance_name_patterns: ['rdbtest-*'], owner_ids: ['u2'], cluster_ids: ['c1'] },
+      });
+    });
+    expect(userService.list).not.toHaveBeenCalled();
+    expect(instanceService.listAll).toHaveBeenCalledTimes(1);
+  });
+
+  it('admins pick owners from all users', async () => {
+    const user = userEvent.setup();
+    mockAuth.role = 'admin';
+    vi.mocked(notificationChannelService.list).mockResolvedValue([]);
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /create channel/i }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByLabelText(/owners/i));
+    expect(await screen.findByRole('option', { name: 'Alice (alice)' })).toBeInTheDocument();
+    expect(instanceService.listAll).not.toHaveBeenCalled();
+  });
+
+  it('edits the filters of a channel and shows unknown IDs as the ID', async () => {
+    const user = userEvent.setup();
+    vi.mocked(notificationChannelService.list).mockResolvedValue([
+      { ...mockChannels[0], filters: { cluster_ids: ['c1', 'gone-cluster'] } },
+    ]);
+    vi.mocked(notificationChannelService.update).mockResolvedValue({ ...mockChannels[0], warnings: ['cluster_ids: cluster gone-cluster does not exist'] });
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /edit slack-prod/i }));
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() => {
+      expect(within(dialog).getByRole('button', { name: 'dev-cluster' })).toBeInTheDocument();
+    });
+    expect(within(dialog).getByRole('button', { name: 'gone-cluster' })).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('button', { name: 'Update' }));
+
+    await waitFor(() => {
+      expect(notificationChannelService.update).toHaveBeenCalledWith('ch1', expect.objectContaining({
+        filters: { cluster_ids: ['c1', 'gone-cluster'] },
+      }));
+    });
+    expect(await screen.findByText(/saved with filter warnings/i)).toBeInTheDocument();
+  });
+
+  it('sends an empty filters object when all filters are removed', async () => {
+    const user = userEvent.setup();
+    vi.mocked(notificationChannelService.list).mockResolvedValue([
+      { ...mockChannels[0], filters: { instance_name_patterns: [] } },
+    ]);
+    vi.mocked(notificationChannelService.update).mockResolvedValue({ ...mockChannels[0] });
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /edit slack-prod/i }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Update' }));
+
+    await waitFor(() => {
+      expect(notificationChannelService.update).toHaveBeenCalledWith('ch1', expect.objectContaining({ filters: {} }));
+    });
+  });
+
+  it('shows the API error for an invalid pattern', async () => {
+    const user = userEvent.setup();
+    vi.mocked(notificationChannelService.list).mockResolvedValue([]);
+    vi.mocked(notificationChannelService.create).mockRejectedValue({
+      response: { data: { error: 'Invalid filters: instance_name_patterns: "[" is not a valid pattern' } },
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /create channel/i }));
+    const dialog = await screen.findByRole('dialog');
+    await user.type(within(dialog).getByLabelText(/^name/i), 'bad');
+    await user.type(within(dialog).getByLabelText(/webhook url/i), 'https://hooks.example.com/a');
+    await user.click(within(dialog).getByRole('button', { name: 'Create' }));
+
+    expect(await within(dialog).findByText(/is not a valid pattern/i)).toBeInTheDocument();
+  });
+
+  it('shows the Format select with Generic JSON as the default', async () => {
+    const user = userEvent.setup();
+    vi.mocked(notificationChannelService.list).mockResolvedValue([]);
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /create channel/i }));
+    const dialog = await screen.findByRole('dialog');
+    const select = within(dialog).getByRole('combobox', { name: /format/i });
+    expect(select).toHaveTextContent('Generic JSON');
+    expect(within(dialog).getByText('Sends the stack manager event JSON.')).toBeInTheDocument();
+  });
+
+  it('sends format teams on create when Microsoft Teams is chosen', async () => {
+    const user = userEvent.setup();
+    vi.mocked(notificationChannelService.list).mockResolvedValue([]);
+    vi.mocked(notificationChannelService.create).mockResolvedValue({ ...mockChannels[1], format: 'teams' });
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /create channel/i }));
+    const dialog = await screen.findByRole('dialog');
+    await user.type(within(dialog).getByLabelText(/^name/i), 'teams-alerts');
+    await user.type(within(dialog).getByLabelText(/webhook url/i), 'https://hooks.example.com/teams');
+    await user.click(within(dialog).getByRole('combobox', { name: /format/i }));
+    await user.click(await screen.findByRole('option', { name: 'Microsoft Teams (Adaptive Card)' }));
+    expect(within(dialog).getByText(/post to a channel when a webhook request is received/i)).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('button', { name: 'Create' }));
+
+    await waitFor(() => {
+      expect(notificationChannelService.create).toHaveBeenCalledWith(expect.objectContaining({
+        name: 'teams-alerts',
+        format: 'teams',
+      }));
+    });
+  });
+
+  it('shows a Teams chip in the list and the stored format when editing', async () => {
+    const user = userEvent.setup();
+    vi.mocked(notificationChannelService.list).mockResolvedValue([
+      mockChannels[0],
+      { ...mockChannels[1], format: 'teams' },
+    ]);
+    vi.mocked(notificationChannelService.update).mockResolvedValue({ ...mockChannels[1], format: 'generic' });
+    renderPage();
+
+    expect(await screen.findByText('Teams')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /edit teams-dev/i }));
+    const dialog = await screen.findByRole('dialog');
+    const select = within(dialog).getByRole('combobox', { name: /format/i });
+    expect(select).toHaveTextContent('Microsoft Teams (Adaptive Card)');
+
+    await user.click(select);
+    await user.click(await screen.findByRole('option', { name: 'Generic JSON' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Update' }));
+
+    await waitFor(() => {
+      expect(notificationChannelService.update).toHaveBeenCalledWith('ch2', expect.objectContaining({ format: 'generic' }));
+    });
+  });
+
+  it('treats a channel without format as generic when editing', async () => {
+    const user = userEvent.setup();
+    vi.mocked(notificationChannelService.list).mockResolvedValue([mockChannels[0]]);
+    vi.mocked(notificationChannelService.update).mockResolvedValue({ ...mockChannels[0] });
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /edit slack-prod/i }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByRole('combobox', { name: /format/i })).toHaveTextContent('Generic JSON');
+    expect(screen.queryByText('Teams')).not.toBeInTheDocument();
   });
 });

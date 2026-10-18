@@ -46,7 +46,7 @@ func (m *mockSessionStore) BlockUser(_ context.Context, userID string, _ time.Ti
 	return nil
 }
 
-func (m *mockSessionStore) IsUserBlocked(_ context.Context, userID string) (bool, error) {
+func (m *mockSessionStore) IsUserBlocked(_ context.Context, userID string, _ time.Time) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.blockedUsers[userID], nil

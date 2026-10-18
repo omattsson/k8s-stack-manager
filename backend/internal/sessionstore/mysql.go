@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
@@ -16,7 +17,11 @@ const (
 	kindTokenBlock = "token_block"
 	kindOIDCState  = "oidc_state"
 	kindUserBlock  = "user_block"
-	kindCLIAuth    = "cli_auth"
+	// kindUserBlockMs holds the block time in Unix milliseconds. The
+	// user_block row keeps Unix seconds, so that older versions (rolling
+	// update, rollback) keep reading it with their second rule.
+	kindUserBlockMs = "user_block_ms"
+	kindCLIAuth     = "cli_auth"
 )
 
 type SessionEntry struct {
@@ -69,35 +74,59 @@ func (s *MySQLStore) IsTokenBlocked(ctx context.Context, jti string) (bool, erro
 	return count > 0, nil
 }
 
+// BlockUser writes two rows with the same key and expiry (dual write; no
+// schema change, Data is the text column of session_entries):
+//   - kind user_block: the block time in Unix seconds. Older versions read
+//     only this row, with their second rule.
+//   - kind user_block_ms: the block time in Unix milliseconds. This version
+//     reads it for the millisecond rule (see userBlockTime).
 func (s *MySQLStore) BlockUser(ctx context.Context, userID string, until time.Time) error {
-	entry := SessionEntry{
-		EntryKey:  userID,
-		Kind:      kindUserBlock,
-		ExpiresAt: until.Unix(),
+	now := time.Now()
+	entries := []SessionEntry{
+		{EntryKey: userID, Kind: kindUserBlock, Data: strconv.FormatInt(now.Unix(), 10), ExpiresAt: until.Unix()},
+		{EntryKey: userID, Kind: kindUserBlockMs, Data: strconv.FormatInt(now.UnixMilli(), 10), ExpiresAt: until.Unix()},
 	}
 	return s.db.WithContext(ctx).
 		Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "entry_key"}, {Name: "kind"}},
-			DoUpdates: clause.AssignmentColumns([]string{"expires_at"}),
+			DoUpdates: clause.AssignmentColumns([]string{"expires_at", "data"}),
 		}).
-		Create(&entry).Error
+		Create(&entries).Error
 }
 
-func (s *MySQLStore) IsUserBlocked(ctx context.Context, userID string) (bool, error) {
-	var count int64
+// IsUserBlocked returns true when an unexpired user block exists and the
+// token was issued at or before the block. See userBlockTime for how the two
+// rows combine. A seconds row without a parsable block time (written before
+// this field existed) blocks every token.
+func (s *MySQLStore) IsUserBlocked(ctx context.Context, userID string, issuedAt time.Time) (bool, error) {
+	var entries []SessionEntry
 	err := s.db.WithContext(ctx).
-		Model(&SessionEntry{}).
-		Where("entry_key = ? AND kind = ? AND expires_at > ?", userID, kindUserBlock, time.Now().Unix()).
-		Count(&count).Error
+		Select("kind, data").
+		Where("entry_key = ? AND kind IN ? AND expires_at > ?", userID, []string{kindUserBlock, kindUserBlockMs}, time.Now().Unix()).
+		Limit(2).
+		Find(&entries).Error
 	if err != nil {
 		return false, err
 	}
-	return count > 0, nil
+	var secData, msData string
+	var hasSec, hasMs bool
+	for _, e := range entries {
+		switch e.Kind {
+		case kindUserBlock:
+			secData, hasSec = e.Data, true
+		case kindUserBlockMs:
+			msData, hasMs = e.Data, true
+		}
+	}
+	if !hasSec && !hasMs {
+		return false, nil
+	}
+	return userBlockApplies(userBlockTime(secData, hasSec, msData, hasMs), issuedAt), nil
 }
 
 func (s *MySQLStore) UnblockUser(ctx context.Context, userID string) error {
 	return s.db.WithContext(ctx).
-		Where("entry_key = ? AND kind = ?", userID, kindUserBlock).
+		Where("entry_key = ? AND kind IN ?", userID, []string{kindUserBlock, kindUserBlockMs}).
 		Delete(&SessionEntry{}).Error
 }
 

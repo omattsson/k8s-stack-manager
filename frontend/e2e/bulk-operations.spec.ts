@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { loginAsDevops, uniqueName, createAndPublishTemplate, instantiateTemplate } from './helpers';
+import { loginAsDevops, uniqueName, createAndPublishTemplate, instantiateTemplate, mockListAPI } from './helpers';
 
 const mockInstances = [
   {
@@ -44,16 +44,7 @@ const mockInstances = [
  * Mock APIs needed for the dashboard to render with mock instance data.
  */
 async function mockDashboardAPIs(page: import('@playwright/test').Page) {
-  await page.route('**/api/v1/stack-instances', (route) => {
-    if (route.request().method() === 'GET') {
-      return route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify(mockInstances),
-      });
-    }
-    return route.continue();
-  });
+  await mockListAPI(page, '/api/v1/stack-instances', mockInstances);
 
   await page.route('**/api/v1/stack-instances/recent', (route) =>
     route.fulfill({

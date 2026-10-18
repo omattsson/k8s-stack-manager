@@ -17,18 +17,14 @@ services:
       - SERVER_WRITE_TIMEOUT=${SERVER_WRITE_TIMEOUT:-15s}
       - SERVER_SHUTDOWN_TIMEOUT=${SERVER_SHUTDOWN_TIMEOUT:-30s}
       - LOG_LEVEL=${LOG_LEVEL:-info}
-      - LOG_FILE=${LOG_FILE:-}
-      - API_VERSION=${API_VERSION:-v1}
-      - API_PREFIX=${API_PREFIX:-/api}
       - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
-      - CORS_ALLOWED_METHODS=${CORS_ALLOWED_METHODS:-GET,POST,PUT,DELETE,OPTIONS}
-      - CORS_ALLOWED_HEADERS=${CORS_ALLOWED_HEADERS:-Origin,Content-Type,Accept,Authorization}
-      - CORS_MAX_AGE=${CORS_MAX_AGE:-300}
       # Auth
       - JWT_SECRET=${JWT_SECRET:-dev-secret-change-in-production-minimum-16-chars}
       - JWT_EXPIRATION=${JWT_EXPIRATION:-24h}
       - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
+      # Development setting: every signed-in user can create local accounts.
+      # The backend code and the Helm chart default to false (only an admin).
       - SELF_REGISTRATION=${SELF_REGISTRATION:-true}
       # OIDC / External Auth (optional)
       - OIDC_ENABLED=${OIDC_ENABLED:-false}
@@ -63,8 +59,12 @@ services:
       # Deployment
       - HELM_BINARY=${HELM_BINARY:-helm}
       - KUBECONFIG_PATH=${KUBECONFIG_PATH:-}
+      # Local development only: the kubeconfig of an in-cluster cluster (#582).
+      - IN_CLUSTER_FALLBACK_KUBECONFIG=${IN_CLUSTER_FALLBACK_KUBECONFIG:-}
       - DEPLOYMENT_TIMEOUT=${DEPLOYMENT_TIMEOUT:-10m}
       - MAX_CONCURRENT_DEPLOYS=${MAX_CONCURRENT_DEPLOYS:-5}
+      - DEFAULT_INSTANCE_TTL_MINUTES=${DEFAULT_INSTANCE_TTL_MINUTES:-0}
+      - MAX_INSTANCE_TTL_DAYS=${MAX_INSTANCE_TTL_DAYS:-}
       # OpenTelemetry (requires --profile otel)
       - OTEL_ENABLED=${OTEL_ENABLED:-false}
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-otel-collector:4317}
@@ -241,6 +241,10 @@ services:
       - GF_INSTALL_PLUGINS=
     volumes:
       - ./config/otel/grafana/provisioning:/etc/grafana/provisioning:ro
+      # The dashboard of the Helm chart (one file for the chart and for dev).
+      # A separate path: a file mount inside the read-only provisioning mount
+      # fails (Docker cannot create the mount point).
+      - ./helm/k8s-stack-manager/dashboards/k8s-stack-manager.json:/var/lib/grafana/dashboards-chart/k8s-stack-manager.json:ro
       - grafana_data:/var/lib/grafana
     depends_on:
       prometheus:
@@ -263,8 +267,11 @@ volumes:
   grafana_data: {}
   tempo_data: {}
 
+# Fixed names (#581): a name with ${GO_ENV}/${NODE_ENV} changed between
+# `make dev` and `make test-e2e`, and Compose then failed with "container ...
+# is not connected to the network ...". The two networks stay separate.
 networks:
   backend-net:
-    name: backend-network-${GO_ENV:-prod}
+    name: backend-network
   frontend-net:
-    name: frontend-network-${NODE_ENV:-prod}
+    name: frontend-network

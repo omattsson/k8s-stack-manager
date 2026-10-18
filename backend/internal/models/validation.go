@@ -7,6 +7,7 @@ import (
 
 	"github.com/robfig/cron/v3"
 	"gopkg.in/yaml.v3"
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 var (
@@ -61,7 +62,7 @@ func (c *TemplateChartConfig) Validate() error {
 	if !helmReleaseNameRegex.MatchString(c.ChartName) {
 		return errors.New("chart_name must contain only lowercase alphanumeric characters, dashes, dots, or underscores, and must start and end with an alphanumeric character")
 	}
-	return nil
+	return CheckChartSource(c.RepositoryURL, c.ChartPath, c.ChartName)
 }
 
 // Validate implements model validation for StackDefinition.
@@ -95,7 +96,7 @@ func (c *ChartConfig) Validate() error {
 	if !helmReleaseNameRegex.MatchString(c.ChartName) {
 		return errors.New("chart_name must contain only lowercase alphanumeric characters, dashes, dots, or underscores, and must start and end with an alphanumeric character")
 	}
-	return nil
+	return CheckChartSource(c.RepositoryURL, c.ChartPath, c.ChartName)
 }
 
 // rfc1123LabelRegex matches valid RFC 1123 label names (used for K8s namespaces).
@@ -107,6 +108,30 @@ const MaxInstanceNameLength = 50
 
 // MaxNamespaceLength is the maximum length for a K8s namespace (RFC 1123).
 const MaxNamespaceLength = 63
+
+// MsgInstanceNameFormat explains the instance name rule to API clients.
+const MsgInstanceNameFormat = "name must be a valid DNS label: lowercase letters a-z, digits 0-9 and '-', starting and ending with a letter or digit"
+
+// ValidateInstanceName checks a new or changed instance name. The name must
+// be an RFC 1123 label (lowercase a-z, 0-9 and '-', starting and ending with
+// an alphanumeric character) of at most MaxInstanceNameLength characters,
+// because charts build host names and labels from {{.InstanceName}}.
+//
+// StackInstance.Validate does not call this function: instances created
+// before the rule existed keep working, and updates that keep their name do
+// not fail. Handlers call it on create, clone, quick deploy and rename.
+func ValidateInstanceName(name string) error {
+	if name == "" {
+		return errors.New("name is required")
+	}
+	if len(name) > MaxInstanceNameLength {
+		return fmt.Errorf("name must be at most %d characters", MaxInstanceNameLength)
+	}
+	if !rfc1123LabelRegex.MatchString(name) {
+		return errors.New(MsgInstanceNameFormat)
+	}
+	return nil
+}
 
 // Validate implements model validation for StackInstance.
 func (si *StackInstance) Validate() error {
@@ -276,7 +301,11 @@ func (rq *ResourceQuotaConfig) Validate() error {
 	if rq.PodLimit < 0 {
 		return errors.New("pod_limit must be non-negative")
 	}
-	return nil
+	values := make([]quotaValue, 0, len(quotaQuantityFields))
+	for _, f := range quotaQuantityFields {
+		values = append(values, quotaValue{name: f.name, value: *f.cluster(rq)})
+	}
+	return validateQuotaQuantities(values)
 }
 
 // Validate implements model validation for InstanceQuotaOverride.
@@ -286,6 +315,56 @@ func (iqo *InstanceQuotaOverride) Validate() error {
 	}
 	if iqo.PodLimit != nil && *iqo.PodLimit < 0 {
 		return errors.New("pod_limit must be non-negative")
+	}
+	values := make([]quotaValue, 0, len(quotaQuantityFields))
+	for _, f := range quotaQuantityFields {
+		values = append(values, quotaValue{name: f.name, value: *f.override(iqo)})
+	}
+	return validateQuotaQuantities(values)
+}
+
+// maxQuotaQuantityLen matches the size:20 column of the quota quantity fields.
+const maxQuotaQuantityLen = 20
+
+// quotaValue is one named quantity field value.
+type quotaValue struct {
+	name  string
+	value string
+}
+
+// validateQuotaQuantities checks the resource quantity fields shared by
+// ResourceQuotaConfig and InstanceQuotaOverride (quotaQuantityFields). Each
+// non-empty value must parse as a Kubernetes quantity (the deployer parses
+// them again when it creates the namespace ResourceQuota and LimitRange),
+// must not be negative, and the order rules of quotaOrderRules must hold for
+// each pair where both values are set (for example a request not above its
+// limit, a per-container limit not above the per-container max). Empty values
+// mean "not set".
+func validateQuotaQuantities(values []quotaValue) error {
+	parsed := make(map[string]resource.Quantity, len(values))
+	for _, f := range values {
+		if f.value == "" {
+			continue
+		}
+		if len(f.value) > maxQuotaQuantityLen {
+			return fmt.Errorf("%s: must be at most %d characters", f.name, maxQuotaQuantityLen)
+		}
+		q, err := resource.ParseQuantity(f.value)
+		if err != nil {
+			return fmt.Errorf("%s: invalid quantity (examples: 500m, 2, 512Mi, 10Gi)", f.name)
+		}
+		if q.Sign() < 0 {
+			return fmt.Errorf("%s: must not be negative", f.name)
+		}
+		parsed[f.name] = q
+	}
+
+	for _, p := range quotaOrderRules {
+		low, hasLow := parsed[p[0]]
+		high, hasHigh := parsed[p[1]]
+		if hasLow && hasHigh && low.Cmp(high) > 0 {
+			return fmt.Errorf("%s must not exceed %s", p[0], p[1])
+		}
 	}
 	return nil
 }

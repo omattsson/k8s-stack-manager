@@ -72,3 +72,6 @@ sonar-project.properties
 mempalace.yaml
 entities.json
 backend/test-results/
+
+# Snapshots of the Playwright MCP browser tool
+/.playwright-mcp/

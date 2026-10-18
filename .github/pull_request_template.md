@@ -1,36 +1,39 @@
 # Pull Request
 
+<!-- The pull request title must use the Conventional Commits format, for example "fix(deployer): clear a pending release". -->
+
 ## Description
-<!-- Provide a concise description of the changes introduced by this PR -->
+<!-- Describe the changes in this pull request in a few short sentences. -->
 
 ## Related Issue
-<!-- Link to a related issue (if applicable): Fixes #(issue) -->
+<!-- Link the related issue, if there is one. Example: Fixes #123 -->
 
 ## Type of Change
 - [ ] Bug fix
 - [ ] New feature
 - [ ] Breaking change
 - [ ] Documentation update
-- [ ] Refactoring (no functional changes)
-- [ ] Other (please describe):
+- [ ] Refactoring (no functional change)
+- [ ] Other (describe it):
 
-## How Has This Been Tested?
-<!-- Describe the tests you ran to verify your changes -->
+## How Did You Test the Change?
+<!-- Describe the tests that you ran. -->
 - [ ] Unit tests
 - [ ] Integration tests
-- [ ] Manual testing
+- [ ] End-to-end tests
+- [ ] Manual test
 
 ## Checklist
-- [ ] My code follows the project's code style
-- [ ] I have performed a self-review of my code
-- [ ] I have commented my code, particularly in hard-to-understand areas
-- [ ] I have updated any relevant documentation
-- [ ] My changes generate no new warnings
-- [ ] Tests for the changes have been added
-- [ ] All tests pass
+- [ ] The code follows the style of the project.
+- [ ] I reviewed my own code.
+- [ ] I added comments in places that are hard to understand.
+- [ ] I updated the relevant documentation.
+- [ ] The change adds no new warnings.
+- [ ] I added tests for the change.
+- [ ] All tests pass.
 
 ## Implementation Notes
-<!-- Include any additional information that would be helpful for reviewers -->
+<!-- Add information that helps the reviewers. -->
 
 ## Screenshots (if applicable)
-<!-- Add screenshots here if applicable -->
+<!-- Add screenshots of UI changes. -->

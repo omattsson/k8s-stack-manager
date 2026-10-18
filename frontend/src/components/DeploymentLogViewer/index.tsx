@@ -6,19 +6,28 @@ import {
   Accordion,
   AccordionSummary,
   AccordionDetails,
+  Button,
+  Tooltip,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import type { DeploymentLog } from '../../types';
+import { liveLogLines } from '../../utils/liveLogLines';
 
 interface DeploymentLogViewerProps {
   logs: DeploymentLog[];
   loading?: boolean;
   streamingLines?: Record<string, string[]>;
+  /** ID of the deploy whose values run now. It gets a "current" label and no rollback action. */
+  currentDeployLogId?: string;
+  /** When set, successful deploys (except the current one) offer "Roll back to this deploy". */
+  onRollbackTo?: (log: DeploymentLog) => void;
 }
 
-const statusColor = (status: string): 'success' | 'error' | 'info' | 'default' => {
+const statusColor = (status: string): 'success' | 'warning' | 'error' | 'info' | 'default' => {
   switch (status) {
     case 'success': return 'success';
+    // Same color as the instance status "partial" (StatusBadge).
+    case 'partial': return 'warning';
     case 'error': return 'error';
     case 'running': return 'info';
     default: return 'default';
@@ -58,7 +67,7 @@ const terminalSx = {
   wordBreak: 'break-all',
 } as const;
 
-const DeploymentLogViewer = ({ logs, loading, streamingLines }: DeploymentLogViewerProps) => {
+const DeploymentLogViewer = ({ logs, loading, streamingLines, currentDeployLogId, onRollbackTo }: DeploymentLogViewerProps) => {
   const bottomRef = useRef<HTMLDivElement>(null);
   const streamContainerRef = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState<string | false>(false);
@@ -111,9 +120,17 @@ const DeploymentLogViewer = ({ logs, loading, streamingLines }: DeploymentLogVie
   return (
     <Box>
       {logs.map((log) => {
-        const lines = streamingLines?.[log.id];
-        const isStreaming = log.status === 'running' && lines && lines.length > 0;
+        // A running log shows its stored output (the server writes it every
+        // few seconds, so it survives a page reload) and then the streamed lines.
+        const streamed = streamingLines?.[log.id];
+        const lines = log.status === 'running' ? liveLogLines(log.output, streamed) : [];
+        const isStreaming = lines.length > 0;
+        // LIVE: lines arrive over the WebSocket now.
+        const isLive = log.status === 'running' && (streamed?.length ?? 0) > 0;
         const isExpanded = expanded === log.id;
+        const isCurrentDeploy = log.id === currentDeployLogId;
+        const canRollbackHere = Boolean(onRollbackTo)
+          && log.action === 'deploy' && log.status === 'success' && !isCurrentDeploy;
 
         return (
           <Accordion
@@ -135,7 +152,13 @@ const DeploymentLogViewer = ({ logs, loading, streamingLines }: DeploymentLogVie
                   size="small"
                   color={statusColor(log.status)}
                 />
-                {isStreaming && (
+                {log.branch && (
+                  <Chip label={log.branch} size="small" variant="outlined" />
+                )}
+                {isCurrentDeploy && (
+                  <Chip label="current" size="small" color="success" variant="outlined" />
+                )}
+                {isLive && (
                   <Chip
                     label="LIVE"
                     size="small"
@@ -157,6 +180,20 @@ const DeploymentLogViewer = ({ logs, loading, streamingLines }: DeploymentLogVie
               </Box>
             </AccordionSummary>
             <AccordionDetails sx={{ p: 0 }}>
+              {canRollbackHere && (
+                <Box sx={{ px: 2, pt: 1, display: 'flex', justifyContent: 'flex-end' }}>
+                  <Tooltip
+                    describeChild
+                    title={currentDeployLogId
+                      ? ''
+                      : 'The running values are unknown after a rollback without a target.'}
+                  >
+                    <Button size="small" variant="outlined" color="warning" onClick={() => onRollbackTo?.(log)}>
+                      Roll back to this deploy
+                    </Button>
+                  </Tooltip>
+                </Box>
+              )}
               {isStreaming ? (
                 <Box
                   ref={isExpanded ? streamContainerRef : undefined}

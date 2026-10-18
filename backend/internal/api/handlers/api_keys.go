@@ -2,12 +2,14 @@ package handlers
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
 	"backend/internal/api/middleware"
 	"backend/internal/config"
 	"backend/internal/models"
+	"backend/internal/websocket"
 
 	"github.com/gin-gonic/gin"
 )
@@ -21,8 +23,13 @@ const (
 type APIKeyHandler struct {
 	apiKeyRepo            models.APIKeyRepository
 	userRepo              models.UserRepository
+	wsRevoker             websocket.ClientRevoker // nil: no socket close on delete
 	apiKeyMaxLifetimeDays int
 }
+
+// SetWebSocketRevoker makes DeleteAPIKey close the WebSocket connections
+// opened with the deleted key (on all replicas with fan-out).
+func (h *APIKeyHandler) SetWebSocketRevoker(r websocket.ClientRevoker) { h.wsRevoker = r }
 
 // NewAPIKeyHandler creates a new APIKeyHandler.
 func NewAPIKeyHandler(apiKeyRepo models.APIKeyRepository, userRepo models.UserRepository, authCfg *config.AuthConfig) *APIKeyHandler {
@@ -221,7 +228,7 @@ func (h *APIKeyHandler) ListAPIKeys(c *gin.Context) {
 
 // DeleteAPIKey godoc
 // @Summary      Delete an API key
-// @Description  Deletes the specified API key. Admin or own user only.
+// @Description  Deletes the specified API key. Admin or own user only. Open WebSocket connections opened with the key close with code 1008.
 // @Tags         api-keys
 // @Produce      json
 // @Security     BearerAuth
@@ -250,6 +257,12 @@ func (h *APIKeyHandler) DeleteAPIKey(c *gin.Context) {
 		status, message := mapError(err, "API key")
 		c.JSON(status, gin.H{"error": message})
 		return
+	}
+
+	if h.wsRevoker != nil {
+		if n := h.wsRevoker.DisconnectAPIKey(keyID); n > 0 {
+			slog.Info("Closed WebSocket connections of a deleted API key", "connections", n)
+		}
 	}
 
 	c.Status(http.StatusNoContent)

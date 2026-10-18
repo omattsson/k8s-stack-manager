@@ -11,9 +11,11 @@ vi.mock('../../../api/client', () => ({
   },
 }));
 
+const authState = vi.hoisted(() => ({ role: 'admin' }));
+
 vi.mock('../../../context/AuthContext', () => ({
   useAuth: () => ({
-    user: { id: '1', username: 'admin', role: 'admin', display_name: 'Admin' },
+    user: { id: '1', username: 'admin', role: authState.role, display_name: 'Admin' },
     isAuthenticated: true,
     isLoading: false,
     login: vi.fn(),
@@ -60,6 +62,7 @@ const mockUsers = [
 describe('Analytics Page', () => {
   afterEach(() => {
     vi.clearAllMocks();
+    authState.role = 'admin';
   });
 
   it('shows loading spinner initially', () => {
@@ -72,6 +75,33 @@ describe('Analytics Page', () => {
       </MemoryRouter>
     );
     expect(screen.getByRole('progressbar')).toBeInTheDocument();
+  });
+
+  it('says that the deploy counts cover the retention period', async () => {
+    (analyticsService.getOverview as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockOverview, deploy_log_retention_days: 180 });
+    (analyticsService.getTemplateStats as ReturnType<typeof vi.fn>).mockResolvedValue(mockTemplates);
+    (analyticsService.getUserStats as ReturnType<typeof vi.fn>).mockResolvedValue(mockUsers);
+    render(
+      <MemoryRouter>
+        <Analytics />
+      </MemoryRouter>
+    );
+    expect(await screen.findByText(/The deploy counts on this page cover the last 180 days/)).toBeInTheDocument();
+    expect(screen.getByText('Last 180 days')).toBeInTheDocument();
+  });
+
+  it('shows no retention note without a deploy log retention', async () => {
+    (analyticsService.getOverview as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockOverview, deploy_log_retention_days: 0 });
+    (analyticsService.getTemplateStats as ReturnType<typeof vi.fn>).mockResolvedValue(mockTemplates);
+    (analyticsService.getUserStats as ReturnType<typeof vi.fn>).mockResolvedValue(mockUsers);
+    render(
+      <MemoryRouter>
+        <Analytics />
+      </MemoryRouter>
+    );
+    expect(await screen.findByText('42')).toBeInTheDocument();
+    expect(screen.queryByText(/cover the last/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Last \d+ days$/)).not.toBeInTheDocument();
   });
 
   it('renders overview cards and tables on success', async () => {
@@ -132,5 +162,51 @@ describe('Analytics Page', () => {
       expect(screen.getByText('No template data available')).toBeInTheDocument();
       expect(screen.getByText('No user data available')).toBeInTheDocument();
     });
+  });
+
+  it('shows overview and templates for devops without calling the admin-only user stats', async () => {
+    authState.role = 'devops';
+    (analyticsService.getOverview as ReturnType<typeof vi.fn>).mockResolvedValue(mockOverview);
+    (analyticsService.getTemplateStats as ReturnType<typeof vi.fn>).mockResolvedValue(mockTemplates);
+    render(
+      <MemoryRouter>
+        <Analytics />
+      </MemoryRouter>
+    );
+    expect(await screen.findByText('Web App')).toBeInTheDocument();
+    expect(screen.getByText('42')).toBeInTheDocument();
+    expect(analyticsService.getUserStats).not.toHaveBeenCalled();
+    expect(screen.queryByText('User Activity')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('keeps the loaded sections when one request fails', async () => {
+    (analyticsService.getOverview as ReturnType<typeof vi.fn>).mockResolvedValue(mockOverview);
+    (analyticsService.getTemplateStats as ReturnType<typeof vi.fn>).mockResolvedValue(mockTemplates);
+    (analyticsService.getUserStats as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('forbidden'));
+    render(
+      <MemoryRouter>
+        <Analytics />
+      </MemoryRouter>
+    );
+    expect(await screen.findByText('Failed to load user activity')).toBeInTheDocument();
+    expect(screen.getByText('Web App')).toBeInTheDocument();
+    expect(screen.getByText('42')).toBeInTheDocument();
+    expect(screen.queryByText('Failed to load analytics data')).not.toBeInTheDocument();
+  });
+
+  it('shows a dash instead of 0% for a template without deploys', async () => {
+    (analyticsService.getOverview as ReturnType<typeof vi.fn>).mockResolvedValue(mockOverview);
+    (analyticsService.getTemplateStats as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { ...mockTemplates[0], deploy_count: 0, success_count: 0, error_count: 0, success_rate: 0 },
+    ]);
+    (analyticsService.getUserStats as ReturnType<typeof vi.fn>).mockResolvedValue(mockUsers);
+    render(
+      <MemoryRouter>
+        <Analytics />
+      </MemoryRouter>
+    );
+    expect(await screen.findByLabelText('No deploys')).toHaveTextContent('—');
+    expect(screen.queryByText('0%')).not.toBeInTheDocument();
   });
 });

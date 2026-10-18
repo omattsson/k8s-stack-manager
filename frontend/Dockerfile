@@ -1,5 +1,8 @@
-# Build stage
-FROM node:26-alpine AS build
+# syntax=docker/dockerfile:1
+# Build stage. It runs on the build machine's platform ($BUILDPLATFORM): the
+# built dist/ files do not depend on the CPU architecture, so a multi-platform
+# build compiles the app once and natively, not under QEMU emulation.
+FROM --platform=$BUILDPLATFORM node:26-alpine AS build
 
 WORKDIR /app
 
@@ -7,8 +10,9 @@ WORKDIR /app
 COPY package*.json ./
 COPY .npmrc* ./
 
-# Install dependencies
-RUN npm ci
+# Install dependencies (the npm cache mount speeds up repeated builds)
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci
 
 # Copy source code
 COPY . .

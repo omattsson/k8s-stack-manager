@@ -8,7 +8,9 @@ import (
 
 const (
 	defaultTimeout = 5 * time.Second
-	maxTimeout     = 10 * time.Minute
+	// maxTimeout allows a pre-deploy gate to wait for CI image builds: one
+	// build takes 4-9 minutes, and builds of several charts can queue.
+	maxTimeout = 30 * time.Minute
 )
 
 // Config holds dispatcher-wide settings and the registered subscriptions.
@@ -37,6 +39,10 @@ func (c *Config) Validate() error {
 			if !isKnownEvent(e) {
 				return fmt.Errorf("subscription %q: unknown event %q", s.Name, e)
 			}
+		}
+
+		if s.Blocking && !hasEvent(s.Events, EventPostDeploy) {
+			return fmt.Errorf("subscription %q: blocking requires the %s event", s.Name, EventPostDeploy)
 		}
 
 		if s.URL == "" {
@@ -82,6 +88,15 @@ func isKnownEvent(e string) bool {
 		EventStackExpired, EventStackExpiring,
 		EventQuotaWarning, EventSecretExpiring:
 		return true
+	}
+	return false
+}
+
+func hasEvent(events []string, event string) bool {
+	for _, e := range events {
+		if e == event {
+			return true
+		}
 	}
 	return false
 }

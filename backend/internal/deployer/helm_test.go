@@ -3,10 +3,13 @@ package deployer
 import (
 	"context"
 	"errors"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewHelmClient(t *testing.T) {
@@ -677,6 +680,24 @@ func TestHelmClient_BuildUninstallArgs(t *testing.T) {
 				ReleaseName: "my-app",
 				Namespace:   "default",
 			},
+			wantArgs: []string{"uninstall", "my-app", "-n", "default", "--wait", "--timeout", "5m0s"},
+		},
+		{
+			name: "explicit timeout",
+			req: UninstallRequest{
+				ReleaseName: "my-app",
+				Namespace:   "default",
+				Timeout:     90 * time.Second,
+			},
+			wantArgs: []string{"uninstall", "my-app", "-n", "default", "--wait", "--timeout", "1m30s"},
+		},
+		{
+			name: "no wait",
+			req: UninstallRequest{
+				ReleaseName: "my-app",
+				Namespace:   "default",
+				NoWait:      true,
+			},
 			wantArgs: []string{"uninstall", "my-app", "-n", "default"},
 		},
 		{
@@ -820,4 +841,41 @@ func TestHelmClient_WithLineHandler_DifferentHandlersAreIndependent(t *testing.T
 
 	assert.Equal(t, []string{"only-for-1"}, captured1)
 	assert.Equal(t, []string{"only-for-2"}, captured2)
+}
+
+// lastEnv returns the last value of key in env, as os/exec uses it.
+func lastEnv(env []string, key string) (string, bool) {
+	value, found := "", false
+	for _, kv := range env {
+		if v, ok := strings.CutPrefix(kv, key+"="); ok {
+			value, found = v, true
+		}
+	}
+	return value, found
+}
+
+// The helm command uses the kubeconfig of the cluster: --kubeconfig for a
+// path, and an empty KUBECONFIG (no $KUBECONFIG, no ~/.kube/config) for an
+// in-cluster cluster (#582).
+func TestHelmClient_CommandKubeconfig(t *testing.T) {
+	t.Parallel()
+
+	t.Run("kubeconfig path", func(t *testing.T) {
+		t.Parallel()
+		h := NewHelmClient("helm", "/etc/kube/cluster.yaml", time.Minute)
+		cmd, args := h.command(context.Background(), []string{"list", "-A"})
+		assert.Equal(t, []string{"--kubeconfig", "/etc/kube/cluster.yaml", "list", "-A"}, args)
+		assert.Equal(t, append([]string{"helm"}, args...), cmd.Args)
+		assert.Nil(t, cmd.Env, "the process environment is inherited unchanged")
+	})
+
+	t.Run("in-cluster", func(t *testing.T) {
+		t.Parallel()
+		h := NewHelmClient("helm", "", time.Minute)
+		cmd, args := h.command(context.Background(), []string{"list", "-A"})
+		assert.Equal(t, []string{"list", "-A"}, args)
+		value, found := lastEnv(cmd.Env, "KUBECONFIG")
+		require.True(t, found)
+		assert.Equal(t, os.DevNull, value)
+	})
 }

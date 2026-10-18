@@ -1,0 +1,89 @@
+/** Shape of an HTTP error as thrown by axios (checked structurally). */
+interface HttpErrorLike {
+  response?: {
+    status?: number;
+    statusText?: string;
+    data?: unknown;
+  };
+}
+
+/** Read the server error message from a response body (JSON object, JSON text, plain text or Blob). */
+async function readServerMessage(data: unknown): Promise<string | null> {
+  let body: unknown = data;
+  if (typeof Blob !== 'undefined' && body instanceof Blob) {
+    try {
+      body = await body.text();
+    } catch {
+      return null;
+    }
+  }
+  if (typeof body === 'string') {
+    const text = body.trim();
+    if (!text) return null;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      // Plain text body (not JSON). Use it only when it is short.
+      return text.length <= 200 ? text : null;
+    }
+  }
+  if (body && typeof body === 'object') {
+    const obj = body as { error?: unknown; message?: unknown };
+    if (typeof obj.error === 'string' && obj.error) return obj.error;
+    if (typeof obj.message === 'string' && obj.message) return obj.message;
+  }
+  return null;
+}
+
+/**
+ * Build a user-facing error message that includes the HTTP status and the
+ * server error message. Reads Blob bodies (from `responseType: 'blob'`
+ * requests) as text first.
+ * @param error - The thrown error (usually an AxiosError)
+ * @param fallback - Message prefix, for example "Failed to export values"
+ * @returns For example "Failed to export values (HTTP 404: Instance not found)", or the fallback when there is no HTTP response
+ */
+export async function describeApiError(error: unknown, fallback: string): Promise<string> {
+  const response = (error as HttpErrorLike | null)?.response;
+  if (!response || typeof response.status !== 'number') return fallback;
+  const serverMessage = await readServerMessage(response.data);
+  const reason = serverMessage ?? response.statusText;
+  return reason
+    ? `${fallback} (HTTP ${response.status}: ${reason})`
+    : `${fallback} (HTTP ${response.status})`;
+}
+
+/**
+ * Read the HTTP status and the server error message from a thrown error
+ * without async body parsing (JSON object bodies only).
+ * @param error - The thrown error (usually an AxiosError)
+ * @returns The status (undefined without an HTTP response) and the server message (undefined when absent)
+ */
+export function getApiErrorInfo(error: unknown): { status?: number; message?: string } {
+  const response = (error as HttpErrorLike | null)?.response;
+  if (!response) return {};
+  const data = response.data as { error?: unknown; message?: unknown } | null | undefined;
+  let message: string | undefined;
+  if (data && typeof data === 'object') {
+    if (typeof data.error === 'string' && data.error) message = data.error;
+    else if (typeof data.message === 'string' && data.message) message = data.message;
+  }
+  return { status: typeof response.status === 'number' ? response.status : undefined, message };
+}
+
+/**
+ * Read a name conflict (HTTP 409 with `message` and `suggestions`, the
+ * NamespaceConflictResponse of create, clone and quick deploy) as one
+ * user-facing sentence.
+ * @param error - The thrown error (usually an AxiosError)
+ * @returns For example 'A stack named "demo" already exists on this cluster (owner: carol). Free names: demo-2, demo-3.', or null when the error is not a name conflict
+ */
+export function describeNameConflict(error: unknown): string | null {
+  const response = (error as HttpErrorLike | null)?.response;
+  if (response?.status !== 409) return null;
+  const data = response.data as { message?: unknown; suggestions?: unknown } | null | undefined;
+  if (!data || typeof data !== 'object' || typeof data.message !== 'string' || !data.message) return null;
+  if (!Array.isArray(data.suggestions)) return null;
+  const names = data.suggestions.filter((s): s is string => typeof s === 'string' && s !== '');
+  return names.length > 0 ? `${data.message}. Free names: ${names.join(', ')}.` : `${data.message}.`;
+}

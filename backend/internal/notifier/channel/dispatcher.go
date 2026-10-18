@@ -6,13 +6,15 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"time"
 
+	"backend/internal/hooks"
 	"backend/internal/models"
 
 	"github.com/google/uuid"
@@ -35,34 +37,62 @@ type Dispatcher struct {
 func NewDispatcher(repo models.NotificationChannelRepository) *Dispatcher {
 	return &Dispatcher{
 		repo: repo,
-		client: &http.Client{
+		// A redirect is not followed: a signed body must not go to another
+		// URL. A 3xx answer is a failed delivery.
+		client: hooks.NoRedirectHTTPClient(&http.Client{
 			Timeout: requestTimeout,
-		},
+		}),
 	}
 }
 
 // Dispatch finds all enabled channels subscribed to the payload's event type
-// and POSTs the generic JSON to each. Errors are logged and recorded as
-// delivery logs; they never propagate to the caller.
+// whose filters match the instances of the payload, and POSTs the payload to
+// each in the format of the channel (generic event JSON or a Teams Adaptive
+// Card envelope). A channel that the filters skip gets no delivery log (only a
+// debug log line). Errors are logged and recorded as delivery logs; they
+// never propagate to the caller.
 func (d *Dispatcher) Dispatch(ctx context.Context, payload EventPayload) {
-	channels, err := d.repo.FindChannelsByEvent(ctx, payload.EventType)
+	found, err := d.repo.FindChannelsByEvent(ctx, payload.EventType)
 	if err != nil {
 		slog.Error("notification channel: failed to find channels", "event", payload.EventType, "error", err)
 		return
+	}
+	channels := make([]models.NotificationChannel, 0, len(found))
+	for _, ch := range found {
+		if !ch.Filters.MatchesAny(payload.Instances) {
+			slog.Debug("notification channel: skipped by filters",
+				"channel", ch.Name, "event", payload.EventType, "entity_id", payload.EntityID)
+			continue
+		}
+		channels = append(channels, ch)
 	}
 	if len(channels) == 0 {
 		return
 	}
 
-	body, err := json.Marshal(payload)
-	if err != nil {
-		slog.Error("notification channel: failed to marshal payload", "error", err)
-		return
-	}
+	// Each format is encoded once per event, not once per channel.
+	bodies := make(map[string][]byte, 2)
 
 	for i := range channels {
 		ch := &channels[i]
-		status, statusCode, errMsg := d.deliver(ctx, ch, payload.EventType, body)
+		format := bodyFormat(ch)
+		var status, errMsg string
+		var statusCode int
+		body, ok := bodies[format]
+		if !ok {
+			var err error
+			body, err = encodeBody(format, payload)
+			if err != nil {
+				slog.Error("notification channel: failed to marshal payload", "format", format, "error", err)
+				body = nil
+				status, errMsg = "failed", "failed to encode the payload"
+			} else {
+				bodies[format] = body
+			}
+		}
+		if body != nil {
+			status, statusCode, errMsg = d.deliver(ctx, ch, payload.EventType, body)
+		}
 		if logErr := d.repo.CreateDeliveryLog(ctx, &models.NotificationDeliveryLog{
 			ID:           uuid.New().String(),
 			ChannelID:    ch.ID,
@@ -79,13 +109,31 @@ func (d *Dispatcher) Dispatch(ctx context.Context, payload EventPayload) {
 	}
 }
 
-// DispatchTo sends a payload to a single specific channel (used by TestChannel).
+// DispatchTo sends a payload to a single specific channel in the format of
+// the channel, with a retry.
 func (d *Dispatcher) DispatchTo(ctx context.Context, ch models.NotificationChannel, payload EventPayload) (string, int, string) {
-	body, err := json.Marshal(payload)
+	body, err := encodeBody(bodyFormat(&ch), payload)
 	if err != nil {
 		return "failed", 0, fmt.Sprintf("marshal error: %v", err)
 	}
 	return d.deliver(ctx, &ch, payload.EventType, body)
+}
+
+// DeliverOnce sends a payload to one channel with one attempt (no retry),
+// also when the channel is disabled, in the format of the channel. TestChannel
+// uses it, so the admin gets the result at once. It returns the delivery status ("success" or
+// "failed"), the HTTP status code (0 when no answer came) and an error
+// message without the webhook URL. It writes no delivery log.
+func (d *Dispatcher) DeliverOnce(ctx context.Context, ch models.NotificationChannel, payload EventPayload) (string, int, string) {
+	body, err := encodeBody(bodyFormat(&ch), payload)
+	if err != nil {
+		return "failed", 0, "marshal error"
+	}
+	statusCode, err := d.post(ctx, &ch, payload.EventType, body)
+	if err != nil {
+		return "failed", statusCode, err.Error()
+	}
+	return "success", statusCode, ""
 }
 
 func (d *Dispatcher) deliver(ctx context.Context, ch *models.NotificationChannel, eventType string, body []byte) (status string, statusCode int, errMsg string) {
@@ -128,11 +176,21 @@ func (d *Dispatcher) post(ctx context.Context, ch *models.NotificationChannel, e
 
 	resp, err := d.client.Do(req)
 	if err != nil {
+		// A *url.Error contains the webhook URL (it can hold a token).
+		// The delivery log shows the cause only.
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			err = urlErr.Err
+		}
 		return 0, fmt.Errorf("sending request: %w", err)
 	}
 	defer resp.Body.Close()
 	io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBody))
 
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		// The Location header is not in the message.
+		return resp.StatusCode, fmt.Errorf("HTTP %d: redirect not followed", resp.StatusCode)
+	}
 	if resp.StatusCode >= 400 {
 		return resp.StatusCode, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}

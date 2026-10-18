@@ -2,8 +2,13 @@ package deployer
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
+	"time"
 
+	"backend/internal/database"
+	"backend/internal/hooks"
 	"backend/internal/models"
 )
 
@@ -55,17 +60,112 @@ func (e *CleanupExecutor) CleanInstance(ctx context.Context, inst *models.StackI
 	return err
 }
 
-// DeleteInstance deletes the instance from the database.
-// It refuses deletion while the instance is running or in the middle of an async
-// stop/clean operation, because those workflows need to read/update the record.
-// Callers should ensure the instance is stopped/cleaned before requesting deletion.
+// DeleteInstance deletes the instance for a cleanup policy. It refuses an
+// instance that is running or in the middle of an operation. A stopped
+// instance or one with status error can still have cluster resources (Helm
+// releases, namespace, PVCs): it is cleaned first with the delete path of the
+// API (Manager.CleanForDelete), and the deploy manager deletes the row and
+// sends the delete events when the clean completes. Any other instance
+// (draft) is deleted at once.
 func (e *CleanupExecutor) DeleteInstance(ctx context.Context, inst *models.StackInstance) error {
+	// Do not start a delete when the caller stopped (for example the cleanup
+	// scheduler at the end of a leadership term).
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	needsClean := false
 	switch inst.Status {
 	case models.StackStatusRunning, models.StackStatusPartial, models.StackStatusDeploying, models.StackStatusStabilizing,
-		models.StackStatusStopping, models.StackStatusCleaning:
+		models.StackStatusStopping, models.StackStatusCleaning, models.StackStatusQueued:
 		return fmt.Errorf("cannot delete instance %s while status is %s; stop/clean must complete first", inst.ID, inst.Status)
+	case models.StackStatusStopped, models.StackStatusError:
+		needsClean = true
+		if e.manager == nil {
+			return fmt.Errorf("cannot delete instance %s: the deploy manager is needed to clean it first", inst.ID)
+		}
 	}
-	return e.instanceRepo.Delete(inst.ID)
+	// pre-instance-delete can stop the delete, as for the API delete. The
+	// error text is user-safe (never the subscriber URL); the policy run
+	// records it as the error of this instance.
+	if e.manager != nil {
+		if hookErr := e.manager.fireDeployHook(ctx, hooks.EventPreInstanceDelete, inst, "", time.Time{}, e.triggerOpts(ctx)); hookErr != nil {
+			slog.Warn("pre-instance-delete hook stopped a cleanup delete", "instance_id", inst.ID, "error", hookErr)
+			return errors.New(hooks.UserMessage(hookErr, hooks.EventPreInstanceDelete, "delete"))
+		}
+	}
+	if needsClean {
+		// As the API delete: a definition without charts still gets the
+		// namespace delete.
+		def, err := e.definitionRepo.FindByID(inst.StackDefinitionID)
+		if err != nil {
+			return fmt.Errorf("finding definition: %w", err)
+		}
+		charts, err := e.chartConfigRepo.ListByDefinition(def.ID)
+		if err != nil {
+			return fmt.Errorf("listing charts: %w", err)
+		}
+		if _, err := e.manager.CleanForDelete(ctx, inst, charts); err != nil {
+			if errors.Is(err, models.ErrDeleteConflict) {
+				return fmt.Errorf("cannot delete instance %s: another operation started on it", inst.ID)
+			}
+			return err
+		}
+		return nil
+	}
+
+	// The delete removes the follower rows: read the followers first, so
+	// that they get the "instance.deleted" notification.
+	var followerIDs []string
+	if e.manager != nil {
+		followerIDs = e.manager.followerIDs(inst.ID)
+	}
+	// With a transaction runner, delete the branch overrides and the quick
+	// deploy definition owned by the instance in the same transaction.
+	var err error
+	if e.manager != nil && e.manager.txRunner != nil {
+		err = database.DeleteInstanceWithOwnedDefinition(e.manager.txRunner, inst)
+	} else {
+		err = e.instanceRepo.Delete(inst.ID)
+	}
+	if err != nil {
+		return err
+	}
+	e.afterDelete(ctx, inst, followerIDs)
+	return nil
+}
+
+// afterDelete tells subscribers and the owner about a delete, as the API
+// delete path does: post-instance-delete and delete-completed (with the
+// trigger of ctx, for example the cleanup policy) and the notification
+// instance.deleted for the owner and followerIDs (read before the delete).
+// The delete is done, so a caller that stops (the end of a leadership term)
+// does not cancel the events; the subscription timeouts limit them.
+func (e *CleanupExecutor) afterDelete(ctx context.Context, inst *models.StackInstance, followerIDs []string) {
+	// Open stack lists remove the row.
+	e.manager.BroadcastInstanceDeleted(inst.ID)
+
+	if e.manager == nil {
+		return
+	}
+	hookCtx := context.WithoutCancel(ctx)
+	opts := e.triggerOpts(ctx)
+	trigger, ok := hooks.TriggerFromContext(ctx)
+	for _, event := range []string{hooks.EventPostInstanceDelete, hooks.EventDeleteCompleted} {
+		if err := e.manager.fireDeployHook(hookCtx, event, inst, "", time.Time{}, opts); err != nil {
+			slog.Warn("hook after cleanup delete failed", "event", event, "instance_id", inst.ID, "error", err)
+		}
+	}
+	message := fmt.Sprintf("Stack %s has been deleted", inst.Name)
+	if ok && trigger.Type == hooks.TriggerCleanupPolicy && trigger.Name != "" {
+		message = fmt.Sprintf("Stack %s has been deleted by cleanup policy %q", inst.Name, trigger.Name)
+	}
+	target := models.NewNotificationTarget(inst)
+	target.FollowerIDs = followerIDs
+	if target.FollowerIDs == nil {
+		// The rows are gone: no lookup after the delete.
+		target.FollowerIDs = []string{}
+	}
+	e.manager.notifyInstance(target, "instance.deleted", "Stack deleted", message)
 }
 
 func (e *CleanupExecutor) resolveCharts(inst *models.StackInstance) ([]models.ChartConfig, error) {
@@ -81,4 +181,12 @@ func (e *CleanupExecutor) resolveCharts(inst *models.StackInstance) ([]models.Ch
 		return nil, fmt.Errorf("no charts configured for definition %s", def.ID)
 	}
 	return charts, nil
+}
+
+// triggerOpts returns hook options with the trigger of ctx, if any.
+func (e *CleanupExecutor) triggerOpts(ctx context.Context) hookOpts {
+	if trigger, ok := hooks.TriggerFromContext(ctx); ok {
+		return hookOpts{Trigger: &trigger}
+	}
+	return hookOpts{}
 }

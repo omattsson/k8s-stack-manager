@@ -1,51 +1,66 @@
 # Contributing to K8s Stack Manager
 
-Thank you for considering contributing to the K8s Stack Manager project! This document outlines the guidelines and workflows for contributing to this project.
+Thank you for your interest in K8s Stack Manager. This document explains how to contribute.
 
 ## Code of Conduct
 
-By participating in this project, you agree to abide by our Code of Conduct. Please read it before participating.
+By participating in this project, you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md). Read it before you participate.
 
 ## How Can I Contribute?
 
-### Reporting Bugs
+### Report a Bug
 
-1. Check if the bug has already been reported in the Issues tab.
-2. If not, create a new issue using the Bug Report template.
+1. Search the Issues tab. Check if someone already reported the bug.
+2. If not, create an issue with the Bug Report template.
 3. Include as much relevant information as possible:
-   - Clear steps to reproduce
-   - Expected vs. actual behavior
-   - Screenshots if applicable
-   - Environment details
+   - Clear steps to reproduce the bug
+   - The expected behavior and the actual behavior
+   - Screenshots, if they help
+   - Environment details: application version, browser, and how you run the application (Docker Compose or Helm)
 
-### Suggesting Features
+To report a security vulnerability, do not use a public issue. See [SECURITY.md](SECURITY.md).
 
-1. Check if the feature has already been suggested in the Issues tab.
-2. If not, create a new issue using the Feature Request template.
-3. Describe the feature clearly and why it would be valuable.
+### Suggest a Feature
 
-### Improving Documentation
+1. Search the Issues tab. Check if someone already suggested the feature. The [roadmap](../ROADMAP.md) lists the planned work.
+2. If not, create an issue with the Feature Request template.
+3. Describe the feature and explain why it is valuable.
 
-1. For minor changes (typos, clarification), you can submit a pull request directly.
-2. For larger documentation issues, create an issue using the Documentation Issue template.
+### Improve the Documentation
+
+1. For a small change (a typo or a clarification), send a pull request directly.
+2. For a larger problem, create an issue with the Documentation Issue template.
+
+Follow these rules when you write documentation:
+
+- Write short sentences. Use one idea in each sentence.
+- Use the active voice and the present tense.
+- Use the same word for the same thing. The main terms are: template, stack definition, stack instance, chart config, cluster, and the roles `user`, `devops`, and `admin`.
+- Expand an abbreviation the first time that you use it in a document.
+- Do not use idioms, marketing words, or decorative symbols.
+- Use placeholders such as `example.com` in examples. Do not use the names of real organizations, hosts, or people.
+- Check each fact against the code. Check commands, environment variable names, default values, and routes.
 
 ### Pull Request Process
 
-1. Fork the repository and create a branch from `main`.
+1. Fork the repository, and create a branch from `main`.
 2. Make your changes.
-3. Ensure your code follows the project's style guidelines.
-4. Add or update tests as necessary.
-5. Update documentation if needed.
-6. Ensure all tests pass.
-7. Create a pull request using the appropriate template.
+3. Follow the style guidelines below.
+4. Add or update tests.
+5. Update the documentation when the behavior changes.
+6. Run the checks that are described in "Running Tests and Checks".
+7. Create a pull request with the pull request template.
+
+The pull request title must use the [Conventional Commits](https://www.conventionalcommits.org/) format, for example `fix(deployer): clear a pending release before the upgrade`. A CI check validates the title. The allowed types are `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`, and `deps`.
 
 ## Development Setup
 
 ### Prerequisites
 
 - Docker and Docker Compose
-- Go 1.26 or later (for backend development)
-- Node.js 22 or later (for frontend development)
+- Go 1.26 or later (backend development)
+- Node.js 22.12 or later (frontend development). CI and the Docker images use Node.js 26.
+- Helm 3 (chart development)
 
 ### Setup Steps
 
@@ -54,60 +69,86 @@ By participating in this project, you agree to abide by our Code of Conduct. Ple
 git clone https://github.com/your-username/k8s-stack-manager.git
 cd k8s-stack-manager
 
-# Set up development environment
-make setup
+# Install the dependencies of the backend and the frontend
+make install
 
-# Run the application locally
-make run
+# Create the Docker Compose settings (first time only)
+cp .env.example .env
+
+# Run the full stack with Docker Compose (frontend on port 3000, API on port 8081)
+make dev
+
+# Or run MySQL in Docker and the backend and frontend locally with hot reload
+make dev-local
 ```
 
-### Running Tests
+The default admin credentials for local development are `admin` / `admin`. See the [README](../README.md) for more options, for example a headless stack.
+
+### Running Tests and Checks
 
 ```bash
-# Run all tests
+# Run all unit tests (backend and frontend)
 make test
 
-# Run backend tests only
+# Run the backend unit tests only
 make test-backend
 
-# Run frontend tests only
+# Run the frontend unit tests only
 make test-frontend
+
+# Run the backend unit and integration tests (starts MySQL)
+make test-backend-all
+
+# Run the end-to-end tests (starts MySQL and the backend)
+make test-e2e
+
+# Run the backend tests with a coverage report (80% threshold)
+cd backend && make test-coverage
+
+# Lint the code (go vet, TypeScript type check, ESLint)
+make lint
+
+# Check the Helm chart
+make helm-lint
+make helm-test
 ```
+
+The pull request checks run these commands for the parts that you change: `go vet` and `go test -short` for the backend, `npm run lint`, `vitest`, and `npm run build` for the frontend, `helm lint` and `make helm-test` for the chart, and a Markdown lint for documentation. A security scan (`gosec` and `npm audit`) runs for each pull request.
 
 ## Style Guidelines
 
 ### Go Code
 
-- Follow the standard Go code style (run `gofmt` before committing)
-- Ensure code passes `golint` and `go vet`
-- Follow the project's architecture pattern
+- Follow the standard Go code style. Run `gofmt` on the code that you change. Do not mix large formatting changes into a pull request.
+- Make sure that the code passes `go vet` (and `golangci-lint` when you have it: `cd backend && make lint`).
+- Follow the architecture of the project. See [ARCHITECTURE.md](../ARCHITECTURE.md) and the files in [.github/instructions](instructions/).
+- Return `"Internal server error"` for HTTP 500 responses. Do not send raw error messages to clients.
+- Write table-driven tests with testify.
 
-### TypeScript/React Code
+### TypeScript and React Code
 
-- Follow the ESLint configuration in the project
-- Use TypeScript types appropriately
-- Follow the component structure in the project
+- Follow the ESLint configuration of the project (`cd frontend && npm run lint`).
+- Use TypeScript types for props, API responses, and state.
+- Use MUI components, and follow the component structure of the project. See [frontend/README.md](../frontend/README.md).
+- Add a TSDoc comment with `@param`, `@returns`, and `@see` (HTTP method and route) to each method of a service object in `frontend/src/api/client.ts`.
 
 ### Commit Messages
 
-- Use clear, descriptive commit messages
-- Begin with a short summary (50 chars or less)
-- Reference issue numbers when appropriate
+- Use clear, descriptive commit messages in the Conventional Commits format.
+- Begin with a short summary of 50 characters or less where you can.
+- Refer to issue numbers when it helps.
 
 ## Branching Strategy
 
-- `main` - stable production code
-- `dev` - development branch for next release
-- `feature/<name>` - for new features
-- `fix/<name>` - for bug fixes
-- `docs/<name>` - for documentation changes
+- `main` is the only long-lived branch. All pull requests target `main`.
+- Use short-lived branches that are named `<type>/<short-name>`. The type is a Conventional Commits type, for example `feat/`, `fix/`, `docs/`, or `chore/`.
 
 ## Code Review Process
 
-1. All code changes require a review before merging.
-2. Address review comments promptly.
-3. Keep pull requests focused on a single issue/feature.
+1. All code changes need a review before the merge.
+2. Answer review comments promptly.
+3. Keep each pull request focused on one issue or feature.
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the project's MIT License.
+When you contribute, you agree that your contributions use the project's [MIT License](../LICENSE).

@@ -24,10 +24,16 @@ spec:
         {{- include "k8s-stack-manager.frontend.selectorLabels" . | nindent 8 }}
       annotations:
         checksum/nginx-config: {{ include (print $.Template.BasePath "/frontend/configmap.yaml") . | sha256sum }}
+        {{- if include "k8s-stack-manager.brandingFilesEnabled" . }}
+        checksum/branding: {{ include (print $.Template.BasePath "/frontend/branding-configmap.yaml") . | sha256sum }}
+        {{- end }}
         {{- if and .Values.global.appArmor.enabled (semverCompare "<1.30-0" .Capabilities.KubeVersion.Version) }}
         container.apparmor.security.beta.kubernetes.io/nginx: runtime/default
         {{- end }}
     spec:
+      {{- with .Values.frontend.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
       {{- with .Values.global.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -84,6 +90,11 @@ spec:
               mountPath: /var/run
             - name: nginx-tmp
               mountPath: /tmp
+            {{- if include "k8s-stack-manager.brandingFilesEnabled" . }}
+            - name: branding
+              mountPath: /usr/share/nginx/html/branding
+              readOnly: true
+            {{- end }}
           securityContext:
             runAsNonRoot: true
             allowPrivilegeEscalation: false
@@ -105,4 +116,9 @@ spec:
           emptyDir: {}
         - name: nginx-tmp
           emptyDir: {}
+        {{- if include "k8s-stack-manager.brandingFilesEnabled" . }}
+        - name: branding
+          configMap:
+            name: {{ include "k8s-stack-manager.fullname" . }}-frontend-branding
+        {{- end }}
 {{- end }}

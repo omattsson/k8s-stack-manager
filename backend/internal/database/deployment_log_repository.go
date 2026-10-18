@@ -16,8 +16,12 @@ import (
 	"gorm.io/gorm"
 )
 
-// Compile-time interface check.
-var _ models.DeploymentLogRepository = (*GORMDeploymentLogRepository)(nil)
+// Compile-time interface checks.
+var (
+	_ models.DeploymentLogRepository       = (*GORMDeploymentLogRepository)(nil)
+	_ models.DeploymentLogDeadlineExtender = (*GORMDeploymentLogRepository)(nil)
+	_ models.DeploymentLogOutputWriter     = (*GORMDeploymentLogRepository)(nil)
+)
 
 // GORMDeploymentLogRepository implements models.DeploymentLogRepository using GORM.
 type GORMDeploymentLogRepository struct {
@@ -55,10 +59,89 @@ func (r *GORMDeploymentLogRepository) FindByID(ctx context.Context, id string) (
 	return &log, nil
 }
 
-// Update persists changes to an existing deployment log record.
+// Update writes all columns of a deployment log, only while the stored log
+// is running (conditional UPDATE ... WHERE id = ? AND status = 'running').
+// When no running row matches it changes nothing and returns
+// models.ErrDeployLogNotRunning: the leader can have ended the operation
+// (interrupted operation recovery), and a late writer must not overwrite
+// that result. Save is not used: it inserts a row when the update matches
+// nothing.
 func (r *GORMDeploymentLogRepository) Update(ctx context.Context, log *models.DeploymentLog) error {
-	if err := r.db.WithContext(ctx).Save(log).Error; err != nil {
+	res := r.db.WithContext(ctx).Model(&models.DeploymentLog{}).
+		Where("id = ? AND status = ?", log.ID, models.DeployLogRunning).
+		Select("*").Omit("id").
+		Updates(log)
+	if res.Error != nil {
+		return dberrors.NewDatabaseError("update", res.Error)
+	}
+	if res.RowsAffected > 0 {
+		return nil
+	}
+	// MySQL counts only changed rows: an update without a change of a
+	// running log also gives 0 rows.
+	var running int64
+	if err := r.db.WithContext(ctx).Model(&models.DeploymentLog{}).
+		Where("id = ? AND status = ?", log.ID, models.DeployLogRunning).
+		Count(&running).Error; err != nil {
 		return dberrors.NewDatabaseError("update", err)
+	}
+	if running > 0 {
+		return nil
+	}
+	return models.ErrDeployLogNotRunning
+}
+
+// ExtendDeadline sets deadline_at to deadline when the log is running and
+// its deadline is earlier (or not set). It returns
+// models.ErrDeployLogNotRunning when the log is no longer running (for
+// example the leader ended it while the operation waited for its slot).
+func (r *GORMDeploymentLogRepository) ExtendDeadline(ctx context.Context, id string, deadline time.Time) error {
+	res := r.db.WithContext(ctx).Model(&models.DeploymentLog{}).
+		Where("id = ? AND status = ? AND (deadline_at IS NULL OR deadline_at < ?)", id, models.DeployLogRunning, deadline.UTC()).
+		Update("deadline_at", deadline.UTC())
+	if res.Error != nil {
+		return dberrors.NewDatabaseError("extend_deadline", res.Error)
+	}
+	if res.RowsAffected > 0 {
+		return nil
+	}
+	// No change: the deadline is already later, or the log is not running.
+	var running int64
+	if err := r.db.WithContext(ctx).Model(&models.DeploymentLog{}).
+		Where("id = ? AND status = ?", id, models.DeployLogRunning).
+		Count(&running).Error; err != nil {
+		return dberrors.NewDatabaseError("extend_deadline", err)
+	}
+	if running == 0 {
+		return models.ErrDeployLogNotRunning
+	}
+	return nil
+}
+
+// UpdateRunningOutput sets the output column of a running log (conditional
+// UPDATE ... WHERE id = ? AND status = 'running'). It returns
+// models.ErrDeployLogNotRunning when the log is no longer running: the final
+// write of the operation (or the interrupted operation recovery) has already
+// set the output, and this write must not replace it.
+func (r *GORMDeploymentLogRepository) UpdateRunningOutput(ctx context.Context, id, output string) error {
+	res := r.db.WithContext(ctx).Model(&models.DeploymentLog{}).
+		Where("id = ? AND status = ?", id, models.DeployLogRunning).
+		Update("output", output)
+	if res.Error != nil {
+		return dberrors.NewDatabaseError("update_running_output", res.Error)
+	}
+	if res.RowsAffected > 0 {
+		return nil
+	}
+	// MySQL counts only changed rows: the same output again also gives 0 rows.
+	var running int64
+	if err := r.db.WithContext(ctx).Model(&models.DeploymentLog{}).
+		Where("id = ? AND status = ?", id, models.DeployLogRunning).
+		Count(&running).Error; err != nil {
+		return dberrors.NewDatabaseError("update_running_output", err)
+	}
+	if running == 0 {
+		return models.ErrDeployLogNotRunning
 	}
 	return nil
 }
@@ -170,6 +253,25 @@ func (r *GORMDeploymentLogRepository) GetLatestByInstance(ctx context.Context, i
 	return &log, nil
 }
 
+// ListLatestByActions returns up to limit logs of the instance whose action
+// is one of actions, newest first. It selects only the small columns (the
+// index idx_deployment_logs_instance_action_started covers the filter).
+func (r *GORMDeploymentLogRepository) ListLatestByActions(ctx context.Context, instanceID string, actions []string, limit int) ([]models.DeploymentLog, error) {
+	if limit <= 0 {
+		limit = 1
+	}
+	var logs []models.DeploymentLog
+	if err := r.db.WithContext(ctx).
+		Select("id, stack_instance_id, action, status, started_at, completed_at, target_log_id, branch").
+		Where("stack_instance_id = ? AND action IN ?", instanceID, actions).
+		Order("started_at DESC").
+		Limit(limit).
+		Find(&logs).Error; err != nil {
+		return nil, dberrors.NewDatabaseError("list_latest_by_actions", err)
+	}
+	return logs, nil
+}
+
 // SummarizeByInstance returns aggregate deployment statistics for a given stack instance.
 // Only logs from the last 90 days are considered.
 func (r *GORMDeploymentLogRepository) SummarizeByInstance(ctx context.Context, instanceID string) (*models.DeployLogSummary, error) {
@@ -181,8 +283,8 @@ func (r *GORMDeploymentLogRepository) SummarizeByInstance(ctx context.Context, i
 	row := r.db.WithContext(ctx).Model(&models.DeploymentLog{}).
 		Select("COUNT(*) as deploy_count, "+
 			"COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) as success_count, "+
-			"COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) as error_count",
-			models.DeployLogSuccess, models.DeployLogError).
+			"COALESCE(SUM(CASE WHEN status IN (?, ?) THEN 1 ELSE 0 END), 0) as error_count",
+			models.DeployLogSuccess, models.DeployLogError, models.DeployLogPartial).
 		Where("stack_instance_id = ? AND action = ? AND started_at >= ?",
 			instanceID, models.DeployActionDeploy, cutoff).
 		Row()
@@ -255,6 +357,72 @@ func (r *GORMDeploymentLogRepository) SummarizeBatch(ctx context.Context, instan
 	return result, nil
 }
 
+// SummarizeByUsers returns deploy statistics per user who started the deploy
+// (DeploymentLog.UserID), over all deploy logs and also for deleted instances.
+// User IDs are processed in chunks of 500 to stay within MySQL's IN clause
+// limits. Users without deploys are not in the result.
+func (r *GORMDeploymentLogRepository) SummarizeByUsers(ctx context.Context, userIDs []string) (map[string]*models.DeployLogSummary, error) {
+	result := make(map[string]*models.DeployLogSummary, len(userIDs))
+	const chunkSize = 500
+	for start := 0; start < len(userIDs); start += chunkSize {
+		end := start + chunkSize
+		if end > len(userIDs) {
+			end = len(userIDs)
+		}
+		var rows []summarizeByUserRow
+		err := r.db.WithContext(ctx).Model(&models.DeploymentLog{}).
+			Select(`user_id,
+				COUNT(*) as deploy_count,
+				COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) as success_count,
+				COALESCE(SUM(CASE WHEN status IN (?, ?) THEN 1 ELSE 0 END), 0) as error_count,
+				MAX(COALESCE(completed_at, started_at)) as last_deploy`,
+				models.DeployLogSuccess, models.DeployLogError, models.DeployLogPartial).
+			Where("user_id IN ? AND action = ?", userIDs[start:end], models.DeployActionDeploy).
+			Group("user_id").
+			Find(&rows).Error
+		if err != nil {
+			return nil, dberrors.NewDatabaseError("summarize_by_users", err)
+		}
+		for _, row := range rows {
+			summary := &models.DeployLogSummary{
+				UserID:       row.UserID,
+				DeployCount:  row.DeployCount,
+				SuccessCount: row.SuccessCount,
+				ErrorCount:   row.ErrorCount,
+			}
+			if t, ok := parseAggregateTime(row.LastDeploy); ok {
+				summary.LastDeployAt = &t
+			}
+			result[row.UserID] = summary
+		}
+	}
+	return result, nil
+}
+
+// summarizeByUserRow holds the raw scan results of SummarizeByUsers.
+type summarizeByUserRow struct {
+	UserID       string
+	DeployCount  int
+	SuccessCount int
+	ErrorCount   int
+	LastDeploy   sql.NullString
+}
+
+// parseAggregateTime parses the result of MAX() over a datetime column,
+// scanned as text. MySQL (parseTime=true) returns a time.Time, which
+// database/sql converts to RFC 3339 text; SQLite returns its own text format.
+func parseAggregateTime(v sql.NullString) (time.Time, bool) {
+	if !v.Valid {
+		return time.Time{}, false
+	}
+	for _, layout := range []string{time.RFC3339Nano, "2006-01-02 15:04:05.999999999-07:00", "2006-01-02 15:04:05.999999999"} {
+		if t, err := time.Parse(layout, v.String); err == nil {
+			return t.UTC(), true
+		}
+	}
+	return time.Time{}, false
+}
+
 // summarizeBatchRow holds the raw scan results from the batch summary query.
 // Uses sql.NullTime for LastDeploy — MySQL with parseTime=true returns
 // time.Time natively for computed datetime columns.
@@ -279,11 +447,11 @@ func (r *GORMDeploymentLogRepository) summarizeBatchChunk(
 		Select(`stack_instance_id as instance_id,
 			COUNT(CASE WHEN action = ? THEN 1 END) as deploy_count,
 			COALESCE(SUM(CASE WHEN action = ? AND status = ? THEN 1 ELSE 0 END), 0) as success_count,
-			COALESCE(SUM(CASE WHEN action = ? AND status = ? THEN 1 ELSE 0 END), 0) as error_count,
+			COALESCE(SUM(CASE WHEN action = ? AND status IN (?, ?) THEN 1 ELSE 0 END), 0) as error_count,
 			MAX(COALESCE(completed_at, started_at)) as last_deploy`,
 			models.DeployActionDeploy,
 			models.DeployActionDeploy, models.DeployLogSuccess,
-			models.DeployActionDeploy, models.DeployLogError).
+			models.DeployActionDeploy, models.DeployLogError, models.DeployLogPartial).
 		Where("stack_instance_id IN ? AND started_at >= ?", chunk, cutoff).
 		Group("stack_instance_id").
 		Find(&rows).Error
@@ -324,7 +492,7 @@ func (r *GORMDeploymentLogRepository) ListRecentGlobal(ctx context.Context, limi
 	var rows []row
 	err := r.db.WithContext(ctx).
 		Table("deployment_logs dl").
-		Select("dl.id, dl.stack_instance_id, dl.action, dl.status, dl.started_at, dl.completed_at, dl.error_message, COALESCE(si.name, '(deleted)') AS instance_name, COALESCE(u.username, '(unknown)') AS owner_username").
+		Select("dl.id, dl.stack_instance_id, dl.action, dl.status, dl.branch, dl.started_at, dl.completed_at, dl.error_message, COALESCE(si.name, '(deleted)') AS instance_name, COALESCE(u.username, '(unknown)') AS owner_username").
 		Joins("LEFT JOIN stack_instances si ON dl.stack_instance_id = si.id").
 		Joins("LEFT JOIN users u ON si.owner_id = u.id").
 		Order("dl.started_at DESC").

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import DeploymentLogViewer from '../index';
@@ -189,6 +189,12 @@ describe('DeploymentLogViewer', () => {
     expect(chips.length).toBeGreaterThanOrEqual(3);
   });
 
+  it('shows a partial log status as a warning chip, like the instance status', () => {
+    render(<DeploymentLogViewer logs={[{ ...completedDeployLog, id: 'p1', status: 'partial' }]} />);
+    const chip = screen.getByText('partial').closest('.MuiChip-root');
+    expect(chip).toHaveClass('MuiChip-colorWarning');
+  });
+
   // -------------------------------------------------------------------------
   // Timestamp and duration
   // -------------------------------------------------------------------------
@@ -266,12 +272,12 @@ describe('DeploymentLogViewer', () => {
   describe('real-time streaming', () => {
     it('shows streaming lines for a running log', () => {
       const streamingLines = {
-        [runningLogNoOutput.id]: ['Installing chart kvk-core...', 'Waiting for pods...'],
+        [runningLogNoOutput.id]: ['Installing chart app-core...', 'Waiting for pods...'],
       };
       render(
         <DeploymentLogViewer logs={[runningLogNoOutput]} streamingLines={streamingLines} />,
       );
-      expect(screen.getByText('Installing chart kvk-core...')).toBeInTheDocument();
+      expect(screen.getByText('Installing chart app-core...')).toBeInTheDocument();
       expect(screen.getByText('Waiting for pods...')).toBeInTheDocument();
     });
 
@@ -316,17 +322,27 @@ describe('DeploymentLogViewer', () => {
       expect(screen.queryByText('LIVE')).not.toBeInTheDocument();
     });
 
-    it('renders streaming output instead of log.output for running log with streaming lines', () => {
-      // This running log has output AND streaming lines.
-      // Streaming lines should win when isStreaming is true.
+    it('shows the stored output of a running log and then the streaming lines (page reload)', () => {
+      // The stored output has the lines written before the page loaded.
       const streamingLines = {
         [runningLogWithOutput.id]: ['Real-time line A', 'Real-time line B'],
       };
       render(
         <DeploymentLogViewer logs={[runningLogWithOutput]} streamingLines={streamingLines} />,
       );
-      expect(screen.getByText('Real-time line A')).toBeInTheDocument();
-      expect(screen.getByText('Real-time line B')).toBeInTheDocument();
+      const shown = ['Helm install started...', 'Real-time line A', 'Real-time line B'];
+      shown.forEach((line) => expect(screen.getByText(line)).toBeInTheDocument());
+      expect(screen.getByText('LIVE')).toBeInTheDocument();
+    });
+
+    it('shows a line once when it is in the stored output and in the streaming lines', () => {
+      const log = { ...runningLogWithOutput, output: 'line 1\nline 2\n' };
+      render(
+        <DeploymentLogViewer logs={[log]} streamingLines={{ [log.id]: ['line 1', 'line 2', 'line 3'] }} />,
+      );
+      expect(screen.getAllByText('line 1')).toHaveLength(1);
+      expect(screen.getAllByText('line 2')).toHaveLength(1);
+      expect(screen.getByText('line 3')).toBeInTheDocument();
     });
 
     it('falls back to log.output when running log has output but no streaming lines', () => {
@@ -406,5 +422,63 @@ describe('DeploymentLogViewer', () => {
   it('does not show "No deployment history" when loading is true even with empty logs', () => {
     render(<DeploymentLogViewer logs={[]} loading={true} />);
     expect(screen.queryByText('No deployment history')).not.toBeInTheDocument();
+  });
+
+  // -------------------------------------------------------------------------
+  // Roll back to this deploy
+  // -------------------------------------------------------------------------
+
+  describe('rollback action', () => {
+    const olderDeploy: DeploymentLog = {
+      ...completedDeployLog,
+      id: 'log-old',
+      branch: 'feature-x',
+      started_at: '2026-03-18T10:00:00Z',
+      completed_at: '2026-03-18T10:01:00Z',
+    };
+
+    it('offers "Roll back to this deploy" for an older successful deploy', async () => {
+      const user = userEvent.setup();
+      const onRollbackTo = vi.fn();
+      render(
+        <DeploymentLogViewer
+          logs={[completedDeployLog, olderDeploy]}
+          currentDeployLogId="log-1"
+          onRollbackTo={onRollbackTo}
+        />,
+      );
+      // The current deploy (expanded by default) has no action.
+      expect(screen.queryByRole('button', { name: 'Roll back to this deploy' })).not.toBeInTheDocument();
+      expect(screen.getByText('current')).toBeInTheDocument();
+      expect(screen.getByText('feature-x')).toBeInTheDocument();
+
+      await user.click(screen.getByText('feature-x'));
+      await user.click(await screen.findByRole('button', { name: 'Roll back to this deploy' }));
+      expect(onRollbackTo).toHaveBeenCalledWith(olderDeploy);
+    });
+
+    it('explains the action when no deploy is marked current', async () => {
+      const user = userEvent.setup();
+      render(<DeploymentLogViewer logs={[completedDeployLog, olderDeploy]} onRollbackTo={vi.fn()} />);
+      await user.hover(screen.getAllByRole('button', { name: 'Roll back to this deploy' })[0]);
+      expect(await screen.findByRole('tooltip')).toHaveTextContent(
+        'The running values are unknown after a rollback without a target.',
+      );
+    });
+
+    it('offers no action for failed deploys or other actions', () => {
+      render(
+        <DeploymentLogViewer
+          logs={[{ ...completedDeployLog, id: 'x', status: 'error' }, { ...errorStopLog, status: 'success' }]}
+          onRollbackTo={vi.fn()}
+        />,
+      );
+      expect(screen.queryByRole('button', { name: 'Roll back to this deploy' })).not.toBeInTheDocument();
+    });
+
+    it('offers no action without onRollbackTo', () => {
+      render(<DeploymentLogViewer logs={[completedDeployLog]} />);
+      expect(screen.queryByRole('button', { name: 'Roll back to this deploy' })).not.toBeInTheDocument();
+    });
   });
 });

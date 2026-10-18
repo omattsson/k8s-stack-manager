@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
+import { StrictMode } from 'react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import Form from '../Form';
@@ -14,6 +15,17 @@ vi.mock('react-router-dom', async () => {
   };
 });
 
+const mockAuth = { role: 'admin' };
+vi.mock('../../../context/AuthContext', () => ({
+  useAuth: () => ({
+    user: { id: '1', username: 'tester', role: mockAuth.role, display_name: 'Tester' },
+    isAuthenticated: true,
+    isLoading: false,
+    login: vi.fn(),
+    logout: vi.fn(),
+  }),
+}));
+
 vi.mock('../../../hooks/useUnsavedChanges', () => ({
   useUnsavedChanges: vi.fn(),
 }));
@@ -27,9 +39,12 @@ vi.mock('../../../api/client', () => ({
     updateChart: vi.fn(),
     deleteChart: vi.fn(),
     exportDefinition: vi.fn(),
+    setTemplateLink: vi.fn(),
   },
   templateService: {
     get: vi.fn(),
+    listAll: vi.fn(),
+    listVersions: vi.fn(),
   },
 }));
 
@@ -44,7 +59,8 @@ vi.mock('../../../components/YamlEditor', () => ({
   ),
 }));
 
-import { definitionService } from '../../../api/client';
+import { definitionService, templateService } from '../../../api/client';
+import { useUnsavedChanges } from '../../../hooks/useUnsavedChanges';
 
 const mockDefinitionWithCharts = {
   id: '123',
@@ -70,6 +86,7 @@ const mockDefinitionWithCharts = {
 describe('StackDefinitions Form', () => {
   afterEach(() => {
     vi.clearAllMocks();
+    mockAuth.role = 'admin';
   });
 
   it('shows Create Stack Definition heading in create mode', () => {
@@ -427,4 +444,172 @@ describe('StackDefinitions Form', () => {
     expect(screen.getByRole('textbox', { name: /description/i })).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: /default branch/i })).toBeInTheDocument();
   });
+
+  const lastDirtyFlag = () => {
+    const calls = (useUnsavedChanges as ReturnType<typeof vi.fn>).mock.calls;
+    return calls[calls.length - 1]?.[0];
+  };
+
+  const renderEdit = () =>
+    render(
+      <MemoryRouter initialEntries={['/stack-definitions/123/edit']}>
+        <NotificationProvider>
+          <Routes>
+            <Route path="/stack-definitions/:id/edit" element={<Form />} />
+          </Routes>
+        </NotificationProvider>
+      </MemoryRouter>
+    );
+
+  it('is not dirty after loading a definition created from a template', async () => {
+    // Shape after Use Template: source template set, some fields null.
+    (definitionService.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...mockDefinitionWithCharts,
+      description: null,
+      source_template_id: 't1',
+      source_template_version: '1.0.0',
+      charts: [{ ...mockDefinitionWithCharts.charts[0], source_repo_url: null, chart_path: null }],
+    });
+    (templateService.get as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 't1', charts: [] });
+
+    renderEdit();
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('Test Def')).toBeInTheDocument();
+      expect(templateService.get).toHaveBeenCalledWith('t1');
+    });
+    await waitFor(() => {
+      expect(lastDirtyFlag()).toBe(false);
+    });
+  });
+
+  it('is dirty after a change to a loaded definition', async () => {
+    const user = userEvent.setup();
+    (definitionService.get as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitionWithCharts);
+
+    renderEdit();
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('Test Def')).toBeInTheDocument();
+    });
+    expect(lastDirtyFlag()).toBe(false);
+
+    await user.type(screen.getByDisplayValue('Test Def'), ' changed');
+
+    await waitFor(() => {
+      expect(lastDirtyFlag()).toBe(true);
+    });
+  });
+
+  it('tells a user without devops role to start from a template in create mode', () => {
+    mockAuth.role = 'user';
+    render(
+      <MemoryRouter initialEntries={['/stack-definitions/new']}>
+        <NotificationProvider>
+          <Routes>
+            <Route path="/stack-definitions/new" element={<Form />} />
+          </Routes>
+        </NotificationProvider>
+      </MemoryRouter>
+    );
+    expect(screen.getByText(/Only devops and admin users can create a definition/)).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: /name/i })).not.toBeInTheDocument();
+  });
+
+  it('locks the chart source and hides add and remove for a user without devops role', async () => {
+    mockAuth.role = 'user';
+    (definitionService.get as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitionWithCharts);
+    renderEdit();
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('Test Def')).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('button', { name: /add chart/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /remove chart/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: /chart name/i })).toBeDisabled();
+    expect(screen.getByRole('textbox', { name: /repository url/i })).toBeDisabled();
+    expect(screen.getByText(/Only devops and admin users can add or remove charts/)).toBeInTheDocument();
+  });
+
+  it('allows chart management for a devops user', async () => {
+    mockAuth.role = 'devops';
+    (definitionService.get as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitionWithCharts);
+    renderEdit();
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('Test Def')).toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: /add chart/i })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: /chart name/i })).not.toBeDisabled();
+  });
+
+  it('offers a template link to a devops user, not to a user', async () => {
+    (definitionService.get as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitionWithCharts);
+    mockAuth.role = 'devops';
+    const { unmount } = renderEdit();
+    expect(await screen.findByRole('button', { name: /link to a template/i })).toBeInTheDocument();
+    unmount();
+
+    mockAuth.role = 'user';
+    renderEdit();
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('Test Def')).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('button', { name: /link to a template/i })).not.toBeInTheDocument();
+  });
+
+  it('links the definition and shows the template name', async () => {
+    const user = userEvent.setup();
+    mockAuth.role = 'devops';
+    (definitionService.get as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitionWithCharts);
+    (templateService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([{ id: 't1', name: 'Web stack', is_published: true }]);
+    (templateService.listVersions as ReturnType<typeof vi.fn>).mockResolvedValue([{ id: 'v1', template_id: 't1', version: '1.0.0' }]);
+    (templateService.get as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 't1', name: 'Web stack', charts: [] });
+    (definitionService.setTemplateLink as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...mockDefinitionWithCharts,
+      source_template_id: 't1',
+      source_template_version: '1.0.0',
+    });
+    renderEdit();
+
+    await user.click(await screen.findByRole('button', { name: /link to a template/i }));
+    await user.click(await screen.findByRole('combobox', { name: 'Template' }));
+    await user.click(await screen.findByRole('option', { name: 'Web stack' }));
+    await waitFor(() => expect(templateService.listVersions).toHaveBeenCalledWith('t1'));
+    await user.click(screen.getByRole('button', { name: 'Save link' }));
+
+    await waitFor(() => expect(definitionService.setTemplateLink).toHaveBeenCalledWith('123', 't1', ''));
+    expect(await screen.findByText(/Derived from template Web stack \(v1.0.0\)/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /link to a template/i })).not.toBeInTheDocument();
+  });
+
+  it('keeps an edit when a late, stale definition response arrives (StrictMode, #596)', async () => {
+    // StrictMode runs the load effect twice. The first (stale) response comes last.
+    let resolveFirst: (v: unknown) => void = () => {};
+    let resolveSecond: (v: unknown) => void = () => {};
+    const def = { id: '123', name: 'Test Def', description: 'A test definition', default_branch: 'develop', charts: [] };
+    (definitionService.get as ReturnType<typeof vi.fn>)
+      .mockReturnValueOnce(new Promise((r) => { resolveFirst = r; }))
+      .mockReturnValueOnce(new Promise((r) => { resolveSecond = r; }));
+    const user = userEvent.setup();
+    render(
+      <StrictMode>
+        <MemoryRouter initialEntries={['/stack-definitions/123/edit']}>
+          <NotificationProvider>
+            <Routes>
+              <Route path="/stack-definitions/:id/edit" element={<Form />} />
+            </Routes>
+          </NotificationProvider>
+        </MemoryRouter>
+      </StrictMode>
+    );
+    await waitFor(() => expect(definitionService.get).toHaveBeenCalledTimes(2));
+    await act(async () => resolveSecond(def));
+    const field = await screen.findByDisplayValue('Test Def');
+    await user.clear(field);
+    await user.type(field, 'Renamed Def');
+    await act(async () => resolveFirst(def));
+    expect(screen.getByDisplayValue('Renamed Def')).toBeInTheDocument();
+  });
+
 });

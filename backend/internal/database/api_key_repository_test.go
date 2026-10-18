@@ -1,6 +1,7 @@
 package database
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -111,6 +112,43 @@ func TestGORMAPIKeyRepository_FindByPrefix(t *testing.T) {
 	})
 }
 
+func TestGORMAPIKeyRepository_FindByIDs(t *testing.T) {
+	t.Parallel()
+
+	repo := setupAPIKeyRepo(t)
+	require.NoError(t, repo.Create(&models.APIKey{ID: "k-ids1", UserID: "u1", Name: "k1", Prefix: "p-ids1", KeyHash: "h1"}))
+	require.NoError(t, repo.Create(&models.APIKey{ID: "k-ids2", UserID: "u2", Name: "k2", Prefix: "p-ids2", KeyHash: "h2"}))
+	many := make([]string, 0, apiKeyIDsPerQuery+2)
+	for i := 0; i < apiKeyIDsPerQuery; i++ {
+		many = append(many, fmt.Sprintf("missing-%d", i))
+	}
+	many = append(many, "k-ids1", "k-ids2") // second chunk
+
+	tests := []struct {
+		name    string
+		ids     []string
+		wantIDs []string
+	}{
+		{name: "keys of different users", ids: []string{"k-ids1", "k-ids2"}, wantIDs: []string{"k-ids1", "k-ids2"}},
+		{name: "missing IDs are skipped", ids: []string{"k-ids1", "gone"}, wantIDs: []string{"k-ids1"}},
+		{name: "no IDs", ids: nil, wantIDs: nil},
+		{name: "more IDs than one query", ids: many, wantIDs: []string{"k-ids1", "k-ids2"}},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			keys, err := repo.FindByIDs(tt.ids)
+			require.NoError(t, err)
+			var got []string
+			for _, k := range keys {
+				got = append(got, k.ID)
+			}
+			assert.ElementsMatch(t, tt.wantIDs, got)
+		})
+	}
+}
+
 func TestGORMAPIKeyRepository_ListByUser(t *testing.T) {
 	t.Parallel()
 
@@ -180,6 +218,51 @@ func TestGORMAPIKeyRepository_Delete(t *testing.T) {
 			} else {
 				assert.NoError(t, err)
 			}
+		})
+	}
+}
+
+func TestGORMAPIKeyRepository_DeleteAllForUser(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		userID      string
+		seedTarget  int
+		wantDeleted int64
+		wantErr     bool
+	}{
+		{name: "deletes all keys of the user", userID: "u-target", seedTarget: 3, wantDeleted: 3},
+		{name: "no keys is not an error", userID: "u-target", seedTarget: 0, wantDeleted: 0},
+		{name: "empty user ID fails", userID: "", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			repo := setupAPIKeyRepo(t)
+			for i := 0; i < tt.seedTarget; i++ {
+				require.NoError(t, repo.Create(&models.APIKey{
+					ID: fmt.Sprintf("k-t-%d", i), UserID: "u-target", Name: "test", Prefix: fmt.Sprintf("pt%d", i), KeyHash: "h",
+				}))
+			}
+			require.NoError(t, repo.Create(&models.APIKey{ID: "k-other", UserID: "u-other", Name: "test", Prefix: "po", KeyHash: "h"}))
+
+			n, err := repo.DeleteAllForUser(tt.userID)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantDeleted, n)
+
+			left, err := repo.ListByUser("u-target")
+			require.NoError(t, err)
+			assert.Empty(t, left)
+			other, err := repo.ListByUser("u-other")
+			require.NoError(t, err)
+			assert.Len(t, other, 1, "other users keep their keys")
 		})
 	}
 }

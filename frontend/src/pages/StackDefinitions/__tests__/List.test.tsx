@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import List from '../List';
@@ -15,14 +15,14 @@ vi.mock('react-router-dom', async () => {
 
 vi.mock('../../../api/client', () => ({
   definitionService: {
-    list: vi.fn(),
+    listAll: vi.fn(),
     delete: vi.fn(),
     importDefinition: vi.fn(),
     exportDefinition: vi.fn(),
     checkUpgrade: vi.fn(),
   },
   templateService: {
-    list: vi.fn().mockResolvedValue([]),
+    listAll: vi.fn().mockResolvedValue([]),
   },
   favoriteService: {
     list: vi.fn().mockResolvedValue([]),
@@ -40,9 +40,10 @@ vi.mock('../../../context/NotificationContext', () => ({
   }),
 }));
 
+const mockAuth = { role: 'admin' };
 vi.mock('../../../context/AuthContext', () => ({
   useAuth: () => ({
-    user: { id: '1', username: 'admin', role: 'admin', display_name: 'Admin' },
+    user: { id: '1', username: 'admin', role: mockAuth.role, display_name: 'Admin' },
     isAuthenticated: true,
     isLoading: false,
     login: vi.fn(),
@@ -50,7 +51,7 @@ vi.mock('../../../context/AuthContext', () => ({
   }),
 }));
 
-import { definitionService } from '../../../api/client';
+import { definitionService, templateService } from '../../../api/client';
 
 const mockDefinitions = [
   {
@@ -65,15 +66,30 @@ const mockDefinitions = [
 
 describe('Stack Definitions List', () => {
   beforeEach(() => {
-    (definitionService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
   });
 
   afterEach(() => {
     vi.clearAllMocks();
+    mockAuth.role = 'admin';
+  });
+
+  it('hides Create Definition and Import for a user without devops role', async () => {
+    mockAuth.role = 'user';
+    render(
+      <MemoryRouter>
+        <List />
+      </MemoryRouter>
+    );
+    await waitFor(() => {
+      expect(screen.getByText('My Stack')).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('button', { name: /create definition/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /import/i })).not.toBeInTheDocument();
   });
 
   it('shows loading spinner initially', () => {
-    (definitionService.list as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
     render(
       <MemoryRouter>
         <List />
@@ -94,8 +110,51 @@ describe('Stack Definitions List', () => {
     expect(screen.getByText('API Stack')).toBeInTheDocument();
   });
 
+  it('loads all definitions and all templates for the update check', async () => {
+    const many = Array.from({ length: 30 }, (_, i) => ({
+      ...mockDefinitions[1],
+      id: `def-${i}`,
+      name: `Definition ${String(i).padStart(2, '0')}`,
+      source_template_id: i === 29 ? 'tpl-late' : undefined,
+      source_template_version: i === 29 ? '1.0.0' : undefined,
+    }));
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(many);
+    (templateService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: 'tpl-late', name: 'Late Template', version: '2.0.0' },
+    ]);
+    render(
+      <MemoryRouter>
+        <List />
+      </MemoryRouter>
+    );
+    await waitFor(() => {
+      expect(screen.getByText('Definition 29')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Update available')).toBeInTheDocument();
+    expect(definitionService.listAll).toHaveBeenCalledTimes(1);
+    expect(templateService.listAll).toHaveBeenCalledTimes(1);
+    (templateService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+  });
+
+  it('shows the chart count from the list response', async () => {
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { ...mockDefinitions[0], chart_count: 8 },
+      { ...mockDefinitions[1], chart_count: 0 },
+    ]);
+    render(
+      <MemoryRouter>
+        <List />
+      </MemoryRouter>
+    );
+    const firstRow = (await screen.findByText('My Stack')).closest('tr') as HTMLElement;
+    expect(within(firstRow).getByText('8')).toBeInTheDocument();
+    const secondRow = screen.getByText('API Stack').closest('tr') as HTMLElement;
+    expect(within(secondRow).getByText('0')).toBeInTheDocument();
+    expect(within(secondRow).queryByText('—')).not.toBeInTheDocument();
+  });
+
   it('shows Import button', async () => {
-    (definitionService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     render(
       <MemoryRouter>
         <List />
@@ -107,7 +166,7 @@ describe('Stack Definitions List', () => {
   });
 
   it('shows error on failure', async () => {
-    (definitionService.list as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('error'));
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('error'));
     render(
       <MemoryRouter>
         <List />
@@ -187,7 +246,7 @@ describe('Stack Definitions List', () => {
   });
 
   it('shows empty state when no definitions exist', async () => {
-    (definitionService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     render(
       <MemoryRouter>
         <List />
