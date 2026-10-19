@@ -226,7 +226,7 @@ Event subscriptions and action subscriptions are both in the `HOOKS_CONFIG_FILE`
 - **`secret_env`** names an environment variable that holds the HMAC secret. You can commit the file to version control. The secrets stay in the environment (mounted from a Kubernetes Secret, Vault, and so on).
 - If you set `secret_env`, the variable must be non-empty. Otherwise the backend refuses to start.
 - An empty `secret_env` disables HMAC signing for that subscriber. Do this only for internal communication on a trust boundary, for example localhost.
-- `timeout_seconds`: events default to 5 s (maximum 1800 s). Actions default to 30 s (maximum 600 s).
+- `timeout_seconds`: events default to 5 s (maximum 3600 s). Actions default to 30 s (maximum 600 s).
 - `failure_policy`: `fail` or `ignore`. The default is `ignore`.
 - `name` must be unique, and `url` must be an `http` or `https` URL.
 - Actions also accept optional UI fields: `label`, `confirm`, `parameters` and `log_path`. See [Actions in the web UI](#actions-in-the-web-ui).
@@ -347,7 +347,7 @@ A normal `post-deploy` subscriber is fire-and-forget. The stack is `running` and
 
 - The deployer calls the blocking subscriber after the Helm releases are ready and waits for it. The stack stays `stabilizing`.
 - `LOG:` lines (the streaming protocol above) go to the deploy log and to the live log view.
-- `timeout_seconds` (maximum 1800) limits the call. The wait has its own time limit: the sum of the blocking timeouts plus one minute. The Helm deploy budget does not change.
+- `timeout_seconds` (maximum 3600) limits the call. The wait has its own time limit: the sum of the blocking timeouts plus one minute. The Helm deploy budget does not change.
 - Only after the subscriber returned: status `running`, "Deployment succeeded", the other `post-deploy` subscribers, `deploy-finalized`.
 - A failure, a denial or a timeout has this result:
   - With `failure_policy: fail`, the deploy fails. The status is `error`, and `error_message` has the hook reason (never the URL).
@@ -543,7 +543,7 @@ The server makes **outbound** HTTPS (or HTTP) connections to subscriber URLs. A 
 
 `failure_policy: fail` on a `pre-*` event blocks the operation when the subscriber fails. Use it with care. A broken subscriber can halt every deploy. For anything non-critical, use `ignore` and add alerting.
 
-Per-call timeouts limit the worst case. The default is 5 s for events and 30 s for actions. The maximum is 30 minutes for events and 10 minutes for actions.
+Per-call timeouts limit the worst case. The default is 5 s for events and 30 s for actions. The maximum is 60 minutes for events and 10 minutes for actions.
 
 ### Do not trust outbound URLs in a hostile environment
 
@@ -643,7 +643,7 @@ A `deploy-finalized` subscriber posts to Slack when the deploy failed. It return
 
 ### CI trigger gate: build images before deploy
 
-A `pre-deploy` subscriber has `failure_policy: fail` and a long timeout (up to 1800 s). It checks whether container images exist for the branch of the deploy. When images are missing, it triggers CI builds (Azure DevOps, GitHub Actions, GitLab CI, and so on) and polls until they complete.
+A `pre-deploy` subscriber has `failure_policy: fail` and a long timeout (up to 3600 s). It checks whether container images exist for the branch of the deploy. When images are missing, it triggers CI builds (Azure DevOps, GitHub Actions, GitLab CI, and so on) and polls until they complete.
 
 The core sends `charts` with `source_repo_url`, `build_pipeline_id`, `branch` and `image_tag` (the `{{.ImageTag}}` value of that chart) in the `pre-deploy` envelope. It also sends `metadata.registry_url` for registry lookups. The subscriber uses the streaming progress protocol to show the build status in the deployment log.
 

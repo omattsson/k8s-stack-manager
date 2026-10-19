@@ -80,7 +80,7 @@ therefore commit the file to version control.
 - `name`: required. It must be unique.
 - `events`: required. At least one known event.
 - `url`: required. It must be an `http` or `https` URL with a host.
-- `timeout_seconds`: optional. Default 5, maximum 1800 (30 minutes, for gates that wait for CI builds).
+- `timeout_seconds`: optional. Default 5, maximum 3600 (60 minutes, for gates that wait for CI builds and free CI agents).
 - `blocking`: optional. Default `false`. Only for `post-deploy`: the subscription must list `post-deploy`, or the startup fails. See [Blocking post-deploy subscribers](#blocking-post-deploy-subscribers).
 - `failure_policy`: optional. Default `ignore`. Set `fail` to block on an error.
 - `secret_env`: optional. It names an environment variable that holds the HMAC (hash-based message authentication code) secret. If you set it, the variable must be non-empty in the process environment. Otherwise the startup fails (fail closed).
@@ -247,7 +247,7 @@ the deploy waits for the subscriber:
 2. The subscriber can stream `LOG: <message>` lines (the same protocol as
    `pre-deploy`). They go to the deploy log and to the WebSocket log stream.
    The deploy log keeps the last 16 KiB of these lines.
-3. Each call is limited by its `timeout_seconds` (maximum 1800). The blocking
+3. Each call is limited by its `timeout_seconds` (maximum 3600). The blocking
    phase has its own time limit: the sum of the timeouts of the blocking
    subscribers plus one minute. It does not change the Helm deploy budget.
 4. After all blocking subscribers returned, the instance gets `running`, the
@@ -676,7 +676,7 @@ signed request. Job log reads carry a signed `ts` query parameter (see
 ### Failure policy and blast radius
 
 - `failure_policy=fail` on a `pre-*` event blocks the operation when the subscriber fails. Use it with care. A broken subscriber can halt all deploys.
-- Every hook has a per-call timeout. The default is 5 s for events and 30 s for actions. The maximum is 30 minutes (1800 s) for events and 10 minutes (600 s) for actions.
+- Every hook has a per-call timeout. The default is 5 s for events and 30 s for actions. The maximum is 60 minutes (3600 s) for events and 10 minutes (600 s) for actions.
 - Dispatch is synchronous and follows the registration order. A `fail` subscription that errors prevents later subscriptions of the same event from running.
 - A blocking `post-deploy` subscription with `failure_policy=fail` fails the deploy when it fails. Use `ignore` when the post-deploy work is optional.
 

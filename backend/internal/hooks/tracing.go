@@ -74,10 +74,10 @@ func init() {
 		"hook.dispatch_duration",
 		metric.WithDescription("Per-subscriber dispatch duration (POST + wait for response)"),
 		metric.WithUnit("s"),
-		// Hook dispatch: 10 ms to 30 min (the hook timeout maximum; pre-deploy CI gates and
+		// Hook dispatch: 10 ms to 60 min (the hook timeout maximum; pre-deploy CI gates and
 		// blocking post-deploy hooks wait minutes). The OpenTelemetry default buckets (0 to 10000) are for
 		// milliseconds: in seconds every value fell into the first bucket.
-		metric.WithExplicitBucketBoundaries(0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 300, 900, 1800),
+		metric.WithExplicitBucketBoundaries(0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 300, 900, 1800, 3600),
 	)
 	if err != nil {
 		otel.Handle(err)

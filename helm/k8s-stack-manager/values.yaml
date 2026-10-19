@@ -590,7 +590,7 @@ hooks:
   # - name: ci-trigger-gate
   #   events: ["pre-deploy"]
   #   url: "http://ci-trigger-gate.extensions.svc.cluster.local:8080/hook"
-  #   timeout_seconds: 600
+  #   timeout_seconds: 1800
   #   failure_policy: fail
   #   secret_env: CI_TRIGGER_WEBHOOK_SECRET
   actions: []
