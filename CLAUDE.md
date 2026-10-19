@@ -64,6 +64,7 @@ startHTTPServer              # main server, optional pprof and metrics servers
 | Coverage (80% threshold) | `cd backend && make test-coverage` |
 | Format | `make fmt` |
 | Lint | `make lint` (`go vet` and `npm run lint`) |
+| Security scan (backend) | `make gosec` (`scripts/gosec.sh`: pinned gosec built with the local Go, run inside `backend/`, as in CI) |
 | Install dependencies | `make install` |
 | Helm lint | `make helm-lint` |
 | Helm dry-run render | `make helm-template` |

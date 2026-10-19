@@ -35,7 +35,7 @@ Store new facts without asking: cluster state, endpoint URLs, deploy topology, c
 - **Frontend**: Compose runs the Vite dev server (`npm run dev`, `:3000`). It proxies `/api` and `/ws` to `backend:8081`. The `production` stage uses `nginx-unprivileged` on `:8080`. The image `nginx.conf` proxies `/api` and `/ws` to `backend:8081`. The Helm chart replaces it with an single-page application (SPA)-only ConfigMap, and the ingress routes `/api` and `/ws`.
 - **Ports**: backend `8081`, frontend `3000`.
 - **Deploy variables**: `KUBECONFIG_PATH`, `HELM_BINARY`, `DEPLOYMENT_TIMEOUT` (default 10m), `MAX_CONCURRENT_DEPLOYS` (default 5).
-- **CI** (`.github/workflows/`): `pull-request.yml` (title check, Go 1.27, gofmt, Node 26, lint, tests, Helm lint, `make helm-test`, Markdown lint), `security-scan.yml`, `codeql.yml`, `docker-build.yml`, `helm-release.yml` (chart-releaser).
+- **CI** (`.github/workflows/`): `pull-request.yml` (title check, Go 1.27, gofmt, gosec via `scripts/gosec.sh`, Node 26, lint, tests, Helm lint, `make helm-test`, Markdown lint), `security-scan.yml`, `codeql.yml`, `docker-build.yml`, `helm-release.yml` (chart-releaser).
 
 ## Helm chart (`helm/k8s-stack-manager/`)
 

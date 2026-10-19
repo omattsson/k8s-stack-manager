@@ -159,10 +159,11 @@ jobs:
           cache: true
           cache-dependency-path: backend/go.sum
 
+      # scripts/gosec.sh builds the pinned gosec with the Go above and runs it
+      # inside backend/ (the Docker action has its own Go and scanned 0 files
+      # from the repository root). See the script for details.
       - name: Run Gosec Security Scanner
-        uses: securego/gosec@v2.29.0
-        with:
-          args: ./backend/...
+        run: scripts/gosec.sh
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
