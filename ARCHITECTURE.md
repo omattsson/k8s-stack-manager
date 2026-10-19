@@ -126,7 +126,7 @@ Other hook events that the backend dispatches are: `deploy-finalized`, `deploy-t
 - **User.Disabled.** An `admin` can disable accounts. This blocks login, token refresh, OIDC login, and API-key auth at once.
 - **Sessions.** A login starts a refresh-token family (`refresh_tokens.family_id`, also the `sid` claim of the access token).
   - A rotation keeps the family and its start time.
-  - A session ends after `SESSION_MAX_LIFETIME`, or after `SESSION_IDLE_TIMEOUT` without requests. The JWT middleware records the request activity, at most one write each minute for each session.
+  - A session ends after `SESSION_MAX_LIFETIME`, or after `SESSION_IDLE_TIMEOUT` without requests. The JWT middleware records the request activity, at most one write for each session per interval: a quarter of `SESSION_IDLE_TIMEOUT`, at most 1 minute and at least 1 second.
   - A just-rotated token gets an access token inside `REFRESH_REUSE_GRACE`. Other reuse revokes the family.
   - See [WIKI.md](WIKI.md#sessions).
 - **Rate limits.** A per-IP limiter works on `/api/v1` (`RATE_LIMIT`, default 100 each minute). A stricter login limiter works on the login and refresh routes (`LOGIN_RATE_LIMIT`, default 10 each minute).

@@ -2,7 +2,9 @@ name: E2E Tests
 
 # Runs the Playwright end-to-end tests (frontend/e2e) against a real backend and
 # MySQL through `make test-e2e`. The runner has no cluster, so the specs that
-# need one are skipped (see E2E_KUBECONFIG in the Makefile).
+# need one are skipped (see E2E_KUBECONFIG in the Makefile). After the main
+# suite, `make test-e2e` restarts the backend with short session limits and
+# runs the session lifecycle spec (report in playwright-report-session/).
 
 on:
   pull_request:
@@ -77,6 +79,8 @@ jobs:
           path: |
             frontend/playwright-report/
             frontend/test-results/
+            frontend/playwright-report-session/
+            frontend/test-results-session/
             frontend/test-logs/
           retention-days: 14
           if-no-files-found: ignore

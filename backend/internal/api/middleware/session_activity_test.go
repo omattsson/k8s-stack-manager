@@ -253,3 +253,242 @@ func TestAuthRequiredWithOptions_SessionActivityDeadline(t *testing.T) {
 		t.Fatal("activity hook was not called")
 	}
 }
+
+func TestSessionActivityInterval(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		idle time.Duration
+		want time.Duration
+	}{
+		{name: "unset idle timeout keeps one minute", idle: 0, want: time.Minute},
+		{name: "negative idle timeout keeps one minute", idle: -time.Second, want: time.Minute},
+		{name: "default 30m idle timeout caps at one minute", idle: 30 * time.Minute, want: time.Minute},
+		{name: "4m idle timeout gives exactly one minute", idle: 4 * time.Minute, want: time.Minute},
+		{name: "2m idle timeout gives a quarter", idle: 2 * time.Minute, want: 30 * time.Second},
+		{name: "20s idle timeout gives a quarter", idle: 20 * time.Second, want: 5 * time.Second},
+		{name: "4s idle timeout gives the floor", idle: 4 * time.Second, want: time.Second},
+		{name: "very short idle timeout gives the floor", idle: 2 * time.Second, want: time.Second},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, SessionActivityInterval(tt.idle))
+		})
+	}
+}
+
+// fakeClock is a manually advanced clock for sessionActivityTracker.now.
+type fakeClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func (c *fakeClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+func (c *fakeClock) Advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.t = c.t.Add(d)
+}
+
+// timedActivityRecorder records the activity times that the tracker writes.
+type timedActivityRecorder struct {
+	mu  sync.Mutex
+	ats []time.Time
+}
+
+func (r *timedActivityRecorder) fn(_ context.Context, _ string, at time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.ats = append(r.ats, at)
+	return nil
+}
+
+func (r *timedActivityRecorder) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.ats)
+}
+
+func (r *timedActivityRecorder) last() time.Time {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.ats[len(r.ats)-1]
+}
+
+func TestNewSessionActivityTracker_Interval(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		interval time.Duration
+		want     time.Duration
+	}{
+		{name: "zero keeps one minute", interval: 0, want: time.Minute},
+		{name: "negative keeps one minute", interval: -time.Second, want: time.Minute},
+		{name: "explicit interval is used", interval: 5 * time.Second, want: 5 * time.Second},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tr := newSessionActivityTracker(newActivityRecorder().fn, tt.interval)
+			require.NotNil(t, tr)
+			assert.Equal(t, tt.want, tr.interval)
+		})
+	}
+
+	assert.Nil(t, newSessionActivityTracker(nil, time.Second), "nil hook gives a nil tracker")
+}
+
+func TestSessionActivityTracker_Throttle(t *testing.T) {
+	t.Parallel()
+
+	const interval = 5 * time.Second
+	tests := []struct {
+		name      string
+		steps     []time.Duration // clock advance before each touch
+		wantCalls int
+	}{
+		{name: "two touches within the interval write once", steps: []time.Duration{0, interval - time.Millisecond}, wantCalls: 1},
+		{name: "touch after the interval writes again", steps: []time.Duration{0, interval}, wantCalls: 2},
+		{name: "touches within then after the interval", steps: []time.Duration{0, time.Second, time.Second, 3 * time.Second}, wantCalls: 2},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			rec := &timedActivityRecorder{}
+			clock := &fakeClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+			tr := newSessionActivityTracker(rec.fn, interval)
+			tr.now = clock.Now
+
+			for _, d := range tt.steps {
+				clock.Advance(d)
+				tr.touch(context.Background(), "fam-throttle")
+			}
+
+			assert.Eventually(t, func() bool { return rec.count() == tt.wantCalls },
+				2*time.Second, 5*time.Millisecond)
+			time.Sleep(20 * time.Millisecond)
+			assert.Equal(t, tt.wantCalls, rec.count())
+		})
+	}
+}
+
+// An active session must never look idle to the refresh handler, which
+// rejects a refresh when now - LastActivity > SESSION_IDLE_TIMEOUT. The test
+// simulates a request every 3s for 2 minutes with the e2e settings
+// (idle=20s) and checks the recorded activity lag at every request. The
+// fixed one-minute interval (the old behavior) fails this check.
+func TestSessionActivityTracker_ActiveSessionStaysWithinIdleTimeout(t *testing.T) {
+	t.Parallel()
+
+	const idle = 20 * time.Second
+	const requestEvery = 3 * time.Second
+	tests := []struct {
+		name     string
+		interval time.Duration
+		wantIdle bool // true: the recorded activity falls behind the idle timeout
+	}{
+		{name: "interval derived from idle timeout", interval: SessionActivityInterval(idle), wantIdle: false},
+		{name: "fixed one-minute interval", interval: time.Minute, wantIdle: true},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			rec := &timedActivityRecorder{}
+			clock := &fakeClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+			tr := newSessionActivityTracker(rec.fn, tt.interval)
+			tr.now = clock.Now
+
+			idleSeen := false
+			for elapsed := time.Duration(0); elapsed <= 2*time.Minute; elapsed += requestEvery {
+				before := rec.count()
+				tr.touch(context.Background(), "fam-active")
+				// The tracker stores the time of each scheduled write; wait
+				// for the async write when this touch scheduled one.
+				if prev, ok := tr.lastSeen.Get("fam-active"); ok && prev.Equal(clock.Now().UTC()) {
+					require.Eventually(t, func() bool { return rec.count() > before },
+						2*time.Second, time.Millisecond)
+				}
+				// A refresh right before the next request.
+				refreshAt := clock.Now().Add(requestEvery - time.Millisecond)
+				if refreshAt.Sub(rec.last()) > idle {
+					idleSeen = true
+				}
+				clock.Advance(requestEvery)
+			}
+			assert.Equal(t, tt.wantIdle, idleSeen)
+		})
+	}
+}
+
+// The interval set in JWTAuthOptions and APIKeyAuthDeps reaches the tracker:
+// with a 30ms interval a second request after 40ms writes again, with the
+// default (one minute) it does not.
+func TestAuthMiddleware_SessionActivityIntervalOption(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		combined  bool
+		interval  time.Duration
+		wantCalls int
+	}{
+		{name: "JWT options short interval writes twice", interval: 30 * time.Millisecond, wantCalls: 2},
+		{name: "JWT options default interval writes once", interval: 0, wantCalls: 1},
+		{name: "combined deps short interval writes twice", combined: true, interval: 30 * time.Millisecond, wantCalls: 2},
+		{name: "combined deps default interval writes once", combined: true, interval: 0, wantCalls: 1},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			rec := newActivityRecorder()
+			var r *gin.Engine
+			if tt.combined {
+				r = buildCombinedAuthRouter(APIKeyAuthDeps{
+					JWTSecret:               combinedTestSecret,
+					APIKeyRepo:              newTestAPIKeyRepo(),
+					UserRepo:                newTestUserRepo(),
+					OnSessionActivity:       rec.fn,
+					SessionActivityInterval: tt.interval,
+				})
+			} else {
+				gin.SetMode(gin.TestMode)
+				r = gin.New()
+				r.Use(AuthRequiredWithOptions(JWTAuthOptions{
+					JWTSecret:               combinedTestSecret,
+					OnSessionActivity:       rec.fn,
+					SessionActivityInterval: tt.interval,
+				}))
+				r.GET("/test", func(c *gin.Context) { c.Status(http.StatusOK) })
+			}
+
+			headers := map[string]string{"Authorization": "Bearer " + makeSessionJWT(t, "fam-option")}
+			require.Equal(t, http.StatusOK, doGET(r, headers).Code)
+			assert.Eventually(t, func() bool { return rec.total() == 1 }, 2*time.Second, 5*time.Millisecond)
+			time.Sleep(40 * time.Millisecond)
+			require.Equal(t, http.StatusOK, doGET(r, headers).Code)
+
+			if tt.wantCalls > 1 {
+				assert.Eventually(t, func() bool { return rec.total() == tt.wantCalls },
+					2*time.Second, 5*time.Millisecond)
+			}
+			time.Sleep(20 * time.Millisecond)
+			assert.Equal(t, tt.wantCalls, rec.total())
+		})
+	}
+}

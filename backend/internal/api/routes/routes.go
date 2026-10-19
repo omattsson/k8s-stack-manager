@@ -222,6 +222,9 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 			// Each authenticated JWT request keeps the refresh-token
 			// family alive for the idle timeout (throttled per session).
 			OnSessionActivity: deps.SessionActivity,
+			// Write activity often enough that a recorded activity lags
+			// at most a quarter of the idle timeout (1s to 1m).
+			SessionActivityInterval: middleware.SessionActivityInterval(cfg.Auth.SessionIdleTimeout),
 		})
 
 		// Auth — login and refresh are public; register requires auth.

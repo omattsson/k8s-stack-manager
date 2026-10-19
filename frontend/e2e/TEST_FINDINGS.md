@@ -144,10 +144,11 @@ The tests use the lowest role that the page or the API needs. The helpers are in
 ```bash
 make test-e2e                          # starts MySQL and the backend, runs Playwright
 E2E_KUBECONFIG=~/.kube/local-cluster.yaml make test-e2e   # also run the specs that need a cluster
+make test-e2e-session                  # only the session lifecycle spec (short session limits)
 cd frontend && PW_WORKERS=1 npx playwright test   # run against a backend that you started
 ```
 
-`make test-e2e` writes the logs to `frontend/test-logs/` (`backend.log` and `playwright.log`). The Playwright configuration starts the Vite dev server (`npm run dev`) when none runs.
+`make test-e2e` writes the logs to `frontend/test-logs/` (`backend.log` and `playwright.log`). After the main suite it restarts the backend with short session limits (`E2E_SESSION_*` in the Makefile) and runs `session-lifecycle.spec.ts` (project `session`). That phase writes `backend-session.log` and `playwright-session.log`, and its report and traces go to `playwright-report-session/` and `test-results-session/`. A failed main suite does not skip the session phase; the target fails at the end. The Playwright configuration starts the Vite dev server (`npm run dev`) when none runs.
 
 Isolation: `make test-e2e` uses its own database (`E2E_DB_NAME`, default `app_e2e`) and creates it fresh on each run, so the tests always start empty. The dev database can hold cluster rows with an absolute kubeconfig path (`make dev-local` stores `~/.kube/config`). The backend runs with `HOME=backend/tmp/e2e-home`. An in-cluster cluster outside a pod falls back to `$HOME/.kube/config`, and Helm reads `KUBECONFIG` or `$HOME/.kube/config`. So both see only a copy of `E2E_KUBECONFIG` (an absolute path, or a path relative to the repository root), or no kubeconfig at all. The specs that need a cluster skip themselves without `E2E_KUBECONFIG`. Set it only to a local cluster (for example Rancher Desktop or kind), never to a shared cluster: the specs create and delete stack namespaces.
 

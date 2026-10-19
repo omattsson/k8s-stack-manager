@@ -40,6 +40,10 @@ type MockRefreshTokenRepository struct {
 	countHook  func(call int)
 	countCalls int
 	countErr   error // returned by CountActiveInFamily when set
+	// txHook, when set, runs at the start of each WithTx call, before the
+	// transaction reads anything. Tests use it to commit a concurrent write
+	// (for example TouchFamily) between a handler read and its transaction.
+	txHook func()
 }
 
 func NewMockRefreshTokenRepository() *MockRefreshTokenRepository {
@@ -216,6 +220,10 @@ func (m *MockRefreshTokenRepository) CountActiveForUser(userID string) (int64, e
 func (m *MockRefreshTokenRepository) WithTx(fn func(models.RefreshTokenRepository) error) error {
 	m.txMu.Lock()
 	defer m.txMu.Unlock()
+
+	if m.txHook != nil {
+		m.txHook()
+	}
 
 	m.mu.RLock()
 	staged := &MockRefreshTokenRepository{

@@ -584,7 +584,7 @@ A login (local or SSO) starts a session. The session has one refresh token at a 
 
 How the limits work together:
 
-- The idle time counts from the last authenticated request, not from the last refresh. Each request with a session access token updates the session activity (at most one database write each minute for each session). API-key requests do not change sessions.
+- The idle time counts from the last authenticated request, not from the last refresh. Each request with a session access token updates the session activity (at most one database write for each session per interval: a quarter of `SESSION_IDLE_TIMEOUT`, at most 1 minute and at least 1 second; so a session can count as idle about one interval before the full timeout). API-key requests do not change sessions.
 - A refresh never extends the session. A new refresh token expires at the earlier time of `now + REFRESH_TOKEN_EXPIRATION` and `login time + SESSION_MAX_LIFETIME`.
 - After `SESSION_MAX_LIFETIME`, the user must log in again. An SSO login reads the role and the account state from the identity provider again. So a role change in the identity provider applies at the latest after `SESSION_MAX_LIFETIME` plus one `ACCESS_TOKEN_EXPIRATION`.
 - Two browser tabs can refresh at the same time with the same cookie. The second request presents a token that the first request just rotated. Inside `REFRESH_REUSE_GRACE`, it gets a new access token and no new cookie. Nothing is revoked.

@@ -278,7 +278,8 @@ See the [stackctl README](https://github.com/omattsson/stackctl) for all command
 | `make test-backend` | Run the backend unit tests |
 | `make test-frontend` | Run the frontend unit tests |
 | `make test-backend-all` | Run the backend unit and integration tests (starts MySQL) |
-| `make test-e2e` | Run the end-to-end Playwright tests (starts MySQL and the backend; set `E2E_KUBECONFIG` to a local cluster for the specs that need one) |
+| `make test-e2e` | Run the end-to-end Playwright tests (starts MySQL and the backend; set `E2E_KUBECONFIG` to a local cluster for the specs that need one), then the session lifecycle tests with short session limits |
+| `make test-e2e-session` | Run only the session lifecycle e2e tests (backend with short session limits) |
 | `make docs` | Regenerate the Swagger documentation |
 | `make fmt` | Format the backend and frontend code |
 | `make lint` | Lint the backend (`go vet`) and the frontend |
