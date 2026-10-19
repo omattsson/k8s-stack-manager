@@ -16,7 +16,6 @@ const (
 	msgPolicyIDRequired = "Policy ID is required"
 )
 
-
 // CleanupPolicyHandler handles CRUD and manual execution of cleanup policies.
 type CleanupPolicyHandler struct {
 	repo      models.CleanupPolicyRepository
@@ -70,7 +69,6 @@ func (h *CleanupPolicyHandler) CreateCleanupPolicy(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
 
 	if _, err := scheduler.ParseCondition(policy.Condition); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

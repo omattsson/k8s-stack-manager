@@ -5,7 +5,7 @@
 K8s Stack Manager is a full-stack application.
 - Backend: Go (Gin). Frontend: React (TypeScript, Vite, MUI). Data store: MySQL (GORM).
 - Docker Compose runs all services.
-- Versions: Go 1.26 (`backend/go.mod`; the images build with `golang:1.27`), Node 22.12 or later (Vitest needs `^22.12 || ^24 || >=26`; the images use `node:26-alpine`).
+- Versions: Go 1.27 (`backend/go.mod`; CI uses Go 1.27 and the images build with `golang:1.27.2`), Node 22.12 or later (Vitest needs `^22.12 || ^24 || >=26`; the images use `node:26-alpine`).
 
 **Bootstrap flow.** `backend/api/main.go` calls helpers in `backend/api/bootstrap.go` in this order:
 
@@ -64,6 +64,7 @@ startHTTPServer              # main server, optional pprof and metrics servers
 | Coverage (80% threshold) | `cd backend && make test-coverage` |
 | Format | `make fmt` |
 | Lint | `make lint` (`go vet` and `npm run lint`) |
+| Security scan (backend) | `make gosec` (`scripts/gosec.sh`: pinned gosec built with the local Go, run inside `backend/`, as in CI) |
 | Install dependencies | `make install` |
 | Helm lint | `make helm-lint` |
 | Helm dry-run render | `make helm-template` |

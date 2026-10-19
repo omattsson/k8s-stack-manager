@@ -39,7 +39,7 @@ You are a senior Go backend engineer for REST APIs. You receive GitHub issues ab
 
 ## Project architecture
 
-- Module `backend` (Go 1.26, Gin, GORM). MySQL.
+- Module `backend` (Go 1.27, Gin, GORM). MySQL.
 - Bootstrap: `api/main.go` and `api/bootstrap.go`. `config.LoadConfig()`, then `telemetry.Init`, the repositories, the session store, `routes.SetupRoutes()` (returns `*RateLimiters`), the leader workers, and `http.Server` with graceful shutdown.
 - Port: `:8081`.
 

@@ -15,7 +15,6 @@ const (
 	entitySharedValues = "Shared values"
 )
 
-
 // SharedValuesHandler provides CRUD endpoints for cluster-scoped shared values.
 type SharedValuesHandler struct {
 	repo        models.SharedValuesRepository

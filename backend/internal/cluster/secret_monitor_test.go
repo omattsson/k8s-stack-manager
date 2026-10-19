@@ -74,8 +74,8 @@ func TestSecretMonitor_PruneWarned(t *testing.T) {
 		Interval:     1 * time.Hour,
 	})
 
-	stale := time.Now().Add(-3 * secretWarnCooldown)   // 72h ago, well past 2*24h cutoff
-	fresh := time.Now().Add(-12 * time.Hour)            // 12h ago, within 48h cutoff
+	stale := time.Now().Add(-3 * secretWarnCooldown) // 72h ago, well past 2*24h cutoff
+	fresh := time.Now().Add(-12 * time.Hour)         // 12h ago, within 48h cutoff
 
 	m.mu.Lock()
 	m.warned["cluster-1/ns-1/old-secret"] = stale

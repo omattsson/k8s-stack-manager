@@ -17,8 +17,6 @@ const (
 
 const logKeyFavUserID = "user_id"
 
-
-
 // FavoriteHandler handles user favorites endpoints.
 type FavoriteHandler struct {
 	favoriteRepo models.UserFavoriteRepository

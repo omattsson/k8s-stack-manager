@@ -27,10 +27,10 @@ var (
 // hooksMetrics holds pre-created metric instruments. Instruments are created
 // once at init and reused for every dispatch.
 type hooksMetrics struct {
-	dispatchTotal     metric.Int64Counter
-	dispatchDuration  metric.Float64Histogram
-	actionTotal       metric.Int64Counter
-	actionDuration    metric.Float64Histogram
+	dispatchTotal    metric.Int64Counter
+	dispatchDuration metric.Float64Histogram
+	actionTotal      metric.Int64Counter
+	actionDuration   metric.Float64Histogram
 }
 
 var hmetrics hooksMetrics

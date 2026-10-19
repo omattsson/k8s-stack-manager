@@ -58,7 +58,7 @@ The pull request title must use the [Conventional Commits](https://www.conventio
 ### Prerequisites
 
 - Docker and Docker Compose
-- Go 1.26 or later (backend development)
+- Go 1.27 or later (backend development)
 - Node.js 22.12 or later (frontend development). CI and the Docker images use Node.js 26.
 - Helm 3 (chart development)
 

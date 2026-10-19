@@ -185,7 +185,9 @@ func (d *Dispatcher) post(ctx context.Context, ch *models.NotificationChannel, e
 		return 0, fmt.Errorf("sending request: %w", err)
 	}
 	defer resp.Body.Close()
-	io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBody))
+	// Drain the body so the connection can be reused. A read error does not
+	// change the delivery result, which depends on the status code only.
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBody))
 
 	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
 		// The Location header is not in the message.

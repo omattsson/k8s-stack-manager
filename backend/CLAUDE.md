@@ -1,7 +1,7 @@
 # Backend: Go Instructions
 
 ## Project Layout
-The module is `backend` (see `go.mod`, Go 1.26). Use `internal/` for private packages and `pkg/` for shared utilities (`pkg/dberrors/`, `pkg/crypto/`, `pkg/utils/`). Shared test utilities are in `internal/test/test_helpers.go`.
+The module is `backend` (see `go.mod`, Go 1.27). Use `internal/` for private packages and `pkg/` for shared utilities (`pkg/dberrors/`, `pkg/crypto/`, `pkg/utils/`). Shared test utilities are in `internal/test/test_helpers.go`.
 
 Domain packages in `internal/`:
 - `auth`: OIDC provider (PKCE).

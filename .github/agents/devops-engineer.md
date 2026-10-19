@@ -94,7 +94,7 @@ Do not run `make fmt` on the whole tree. Many Go files have existing `gofmt` dif
 
 ### CI (`.github/workflows/`)
 
-- `pull-request.yml`: pull request (PR) title check, Go 1.26, Node 26, lint, tests, build, Helm lint, `make helm-test`, Markdown lint.
+- `pull-request.yml`: pull request (PR) title check, Go 1.27, gofmt, gosec via `scripts/gosec.sh`, Node 26, lint, tests, build, Helm lint, `make helm-test`, Markdown lint.
 - `security-scan.yml`, `codeql.yml`, `docker-build.yml`, `helm-release.yml` (chart-releaser).
 
 ## Rules

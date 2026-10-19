@@ -266,7 +266,9 @@ func gracefulShutdown(srvs *servers, timeout time.Duration, deps shutdownDeps) {
 	//    before the hub and the database close.
 	deps.wsFanout.Stop()
 	deps.hub.Shutdown()
-	deps.clusterRegistry.Close()
+	if err := deps.clusterRegistry.Close(); err != nil {
+		slog.Warn("Failed to close the cluster registry", "error", err)
+	}
 	if deps.notifier != nil {
 		deps.notifier.Stop()
 	}

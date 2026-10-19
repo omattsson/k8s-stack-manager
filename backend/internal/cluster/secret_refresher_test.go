@@ -21,15 +21,19 @@ type mockInstanceRepo struct {
 	instances []models.StackInstance
 }
 
-func (m *mockInstanceRepo) Create(_ *models.StackInstance) error                   { return nil }
-func (m *mockInstanceRepo) FindByID(_ string) (*models.StackInstance, error)       { return nil, fmt.Errorf("not found") }
+func (m *mockInstanceRepo) Create(_ *models.StackInstance) error { return nil }
+func (m *mockInstanceRepo) FindByID(_ string) (*models.StackInstance, error) {
+	return nil, fmt.Errorf("not found")
+}
 func (m *mockInstanceRepo) FindByNamespace(_ string) (*models.StackInstance, error) { return nil, nil }
-func (m *mockInstanceRepo) Update(_ *models.StackInstance) error                   { return nil }
-func (m *mockInstanceRepo) Delete(_ string) error                                  { return nil }
-func (m *mockInstanceRepo) List() ([]models.StackInstance, error)                  { return nil, nil }
-func (m *mockInstanceRepo) ListPaged(_ models.StackInstanceFilter, _, _ int) ([]models.StackInstance, int, error) { return nil, 0, nil }
-func (m *mockInstanceRepo) ListByOwner(_ string) ([]models.StackInstance, error)   { return nil, nil }
-func (m *mockInstanceRepo) FindByName(_ string) ([]models.StackInstance, error)    { return nil, nil }
+func (m *mockInstanceRepo) Update(_ *models.StackInstance) error                    { return nil }
+func (m *mockInstanceRepo) Delete(_ string) error                                   { return nil }
+func (m *mockInstanceRepo) List() ([]models.StackInstance, error)                   { return nil, nil }
+func (m *mockInstanceRepo) ListPaged(_ models.StackInstanceFilter, _, _ int) ([]models.StackInstance, int, error) {
+	return nil, 0, nil
+}
+func (m *mockInstanceRepo) ListByOwner(_ string) ([]models.StackInstance, error) { return nil, nil }
+func (m *mockInstanceRepo) FindByName(_ string) ([]models.StackInstance, error)  { return nil, nil }
 func (m *mockInstanceRepo) FindByCluster(clusterID string) ([]models.StackInstance, error) {
 	var result []models.StackInstance
 	for _, inst := range m.instances {
@@ -39,20 +43,28 @@ func (m *mockInstanceRepo) FindByCluster(clusterID string) ([]models.StackInstan
 	}
 	return result, nil
 }
-func (m *mockInstanceRepo) CountByClusterAndOwner(_, _ string) (int, error) { return 0, nil }
-func (m *mockInstanceRepo) CountAll() (int, error)                           { return 0, nil }
-func (m *mockInstanceRepo) CountByStatus(_ string) (int, error)              { return 0, nil }
+func (m *mockInstanceRepo) CountByClusterAndOwner(_, _ string) (int, error)         { return 0, nil }
+func (m *mockInstanceRepo) CountAll() (int, error)                                  { return 0, nil }
+func (m *mockInstanceRepo) CountByStatus(_ string) (int, error)                     { return 0, nil }
 func (m *mockInstanceRepo) CountByDefinitionIDs(_ []string) (map[string]int, error) { return nil, nil }
-func (m *mockInstanceRepo) CountByOwnerIDs(_ []string) (map[string]int, error)     { return nil, nil }
-func (m *mockInstanceRepo) ListIDsByDefinitionIDs(_ []string) (map[string][]string, error) { return nil, nil }
-func (m *mockInstanceRepo) ListIDsByOwnerIDs(_ []string) (map[string][]string, error)     { return nil, nil }
+func (m *mockInstanceRepo) CountByOwnerIDs(_ []string) (map[string]int, error)      { return nil, nil }
+func (m *mockInstanceRepo) ListIDsByDefinitionIDs(_ []string) (map[string][]string, error) {
+	return nil, nil
+}
+func (m *mockInstanceRepo) ListIDsByOwnerIDs(_ []string) (map[string][]string, error) {
+	return nil, nil
+}
 func (m *mockInstanceRepo) ExistsByDefinitionAndStatus(_, _ string) (bool, error) { return false, nil }
-func (m *mockInstanceRepo) ListExpired() ([]*models.StackInstance, error)                        { return nil, nil }
-func (m *mockInstanceRepo) ListExpiringSoon(_ time.Duration) ([]*models.StackInstance, error) { return nil, nil }
+func (m *mockInstanceRepo) ListExpired() ([]*models.StackInstance, error)         { return nil, nil }
+func (m *mockInstanceRepo) ListExpiringSoon(_ time.Duration) ([]*models.StackInstance, error) {
+	return nil, nil
+}
 func (*mockInstanceRepo) MarkExpiryWarned(_ string, _, _ time.Time) (bool, error) {
 	return false, nil
 }
-func (m *mockInstanceRepo) ListByStatus(_ string, _ int) ([]*models.StackInstance, error)     { return nil, nil }
+func (m *mockInstanceRepo) ListByStatus(_ string, _ int) ([]*models.StackInstance, error) {
+	return nil, nil
+}
 
 func TestSecretRefresher_RefreshesRunningInstances(t *testing.T) {
 	t.Parallel()

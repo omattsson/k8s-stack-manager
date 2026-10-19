@@ -3878,13 +3878,13 @@ func TestAwaitReadiness_HealthyImmediately(t *testing.T) {
 	k8sClient := k8s.NewClientFromInterface(fakeCS)
 
 	mgr := NewManager(ManagerConfig{
-		Registry:             &mockClusterResolver{helm: &mockHelmExecutor{}, k8sClient: k8sClient},
-		InstanceRepo:         instanceRepo,
-		DeployLogRepo:        logRepo,
-		TxRunner:             &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
-		Hub:                  hub,
-		MaxConcurrent:        2,
-		StabilizeTimeout:     10 * time.Second,
+		Registry:              &mockClusterResolver{helm: &mockHelmExecutor{}, k8sClient: k8sClient},
+		InstanceRepo:          instanceRepo,
+		DeployLogRepo:         logRepo,
+		TxRunner:              &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
+		Hub:                   hub,
+		MaxConcurrent:         2,
+		StabilizeTimeout:      10 * time.Second,
 		StabilizePollInterval: 50 * time.Millisecond,
 	})
 
@@ -3948,13 +3948,13 @@ func TestAwaitReadiness_Timeout(t *testing.T) {
 	k8sClient := k8s.NewClientFromInterface(fakeCS)
 
 	mgr := NewManager(ManagerConfig{
-		Registry:             &mockClusterResolver{helm: &mockHelmExecutor{}, k8sClient: k8sClient},
-		InstanceRepo:         instanceRepo,
-		DeployLogRepo:        logRepo,
-		TxRunner:             &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
-		Hub:                  hub,
-		MaxConcurrent:        2,
-		StabilizeTimeout:     200 * time.Millisecond,
+		Registry:              &mockClusterResolver{helm: &mockHelmExecutor{}, k8sClient: k8sClient},
+		InstanceRepo:          instanceRepo,
+		DeployLogRepo:         logRepo,
+		TxRunner:              &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
+		Hub:                   hub,
+		MaxConcurrent:         2,
+		StabilizeTimeout:      200 * time.Millisecond,
 		StabilizePollInterval: 50 * time.Millisecond,
 	})
 
@@ -4004,13 +4004,13 @@ func TestAwaitReadiness_Disabled_WhenTimeoutZero(t *testing.T) {
 	require.NoError(t, instanceRepo.Create(inst))
 
 	mgr := NewManager(ManagerConfig{
-		Registry:             &mockClusterResolver{helm: &mockHelmExecutor{}},
-		InstanceRepo:         instanceRepo,
-		DeployLogRepo:        logRepo,
-		TxRunner:             &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
-		Hub:                  hub,
-		MaxConcurrent:        2,
-		StabilizeTimeout:     0, // disabled
+		Registry:              &mockClusterResolver{helm: &mockHelmExecutor{}},
+		InstanceRepo:          instanceRepo,
+		DeployLogRepo:         logRepo,
+		TxRunner:              &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
+		Hub:                   hub,
+		MaxConcurrent:         2,
+		StabilizeTimeout:      0, // disabled
 		StabilizePollInterval: 50 * time.Millisecond,
 	})
 

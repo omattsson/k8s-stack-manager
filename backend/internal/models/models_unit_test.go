@@ -102,9 +102,9 @@ func TestItemSetVersion(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		initial    uint
-		setTo      uint
+		name        string
+		initial     uint
+		setTo       uint
 		expectAfter uint
 	}{
 		{name: "set from 0 to 1", initial: 0, setTo: 1, expectAfter: 1},
@@ -153,12 +153,12 @@ func TestHandleError(t *testing.T) {
 	repo := &GenericRepository{db: nil, allowedFilterFields: nil}
 
 	tests := []struct {
-		name      string
-		op        string
-		err       error
-		expectNil bool
+		name         string
+		op           string
+		err          error
+		expectNil    bool
 		wantSentinel error
-		wantOp    string
+		wantOp       string
 	}{
 		{
 			name:      "nil error returns nil",
@@ -298,9 +298,9 @@ func TestStackInstanceValidate_NameLength(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		inst    StackInstance
-		wantErr bool
+		name        string
+		inst        StackInstance
+		wantErr     bool
 		errContains string
 	}{
 		{
@@ -341,9 +341,9 @@ func TestStackInstanceValidate_Namespace(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		inst    StackInstance
-		wantErr bool
+		name        string
+		inst        StackInstance
+		wantErr     bool
 		errContains string
 	}{
 		{

@@ -17,10 +17,10 @@ import (
 // ---- Mock NotificationRepository ----
 
 type mockNotificationRepository struct {
-	mu          sync.Mutex
-	created     []*models.Notification
-	createErr   error
-	callCount   int
+	mu        sync.Mutex
+	created   []*models.Notification
+	createErr error
+	callCount int
 	// disabled maps event type -> user ID -> switched off.
 	disabled    map[string]map[string]bool
 	disabledErr error
@@ -107,11 +107,11 @@ func TestNotify(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name         string
-		hub          *websocket.Hub
-		createErr    error
-		wantErr      bool
-		wantCreated  bool
+		name        string
+		hub         *websocket.Hub
+		createErr   error
+		wantErr     bool
+		wantCreated bool
 	}{
 		{
 			name:        "successful notification creation with nil hub",
@@ -330,17 +330,17 @@ func TestNewNotifier(t *testing.T) {
 // ---- Mock UserRepository ----
 
 type mockUserRepository struct {
-	mu           sync.Mutex
-	users        []models.User
-	listByRolesErr error
+	mu                sync.Mutex
+	users             []models.User
+	listByRolesErr    error
 	listByRolesCalled bool
-	rolesReceived []string
+	rolesReceived     []string
 }
 
-func (m *mockUserRepository) UpdateRole(_, _, _ string) (string, error)    { return "", nil }
-func (m *mockUserRepository) SetDisabled(_, _ string, _ bool) error        { return nil }
-func (m *mockUserRepository) DeleteGuarded(_, _ string) error               { return nil }
-func (m *mockUserRepository) UpdatePassword(_, _ string) error { return nil }
+func (m *mockUserRepository) UpdateRole(_, _, _ string) (string, error) { return "", nil }
+func (m *mockUserRepository) SetDisabled(_, _ string, _ bool) error     { return nil }
+func (m *mockUserRepository) DeleteGuarded(_, _ string) error           { return nil }
+func (m *mockUserRepository) UpdatePassword(_, _ string) error          { return nil }
 func (m *mockUserRepository) UpdateProfile(_ string, _ models.UserProfileUpdate) error {
 	return nil
 }
@@ -357,15 +357,15 @@ func (m *mockUserRepository) ListByRoles(roles []string) ([]models.User, error) 
 }
 
 // Stub methods to satisfy models.UserRepository interface.
-func (m *mockUserRepository) Create(_ *models.User) error                             { return nil }
-func (m *mockUserRepository) FindByID(_ string) (*models.User, error)                 { return nil, nil }
-func (m *mockUserRepository) FindByIDs(_ []string) (map[string]*models.User, error)   { return nil, nil }
-func (m *mockUserRepository) FindByUsername(_ string) (*models.User, error)            { return nil, nil }
-func (m *mockUserRepository) FindByExternalID(_, _ string) (*models.User, error)      { return nil, nil }
-func (m *mockUserRepository) Update(_ *models.User) error                             { return nil }
-func (m *mockUserRepository) Delete(_ string) error                                   { return nil }
-func (m *mockUserRepository) List() ([]models.User, error)                            { return nil, nil }
-func (m *mockUserRepository) Count() (int64, error)                                   { return 0, nil }
+func (m *mockUserRepository) Create(_ *models.User) error                           { return nil }
+func (m *mockUserRepository) FindByID(_ string) (*models.User, error)               { return nil, nil }
+func (m *mockUserRepository) FindByIDs(_ []string) (map[string]*models.User, error) { return nil, nil }
+func (m *mockUserRepository) FindByUsername(_ string) (*models.User, error)         { return nil, nil }
+func (m *mockUserRepository) FindByExternalID(_, _ string) (*models.User, error)    { return nil, nil }
+func (m *mockUserRepository) Update(_ *models.User) error                           { return nil }
+func (m *mockUserRepository) Delete(_ string) error                                 { return nil }
+func (m *mockUserRepository) List() ([]models.User, error)                          { return nil, nil }
+func (m *mockUserRepository) Count() (int64, error)                                 { return 0, nil }
 
 // ---- NotifySystem Tests ----
 

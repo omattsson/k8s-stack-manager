@@ -13,13 +13,13 @@ import (
 
 // RateLimiter implements a simple rate limiting middleware
 type RateLimiter struct {
-	sync.RWMutex                             // size: 8
-	window        time.Duration              // size: 8
-	requests      map[string][]time.Time     // size: 8 (pointer)
-	done          chan struct{}              // size: 8
-	rejectedTotal metric.Int64Counter        // size: 8 (interface)
-	limit         int                        // size: 4
-	stopOnce      sync.Once                  // ensures Stop is idempotent
+	sync.RWMutex                         // size: 8
+	window        time.Duration          // size: 8
+	requests      map[string][]time.Time // size: 8 (pointer)
+	done          chan struct{}          // size: 8
+	rejectedTotal metric.Int64Counter    // size: 8 (interface)
+	limit         int                    // size: 4
+	stopOnce      sync.Once              // ensures Stop is idempotent
 }
 
 func NewRateLimiter(limit int, window time.Duration) *RateLimiter {

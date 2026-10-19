@@ -122,25 +122,27 @@ type transientErrorClusterRepo struct {
 }
 
 func (r *transientErrorClusterRepo) Create(_ *models.Cluster) error             { return nil }
-func (r *transientErrorClusterRepo) FindByID(_ string) (*models.Cluster, error)  { return nil, r.err }
+func (r *transientErrorClusterRepo) FindByID(_ string) (*models.Cluster, error) { return nil, r.err }
 func (r *transientErrorClusterRepo) Update(_ *models.Cluster) error             { return nil }
-func (r *transientErrorClusterRepo) Delete(_ string) error                       { return nil }
-func (r *transientErrorClusterRepo) List() ([]models.Cluster, error)             { return nil, nil }
-func (r *transientErrorClusterRepo) FindDefault() (*models.Cluster, error)       { return nil, r.err }
-func (r *transientErrorClusterRepo) SetDefault(_ string) error                   { return nil }
+func (r *transientErrorClusterRepo) Delete(_ string) error                      { return nil }
+func (r *transientErrorClusterRepo) List() ([]models.Cluster, error)            { return nil, nil }
+func (r *transientErrorClusterRepo) FindDefault() (*models.Cluster, error)      { return nil, r.err }
+func (r *transientErrorClusterRepo) SetDefault(_ string) error                  { return nil }
 
 // notFoundClusterRepo returns a dberrors-wrapped not-found error from FindByID.
 type notFoundClusterRepo struct{}
 
-func (r *notFoundClusterRepo) Create(_ *models.Cluster) error             { return nil }
+func (r *notFoundClusterRepo) Create(_ *models.Cluster) error { return nil }
 func (r *notFoundClusterRepo) FindByID(_ string) (*models.Cluster, error) {
 	return nil, dberrors.NewDatabaseError("FindByID", dberrors.ErrNotFound)
 }
-func (r *notFoundClusterRepo) Update(_ *models.Cluster) error           { return nil }
-func (r *notFoundClusterRepo) Delete(_ string) error                     { return nil }
-func (r *notFoundClusterRepo) List() ([]models.Cluster, error)           { return nil, nil }
-func (r *notFoundClusterRepo) FindDefault() (*models.Cluster, error)     { return nil, dberrors.ErrNotFound }
-func (r *notFoundClusterRepo) SetDefault(_ string) error                 { return nil }
+func (r *notFoundClusterRepo) Update(_ *models.Cluster) error  { return nil }
+func (r *notFoundClusterRepo) Delete(_ string) error           { return nil }
+func (r *notFoundClusterRepo) List() ([]models.Cluster, error) { return nil, nil }
+func (r *notFoundClusterRepo) FindDefault() (*models.Cluster, error) {
+	return nil, dberrors.ErrNotFound
+}
+func (r *notFoundClusterRepo) SetDefault(_ string) error { return nil }
 
 func (*transientErrorClusterRepo) CountAll() (int, error) { return 0, nil }
 

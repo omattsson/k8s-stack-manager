@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 // SubscriptionsFile is the on-disk schema for HOOKS_CONFIG_FILE. Keeping event
@@ -53,7 +54,8 @@ func LoadConfigFile(path string) (Config, []ActionSubscription, error) {
 	if path == "" {
 		return Config{}, nil, nil
 	}
-	raw, err := os.ReadFile(path) //nolint:gosec // operator-controlled path
+	// #nosec G304 -- path is HOOKS_CONFIG_FILE (operator config, not request input).
+	raw, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		return Config{}, nil, fmt.Errorf("read %s: %w", path, err)
 	}

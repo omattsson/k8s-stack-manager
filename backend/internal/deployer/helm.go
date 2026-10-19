@@ -28,7 +28,11 @@ const helmTerminateGrace = 30 * time.Second
 // newHelmCommand returns an exec.Cmd that stops helm with SIGTERM (not SIGKILL)
 // when ctx is done, and kills it only after helmTerminateGrace.
 func newHelmCommand(ctx context.Context, binaryPath string, args []string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, binaryPath, args...) //nolint:gosec // G204: binaryPath is admin-configured (not user input); all positional args are validated by validatePositionalArg to prevent argument injection; flag values are safe (consumed by pflag, not parsed as flags); exec.Command uses argv directly (no shell).
+	// #nosec G204 -- binaryPath is HELM_BINARY (operator config, not user input);
+	// exec runs it with argv directly (no shell); validatePositionalArg rejects
+	// positional args that start with a dash; flag values go in their own argv
+	// entries after the flag, so pflag never parses them as flags.
+	cmd := exec.CommandContext(ctx, binaryPath, args...)
 	cmd.Cancel = func() error {
 		return cmd.Process.Signal(syscall.SIGTERM)
 	}

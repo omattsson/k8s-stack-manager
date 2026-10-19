@@ -25,8 +25,6 @@ const (
 	logKeyBOChartID    = "chart_id"
 )
 
-
-
 // BranchOverrideHandler handles per-chart branch override endpoints.
 type BranchOverrideHandler struct {
 	overrideRepo    models.ChartBranchOverrideRepository

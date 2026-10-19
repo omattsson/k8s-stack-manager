@@ -31,11 +31,11 @@ Store new facts without asking: cluster state, endpoint URLs, deploy topology, c
 - **Compose services**: `backend`, `frontend` (profile `full`), `mysql` (`mysql:8.4.4`). Profile `otel`: `otel-collector`, `tempo`, `prometheus` (`:9090`), `grafana` (`:3001`). Profile `mysql-otel`: `mysqld-exporter` (`make dev-otel` does not start it).
 - **Overlays**: `docker-compose.k8s.yml` (`make dev-k8s`) and `docker-compose.otel.yml` (`make dev-otel`). `make dev-api-only` starts backend and MySQL only.
 - **Networks**: `backend-net` (backend, MySQL) and `frontend-net` (backend, frontend). Keep them separate.
-- **Backend Dockerfile stages**: `helm` (downloads the Helm CLI, `ARG HELM_VERSION`), `development` (`air`), `build-prod` (static binary, `CGO_ENABLED=0`), `production` (`alpine`, non-root uid 65532, binary and Helm only). The builder image is `golang:1.27.x`. `go.mod` sets Go 1.26.
+- **Backend Dockerfile stages**: `helm` (downloads the Helm CLI, `ARG HELM_VERSION`), `development` (`air`), `build-prod` (static binary, `CGO_ENABLED=0`), `production` (`alpine`, non-root uid 65532, binary and Helm only). The builder image is `golang:1.27.x`. `go.mod` sets Go 1.27.
 - **Frontend**: Compose runs the Vite dev server (`npm run dev`, `:3000`). It proxies `/api` and `/ws` to `backend:8081`. The `production` stage uses `nginx-unprivileged` on `:8080`. The image `nginx.conf` proxies `/api` and `/ws` to `backend:8081`. The Helm chart replaces it with an single-page application (SPA)-only ConfigMap, and the ingress routes `/api` and `/ws`.
 - **Ports**: backend `8081`, frontend `3000`.
 - **Deploy variables**: `KUBECONFIG_PATH`, `HELM_BINARY`, `DEPLOYMENT_TIMEOUT` (default 10m), `MAX_CONCURRENT_DEPLOYS` (default 5).
-- **CI** (`.github/workflows/`): `pull-request.yml` (title check, Go 1.26, Node 26, lint, tests, Helm lint, `make helm-test`, Markdown lint), `security-scan.yml`, `codeql.yml`, `docker-build.yml`, `helm-release.yml` (chart-releaser).
+- **CI** (`.github/workflows/`): `pull-request.yml` (title check, Go 1.27, gofmt, gosec via `scripts/gosec.sh`, Node 26, lint, tests, Helm lint, `make helm-test`, Markdown lint), `security-scan.yml`, `codeql.yml`, `docker-build.yml`, `helm-release.yml` (chart-releaser).
 
 ## Helm chart (`helm/k8s-stack-manager/`)
 

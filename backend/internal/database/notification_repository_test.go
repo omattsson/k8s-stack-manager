@@ -85,24 +85,24 @@ func TestGORMNotificationRepository_ListByUser(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name          string
-		seedUserID    string
-		queryUserID   string
-		unreadOnly    bool
-		limit         int
-		offset        int
-		seedNotifs    []models.Notification
-		wantCount     int
-		wantTotalGte  int64
-		wantTotalLte  int64
+		name         string
+		seedUserID   string
+		queryUserID  string
+		unreadOnly   bool
+		limit        int
+		offset       int
+		seedNotifs   []models.Notification
+		wantCount    int
+		wantTotalGte int64
+		wantTotalLte int64
 	}{
 		{
-			name:       "returns all for user",
-			seedUserID: "u-list-all",
+			name:        "returns all for user",
+			seedUserID:  "u-list-all",
 			queryUserID: "u-list-all",
-			unreadOnly: false,
-			limit:      10,
-			offset:     0,
+			unreadOnly:  false,
+			limit:       10,
+			offset:      0,
 			seedNotifs: []models.Notification{
 				{ID: "n1", UserID: "u-list-all", Type: "deploy", Title: "A", IsRead: false},
 				{ID: "n2", UserID: "u-list-all", Type: "stop", Title: "B", IsRead: true},
@@ -113,12 +113,12 @@ func TestGORMNotificationRepository_ListByUser(t *testing.T) {
 			wantTotalLte: 3,
 		},
 		{
-			name:       "unread only filter",
-			seedUserID: "u-list-unread",
+			name:        "unread only filter",
+			seedUserID:  "u-list-unread",
 			queryUserID: "u-list-unread",
-			unreadOnly: true,
-			limit:      10,
-			offset:     0,
+			unreadOnly:  true,
+			limit:       10,
+			offset:      0,
 			seedNotifs: []models.Notification{
 				{ID: "n4", UserID: "u-list-unread", Type: "deploy", Title: "A", IsRead: false},
 				{ID: "n5", UserID: "u-list-unread", Type: "stop", Title: "B", IsRead: true},
@@ -129,12 +129,12 @@ func TestGORMNotificationRepository_ListByUser(t *testing.T) {
 			wantTotalLte: 2,
 		},
 		{
-			name:       "pagination limit and offset",
-			seedUserID: "u-list-page",
+			name:        "pagination limit and offset",
+			seedUserID:  "u-list-page",
 			queryUserID: "u-list-page",
-			unreadOnly: false,
-			limit:      2,
-			offset:     1,
+			unreadOnly:  false,
+			limit:       2,
+			offset:      1,
 			seedNotifs: []models.Notification{
 				{ID: "n7", UserID: "u-list-page", Type: "deploy", Title: "A"},
 				{ID: "n8", UserID: "u-list-page", Type: "stop", Title: "B"},

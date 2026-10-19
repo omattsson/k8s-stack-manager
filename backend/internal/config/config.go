@@ -780,6 +780,7 @@ func loadDotEnv() error {
 		envFile = ".env"
 	}
 
+	// #nosec G703 -- ENV_FILE is set by the operator of the process, not by a request.
 	if _, err := os.Stat(envFile); err == nil {
 		if err := godotenv.Load(envFile); err != nil {
 			return fmt.Errorf("error loading %s: %w", envFile, err)

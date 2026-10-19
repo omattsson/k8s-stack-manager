@@ -154,11 +154,11 @@ func TestGORMTemplateVersionRepository_GetByID(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		templateID string
-		versionID  string
-		seed       *models.TemplateVersion
-		wantErr    bool
+		name         string
+		templateID   string
+		versionID    string
+		seed         *models.TemplateVersion
+		wantErr      bool
 		wantNotFound bool
 	}{
 		{
@@ -175,9 +175,9 @@ func TestGORMTemplateVersionRepository_GetByID(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:         "not found - wrong template",
-			templateID:   "t-wrong",
-			versionID:    "tv-getbyid-2",
+			name:       "not found - wrong template",
+			templateID: "t-wrong",
+			versionID:  "tv-getbyid-2",
 			seed: &models.TemplateVersion{
 				ID:         "tv-getbyid-2",
 				TemplateID: "t-right",

@@ -662,12 +662,12 @@ func TestEnsureRoleBinding(t *testing.T) {
 	}
 
 	tests := []struct {
-		name     string
-		seed     []runtime.Object // beyond the namespace itself
-		args     args
-		wantErr  bool
+		name      string
+		seed      []runtime.Object // beyond the namespace itself
+		args      args
+		wantErr   bool
 		errSubstr string
-		check    func(t *testing.T, cs *fake.Clientset)
+		check     func(t *testing.T, cs *fake.Clientset)
 	}{
 		{
 			name: "creates when absent",

@@ -11,16 +11,16 @@ const (
 
 // Cluster represents a Kubernetes cluster that stack instances can be deployed to.
 type Cluster struct {
-	CreatedAt           time.Time `json:"created_at"`
-	UpdatedAt           time.Time `json:"updated_at"`
-	ID                  string    `json:"id" gorm:"primaryKey;size:36"`
-	Name                string    `json:"name" gorm:"size:255;uniqueIndex"`
-	Description         string    `json:"description" gorm:"type:text"`
-	APIServerURL        string    `json:"api_server_url" gorm:"size:500"`
-	KubeconfigData      string    `json:"-" gorm:"type:longtext"`
-	KubeconfigPath      string    `json:"-" gorm:"size:500"`
-	Region              string    `json:"region" gorm:"size:100"`
-	HealthStatus        string    `json:"health_status" gorm:"size:50"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	ID             string    `json:"id" gorm:"primaryKey;size:36"`
+	Name           string    `json:"name" gorm:"size:255;uniqueIndex"`
+	Description    string    `json:"description" gorm:"type:text"`
+	APIServerURL   string    `json:"api_server_url" gorm:"size:500"`
+	KubeconfigData string    `json:"-" gorm:"type:longtext"`
+	KubeconfigPath string    `json:"-" gorm:"size:500"`
+	Region         string    `json:"region" gorm:"size:100"`
+	HealthStatus   string    `json:"health_status" gorm:"size:50"`
 	// Registry fields for automatic image pull secret provisioning.
 	// When RegistryURL is non-empty, a docker-registry secret is created/refreshed
 	// in each stack namespace before chart installs.

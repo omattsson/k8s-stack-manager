@@ -25,8 +25,6 @@ const (
 
 const logKeyNamespace = "namespace"
 
-
-
 // OrphanedNamespaceResponse is the JSON representation of an orphaned namespace.
 type OrphanedNamespaceResponse struct {
 	CreatedAt time.Time `json:"created_at"`

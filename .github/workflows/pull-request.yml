@@ -61,9 +61,20 @@ jobs:
         if: steps.files.outputs.backend == 'true'
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26'
+          go-version: '1.27'
           cache: true
           cache-dependency-path: backend/go.sum
+
+      - name: Backend Format
+        if: steps.files.outputs.backend == 'true'
+        run: |
+          cd backend
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::These files are not gofmt-formatted. Run 'make fmt' (or gofmt -w) with Go 1.27:"
+            echo "$unformatted"
+            exit 1
+          fi
 
       - name: Backend Lint
         if: steps.files.outputs.backend == 'true'
@@ -144,14 +155,15 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26'
+          go-version: '1.27'
           cache: true
           cache-dependency-path: backend/go.sum
 
+      # scripts/gosec.sh builds the pinned gosec with the Go above and runs it
+      # inside backend/ (the Docker action has its own Go and scanned 0 files
+      # from the repository root). See the script for details.
       - name: Run Gosec Security Scanner
-        uses: securego/gosec@v2.29.0
-        with:
-          args: ./backend/...
+        run: scripts/gosec.sh
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
