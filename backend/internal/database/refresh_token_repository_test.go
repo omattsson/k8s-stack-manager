@@ -203,3 +203,54 @@ func TestMigration_RefreshTokenSessionFamily(t *testing.T) {
 	assert.True(t, m.HasColumn(&models.RefreshToken{}, "FamilyID"))
 	assert.True(t, m.HasIndex(&models.RefreshToken{}, "FamilyID"))
 }
+
+func TestGORMRefreshTokenRepository_RevokeOldestForUser(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		excludeID   string
+		wantRevoked []string
+		keep        int
+		wantCount   int64
+	}{
+		{name: "keeps the newest two", keep: 2, wantRevoked: []string{"t0", "t1"}, wantCount: 2},
+		{name: "excluded token is neither kept nor revoked", keep: 2, excludeID: "t3", wantRevoked: []string{"t0"}, wantCount: 1},
+		{name: "keep zero revokes all active", keep: 0, wantRevoked: []string{"t0", "t1", "t2", "t3"}, wantCount: 4},
+		{name: "keep above count revokes nothing", keep: 10, wantCount: 0},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			repo := setupRefreshTokenRepo(t)
+			now := time.Now().UTC()
+			// t0 is the oldest active token, t3 the newest.
+			for i, id := range []string{"t0", "t1", "t2", "t3"} {
+				created := now.Add(time.Duration(i-10) * time.Minute)
+				seedRefreshToken(t, repo, id, id, func(rt *models.RefreshToken) { rt.CreatedAt = created })
+			}
+			// Not active, or another user: never counted or changed.
+			seedRefreshToken(t, repo, "expired", "expired", func(rt *models.RefreshToken) {
+				rt.ExpiresAt = now.Add(-time.Minute)
+				rt.CreatedAt = now.Add(-time.Hour)
+			})
+			seedRefreshToken(t, repo, "other", "other", func(rt *models.RefreshToken) {
+				rt.UserID = "u2"
+				rt.CreatedAt = now.Add(-time.Hour)
+			})
+
+			n, err := repo.RevokeOldestForUser("u1", tt.keep, tt.excludeID)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantCount, n)
+
+			want := map[string]bool{}
+			for _, id := range tt.wantRevoked {
+				want[id] = true
+			}
+			for _, id := range []string{"t0", "t1", "t2", "t3", "expired", "other"} {
+				assert.Equal(t, want[id], loadRefreshToken(t, repo, id).Revoked, "token %s", id)
+			}
+		})
+	}
+}

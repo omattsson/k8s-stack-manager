@@ -1,4 +1,4 @@
-import { Page, expect, APIRequestContext } from '@playwright/test';
+import { Page, expect, APIRequestContext, APIResponse } from '@playwright/test';
 import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -37,12 +37,14 @@ function assertSafeSqlValue(name: string, value: string): void {
 }
 
 /**
- * Run one SQL statement in the e2e database through
- * `docker compose exec -T mysql mysql ...` (execFile, no shell) and return the
- * output of `SELECT ROW_COUNT()` that follows it: the number of changed rows.
- * Callers build `sql` only from values checked by assertSafeSqlValue.
+ * Run SQL in the e2e database through `docker compose exec -T mysql mysql ...`
+ * (execFile, no shell) and return the raw output (`--batch`,
+ * `--skip-column-names`). Use it for test setup and checks that have no API.
+ * Callers build `sql` only from values checked with strict patterns (for
+ * example assertSafeSqlValue, or a UUID pattern), never from free text.
+ * Throws when the E2E_DB_* variables are not set (see e2eDbConfigured).
  */
-async function execE2eSql(sql: string): Promise<number> {
+export async function runE2eSql(sql: string): Promise<string> {
   const db = process.env.E2E_DB_NAME ?? '';
   const user = process.env.E2E_DB_USER ?? '';
   const password = process.env.E2E_DB_PASSWORD ?? '';
@@ -56,9 +58,9 @@ async function execE2eSql(sql: string): Promise<number> {
   const args = [
     'compose', 'exec', '-T', '-e', 'MYSQL_PWD', 'mysql',
     'mysql', `-u${user}`, '--batch', '--skip-column-names', db,
-    '-e', `${sql}; SELECT ROW_COUNT();`,
+    '-e', sql,
   ];
-  const stdout = await new Promise<string>((resolve, reject) => {
+  return new Promise<string>((resolve, reject) => {
     execFile(
       'docker',
       args,
@@ -76,6 +78,14 @@ async function execE2eSql(sql: string): Promise<number> {
       },
     );
   });
+}
+
+/**
+ * Run one SQL statement with runE2eSql and return the output of the
+ * `SELECT ROW_COUNT()` that follows it: the number of changed rows.
+ */
+async function execE2eSql(sql: string): Promise<number> {
+  const stdout = await runE2eSql(`${sql}; SELECT ROW_COUNT();`);
   const rows = parseInt(stdout.trim().split('\n').pop() ?? '', 10);
   if (!Number.isFinite(rows)) throw new Error(`Unexpected mysql output: ${JSON.stringify(stdout)}`);
   return rows;
@@ -199,6 +209,17 @@ export async function deleteCluster(
 }
 
 /**
+ * Assert that a login response succeeded. On failure the message has the
+ * status and the response body (for example 401 "Session revoked" versus
+ * "Invalid username or password"), so a flaky login shows its cause (#619).
+ */
+export async function expectLoginOk(res: APIResponse, username: string): Promise<void> {
+  if (res.ok()) return;
+  const body = await res.text().catch(() => '<unreadable body>');
+  expect(res.ok(), `Login API failed for ${username} with status ${res.status()}: ${body.slice(0, 500)}`).toBe(true);
+}
+
+/**
  * Log in as admin by obtaining a JWT token via API and injecting it into localStorage.
  * This avoids the UI login flow to reduce API calls and rate-limiter pressure.
  * Does NOT navigate to any page — each test should navigate to its target page.
@@ -213,7 +234,7 @@ export async function loginAsAdmin(page: Page) {
     if (res.status() !== 429) break;
     await page.waitForTimeout(2000 * (attempt + 1));
   }
-  expect(res!.ok(), `Login API failed with status ${res!.status()}`).toBe(true);
+  await expectLoginOk(res!, 'admin');
   const { token } = await res!.json();
   // Inject token before any page JS runs so AuthContext picks it up on mount
   await page.addInitScript((t) => {
@@ -234,7 +255,7 @@ async function loginViaAPI(page: Page, username: string, password: string): Prom
     if (res.status() !== 429) break;
     await page.waitForTimeout(2000 * (attempt + 1));
   }
-  expect(res!.ok(), `Login API failed for ${username} with status ${res!.status()}`).toBe(true);
+  await expectLoginOk(res!, username);
   const { token } = await res!.json();
   return token;
 }
@@ -326,7 +347,7 @@ export async function apiLogin(
     if (res.status() !== 429) break;
     await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
   }
-  expect(res!.ok(), `Login API failed for ${username} with status ${res!.status()}`).toBe(true);
+  await expectLoginOk(res!, username);
   const { token } = await res!.json();
   return token;
 }

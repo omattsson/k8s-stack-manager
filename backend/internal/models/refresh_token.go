@@ -74,6 +74,12 @@ type RefreshTokenRepository interface {
 	TouchFamily(ctx context.Context, familyID string, at time.Time) error
 	RevokeAllForUser(userID string) error
 	RevokeAllForUserExcept(userID string, excludeID string) error
+	// RevokeOldestForUser revokes the active tokens of the user except the
+	// keep newest ones (by CreatedAt) and the token excludeID (empty: none).
+	// It never revokes a token that is newer than the kept ones, so a login
+	// that runs at the same time keeps its new session. It returns the
+	// number of revoked tokens.
+	RevokeOldestForUser(userID string, keep int, excludeID string) (int64, error)
 	DeleteExpired() (int64, error)
 	CountActiveForUser(userID string) (int64, error)
 	// WithTx executes fn within a database transaction. The repository passed

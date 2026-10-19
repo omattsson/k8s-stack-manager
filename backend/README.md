@@ -138,7 +138,7 @@ The backend reads all configuration from environment variables. It also reads a 
 | `SESSION_IDLE_TIMEOUT` | `30m` | End a session after this time without authenticated requests |
 | `SESSION_MAX_LIFETIME` | `12h` | Maximum session time from login. A refresh never extends it. At least `ACCESS_TOKEN_EXPIRATION`. |
 | `REFRESH_REUSE_GRACE` | `30s` | A just-rotated refresh token still gets a new access token (no new cookie) for this time. `0` disables it. Maximum `5m`. |
-| `MAX_REFRESH_TOKENS_PER_USER` | `10` | When a user has this number of active refresh tokens, the next login revokes the older ones. `0` means no limit. |
+| `MAX_REFRESH_TOKENS_PER_USER` | `10` | When a user has this number of active refresh tokens, the next login or refresh revokes the least recently used ones (issued or rotated), so the user keeps about this number (the newest sessions stay; concurrent logins can exceed it by up to N-1 until the next issue). `0` means no limit. |
 | `API_KEY_MAX_LIFETIME_DAYS` | `0` | Maximum lifetime of an API key in days. `0` means no limit. |
 | `LOGIN_CACHE_TTL` | `30s` | Time that a successful password check stays cached (it skips only the password check) |
 | `SECURE_COOKIES` | `false` | Set the `Secure` flag on the refresh-token cookie. Use `true` behind HTTPS. |

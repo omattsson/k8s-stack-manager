@@ -331,6 +331,8 @@ backend/
   - The check fails open on a store error (log and continue).
 - API-key auth skips the blocklist.
 - Delete, disable, password reset and role change block earlier tokens and revoke refresh tokens. Delete also removes the API keys. A role change keeps them, because API-key auth reads the current role.
+- `MAX_REFRESH_TOKENS_PER_USER` (default 10) caps the active refresh tokens of a user at about that number. A new token revokes only the least recently used ones (issued or rotated; `RevokeOldestForUser`), never all of them: revoking all also killed the new session of a concurrent login (401 "Session revoked", #619). Concurrent logins can exceed the cap by up to N-1 until the next token is issued.
+- Every failed login writes one log line `Login failed` with a fixed `reason` (`user_not_found`, `password_mismatch`, `hash_changed`, `session_revoked`, `disabled`, `lookup_error`, ...), the username, `cache_hit`, `client_ip` and `request_id`, and `auth.login.total` gets the `reason` label (`handlers/login_failure.go`). Never the password, hash or token. The client keeps the generic 401; a database error gives 500, not 401.
 - A login cache hit (`LOGIN_CACHE_TTL`) skips only bcrypt. After the password check, the login reads the user again and uses that record (disabled check, token role). A changed password hash gives 401.
 - All auth paths (login, refresh, OIDC, API key) reject `User.Disabled`.
 - Register (`POST /auth/register`) needs an admin, or `SELF_REGISTRATION=true` (code and Helm chart default `false`; Docker Compose sets `true` for development).
@@ -460,7 +462,7 @@ frontend/src/
   utils/                       # roles, timeAgo, expiry, instanceName, instanceState, jwt, quantity, apiError, download, deployHistory, templateVersion, notificationEventTypes, notificationHelpers, recentTemplates, setupWizard, stopTime
 ```
 
-**Stack:** React 19, MUI v9, react-router-dom v7, Vite 8, TypeScript 6, Vitest 5, Playwright (32 specs in `frontend/e2e/`; the project `isolated` runs `session-lifecycle.spec.ts`, then its teardown project `isolated-last-admin` runs `last-admin.spec.ts` (it disables `admin` for a moment, so it runs last; `global-setup.ts` re-enables a left-over disabled `admin` in the database), only with `E2E_ISOLATED=1`, serially, against a restarted short-limit backend; the project `mobile` runs `mobile.spec.ts` with the iPhone 13 viewport, the project `chromium` runs the rest).
+**Stack:** React 19, MUI v9, react-router-dom v7, Vite 8, TypeScript 6, Vitest 5, Playwright (36 specs in `frontend/e2e/`; the project `isolated` runs `session-lifecycle.spec.ts`, then its teardown project `isolated-last-admin` runs `last-admin.spec.ts` (it disables `admin` for a moment, so it runs last; `global-setup.ts` re-enables a left-over disabled `admin` in the database), only with `E2E_ISOLATED=1`, serially, against a restarted short-limit backend; the project `mobile` runs `mobile.spec.ts` with the iPhone 13 viewport, the project `chromium` runs the rest).
 
 **Patterns.**
 - Use MUI components (no raw HTML) and the `sx` prop for styling.

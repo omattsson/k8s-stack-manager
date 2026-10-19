@@ -2,7 +2,7 @@
 
 ## Project Setup
 - The frontend uses Vite 8, React 19 and TypeScript 6 (strict mode). It uses `@vitejs/plugin-react` (Vite 8 transforms JSX with Oxc).
-- Unit tests run on Vitest 5 with Testing Library. End-to-end tests run on Playwright (`e2e/`, 32 specs).
+- Unit tests run on Vitest 5 with Testing Library. End-to-end tests run on Playwright (`e2e/`, 36 specs).
 - Node 22 or later is required. The Dockerfile uses `node:26-alpine`.
 
 ## Architecture

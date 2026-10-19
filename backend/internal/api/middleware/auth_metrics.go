@@ -61,15 +61,25 @@ func RebindAuthMeter() {
 }
 
 func RecordLogin(method, status string) {
+	RecordLoginFailure(method, status, "")
+}
+
+// RecordLoginFailure counts a login attempt like RecordLogin and adds the
+// attribute "reason" when reason is not empty. Callers pass only reasons from
+// a fixed set of constants (for example the local login reasons in
+// handlers/auth.go), never user input, so the cardinality stays low.
+func RecordLoginFailure(method, status, reason string) {
 	if method == "" || status == "" {
 		return
 	}
-	authMetrics.loginTotal.Add(context.Background(), 1,
-		metric.WithAttributes(
-			attribute.String("method", method),
-			attribute.String("status", status),
-		),
-	)
+	attrs := []attribute.KeyValue{
+		attribute.String("method", method),
+		attribute.String("status", status),
+	}
+	if reason != "" {
+		attrs = append(attrs, attribute.String("reason", reason))
+	}
+	authMetrics.loginTotal.Add(context.Background(), 1, metric.WithAttributes(attrs...))
 }
 
 func RecordRefresh(status string) {

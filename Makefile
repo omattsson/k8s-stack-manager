@@ -101,6 +101,8 @@ test-frontend:
 #   KUBECONFIG_PATH point only at the E2E_KUBECONFIG copy (or are empty). An
 #   in-cluster cluster outside a pod is unreachable (no fallback to
 #   ~/.kube/config, #582), unless IN_CLUSTER_FALLBACK_KUBECONFIG is set.
+# - UNIQUE_INSTANCE_NAMES=true: unique-instance-names.spec.ts (#587) checks the
+#   409 for a taken name. The other specs use unique generated names.
 # - Set E2E_KUBECONFIG only to a local cluster (Rancher Desktop, kind): the
 #   specs create and delete stack namespaces. Without it, the specs that need
 #   a cluster are skipped.
@@ -154,7 +156,7 @@ define e2e_start_backend
 		ADMIN_USERNAME=admin ADMIN_PASSWORD=admin SELF_REGISTRATION=true \
 		HELM_BINARY=$${HELM_BINARY:-helm} \
 		CORS_ALLOWED_ORIGINS=http://localhost:3000 \
-		RATE_LIMIT=10000 LOGIN_RATE_LIMIT=10000 PORT=8081 $(1) \
+		RATE_LIMIT=10000 LOGIN_RATE_LIMIT=10000 PORT=8081 UNIQUE_INSTANCE_NAMES=true $(1) \
 		./tmp/main > ../frontend/test-logs/$(2) 2>&1 & echo $$! > $(E2E_PID)
 	@echo "Waiting for backend to be healthy..."
 	@n=0; until curl -sf http://localhost:8081/health/live >/dev/null 2>&1; do \

@@ -47,7 +47,7 @@ You are a senior frontend engineer for React, TypeScript, and Material UI (MUI).
 
 ## Stack
 
-React 19, MUI v9 (`@mui/material`), react-router-dom v7, Vite 8, TypeScript 6, Vitest 5, Playwright (32 specs in `e2e/`). Node 22 or later.
+React 19, MUI v9 (`@mui/material`), react-router-dom v7, Vite 8, TypeScript 6, Vitest 5, Playwright (36 specs in `e2e/`). Node 22 or later.
 
 ## Rules
 

@@ -14,6 +14,7 @@ import SecurityOutlinedIcon from '@mui/icons-material/SecurityOutlined';
 import { useAuth } from '../../context/AuthContext';
 import { useBranding } from '../../context/BrandingContext';
 import BrandLogo from '../../components/BrandLogo';
+import { describeLoginError, describeSsoError } from './loginError';
 
 const Login = () => {
   const [username, setUsername] = useState('');
@@ -38,8 +39,8 @@ const Login = () => {
     setError(null);
     try {
       await loginWithOIDC();
-    } catch {
-      setError('Failed to initiate SSO login. Please try again.');
+    } catch (err: unknown) {
+      setError(describeSsoError(err));
       setSsoLoading(false);
     }
   };
@@ -51,13 +52,9 @@ const Login = () => {
     try {
       await login(username, password);
     } catch (err: unknown) {
-      const status = (err as { response?: { status?: number } })?.response?.status;
-      const message = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
-      if (status === 403 && message) {
-        setError(message);
-      } else {
-        setError('Invalid username or password');
-      }
+      // Only a 401 means wrong credentials: a 5xx, the rate limiter (429) or a
+      // network error must not send the user back to retype the password.
+      setError(describeLoginError(err));
     } finally {
       setLoading(false);
     }
