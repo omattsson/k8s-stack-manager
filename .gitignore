@@ -61,6 +61,8 @@ Thumbs.db
 # Playwright
 /frontend/test-results/
 /frontend/playwright-report/
+/frontend/playwright-report-session/
+/frontend/test-results-session/
 /frontend/blob-report/
 /frontend/playwright/.cache/
 /frontend/test-logs/

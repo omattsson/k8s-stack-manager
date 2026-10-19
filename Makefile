@@ -1,4 +1,4 @@
-.PHONY: dev dev-otel dev-api-only compose-api-only seed dev-backend dev-frontend dev-local dev-local-backend dev-local-frontend prod prod-backend prod-frontend build clean prune test test-backend test-backend-integration test-backend-all test-frontend test-e2e integration-infra-start integration-infra-stop install docs fmt lint loadtest loadtest-start loadtest-start-backend loadtest-start-frontend loadtest-stop loadtest-stop-backend loadtest-stop-frontend loadtest-backend loadtest-backend-run loadtest-stress loadtest-stress-run loadtest-frontend loadtest-frontend-run
+.PHONY: e2e-prepare test-e2e-session dev dev-otel dev-api-only compose-api-only seed dev-backend dev-frontend dev-local dev-local-backend dev-local-frontend prod prod-backend prod-frontend build clean prune test test-backend test-backend-integration test-backend-all test-frontend test-e2e integration-infra-start integration-infra-stop install docs fmt lint loadtest loadtest-start loadtest-start-backend loadtest-start-frontend loadtest-stop loadtest-stop-backend loadtest-stop-frontend loadtest-backend loadtest-backend-run loadtest-stress loadtest-stress-run loadtest-frontend loadtest-frontend-run
 
 # Development mode for both services
 dev:
@@ -109,23 +109,24 @@ E2E_HOME := $(CURDIR)/backend/tmp/e2e-home
 E2E_PID := $(CURDIR)/backend/tmp/e2e-backend.pid
 E2E_STOP_BACKEND = kill $$(cat $(E2E_PID) 2>/dev/null) 2>/dev/null; rm -rf $(E2E_HOME) $(E2E_PID)
 
-test-e2e: integration-infra-start
-	@if lsof -ti:8081 >/dev/null 2>&1; then \
-		echo "ERROR: port 8081 is in use. Stop make dev (or the other backend) first."; exit 1; \
-	fi
-	@mkdir -p frontend/test-logs backend/tmp
-	@echo "Creating a fresh database $(E2E_DB_NAME)..."
-	@# On a fresh volume, mysqladmin ping already answers during the init of the
-	@# entrypoint (temporary server), so retry until the statement works.
-	@n=0; until docker compose exec -T mysql mysql -uroot -p"$${DB_PASSWORD:-rootpassword}" \
-		-e 'DROP DATABASE IF EXISTS `$(E2E_DB_NAME)`; CREATE DATABASE `$(E2E_DB_NAME)`' 2>$(CURDIR)/backend/tmp/e2e-db.err; do \
-		n=$$((n+1)); if [ $$n -ge 30 ]; then \
-			echo "ERROR: could not create the database $(E2E_DB_NAME):"; cat $(CURDIR)/backend/tmp/e2e-db.err; exit 1; \
-		fi; \
-		sleep 2; \
-	done; rm -f $(CURDIR)/backend/tmp/e2e-db.err
-	@echo "Building and starting backend..."
-	@cd backend && mkdir -p tmp && go build -o tmp/main ./api
+# Session lifecycle phase (#584): e2e/session-lifecycle.spec.ts needs a backend
+# with short session limits. `make test-e2e` runs it after the main suite with a
+# restarted backend; `make test-e2e-session` runs only this phase. The spec
+# reads the same values from the E2E_SESSION_* variables.
+E2E_SESSION_ACCESS_TTL ?= 10s
+E2E_SESSION_IDLE_TIMEOUT ?= 20s
+E2E_SESSION_MAX_LIFETIME ?= 60s
+E2E_SESSION_REUSE_GRACE ?= 3s
+E2E_SESSION_BACKEND_ENV = ACCESS_TOKEN_EXPIRATION=$(E2E_SESSION_ACCESS_TTL) \
+	SESSION_IDLE_TIMEOUT=$(E2E_SESSION_IDLE_TIMEOUT) SESSION_MAX_LIFETIME=$(E2E_SESSION_MAX_LIFETIME) \
+	REFRESH_REUSE_GRACE=$(E2E_SESSION_REUSE_GRACE)
+E2E_SESSION_PLAYWRIGHT_ENV = E2E_SESSION=1 E2E_SESSION_ACCESS_TTL=$(E2E_SESSION_ACCESS_TTL) \
+	E2E_SESSION_IDLE_TIMEOUT=$(E2E_SESSION_IDLE_TIMEOUT) E2E_SESSION_MAX_LIFETIME=$(E2E_SESSION_MAX_LIFETIME) \
+	E2E_SESSION_REUSE_GRACE=$(E2E_SESSION_REUSE_GRACE)
+
+# Recreate the e2e HOME and start the built backend in the background.
+# $(1): extra environment variables. $(2): log file name in frontend/test-logs.
+define e2e_start_backend
 	@rm -rf $(E2E_HOME) && mkdir -p $(E2E_HOME)/.kube
 	@cd backend && \
 		export HOME="$(E2E_HOME)" KUBECONFIG= KUBECONFIG_PATH=; \
@@ -144,22 +145,96 @@ test-e2e: integration-infra-start
 		ADMIN_USERNAME=admin ADMIN_PASSWORD=admin SELF_REGISTRATION=true \
 		HELM_BINARY=$${HELM_BINARY:-helm} \
 		CORS_ALLOWED_ORIGINS=http://localhost:3000 \
-		RATE_LIMIT=10000 LOGIN_RATE_LIMIT=10000 PORT=8081 \
-		./tmp/main > ../frontend/test-logs/backend.log 2>&1 & echo $$! > $(E2E_PID)
+		RATE_LIMIT=10000 LOGIN_RATE_LIMIT=10000 PORT=8081 $(1) \
+		./tmp/main > ../frontend/test-logs/$(2) 2>&1 & echo $$! > $(E2E_PID)
 	@echo "Waiting for backend to be healthy..."
 	@n=0; until curl -sf http://localhost:8081/health/live >/dev/null 2>&1; do \
 		if ! kill -0 $$(cat $(E2E_PID)) 2>/dev/null; then \
-			echo "ERROR: the backend stopped. Last lines of frontend/test-logs/backend.log:"; \
-			tail -20 frontend/test-logs/backend.log; $(E2E_STOP_BACKEND); $(MAKE) integration-infra-stop; exit 1; \
+			echo "ERROR: the backend stopped. Last lines of frontend/test-logs/$(2):"; \
+			tail -20 frontend/test-logs/$(2); $(E2E_STOP_BACKEND); $(MAKE) integration-infra-stop; exit 1; \
 		fi; \
 		n=$$((n+1)); if [ $$n -ge 90 ]; then \
 			echo "ERROR: the backend is not healthy after 90s"; $(E2E_STOP_BACKEND); $(MAKE) integration-infra-stop; exit 1; \
 		fi; \
 		sleep 1; \
 	done
-	@echo "Backend is ready, running Playwright tests..."
-	cd frontend && bash -o pipefail -c 'npx playwright test 2>&1 | tee test-logs/playwright.log' || \
+endef
+
+# PIDs that listen on the backend port (client connections to it do not count).
+E2E_PORT_LISTENERS = lsof -nP -iTCP:8081 -sTCP:LISTEN -t 2>/dev/null
+
+# Stop the backend and wait until nothing listens on port 8081 (before a
+# restart). After 30s, kill the listener; if the port is still taken, stop
+# the infrastructure and fail.
+define e2e_stop_backend_and_wait
+	@$(E2E_STOP_BACKEND) || true
+	@n=0; while [ -n "$$($(E2E_PORT_LISTENERS))" ]; do \
+		n=$$((n+1)); if [ $$n -ge 30 ]; then \
+			echo "WARNING: port 8081 is still in use after 30s; killing the listener."; \
+			$(E2E_PORT_LISTENERS) | xargs kill -9 2>/dev/null; sleep 2; \
+			if [ -n "$$($(E2E_PORT_LISTENERS))" ]; then \
+				echo "ERROR: port 8081 is still in use"; $(MAKE) -C $(CURDIR) integration-infra-stop; exit 1; \
+			fi; \
+			break; \
+		fi; \
+		sleep 1; \
+	done
+endef
+
+# Run the session lifecycle spec against the running (short-limit) backend.
+# It writes its HTML report and traces to separate folders, because Playwright
+# clears playwright-report/ and test-results/ at the start of a run, and the
+# main suite's report must survive for the CI artifact.
+define e2e_run_session_spec
+	@echo "Running the session lifecycle spec (access token $(E2E_SESSION_ACCESS_TTL), idle $(E2E_SESSION_IDLE_TIMEOUT), max lifetime $(E2E_SESSION_MAX_LIFETIME), reuse grace $(E2E_SESSION_REUSE_GRACE))..."
+	cd frontend && $(E2E_SESSION_PLAYWRIGHT_ENV) PLAYWRIGHT_HTML_OUTPUT_DIR=playwright-report-session \
+		bash -o pipefail -c 'npx playwright test --project=session --output=test-results-session 2>&1 | tee test-logs/playwright-session.log' || \
 		($(E2E_STOP_BACKEND); $(MAKE) -C $(CURDIR) integration-infra-stop; exit 1)
+endef
+
+# Check the port, create a fresh database and build the backend.
+e2e-prepare: integration-infra-start
+	@if [ -n "$$($(E2E_PORT_LISTENERS))" ]; then \
+		echo "ERROR: port 8081 is in use. Stop make dev (or the other backend) first."; exit 1; \
+	fi
+	@mkdir -p frontend/test-logs backend/tmp
+	@echo "Creating a fresh database $(E2E_DB_NAME)..."
+	@# On a fresh volume, mysqladmin ping already answers during the init of the
+	@# entrypoint (temporary server), so retry until the statement works.
+	@n=0; until docker compose exec -T mysql mysql -uroot -p"$${DB_PASSWORD:-rootpassword}" \
+		-e 'DROP DATABASE IF EXISTS `$(E2E_DB_NAME)`; CREATE DATABASE `$(E2E_DB_NAME)`' 2>$(CURDIR)/backend/tmp/e2e-db.err; do \
+		n=$$((n+1)); if [ $$n -ge 30 ]; then \
+			echo "ERROR: could not create the database $(E2E_DB_NAME):"; cat $(CURDIR)/backend/tmp/e2e-db.err; exit 1; \
+		fi; \
+		sleep 2; \
+	done; rm -f $(CURDIR)/backend/tmp/e2e-db.err
+	@echo "Building backend..."
+	@cd backend && mkdir -p tmp && go build -o tmp/main ./api
+
+# A failed main suite does not skip the session phase: its exit status goes to
+# E2E_MAIN_STATUS, and the target fails at the end when either phase failed.
+E2E_MAIN_STATUS := $(CURDIR)/backend/tmp/e2e-main.status
+
+test-e2e: e2e-prepare
+	@echo "Starting backend..."
+	$(call e2e_start_backend,,backend.log)
+	@echo "Backend is ready, running Playwright tests..."
+	@cd frontend && bash -o pipefail -c 'npx playwright test 2>&1 | tee test-logs/playwright.log'; \
+		echo $$? > $(E2E_MAIN_STATUS)
+	@echo "Restarting backend with short session limits..."
+	$(call e2e_stop_backend_and_wait)
+	$(call e2e_start_backend,$(E2E_SESSION_BACKEND_ENV),backend-session.log)
+	$(call e2e_run_session_spec)
+	@echo "Stopping backend..."
+	@$(E2E_STOP_BACKEND) || true
+	$(MAKE) integration-infra-stop
+	@status=$$(cat $(E2E_MAIN_STATUS) 2>/dev/null || echo 1); rm -f $(E2E_MAIN_STATUS); \
+		if [ "$$status" != 0 ]; then echo "ERROR: the main e2e suite failed (see frontend/test-logs/playwright.log)."; exit 1; fi
+
+test-e2e-session: e2e-prepare ## Run only the session lifecycle e2e spec (short session limits)
+	@echo "Starting backend with short session limits..."
+	$(call e2e_start_backend,$(E2E_SESSION_BACKEND_ENV),backend-session.log)
+	$(call e2e_run_session_spec)
 	@echo "Stopping backend..."
 	@$(E2E_STOP_BACKEND) || true
 	$(MAKE) integration-infra-stop

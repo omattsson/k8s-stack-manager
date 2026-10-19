@@ -58,7 +58,8 @@ startHTTPServer              # main server, optional pprof and metrics servers
 | All backend tests (unit and integration) | `make test-backend-all` (starts MySQL) |
 | Frontend tests | `cd frontend && npm test` |
 | Unit tests (backend and frontend) | `make test` |
-| End-to-end tests | `make test-e2e` (starts infrastructure, backend and Playwright; no cluster access unless `E2E_KUBECONFIG` names a local kubeconfig; CI: `.github/workflows/e2e.yml`) |
+| End-to-end tests | `make test-e2e` (starts infrastructure, backend and Playwright; no cluster access unless `E2E_KUBECONFIG` names a local kubeconfig; then restarts the backend with short session limits and runs the `session` project; CI: `.github/workflows/e2e.yml`) |
+| Session lifecycle e2e tests only | `make test-e2e-session` (backend with `E2E_SESSION_*` limits: access token 10s, idle 20s, maximum lifetime 60s, reuse grace 3s) |
 | Swagger docs | `make docs` (runs `swag init -g api/main.go` in `backend`) |
 | Coverage (80% threshold) | `cd backend && make test-coverage` |
 | Format | `make fmt` |
@@ -319,7 +320,7 @@ backend/
 - Login returns a JWT (with a `jti` and a `sid` session claim) and a refresh token.
 - `POST /auth/refresh` rotates the refresh token through `RefreshTokenRepository`. Each login starts a session family (`family_id`, `session_started_at`).
 - A rotated token that comes again within `REFRESH_REUSE_GRACE` (default 30s, for concurrent tabs) gets a new access token and no new cookie. Later reuse revokes the family.
-- The idle limit (`SESSION_IDLE_TIMEOUT`, default 30m) counts from the last authenticated request. The JWT middleware touches the `last_activity` of the family, at most once per minute.
+- The idle limit (`SESSION_IDLE_TIMEOUT`, default 30m) counts from the last authenticated request. The JWT middleware touches the `last_activity` of the family, at most one write for each session per interval: a quarter of `SESSION_IDLE_TIMEOUT`, at most 1 minute and at least 1 second (`middleware.SessionActivityInterval`). So a session can count as idle about one interval before the full timeout after its last request.
 - `SESSION_MAX_LIFETIME` (default 12h) caps a session. Rotation never extends it.
 - Exceptions: the SSO CLI token has no session and lives for `JWT_EXPIRATION`. API keys have no session. `/ws` traffic is not activity.
 - `/auth/logout` blocklists the `jti` of the current access token in `sessionstore` and revokes the presented refresh token. `/auth/logout-all` also revokes every refresh token of the user.
@@ -459,7 +460,7 @@ frontend/src/
   utils/                       # roles, timeAgo, expiry, instanceName, instanceState, jwt, quantity, apiError, download, deployHistory, templateVersion, notificationEventTypes, notificationHelpers, recentTemplates, setupWizard, stopTime
 ```
 
-**Stack:** React 19, MUI v9, react-router-dom v7, Vite 8, TypeScript 6, Vitest 5, Playwright (29 specs in `frontend/e2e/`; the project `mobile` runs `mobile.spec.ts` with the iPhone 13 viewport, the project `chromium` runs the rest).
+**Stack:** React 19, MUI v9, react-router-dom v7, Vite 8, TypeScript 6, Vitest 5, Playwright (30 specs in `frontend/e2e/`; the project `session` runs `session-lifecycle.spec.ts` only with `E2E_SESSION=1` against a short-limit backend; the project `mobile` runs `mobile.spec.ts` with the iPhone 13 viewport, the project `chromium` runs the rest).
 
 **Patterns.**
 - Use MUI components (no raw HTML) and the `sx` prop for styling.
