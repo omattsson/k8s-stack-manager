@@ -43,6 +43,7 @@ type AuthHandler struct {
 	sessionStore     sessionstore.SessionStore
 	wsRevoker        websocket.ClientRevoker
 	loginCache       *cache.TTLCache[struct{}] // key: verified credentials; value unused
+	logger           *slog.Logger              // login failure log; nil uses slog.Default() (tests set it)
 }
 
 // NewAuthHandler creates a new AuthHandler.
@@ -110,6 +111,9 @@ type RegisterRequest struct {
 // @Success     200         {object} LoginResponse
 // @Failure     400         {object} map[string]string
 // @Failure     401         {object} map[string]string
+// @Failure     403         {object} map[string]string
+// @Failure     429         {object} map[string]string
+// @Failure     500         {object} map[string]string
 // @Router      /api/v1/auth/login [post]
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req LoginRequest
@@ -119,36 +123,48 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
+	// fail logs the failure with its reason, counts it and writes the response.
+	// The response never shows the reason: a credential failure always gives
+	// the same 401, so usernames cannot be enumerated.
+	cacheHit := false
+	fail := func(f loginFailure, body string) {
+		f.username = req.Username
+		f.cacheHit = cacheHit
+		f.clientIP = c.ClientIP()
+		f.requestID = c.GetString(middleware.RequestIDKey)
+		h.logLoginFailure(f)
+		c.JSON(f.httpCode, gin.H{"error": body})
+	}
+	const msgInvalidCredentials = "Invalid username or password"
+	const msgAccountDisabled = "Account disabled"
+	const msgLocalLoginRestricted = "Local login is restricted to service accounts. Please use SSO."
+
 	user, err := h.userRepo.FindByUsername(req.Username)
 	if err != nil {
-		// An unknown username is an invalid credential; only other lookup
-		// errors are operational failures.
+		// An unknown username is an invalid credential. Another lookup error
+		// is a server-side failure (500): a 401 would tell the client that
+		// the password is wrong.
 		if isNotFoundError(err) {
-			middleware.RecordLogin("local", "invalid")
+			fail(loginFailure{reason: loginReasonUserNotFound, status: "invalid", httpCode: http.StatusUnauthorized}, msgInvalidCredentials)
 		} else {
-			slog.Error("Login user lookup failed", "error", err)
-			middleware.RecordLogin("local", "failure")
+			fail(loginFailure{reason: loginReasonLookupError, status: "failure", httpCode: http.StatusInternalServerError, err: err}, msgInternalServerError)
 		}
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
 		return
 	}
 
 	if user.Disabled {
-		middleware.RecordLogin("local", "disabled")
-		c.JSON(http.StatusForbidden, gin.H{"error": "Account disabled"})
+		fail(loginFailure{reason: loginReasonDisabled, status: "disabled", httpCode: http.StatusForbidden, userID: user.ID}, msgAccountDisabled)
 		return
 	}
 
 	// When OIDC is enabled and local auth is not explicitly allowed, only service accounts can use local login.
 	if h.oidcCfg != nil && h.oidcCfg.Enabled && !h.oidcCfg.LocalAuth && !user.ServiceAccount {
-		middleware.RecordLogin("local", "restricted")
-		c.JSON(http.StatusForbidden, gin.H{"error": "Local login is restricted to service accounts. Please use SSO."})
+		fail(loginFailure{reason: loginReasonLocalLoginNotAllowed, status: "restricted", httpCode: http.StatusForbidden, userID: user.ID}, msgLocalLoginRestricted)
 		return
 	}
 
 	// Check login cache to skip expensive bcrypt comparison on repeated logins.
 	cacheKey := loginCacheKey(req.Username, user.PasswordHash, req.Password)
-	cacheHit := false
 	if h.loginCache != nil {
 		// A hit only proves the password. Keep the fresh user record: the
 		// token must carry the current role and display name (a role
@@ -167,15 +183,14 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 		if bcryptErr != nil {
 			// A password mismatch is an invalid credential. Any other bcrypt
-			// error (for example a malformed or unsupported stored hash) is a
-			// server-side failure, not a bad client credential.
+			// error (for example a malformed stored hash, or the empty hash of
+			// an SSO-linked user) is counted as a failure, but the answer
+			// stays the generic 401: a different answer would reveal the user.
 			if errors.Is(bcryptErr, bcrypt.ErrMismatchedHashAndPassword) {
-				middleware.RecordLogin("local", "invalid")
+				fail(loginFailure{reason: loginReasonPasswordMismatch, status: "invalid", httpCode: http.StatusUnauthorized, userID: user.ID}, msgInvalidCredentials)
 			} else {
-				slog.Error("bcrypt comparison failed", "error", bcryptErr)
-				middleware.RecordLogin("local", "failure")
+				fail(loginFailure{reason: loginReasonHashInvalid, status: "failure", httpCode: http.StatusUnauthorized, userID: user.ID, err: bcryptErr}, msgInvalidCredentials)
 			}
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
 			return
 		}
 		if h.loginCache != nil {
@@ -190,29 +205,24 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	fresh, err := h.userRepo.FindByID(user.ID)
 	if err != nil {
 		if isNotFoundError(err) {
-			middleware.RecordLogin("local", "invalid")
+			fail(loginFailure{reason: loginReasonRereadNotFound, status: "invalid", httpCode: http.StatusUnauthorized, userID: user.ID}, msgInvalidCredentials)
 		} else {
-			slog.Error("Login user re-read failed", "error", err)
-			middleware.RecordLogin("local", "failure")
+			fail(loginFailure{reason: loginReasonRereadError, status: "failure", httpCode: http.StatusInternalServerError, userID: user.ID, err: err}, msgInternalServerError)
 		}
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
 		return
 	}
 	if fresh.PasswordHash != user.PasswordHash {
 		// The password changed after the check: the verified password is the old one.
-		middleware.RecordLogin("local", "invalid")
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
+		fail(loginFailure{reason: loginReasonHashChanged, status: "invalid", httpCode: http.StatusUnauthorized, userID: user.ID}, msgInvalidCredentials)
 		return
 	}
 	user = fresh
 	if user.Disabled {
-		middleware.RecordLogin("local", "disabled")
-		c.JSON(http.StatusForbidden, gin.H{"error": "Account disabled"})
+		fail(loginFailure{reason: loginReasonDisabled, status: "disabled", httpCode: http.StatusForbidden, userID: user.ID}, msgAccountDisabled)
 		return
 	}
 	if h.oidcCfg != nil && h.oidcCfg.Enabled && !h.oidcCfg.LocalAuth && !user.ServiceAccount {
-		middleware.RecordLogin("local", "restricted")
-		c.JSON(http.StatusForbidden, gin.H{"error": "Local login is restricted to service accounts. Please use SSO."})
+		fail(loginFailure{reason: loginReasonLocalLoginNotAllowed, status: "restricted", httpCode: http.StatusForbidden, userID: user.ID}, msgLocalLoginRestricted)
 		return
 	}
 
@@ -237,8 +247,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		})
 	}
 	if err != nil {
-		middleware.RecordLogin("local", "failure")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		fail(loginFailure{reason: loginReasonTokenError, status: "failure", httpCode: http.StatusInternalServerError, userID: user.ID, err: err}, msgInternalServerError)
 		return
 	}
 
@@ -247,15 +256,11 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	if err := recheckUserActive(h.userRepo, user.ID); err != nil {
 		switch {
 		case errors.Is(err, errAccountDisabled):
-			middleware.RecordLogin("local", "disabled")
-			c.JSON(http.StatusForbidden, gin.H{"error": "Account disabled"})
+			fail(loginFailure{reason: loginReasonDisabled, status: "disabled", httpCode: http.StatusForbidden, userID: user.ID}, msgAccountDisabled)
 		case errors.Is(err, errUserGone):
-			middleware.RecordLogin("local", "invalid")
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
+			fail(loginFailure{reason: loginReasonRecheckFailed, status: "invalid", httpCode: http.StatusUnauthorized, userID: user.ID}, msgInvalidCredentials)
 		default:
-			slog.Error("Login user re-check failed", "user_id", user.ID, "error", err)
-			middleware.RecordLogin("local", "failure")
-			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+			fail(loginFailure{reason: loginReasonRecheckError, status: "failure", httpCode: http.StatusInternalServerError, userID: user.ID, err: err}, msgInternalServerError)
 		}
 		return
 	}
@@ -273,12 +278,9 @@ func (h *AuthHandler) Login(c *gin.Context) {
 				abandonSession(h.refreshTokenRepo, sess.familyID)
 				h.clearRefreshCookie(c)
 				if errors.Is(err, errSessionRevoked) {
-					middleware.RecordLogin("local", "revoked")
-					c.JSON(http.StatusUnauthorized, gin.H{"error": "Session revoked"})
+					fail(loginFailure{reason: loginReasonSessionRevoked, status: "revoked", httpCode: http.StatusUnauthorized, userID: user.ID}, "Session revoked")
 				} else {
-					slog.Error("Login session re-check failed", "user_id", user.ID, "family_id", sess.familyID, "error", err)
-					middleware.RecordLogin("local", "failure")
-					c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+					fail(loginFailure{reason: loginReasonSessionError, status: "failure", httpCode: http.StatusInternalServerError, userID: user.ID, err: err}, msgInternalServerError)
 				}
 				return
 			}
@@ -984,23 +986,21 @@ func (h *AuthHandler) issueRefreshTokenWith(c *gin.Context, repo models.RefreshT
 // RefreshTokenExpiration and the session deadline, so rotation never extends
 // a session. Shared by local login, refresh and OIDC login.
 func createRefreshToken(c *gin.Context, repo models.RefreshTokenRepository, cfg *config.AuthConfig, userID string, sess refreshSession, excludeTokenID string) (string, time.Time, error) {
-	// Clean up excess tokens if over limit.
+	// Keep the user within MaxRefreshTokensPerUser: revoke the oldest active
+	// tokens so that the new one fits, but never the newest ones. Revoking all
+	// of them (the old rule) also revoked the session of a login of the same
+	// user that ran at the same time; its session re-check then failed with
+	// 401 "Session revoked" (#619). On refresh, MarkRotatedIfActive has
+	// already revoked the consumed token, so it is not active here; excluding
+	// it is defense in depth, so the cap never revokes the token in use.
 	if cfg.MaxRefreshTokensPerUser > 0 {
 		activeCount, err := repo.CountActiveForUser(userID)
 		if err != nil {
 			return "", time.Time{}, err
 		}
 		if int(activeCount) >= cfg.MaxRefreshTokensPerUser {
-			// Revoke all and start fresh to stay within bounds,
-			// but skip the token currently being consumed (if any).
-			if excludeTokenID != "" {
-				if err := repo.RevokeAllForUserExcept(userID, excludeTokenID); err != nil {
-					return "", time.Time{}, err
-				}
-			} else {
-				if err := repo.RevokeAllForUser(userID); err != nil {
-					return "", time.Time{}, err
-				}
+			if _, err := repo.RevokeOldestForUser(userID, cfg.MaxRefreshTokensPerUser-1, excludeTokenID); err != nil {
+				return "", time.Time{}, err
 			}
 		}
 	}

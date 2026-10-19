@@ -39,7 +39,6 @@ func TestDatabaseInitialization(t *testing.T) {
 		},
 		Logging: config.LogConfig{
 			Level: "debug",
-			File:  "",
 		},
 	}
 

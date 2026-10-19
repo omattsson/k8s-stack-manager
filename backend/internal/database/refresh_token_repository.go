@@ -76,6 +76,36 @@ func (r *GORMRefreshTokenRepository) RevokeAllForUserExcept(userID string, exclu
 		Update("revoked", true).Error
 }
 
+// RevokeOldestForUser revokes the active tokens of the user except the keep
+// newest ones and excludeID. It reads the IDs first (MySQL refuses LIMIT in an
+// IN subquery); a token created after the read is newer than every revoked one
+// and stays active.
+func (r *GORMRefreshTokenRepository) RevokeOldestForUser(userID string, keep int, excludeID string) (int64, error) {
+	if keep < 0 {
+		keep = 0
+	}
+	q := r.db.Model(&models.RefreshToken{}).
+		Where("user_id = ? AND revoked = ? AND expires_at > ?", userID, false, time.Now().UTC())
+	if excludeID != "" {
+		q = q.Where("id <> ?", excludeID)
+	}
+	var ids []string
+	if err := q.Order("created_at DESC").Order("id DESC").Offset(keep).Limit(maxRevokeBatch).Pluck("id", &ids).Error; err != nil {
+		return 0, err
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	tx := r.db.Model(&models.RefreshToken{}).
+		Where("id IN ? AND revoked = ?", ids, false).
+		Update("revoked", true)
+	return tx.RowsAffected, tx.Error
+}
+
+// maxRevokeBatch bounds the IDs of one RevokeOldestForUser call. A user has at
+// most MAX_REFRESH_TOKENS_PER_USER active tokens plus a few concurrent ones.
+const maxRevokeBatch = 1000
+
 func (r *GORMRefreshTokenRepository) DeleteExpired() (int64, error) {
 	tx := r.db.Where("expires_at < ?", time.Now().UTC()).Delete(&models.RefreshToken{})
 	return tx.RowsAffected, tx.Error

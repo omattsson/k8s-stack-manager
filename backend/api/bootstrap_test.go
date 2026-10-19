@@ -821,6 +821,9 @@ func (s *stubRefreshTokenRepo) CountActiveInFamily(_ string) (int64, error) { re
 func (s *stubRefreshTokenRepo) TouchFamily(_ context.Context, _ string, _ time.Time) error {
 	return nil
 }
+func (s *stubRefreshTokenRepo) RevokeOldestForUser(_ string, _ int, _ string) (int64, error) {
+	return 0, nil
+}
 
 // ---- stubTxRunner ----
 

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -180,6 +181,36 @@ func (m *MockRefreshTokenRepository) RevokeAllForUserExcept(userID string, exclu
 		}
 	}
 	return nil
+}
+
+func (m *MockRefreshTokenRepository) RevokeOldestForUser(userID string, keep int, excludeID string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.revokeAllErr != nil {
+		return 0, m.revokeAllErr
+	}
+	now := time.Now()
+	var active []*models.RefreshToken
+	for _, t := range m.tokens {
+		if t.UserID == userID && !t.Revoked && t.ExpiresAt.After(now) && t.ID != excludeID {
+			active = append(active, t)
+		}
+	}
+	sort.Slice(active, func(i, j int) bool {
+		if !active[i].CreatedAt.Equal(active[j].CreatedAt) {
+			return active[i].CreatedAt.After(active[j].CreatedAt)
+		}
+		return active[i].ID > active[j].ID
+	})
+	if keep < 0 {
+		keep = 0
+	}
+	var n int64
+	for i := keep; i < len(active); i++ {
+		active[i].Revoked = true
+		n++
+	}
+	return n, nil
 }
 
 func (m *MockRefreshTokenRepository) DeleteExpired() (int64, error) {
@@ -1074,16 +1105,19 @@ func TestLogoutAll_BlocklistsAccessToken(t *testing.T) {
 
 // ---- issueRefreshTokenWith max-tokens enforcement Tests ----
 
+// At the limit, the issue revokes only the oldest active tokens, so that the
+// user keeps MaxRefreshTokensPerUser tokens including the new one. The newest
+// tokens and the token that a refresh consumes stay active (#619).
 func TestIssueRefreshToken_MaxTokensEnforcement(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name           string
-		maxTokens      int
-		existingTokens int
 		excludeTokenID string
-		wantRevokeAll  bool
-		wantExcept     bool
+		wantRevoked    []string // IDs of the seeded tokens that must be revoked
+		maxTokens      int
+		existingTokens int  // rt-existing-0 is the oldest
+		excludeRevoked bool // the consumed token is already revoked (the real refresh order)
 	}{
 		{
 			name:           "under limit — no revocation",
@@ -1091,24 +1125,42 @@ func TestIssueRefreshToken_MaxTokensEnforcement(t *testing.T) {
 			existingTokens: 3,
 		},
 		{
-			name:           "at limit without excludeTokenID — RevokeAllForUser",
+			name:           "at limit — revokes only the oldest",
 			maxTokens:      3,
 			existingTokens: 3,
-			wantRevokeAll:  true,
+			wantRevoked:    []string{"rt-existing-0"},
 		},
 		{
-			name:           "at limit with excludeTokenID — RevokeAllForUserExcept",
+			// The real refresh order: MarkRotatedIfActive has already
+			// revoked the consumed token, so the user has limit-1 active
+			// tokens and the issue revokes nothing.
+			name:           "refresh at limit — consumed token already revoked, nothing revoked",
+			maxTokens:      3,
+			existingTokens: 2,
+			excludeTokenID: "rt-exclude-me",
+			excludeRevoked: true,
+		},
+		{
+			// Defense in depth: a state production does not reach (the
+			// consumed token still active). The exclusion keeps it, and
+			// only the oldest of the others is revoked.
+			name:           "at limit with an active excludeTokenID — the consumed token stays",
 			maxTokens:      3,
 			existingTokens: 3,
 			excludeTokenID: "rt-exclude-me",
-			wantRevokeAll:  true,
-			wantExcept:     true,
+			wantRevoked:    []string{"rt-existing-0"},
 		},
 		{
-			name:           "over limit without excludeTokenID",
+			name:           "over limit — keeps the newest limit-1",
 			maxTokens:      2,
 			existingTokens: 5,
-			wantRevokeAll:  true,
+			wantRevoked:    []string{"rt-existing-0", "rt-existing-1", "rt-existing-2", "rt-existing-3"},
+		},
+		{
+			name:           "limit 1 — revokes all others",
+			maxTokens:      1,
+			existingTokens: 2,
+			wantRevoked:    []string{"rt-existing-0", "rt-existing-1"},
 		},
 	}
 
@@ -1127,83 +1179,121 @@ func TestIssueRefreshToken_MaxTokensEnforcement(t *testing.T) {
 			h := NewAuthHandler(userRepo, cfg, &config.OIDCConfig{})
 			h.SetRefreshTokenRepo(refreshRepo)
 
-			// Seed existing active tokens.
 			now := time.Now()
-			for i := 0; i < tt.existingTokens; i++ {
-				id := fmt.Sprintf("rt-existing-%d", i)
-				_ = refreshRepo.Create(&models.RefreshToken{
+			seed := func(id string, createdAt time.Time, revoked bool) {
+				require.NoError(t, refreshRepo.Create(&models.RefreshToken{
 					ID:           id,
 					UserID:       "uid-1",
-					TokenHash:    fmt.Sprintf("hash-%d", i),
+					TokenHash:    "hash-" + id,
 					ExpiresAt:    now.Add(7 * 24 * time.Hour),
-					LastActivity: now,
-					CreatedAt:    now,
-				})
+					LastActivity: createdAt,
+					CreatedAt:    createdAt,
+					Revoked:      revoked,
+				}))
 			}
-			// If testing excludeTokenID, seed that specific token too.
+			for i := 0; i < tt.existingTokens; i++ {
+				seed(fmt.Sprintf("rt-existing-%d", i), now.Add(-time.Duration(tt.existingTokens-i)*time.Minute), false)
+			}
+			// The consumed token is the oldest: only the exclusion keeps it.
 			if tt.excludeTokenID != "" {
-				_ = refreshRepo.Create(&models.RefreshToken{
-					ID:           tt.excludeTokenID,
-					UserID:       "uid-1",
-					TokenHash:    "hash-exclude",
-					ExpiresAt:    now.Add(7 * 24 * time.Hour),
-					LastActivity: now,
-					CreatedAt:    now,
-				})
+				seed(tt.excludeTokenID, now.Add(-time.Hour), tt.excludeRevoked)
 			}
 
-			// Build a gin context for the handler.
 			gin.SetMode(gin.TestMode)
 			w := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(w)
 			c.Request, _ = http.NewRequest(http.MethodPost, "/", nil)
 			c.Request.Header.Set("User-Agent", "test-agent")
 
-			var rawToken string
-			var err error
-			if tt.excludeTokenID != "" {
-				rawToken, _, err = h.issueRefreshTokenWith(c, refreshRepo, "uid-1", newRefreshSession(), tt.excludeTokenID)
-			} else {
-				rawToken, _, err = h.issueRefreshTokenWith(c, refreshRepo, "uid-1", newRefreshSession(), "")
-			}
-
+			rawToken, _, err := h.issueRefreshTokenWith(c, refreshRepo, "uid-1", newRefreshSession(), tt.excludeTokenID)
 			require.NoError(t, err)
 			assert.NotEmpty(t, rawToken, "should return a raw token")
 
 			refreshRepo.mu.RLock()
 			defer refreshRepo.mu.RUnlock()
-
-			if tt.wantRevokeAll {
-				if tt.wantExcept {
-					// The exclude token should NOT be revoked, others should be.
-					excludeToken := refreshRepo.tokens[tt.excludeTokenID]
-					require.NotNil(t, excludeToken)
-					assert.False(t, excludeToken.Revoked, "excluded token should not be revoked")
-
-					// Other pre-existing tokens should be revoked.
-					for _, tok := range refreshRepo.tokens {
-						if tok.UserID == "uid-1" && tok.ID != tt.excludeTokenID && tok.TokenHash != hashRefreshToken(rawToken) {
-							assert.True(t, tok.Revoked, "token %s should be revoked", tok.ID)
-						}
-					}
-				} else {
-					// All pre-existing tokens should be revoked.
-					for _, tok := range refreshRepo.tokens {
-						if tok.UserID == "uid-1" && tok.TokenHash != hashRefreshToken(rawToken) {
-							assert.True(t, tok.Revoked, "token %s should be revoked", tok.ID)
-						}
-					}
+			wantRevoked := map[string]bool{}
+			for _, id := range tt.wantRevoked {
+				wantRevoked[id] = true
+			}
+			var activeOthers int
+			for _, tok := range refreshRepo.tokens {
+				if tok.TokenHash == hashRefreshToken(rawToken) {
+					assert.False(t, tok.Revoked, "the new token stays active")
+					continue
 				}
-			} else {
-				// No revocation expected — all existing tokens should still be active.
-				for _, tok := range refreshRepo.tokens {
-					if tok.TokenHash != hashRefreshToken(rawToken) {
-						assert.False(t, tok.Revoked, "token %s should not be revoked (under limit)", tok.ID)
-					}
+				if tok.ID == tt.excludeTokenID {
+					assert.Equal(t, tt.excludeRevoked, tok.Revoked, "the cap never changes the consumed token")
+					continue
+				}
+				assert.Equal(t, wantRevoked[tok.ID], tok.Revoked, "token %s revoked", tok.ID)
+				if !tok.Revoked && tok.ID != tt.excludeTokenID {
+					activeOthers++
 				}
 			}
+			assert.LessOrEqual(t, activeOthers+1, tt.maxTokens, "at most the limit (without the consumed token)")
 		})
 	}
+}
+
+// Regression test for #619: a login of a user at the token limit revoked all
+// refresh tokens of the user, also the new session of a login of the same user
+// that ran at the same time. That login then failed its session re-check with
+// 401 "Session revoked" although the password was correct (e2e: parallel
+// workers log in as admin). Only the oldest tokens may be revoked.
+func TestLogin_ConcurrentLoginAtTokenLimitKeepsNewSession(t *testing.T) {
+	t.Parallel()
+
+	userRepo := NewMockUserRepository()
+	refreshRepo := NewMockRefreshTokenRepository()
+	seedUser(t, userRepo, "uid-1", "admin", "secret", "admin")
+
+	cfg := testAuthConfigWithRefresh()
+	cfg.MaxRefreshTokensPerUser = 3
+	h := NewAuthHandler(userRepo, cfg, &config.OIDCConfig{})
+	h.SetRefreshTokenRepo(refreshRepo)
+
+	// Two older sessions: the login under test brings the user to the limit.
+	now := time.Now()
+	for i := 0; i < 2; i++ {
+		id := fmt.Sprintf("rt-old-%d", i)
+		require.NoError(t, refreshRepo.Create(&models.RefreshToken{
+			ID: id, UserID: "uid-1", FamilyID: id, TokenHash: "hash-" + id,
+			ExpiresAt: now.Add(time.Hour), LastActivity: now.Add(-time.Hour), CreatedAt: now.Add(-time.Hour + time.Duration(i)*time.Minute),
+		}))
+	}
+
+	// Between the issue of the session and its re-check, a second login of
+	// the same user issues its own session at the limit.
+	var concurrentErr error
+	refreshRepo.countHook = func(call int) {
+		if call != 1 {
+			return
+		}
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request, _ = http.NewRequest(http.MethodPost, "/", nil)
+		time.Sleep(time.Millisecond) // a later CreatedAt than the first login
+		_, _, concurrentErr = h.issueRefreshTokenWith(c, refreshRepo, "uid-1", newRefreshSession(), "")
+	}
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.POST("/api/v1/auth/login", h.Login)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(`{"username":"admin","password":"secret"}`))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	require.NoError(t, concurrentErr)
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	assert.Contains(t, w.Body.String(), `"token"`)
+	active, err := refreshRepo.CountActiveForUser("uid-1")
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), active, "both new sessions and the newer old one stay")
+	refreshRepo.mu.RLock()
+	assert.True(t, refreshRepo.tokens["rt-old-0"].Revoked, "the oldest session is revoked")
+	assert.False(t, refreshRepo.tokens["rt-old-1"].Revoked)
+	refreshRepo.mu.RUnlock()
 }
 
 // ---- EnsureAdminUser additional coverage Tests ----

@@ -170,6 +170,9 @@ func Recovery() gin.HandlerFunc {
 	}
 }
 
+// RequestIDKey is the gin context key of the request ID that RequestID sets.
+const RequestIDKey = "request_id"
+
 // RequestID adds a unique request ID to each request.
 // If the client sends an X-Request-ID header, it is reused; otherwise a new one is generated.
 func RequestID() gin.HandlerFunc {
@@ -178,7 +181,7 @@ func RequestID() gin.HandlerFunc {
 		if requestID == "" {
 			requestID = generateRequestID()
 		}
-		c.Set("request_id", requestID)
+		c.Set(RequestIDKey, requestID)
 		c.Writer.Header().Set("X-Request-ID", requestID)
 		c.Next()
 	}

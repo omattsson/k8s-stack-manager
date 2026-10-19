@@ -39,6 +39,19 @@ vi.mock('../../../context/AuthContext', () => ({
   }),
 }));
 
+/** An axios-like error with an HTTP response. */
+function httpError(status: number, error?: string, headers: Record<string, string> = {}) {
+  return Object.assign(new Error(`Request failed with status code ${status}`), {
+    isAxiosError: true,
+    response: { status, data: error ? { error } : {}, headers },
+  });
+}
+
+/** An axios-like network error (no response). */
+function networkError() {
+  return Object.assign(new Error('Network Error'), { isAxiosError: true, code: 'ERR_NETWORK' });
+}
+
 function renderLogin() {
   return render(
     <MemoryRouter>
@@ -257,7 +270,7 @@ describe('Login Page — OIDC modes', () => {
 
     it('shows error message when local login fails', async () => {
       mockOidcConfig = null;
-      mockLogin.mockRejectedValue(new Error('Invalid credentials'));
+      mockLogin.mockRejectedValue(httpError(401, 'Invalid credentials'));
       const user = userEvent.setup();
 
       renderLogin();
@@ -270,6 +283,86 @@ describe('Login Page — OIDC modes', () => {
         expect(screen.getByRole('alert')).toBeInTheDocument();
         expect(screen.getByText(/invalid username or password/i)).toBeInTheDocument();
       });
+    });
+  });
+});
+
+describe('Login Page — sign-in error messages', () => {
+  beforeEach(() => {
+    mockOidcLoading = false;
+    mockOidcConfig = null;
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  async function submitWithError(error: unknown) {
+    mockLogin.mockRejectedValue(error);
+    const user = userEvent.setup();
+    renderLogin();
+    await user.type(screen.getByLabelText(/username/i), 'admin');
+    await user.type(screen.getByLabelText(/password/i), 'secret');
+    await user.click(screen.getByRole('button', { name: 'Sign In' }));
+    return waitFor(() => screen.getByRole('alert'));
+  }
+
+  it('shows "Invalid username or password" for a 401', async () => {
+    const alert = await submitWithError(httpError(401, 'Invalid credentials'));
+    expect(alert).toHaveTextContent('Invalid username or password');
+  });
+
+  it('shows the server message for a 403 (disabled account)', async () => {
+    const alert = await submitWithError(httpError(403, 'Account disabled'));
+    expect(alert).toHaveTextContent('Account disabled');
+    expect(alert).not.toHaveTextContent(/invalid username or password/i);
+  });
+
+  it('shows a rate limit message for a 429 without Retry-After', async () => {
+    const alert = await submitWithError(httpError(429, 'Too many requests'));
+    expect(alert).toHaveTextContent('Too many sign-in attempts. Wait a minute and try again.');
+  });
+
+  it('names the Retry-After delay for a 429', async () => {
+    const alert = await submitWithError(httpError(429, 'Too many requests', { 'retry-after': '30' }));
+    expect(alert).toHaveTextContent('Too many sign-in attempts. Wait 30 seconds and try again.');
+  });
+
+  it('shows a server error message for a 500, not the credentials message', async () => {
+    const alert = await submitWithError(httpError(500, 'Internal server error'));
+    expect(alert).toHaveTextContent('Sign-in failed because of a server error. Try again later.');
+    expect(alert).not.toHaveTextContent(/invalid username or password/i);
+  });
+
+  it('shows a server error message for a 503', async () => {
+    const alert = await submitWithError(httpError(503));
+    expect(alert).toHaveTextContent('Sign-in failed because of a server error. Try again later.');
+  });
+
+  it('shows a connection message for a network error', async () => {
+    const alert = await submitWithError(networkError());
+    expect(alert).toHaveTextContent('Cannot reach the server. Check your connection and try again.');
+  });
+
+  it('shows a server error message when the SSO start fails with a 500', async () => {
+    mockOidcConfig = { enabled: true, provider_name: 'Microsoft', local_auth_enabled: true };
+    mockLoginWithOIDC.mockRejectedValue(httpError(500, 'Internal server error'));
+    const user = userEvent.setup();
+    renderLogin();
+    await user.click(screen.getByRole('button', { name: /sign in with microsoft/i }));
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent('Sign-in failed because of a server error. Try again later.');
+    });
+  });
+
+  it('shows a connection message when the SSO start has a network error', async () => {
+    mockOidcConfig = { enabled: true, provider_name: 'Microsoft', local_auth_enabled: true };
+    mockLoginWithOIDC.mockRejectedValue(networkError());
+    const user = userEvent.setup();
+    renderLogin();
+    await user.click(screen.getByRole('button', { name: /sign in with microsoft/i }));
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent('Cannot reach the server. Check your connection and try again.');
     });
   });
 });
