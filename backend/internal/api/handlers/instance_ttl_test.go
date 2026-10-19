@@ -572,6 +572,10 @@ func TestExtendTTL_Until(t *testing.T) {
 		wantStatus int
 		wantError  string
 		wantExpiry *time.Time
+		// wantExpiryFromNow: the expiry is the request time plus this (a cap
+		// at now plus the limit). The parallel subtest can start well after
+		// `now`, so it is checked against the time around its own request.
+		wantExpiryFromNow time.Duration
 	}{
 		{name: "sets the expiry of a TTL instance", ttl: 60, expiresAt: &inOneHour,
 			body: map[string]any{"until": rfc3339(inThreeDays)}, wantStatus: http.StatusOK, wantExpiry: &inThreeDays},
@@ -592,7 +596,7 @@ func TestExtendTTL_Until(t *testing.T) {
 			body: map[string]any{"until": rfc3339(inThreeDays), "minutes": 30}, wantStatus: http.StatusBadRequest,
 			wantError: "Send either until, minutes or ttl_minutes"},
 		{name: "minutes are capped at now plus the limit", ttl: 60, expiresAt: ptrTime(now.Add(6 * 24 * time.Hour)),
-			body: map[string]any{"minutes": 3 * 24 * 60}, wantStatus: http.StatusOK, wantExpiry: ptrTime(now.Add(7 * 24 * time.Hour))},
+			body: map[string]any{"minutes": 3 * 24 * 60}, wantStatus: http.StatusOK, wantExpiryFromNow: 7 * 24 * time.Hour},
 	}
 	for _, tt := range tests {
 		tt := tt
@@ -600,7 +604,9 @@ func TestExtendTTL_Until(t *testing.T) {
 			t.Parallel()
 			env := newTTLTestEnv(t, 0)
 			env.seed(t, "i1", models.StackStatusRunning, tt.ttl, tt.expiresAt)
+			before := time.Now().UTC()
 			w := env.do(t, http.MethodPost, "/api/v1/stack-instances/i1/extend", tt.body)
+			after := time.Now().UTC()
 			require.Equal(t, tt.wantStatus, w.Code, w.Body.String())
 			if tt.wantError != "" {
 				assert.Equal(t, tt.wantError, errorOf(t, w))
@@ -609,6 +615,14 @@ func TestExtendTTL_Until(t *testing.T) {
 			got := env.get(t, "i1")
 			assert.Equal(t, tt.ttl, got.TTLMinutes, "an extend never changes ttl_minutes")
 			require.NotNil(t, got.ExpiresAt)
+			if tt.wantExpiryFromNow > 0 {
+				// The stored time may be truncated to the second.
+				lo := before.Add(tt.wantExpiryFromNow).Add(-time.Second)
+				hi := after.Add(tt.wantExpiryFromNow).Add(time.Second)
+				assert.Truef(t, !got.ExpiresAt.Before(lo) && !got.ExpiresAt.After(hi),
+					"expiry %s not within [%s, %s]", got.ExpiresAt, lo, hi)
+				return
+			}
 			assert.WithinDuration(t, *tt.wantExpiry, *got.ExpiresAt, 2*time.Second, fmt.Sprint(got.ExpiresAt))
 		})
 	}
