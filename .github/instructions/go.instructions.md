@@ -6,7 +6,7 @@ applyTo: "**/*.go"
 
 ## Project layout
 
-All backend code is in `backend/`. The module is `backend` (`go.mod`, Go 1.26). Use `backend/internal/` for private packages and `backend/pkg/` for shared packages (`dberrors`, `crypto`, `utils`).
+All backend code is in `backend/`. The module is `backend` (`go.mod`, Go 1.27). Use `backend/internal/` for private packages and `backend/pkg/` for shared packages (`dberrors`, `crypto`, `utils`).
 
 Packages in `internal/`: `api` (handlers, middleware, routes), `auth` (OpenID Connect, OIDC), `cache` (in-memory cache with a time to live, TTL), `cluster` (`ClusterRegistry`, health poller, quota monitor, secret refresher), `config`, `database` (GORM repositories, migrations), `deployer` (Helm CLI), `gitprovider`, `health`, `helm` (values merge), `hooks` (outbound webhooks, actions), `k8s`, `leader` (leader election), `models`, `notifier`, `replica` (identity, heartbeat), `scheduler`, `sessionstore` (token blocklist, OIDC state), `telemetry` (OpenTelemetry, metrics), `ttl`, `websocket`.
 

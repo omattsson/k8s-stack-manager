@@ -11,7 +11,7 @@ See [WIKI.md](WIKI.md) for the concepts and rules, [EXTENDING.md](EXTENDING.md) 
 |                    Frontend (React 19)                       |
 |  MUI, Vite, Monaco Editor, WebSocket, OIDC (PKCE)            |
 +--------------------------------------------------------------+
-|                   Backend (Go 1.26 + Gin)                    |
+|                   Backend (Go 1.27 + Gin)                    |
 |  REST API, JWT, Swagger, Audit Middleware, OpenTelemetry     |
 +------+----------+----------+----------+----------+-----------+
 |MySQL | Cluster  | Git      | Helm     | Hook     | K8s       |

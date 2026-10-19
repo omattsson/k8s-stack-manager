@@ -5,7 +5,7 @@
 K8s Stack Manager is a full-stack application.
 - Backend: Go (Gin). Frontend: React (TypeScript, Vite, MUI). Data store: MySQL (GORM).
 - Docker Compose runs all services.
-- Versions: Go 1.26 (`backend/go.mod`; the images build with `golang:1.27`), Node 22.12 or later (Vitest needs `^22.12 || ^24 || >=26`; the images use `node:26-alpine`).
+- Versions: Go 1.27 (`backend/go.mod`; CI uses Go 1.27 and the images build with `golang:1.27.2`), Node 22.12 or later (Vitest needs `^22.12 || ^24 || >=26`; the images use `node:26-alpine`).
 
 **Bootstrap flow.** `backend/api/main.go` calls helpers in `backend/api/bootstrap.go` in this order:
 

@@ -77,7 +77,7 @@ All routes are under `/api/v1` except `/health/*` and `/ws`. Swagger documents t
 
 ## Prerequisites
 
-- Go 1.26 or later
+- Go 1.27 or later
 - MySQL 8.0 or later (the Docker Compose stack uses 8.4)
 
 ## Quick Start
