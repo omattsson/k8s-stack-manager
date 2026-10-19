@@ -115,3 +115,68 @@ func TestDatabaseRefreshTokenSessionFamily(t *testing.T) {
 	assert.True(t, m.HasColumn(&models.RefreshToken{}, "FamilyID"))
 	assert.True(t, m.HasIndex(&models.RefreshToken{}, "FamilyID"))
 }
+
+// TestDatabaseRefreshTokenRotationSeesConcurrentTouch checks the MySQL
+// behavior that the refresh rotation relies on: a TouchFamily that holds the
+// row lock of the old token when the rotation starts commits first, and the
+// re-read of the old row after MarkRotatedIfActive (same transaction) sees
+// the touched last_activity, so the handler can carry it to the new token.
+func TestDatabaseRefreshTokenRotationSeesConcurrentTouch(t *testing.T) {
+	if testing.Short() {
+		t.Skip("MySQL integration test")
+	}
+	db := setupMySQLMigrationDB(t)
+	require.NoError(t, db.AutoMigrate())
+
+	now := time.Now().UTC().Truncate(time.Second)
+	readActivity := now.Add(-10 * time.Minute)
+	touchedAt := now.Add(-time.Second)
+	repo := NewGORMRefreshTokenRepository(db.DB)
+	require.NoError(t, repo.Create(&models.RefreshToken{
+		ID: "old-1", UserID: "u1", FamilyID: "fam-race", TokenHash: "hash-old",
+		ExpiresAt: now.Add(time.Hour), LastActivity: readActivity, CreatedAt: now.Add(-time.Hour), SessionStartedAt: now.Add(-time.Hour),
+	}))
+
+	// The touch takes the row lock and does not commit yet.
+	touchTx := db.DB.Begin()
+	require.NoError(t, touchTx.Error)
+	require.NoError(t, NewGORMRefreshTokenRepository(touchTx).TouchFamily(context.Background(), "fam-race", touchedAt))
+
+	type result struct {
+		lastActivity time.Time
+		affected     int64
+		err          error
+	}
+	done := make(chan result, 1)
+	go func() {
+		var res result
+		res.err = repo.WithTx(func(txRepo models.RefreshTokenRepository) error {
+			affected, err := txRepo.MarkRotatedIfActive("old-1", now) // waits for the touch
+			if err != nil {
+				return err
+			}
+			res.affected = affected
+			current, err := txRepo.FindByTokenHash("hash-old")
+			if err != nil {
+				return err
+			}
+			res.lastActivity = current.LastActivity
+			return nil
+		})
+		done <- res
+	}()
+
+	// Give the rotation time to block on the row lock, then commit the touch.
+	time.Sleep(200 * time.Millisecond)
+	require.NoError(t, touchTx.Commit().Error)
+
+	select {
+	case res := <-done:
+		require.NoError(t, res.err)
+		assert.Equal(t, int64(1), res.affected)
+		assert.WithinDuration(t, touchedAt, res.lastActivity, time.Second,
+			"the re-read after MarkRotatedIfActive must see the committed touch")
+	case <-time.After(30 * time.Second):
+		t.Fatal("rotation did not finish")
+	}
+}

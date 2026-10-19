@@ -99,9 +99,38 @@ func AuthRequiredWithSessionStore(jwtSecret string, store sessionstore.SessionSt
 // request goroutine, so it must be safe for concurrent use.
 type SessionActivityFunc func(ctx context.Context, sessionID string, at time.Time) error
 
-// sessionActivityInterval is the minimum time between two activity writes for
-// one session. It keeps the DB write rate at one per minute per session.
+// sessionActivityInterval is the default (and maximum) minimum time between
+// two activity writes for one session. It keeps the DB write rate at one per
+// minute per session.
 const sessionActivityInterval = time.Minute
+
+// minSessionActivityInterval is the floor of the activity write interval. It
+// bounds the DB write rate for very short idle timeouts.
+const minSessionActivityInterval = time.Second
+
+// SessionActivityInterval returns the throttle interval of session activity
+// writes for the given session idle timeout:
+// min(1m, idleTimeout/4), but at least 1s. The recorded activity lags the
+// last request by at most one interval plus the time of the async write, so
+// the refresh handler counts a session as idle at the earliest about
+// idleTimeout - interval after its last request (at least 3/4 of the idle
+// timeout, unless the 1s floor applies). The refresh rotation carries the
+// latest recorded activity of the old token forward, so a write that races
+// with a rotation is not lost. A non-positive idleTimeout returns the
+// 1-minute default.
+func SessionActivityInterval(idleTimeout time.Duration) time.Duration {
+	if idleTimeout <= 0 {
+		return sessionActivityInterval
+	}
+	interval := idleTimeout / 4
+	if interval > sessionActivityInterval {
+		return sessionActivityInterval
+	}
+	if interval < minSessionActivityInterval {
+		return minSessionActivityInterval
+	}
+	return interval
+}
 
 // sessionActivityTimeout bounds one activity write, so a slow database cannot
 // pile up goroutines.
@@ -114,33 +143,46 @@ type JWTAuthOptions struct {
 	// OnSessionActivity is called (throttled, async) for each authenticated
 	// request with a "sid" claim. nil: no activity tracking.
 	OnSessionActivity SessionActivityFunc
+	// SessionActivityInterval is the minimum time between two activity writes
+	// for one session (see SessionActivityInterval). 0: one minute.
+	SessionActivityInterval time.Duration
 }
 
 // sessionActivityTracker throttles OnSessionActivity calls per session.
 type sessionActivityTracker struct {
 	fn       SessionActivityFunc
 	lastSeen *cache.TTLCache[time.Time]
+	now      func() time.Time // clock; tests may replace it
+	interval time.Duration
 }
 
-func newSessionActivityTracker(fn SessionActivityFunc) *sessionActivityTracker {
+// newSessionActivityTracker returns a tracker that calls fn at most once per
+// interval for each session. A non-positive interval means one minute. It
+// returns nil when fn is nil.
+func newSessionActivityTracker(fn SessionActivityFunc, interval time.Duration) *sessionActivityTracker {
 	if fn == nil {
 		return nil
 	}
+	if interval <= 0 {
+		interval = sessionActivityInterval
+	}
 	return &sessionActivityTracker{
 		fn:       fn,
-		lastSeen: cache.New[time.Time](2*sessionActivityInterval, sessionActivityInterval),
+		lastSeen: cache.New[time.Time](2*interval, interval),
+		now:      time.Now,
+		interval: interval,
 	}
 }
 
-// touch records activity for sessionID at most once per interval. The write
+// touch records activity for sessionID at most once per t.interval. The write
 // runs in a goroutine with a context that the client cannot cancel and that
 // expires after sessionActivityTimeout.
 func (t *sessionActivityTracker) touch(ctx context.Context, sessionID string) {
 	if t == nil || sessionID == "" {
 		return
 	}
-	now := time.Now().UTC()
-	if prev, ok := t.lastSeen.Get(sessionID); ok && now.Sub(prev) < sessionActivityInterval {
+	now := t.now().UTC()
+	if prev, ok := t.lastSeen.Get(sessionID); ok && now.Sub(prev) < t.interval {
 		return
 	}
 	t.lastSeen.Set(sessionID, now)
@@ -158,7 +200,7 @@ func (t *sessionActivityTracker) touch(ctx context.Context, sessionID string) {
 func AuthRequiredWithOptions(opts JWTAuthOptions) gin.HandlerFunc {
 	jwtSecret := opts.JWTSecret
 	store := opts.SessionStore
-	activity := newSessionActivityTracker(opts.OnSessionActivity)
+	activity := newSessionActivityTracker(opts.OnSessionActivity, opts.SessionActivityInterval)
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {

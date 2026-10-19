@@ -542,8 +542,17 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		if affected == 0 {
 			return errRefreshTokenConsumed
 		}
+		// A TouchFamily that committed after the read above updated only the
+		// old row, and the rotation now excludes that row from later touches.
+		// Read the old row again (after MarkRotatedIfActive, so the row lock
+		// is held and the read sees the latest activity) and carry the later
+		// time forward. Never use now: a refresh is not activity.
+		txSess, carryErr := carryLatestActivity(txRepo, tokenHash, sess)
+		if carryErr != nil {
+			return carryErr
+		}
 		var issueErr error
-		newRawToken, newExpiresAt, issueErr = h.issueRefreshTokenWith(c, txRepo, user.ID, sess, stored.ID)
+		newRawToken, newExpiresAt, issueErr = h.issueRefreshTokenWith(c, txRepo, user.ID, txSess, stored.ID)
 		return issueErr
 	})
 	if errors.Is(err, errRefreshTokenConsumed) {
@@ -934,6 +943,22 @@ func newRefreshSession() refreshSession {
 // a rotated token.
 func continuedSession(rt *models.RefreshToken) refreshSession {
 	return refreshSession{familyID: rt.SessionFamily(), startedAt: rt.SessionStart(), lastActivity: rt.LastActivity}
+}
+
+// carryLatestActivity returns sess with lastActivity set to the later of
+// sess.lastActivity and the LastActivity that repo now stores for the token
+// with tokenHash. The rotation calls it inside its transaction, after it has
+// marked the token rotated, so a concurrent TouchFamily on the old row is not
+// lost.
+func carryLatestActivity(repo models.RefreshTokenRepository, tokenHash string, sess refreshSession) (refreshSession, error) {
+	current, err := repo.FindByTokenHash(tokenHash)
+	if err != nil {
+		return sess, err
+	}
+	if current.LastActivity.After(sess.lastActivity) {
+		sess.lastActivity = current.LastActivity
+	}
+	return sess, nil
 }
 
 // sessionDeadline returns the end of a session that started at start, or the

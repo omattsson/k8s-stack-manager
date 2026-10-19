@@ -1056,3 +1056,96 @@ func TestSessionRecheck_RepositoryError(t *testing.T) {
 			map[string]string{"method": "oidc", "status": "failure"}))
 	})
 }
+
+// A TouchFamily that commits after the refresh handler read the token, but
+// before the rotation, updates only the old row. The rotation must carry that
+// activity to the new row; otherwise the session looks idle too early. The
+// rotation never uses now: a refresh is not activity.
+func TestRefresh_RotationCarriesConcurrentActivity(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		touchAge  time.Duration // age of the concurrent activity; 0 = no touch
+		wantTouch bool          // true: the new row has the touched time
+	}{
+		{name: "activity committed between read and rotation is carried", touchAge: 2 * time.Minute, wantTouch: true},
+		{name: "no concurrent activity keeps the read value", touchAge: 0, wantTouch: false},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			env := newSessionTestEnv(t)
+			env.seedUser(t, "local", "")
+			readActivity := time.Now().UTC().Add(-10 * time.Minute)
+			raw := env.seedToken(t, "rt-race", func(rt *models.RefreshToken) { rt.LastActivity = readActivity })
+
+			touchedAt := time.Now().UTC().Add(-tt.touchAge)
+			if tt.touchAge > 0 {
+				env.refresh.txHook = func() {
+					assert.NoError(t, env.refresh.TouchFamily(context.Background(), "fam-1", touchedAt))
+				}
+			}
+
+			w := env.postRefresh(raw)
+			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			cookie := findRefreshCookie(w)
+			require.NotNil(t, cookie)
+			rotated := env.tokenByRaw(t, cookie.Value)
+
+			want := readActivity
+			if tt.wantTouch {
+				want = touchedAt
+				assert.True(t, env.tokenByID(t, "rt-race").LastActivity.Equal(touchedAt),
+					"the touch must have landed on the old row")
+			}
+			assert.True(t, rotated.LastActivity.Equal(want),
+				"rotated token LastActivity = %v, want %v", rotated.LastActivity, want)
+		})
+	}
+}
+
+func TestCarryLatestActivity(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name    string
+		stored  time.Time // LastActivity in the repository
+		read    time.Time // LastActivity read before the transaction
+		findErr error
+		want    time.Time
+		wantErr bool
+	}{
+		{name: "newer stored activity wins", stored: base.Add(time.Minute), read: base, want: base.Add(time.Minute)},
+		{name: "older stored activity keeps the read value", stored: base.Add(-time.Minute), read: base, want: base},
+		{name: "equal values keep the read value", stored: base, read: base, want: base},
+		{name: "zero read value takes the stored value", stored: base, read: time.Time{}, want: base},
+		{name: "find error is returned", stored: base, read: base, findErr: errors.New("db down"), wantErr: true},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			repo := NewMockRefreshTokenRepository()
+			require.NoError(t, repo.Create(&models.RefreshToken{
+				ID: "rt-1", FamilyID: "fam-1", TokenHash: "hash-1", LastActivity: tt.stored,
+			}))
+			if tt.findErr != nil {
+				repo.SetFindError(tt.findErr)
+			}
+
+			sess := refreshSession{familyID: "fam-1", startedAt: base.Add(-time.Hour), lastActivity: tt.read}
+			got, err := carryLatestActivity(repo, "hash-1", sess)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.True(t, got.lastActivity.Equal(tt.want), "lastActivity = %v, want %v", got.lastActivity, tt.want)
+			assert.Equal(t, sess.familyID, got.familyID)
+			assert.True(t, got.startedAt.Equal(sess.startedAt))
+		})
+	}
+}
