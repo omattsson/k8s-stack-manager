@@ -24,7 +24,7 @@ const (
 	WSEventTargetRevokeTokenPrefix = "revoke:token:"
 	// WSEventTargetRevokeAPIKeyPrefix + API key ID closes the sockets
 	// opened with the API key on all replicas (no payload).
-	WSEventTargetRevokeAPIKeyPrefix = "revoke:apikey:"
+	WSEventTargetRevokeAPIKeyPrefix = "revoke:apikey:" // #nosec G101 -- a ws_events target prefix, not a credential
 )
 
 // WSEvent is one WebSocket message that a replica shares with the other

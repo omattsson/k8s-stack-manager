@@ -572,6 +572,7 @@ func subjectsEqual(a, b []rbacv1.Subject) bool {
 		return false
 	}
 	for i := range a {
+		// #nosec G602 -- len(a) == len(b) is checked above, so b[i] is in range.
 		if a[i].APIGroup != b[i].APIGroup ||
 			a[i].Kind != b[i].Kind ||
 			a[i].Name != b[i].Name ||

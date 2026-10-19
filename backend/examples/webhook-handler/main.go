@@ -27,6 +27,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"time"
 )
 
 const signaturePrefix = "sha256="
@@ -59,11 +60,28 @@ func main() {
 	flag.Parse()
 
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	http.HandleFunc("/events", handleEvent(log, *secret))
+	srv := newServer(*addr, log, *secret)
 	log.Info("starting example webhook handler", "addr", *addr, "hmac_enabled", *secret != "")
-	if err := http.ListenAndServe(*addr, nil); err != nil {
+	if err := srv.ListenAndServe(); err != nil {
 		log.Error("server exited", "error", err)
 		os.Exit(1)
+	}
+}
+
+// newServer returns the HTTP server with timeouts, so a slow or idle client
+// cannot hold a connection open forever. WriteTimeout bounds the handler
+// time: raise it (and the timeout of the subscription) for a handler that
+// runs longer, for example a gate that waits for a build.
+func newServer(addr string, log *slog.Logger, secret string) *http.Server {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/events", handleEvent(log, secret))
+	return &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 }
 

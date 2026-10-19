@@ -518,6 +518,8 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 	}
 	m.rememberTrigger(ctx, logID)
 	m.wg.Add(1)
+	// #nosec G118 -- the deploy must outlive the HTTP request: the goroutine uses
+	// m.shutdownCtx with its own time budget, and Shutdown waits for it (m.wg).
 	go m.executeDeploy(helmExec, k8sClient, regCfg, req.Instance, deployLog, charts, req.LastDeployedValues, preDeployOpts)
 
 	return logID, nil
@@ -1234,6 +1236,8 @@ func (m *Manager) StopWithCharts(ctx context.Context, instance *models.StackInst
 	// Pass deployLog into the goroutine to avoid a partition-scanning re-fetch.
 	m.rememberTrigger(ctx, logID)
 	m.wg.Add(1)
+	// #nosec G118 -- the stop must outlive the HTTP request: the goroutine uses
+	// m.shutdownCtx with its own time budget, and Shutdown waits for it (m.wg).
 	go m.executeStopWithCharts(helmExec, instance.ID, deployLog, instance.Namespace, sortedCharts)
 
 	return logID, nil
@@ -1583,6 +1587,8 @@ func (m *Manager) startClean(ctx context.Context, instance *models.StackInstance
 
 	m.rememberTrigger(ctx, logID)
 	m.wg.Add(1)
+	// #nosec G118 -- the clean must outlive the HTTP request: the goroutine uses
+	// m.shutdownCtx with its own time budget, and Shutdown waits for it (m.wg).
 	go m.executeClean(helmExec, k8sClient, instance.ID, deployLog, instance.Namespace, sortedCharts)
 
 	return logID, nil
@@ -1956,6 +1962,8 @@ func (m *Manager) Rollback(ctx context.Context, req RollbackRequest) (string, er
 	// progress streaming, so a long gate does not block the API response.
 	m.rememberTrigger(ctx, logID)
 	m.wg.Add(1)
+	// #nosec G118 -- the rollback must outlive the HTTP request: the goroutine uses
+	// m.shutdownCtx with its own time budget, and Shutdown waits for it (m.wg).
 	go m.executeRollback(rollbackJob{
 		helm:       helmExec,
 		k8sClient:  k8sClient,

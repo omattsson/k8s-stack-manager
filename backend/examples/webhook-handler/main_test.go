@@ -85,3 +85,33 @@ func TestHandleEvent_BadEnvelopeReturns400(t *testing.T) {
 	handler(w, r)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
+
+func TestNewServer_SetsTimeoutsAndRoutes(t *testing.T) {
+	t.Parallel()
+
+	srv := newServer(":0", slog.New(slog.NewTextHandler(io.Discard, nil)), "")
+	assert.Equal(t, ":0", srv.Addr)
+	assert.Positive(t, srv.ReadHeaderTimeout)
+	assert.Positive(t, srv.ReadTimeout)
+	assert.Positive(t, srv.WriteTimeout)
+	assert.Positive(t, srv.IdleTimeout)
+
+	tests := []struct {
+		name   string
+		path   string
+		status int
+	}{
+		{name: "events route", path: "/events", status: http.StatusBadRequest},
+		{name: "unknown route", path: "/other", status: http.StatusNotFound},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			w := httptest.NewRecorder()
+			r := httptest.NewRequest(http.MethodPost, tt.path, strings.NewReader("not json"))
+			srv.Handler.ServeHTTP(w, r)
+			assert.Equal(t, tt.status, w.Code)
+		})
+	}
+}
