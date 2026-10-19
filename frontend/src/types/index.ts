@@ -814,6 +814,11 @@ export interface TemplateChartDiff {
   right_chart_version?: string;
   left_chart_path?: string;
   right_chart_path?: string;
+  /** Chart source repository and CI build pipeline; compared like the chart version. */
+  left_source_repo_url?: string;
+  right_source_repo_url?: string;
+  left_build_pipeline_id?: string;
+  right_build_pipeline_id?: string;
   has_differences: boolean;
   change_type: 'added' | 'removed' | 'modified' | 'unchanged';
 }
@@ -847,17 +852,25 @@ export interface VersionDiffResponse {
   chart_diffs: TemplateChartDiff[];
 }
 
+/** Why check-upgrade found no upgrade. */
+export type UpgradeUnavailableReason = 'no_source_template' | 'no_published_version' | 'up_to_date';
+
 export interface UpgradeCheckResponse {
   upgrade_available: boolean;
   current_version?: string;
   latest_version?: string;
+  /** Only when upgrade_available is false. Absent in responses of older servers. */
+  reason?: UpgradeUnavailableReason;
   changes?: {
     charts_added: string[];
     charts_removed: string[];
     charts_modified: string[];
     charts_unchanged: string[];
   };
-  /** Optional per-chart value diff (current definition values vs the latest release). */
+  /**
+   * Per-chart diff: the definition charts now (left) against the charts as the
+   * upgrade writes them (right). `changes` lists the same charts by change_type.
+   */
   chart_diffs?: TemplateChartDiff[];
 }
 

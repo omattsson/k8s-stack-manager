@@ -135,4 +135,26 @@ describe('ChartDiffList', () => {
     );
     expect(screen.getByText('Default values')).toBeInTheDocument();
   });
+
+  it('shows source repository and build pipeline changes', () => {
+    render(
+      <ChartDiffList
+        chartDiffs={[{
+          chart_name: 'api',
+          left_values: 'a: 1',
+          right_values: 'a: 1',
+          left_source_repo_url: 'https://github.com/org/api',
+          right_source_repo_url: 'https://github.com/org/api2',
+          left_build_pipeline_id: 'p1',
+          right_build_pipeline_id: 'p2',
+          has_differences: true,
+          change_type: 'modified',
+        }]}
+        leftTitle="current"
+        rightTitle="latest"
+      />,
+    );
+    expect(screen.getByText('Source repository: https://github.com/org/api to https://github.com/org/api2')).toBeInTheDocument();
+    expect(screen.getByText('Build pipeline: p1 to p2')).toBeInTheDocument();
+  });
 });

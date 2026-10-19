@@ -35,7 +35,7 @@ const changeTypeColor = (changeType: string): 'success' | 'error' | 'info' | 'de
 const norm = (v: string | null | undefined): string => (v ?? '').replace(/[ \t\r\n]+$/, '');
 const shown = (v: string): string => v || '(none)';
 
-/** Chart attribute changes of a modified chart (repository, version, path, required, order). */
+/** Chart attribute changes of a modified chart (repository, version, path, source, pipeline, required, order). */
 const attributeChanges = (d: TemplateChartDiff): AttributeChange[] => {
   const changes: AttributeChange[] = [];
   const text = (label: string, left?: string, right?: string) => {
@@ -48,6 +48,8 @@ const attributeChanges = (d: TemplateChartDiff): AttributeChange[] => {
   text('Repository', d.left_repo_url, d.right_repo_url);
   bothSides('Chart version', d.left_chart_version, d.right_chart_version);
   bothSides('Chart path', d.left_chart_path, d.right_chart_path);
+  bothSides('Source repository', d.left_source_repo_url, d.right_source_repo_url);
+  bothSides('Build pipeline', d.left_build_pipeline_id, d.right_build_pipeline_id);
   if (Boolean(d.left_required) !== Boolean(d.right_required)) {
     changes.push({ label: 'Required', from: d.left_required ? 'yes' : 'no', to: d.right_required ? 'yes' : 'no' });
   }

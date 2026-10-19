@@ -17,7 +17,6 @@ const (
 	entityTemplateVersion = "Template version"
 )
 
-
 // workingCopyVersionID is the version ID that selects the working copy
 // (draft) of a template in the version diff.
 const workingCopyVersionID = "working"
@@ -220,12 +219,16 @@ type chartDiffEntry struct {
 	RightSortOrder int    `json:"right_sort_order,omitempty"`
 	// Chart source fields; compared only when both sides store them
 	// (snapshot schema version 1 or the working copy).
-	LeftChartVersion  string `json:"left_chart_version,omitempty"`
-	RightChartVersion string `json:"right_chart_version,omitempty"`
-	LeftChartPath     string `json:"left_chart_path,omitempty"`
-	RightChartPath    string `json:"right_chart_path,omitempty"`
-	HasDifferences    bool   `json:"has_differences"`
-	ChangeType        string `json:"change_type"` // "added", "removed", "modified", "unchanged"
+	LeftChartVersion     string `json:"left_chart_version,omitempty"`
+	RightChartVersion    string `json:"right_chart_version,omitempty"`
+	LeftChartPath        string `json:"left_chart_path,omitempty"`
+	RightChartPath       string `json:"right_chart_path,omitempty"`
+	LeftSourceRepoURL    string `json:"left_source_repo_url,omitempty"`
+	RightSourceRepoURL   string `json:"right_source_repo_url,omitempty"`
+	LeftBuildPipelineID  string `json:"left_build_pipeline_id,omitempty"`
+	RightBuildPipelineID string `json:"right_build_pipeline_id,omitempty"`
+	HasDifferences       bool   `json:"has_differences"`
+	ChangeType           string `json:"change_type"` // "added", "removed", "modified", "unchanged"
 }
 
 // versionDiffSide is one side of the version diff. version is the version
@@ -419,14 +422,18 @@ func computeChartDiffs(leftCharts, rightCharts []models.TemplateChartSnapshotDat
 		rch, inRight := rightMap[ch.ChartName]
 		if !inRight {
 			diffs = append(diffs, chartDiffEntry{
-				ChartName:     ch.ChartName,
-				LeftValues:    ch.DefaultValues,
-				LeftRepoURL:   ch.RepoURL,
-				LeftLocked:    ch.LockedValues,
-				LeftRequired:  ch.IsRequired,
-				LeftSortOrder: ch.SortOrder,
-				HasDifferences: true,
-				ChangeType:     "removed",
+				ChartName:           ch.ChartName,
+				LeftValues:          ch.DefaultValues,
+				LeftRepoURL:         ch.RepoURL,
+				LeftLocked:          ch.LockedValues,
+				LeftRequired:        ch.IsRequired,
+				LeftSortOrder:       ch.SortOrder,
+				LeftChartVersion:    ch.ChartVersion,
+				LeftChartPath:       ch.ChartPath,
+				LeftSourceRepoURL:   ch.SourceRepoURL,
+				LeftBuildPipelineID: ch.BuildPipelineID,
+				HasDifferences:      true,
+				ChangeType:          "removed",
 			})
 			continue
 		}
@@ -435,7 +442,8 @@ func computeChartDiffs(leftCharts, rightCharts []models.TemplateChartSnapshotDat
 			ch.RepoURL != rch.RepoURL ||
 			ch.IsRequired != rch.IsRequired ||
 			ch.SortOrder != rch.SortOrder
-		if compareSource && (ch.ChartVersion != rch.ChartVersion || ch.ChartPath != rch.ChartPath) {
+		if compareSource && (ch.ChartVersion != rch.ChartVersion || ch.ChartPath != rch.ChartPath ||
+			ch.SourceRepoURL != rch.SourceRepoURL || ch.BuildPipelineID != rch.BuildPipelineID) {
 			hasDiff = true
 		}
 		changeType := "unchanged"
@@ -443,23 +451,27 @@ func computeChartDiffs(leftCharts, rightCharts []models.TemplateChartSnapshotDat
 			changeType = "modified"
 		}
 		diffs = append(diffs, chartDiffEntry{
-			ChartName:         ch.ChartName,
-			LeftValues:        ch.DefaultValues,
-			RightValues:       rch.DefaultValues,
-			LeftRepoURL:       ch.RepoURL,
-			RightRepoURL:      rch.RepoURL,
-			LeftLocked:        ch.LockedValues,
-			RightLocked:       rch.LockedValues,
-			LeftRequired:      ch.IsRequired,
-			RightRequired:     rch.IsRequired,
-			LeftSortOrder:     ch.SortOrder,
-			RightSortOrder:    rch.SortOrder,
-			LeftChartVersion:  ch.ChartVersion,
-			RightChartVersion: rch.ChartVersion,
-			LeftChartPath:     ch.ChartPath,
-			RightChartPath:    rch.ChartPath,
-			HasDifferences:    hasDiff,
-			ChangeType:        changeType,
+			ChartName:            ch.ChartName,
+			LeftValues:           ch.DefaultValues,
+			RightValues:          rch.DefaultValues,
+			LeftRepoURL:          ch.RepoURL,
+			RightRepoURL:         rch.RepoURL,
+			LeftLocked:           ch.LockedValues,
+			RightLocked:          rch.LockedValues,
+			LeftRequired:         ch.IsRequired,
+			RightRequired:        rch.IsRequired,
+			LeftSortOrder:        ch.SortOrder,
+			RightSortOrder:       rch.SortOrder,
+			LeftChartVersion:     ch.ChartVersion,
+			RightChartVersion:    rch.ChartVersion,
+			LeftChartPath:        ch.ChartPath,
+			RightChartPath:       rch.ChartPath,
+			LeftSourceRepoURL:    ch.SourceRepoURL,
+			RightSourceRepoURL:   rch.SourceRepoURL,
+			LeftBuildPipelineID:  ch.BuildPipelineID,
+			RightBuildPipelineID: rch.BuildPipelineID,
+			HasDifferences:       hasDiff,
+			ChangeType:           changeType,
 		})
 	}
 
@@ -468,14 +480,18 @@ func computeChartDiffs(leftCharts, rightCharts []models.TemplateChartSnapshotDat
 			continue
 		}
 		diffs = append(diffs, chartDiffEntry{
-			ChartName:      ch.ChartName,
-			RightValues:    ch.DefaultValues,
-			RightRepoURL:   ch.RepoURL,
-			RightLocked:    ch.LockedValues,
-			RightRequired:  ch.IsRequired,
-			RightSortOrder: ch.SortOrder,
-			HasDifferences: true,
-			ChangeType:     "added",
+			ChartName:            ch.ChartName,
+			RightValues:          ch.DefaultValues,
+			RightRepoURL:         ch.RepoURL,
+			RightLocked:          ch.LockedValues,
+			RightRequired:        ch.IsRequired,
+			RightSortOrder:       ch.SortOrder,
+			RightChartVersion:    ch.ChartVersion,
+			RightChartPath:       ch.ChartPath,
+			RightSourceRepoURL:   ch.SourceRepoURL,
+			RightBuildPipelineID: ch.BuildPipelineID,
+			HasDifferences:       true,
+			ChangeType:           "added",
 		})
 	}
 
