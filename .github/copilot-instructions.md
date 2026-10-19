@@ -459,7 +459,7 @@ frontend/src/
   utils/                       # roles, timeAgo, expiry, instanceName, instanceState, jwt, quantity, apiError, download, deployHistory, templateVersion, notificationEventTypes, notificationHelpers, recentTemplates, setupWizard, stopTime
 ```
 
-**Stack:** React 19, MUI v9, react-router-dom v7, Vite 8, TypeScript 6, Vitest 5, Playwright (32 specs in `frontend/e2e/`; the project `isolated` runs `session-lifecycle.spec.ts`, then its teardown project `isolated-last-admin` runs `last-admin.spec.ts`, serially against a restarted short-limit backend; the project `mobile` runs `mobile.spec.ts` with the iPhone 13 viewport, the project `chromium` runs the rest).
+**Stack:** React 19, MUI v9, react-router-dom v7, Vite 8, TypeScript 6, Vitest 5, Playwright (36 specs in `frontend/e2e/`; the project `isolated` runs `session-lifecycle.spec.ts`, then its teardown project `isolated-last-admin` runs `last-admin.spec.ts`, serially against a restarted short-limit backend; the project `mobile` runs `mobile.spec.ts` with the iPhone 13 viewport, the project `chromium` runs the rest).
 
 **Patterns.**
 - Use MUI components (no raw HTML) and the `sx` prop for styling.
