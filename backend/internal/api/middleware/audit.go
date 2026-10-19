@@ -33,8 +33,20 @@ func (w *bodyLogWriter) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 
+// skipAuditKey marks a request that must not get an audit entry. A private
+// key type, so no other c.Set can collide with it.
+type skipAuditKey struct{}
+
+// SkipAudit tells the audit middleware not to record this request, although
+// it succeeded. A handler calls it for a mutating request that changed
+// nothing (a no-op), for example a role change to the current role.
+func SkipAudit(c *gin.Context) {
+	c.Set(skipAuditKey{}, true)
+}
+
 // NewAuditMiddleware returns middleware that creates an AuditLog entry after
-// successful mutating requests (POST, PUT, DELETE with status < 400).
+// successful mutating requests (POST, PUT, DELETE with status < 400), unless
+// the handler called SkipAudit.
 //
 // The action, the entity type and the entity ID come from the route table
 // (auditRoutes) for operations that are not plain CRUD, for example
@@ -62,8 +74,8 @@ func NewAuditMiddleware(repo AuditLogger) gin.HandlerFunc {
 
 		c.Next()
 
-		// Only audit successful operations.
-		if c.Writer.Status() >= 400 {
+		// Only audit successful operations that changed something.
+		if c.Writer.Status() >= 400 || c.GetBool(skipAuditKey{}) {
 			return
 		}
 

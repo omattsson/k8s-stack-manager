@@ -1,7 +1,113 @@
 import { Page, expect, APIRequestContext } from '@playwright/test';
+import { execFile } from 'node:child_process';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export const API_BASE = process.env.API_BASE_URL || 'http://localhost:8081';
 export const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin';
+
+// ---------------------------------------------------------------------------
+// Direct database changes (no API exists for them)
+//
+// `make test-e2e` and `make test-e2e-isolated` set E2E_DB_NAME, E2E_DB_USER and
+// E2E_DB_PASSWORD (the database of the e2e backend in the docker compose
+// `mysql` service). A manual `npx playwright test` usually has none of them:
+// specs that need the database skip with E2E_DB_SKIP_REASON.
+
+/** Repository root (docker compose runs there). This file is frontend/e2e/helpers.ts. */
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+/** Values that go into SQL: lowercase letters, digits and dashes only (uniqueName output). */
+const SAFE_SQL_VALUE = /^[a-z0-9-]{1,100}$/;
+/** Database name and user: passed as separate arguments, never into SQL text. */
+const SAFE_DB_IDENTIFIER = /^[A-Za-z0-9_]{1,64}$/;
+
+/** True when the specs may change database rows directly (E2E_DB_* are set). */
+export function e2eDbConfigured(): boolean {
+  return Boolean(process.env.E2E_DB_NAME && process.env.E2E_DB_USER && process.env.E2E_DB_PASSWORD !== undefined);
+}
+
+export const E2E_DB_SKIP_REASON =
+  'Needs direct database access: set E2E_DB_NAME, E2E_DB_USER and E2E_DB_PASSWORD (make test-e2e sets them)';
+
+function assertSafeSqlValue(name: string, value: string): void {
+  if (!SAFE_SQL_VALUE.test(value)) {
+    throw new Error(`${name} must match ${SAFE_SQL_VALUE} (got ${JSON.stringify(value)})`);
+  }
+}
+
+/**
+ * Run one SQL statement in the e2e database through
+ * `docker compose exec -T mysql mysql ...` (execFile, no shell) and return the
+ * output of `SELECT ROW_COUNT()` that follows it: the number of changed rows.
+ * Callers build `sql` only from values checked by assertSafeSqlValue.
+ */
+async function execE2eSql(sql: string): Promise<number> {
+  const db = process.env.E2E_DB_NAME ?? '';
+  const user = process.env.E2E_DB_USER ?? '';
+  const password = process.env.E2E_DB_PASSWORD ?? '';
+  if (!e2eDbConfigured()) throw new Error(E2E_DB_SKIP_REASON);
+  if (!SAFE_DB_IDENTIFIER.test(db) || !SAFE_DB_IDENTIFIER.test(user)) {
+    throw new Error('E2E_DB_NAME and E2E_DB_USER may contain only letters, digits and underscores');
+  }
+  // The password goes to the client through MYSQL_PWD (docker compose exec
+  // -e MYSQL_PWD copies it from this process environment), never as an
+  // argument: an argument would be visible in `ps` on the host.
+  const args = [
+    'compose', 'exec', '-T', '-e', 'MYSQL_PWD', 'mysql',
+    'mysql', `-u${user}`, '--batch', '--skip-column-names', db,
+    '-e', `${sql}; SELECT ROW_COUNT();`,
+  ];
+  const stdout = await new Promise<string>((resolve, reject) => {
+    execFile(
+      'docker',
+      args,
+      { cwd: REPO_ROOT, timeout: 30_000, env: { ...process.env, MYSQL_PWD: password } },
+      (error, out, err) => {
+        if (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+            reject(new Error('docker compose is not available (ENOENT): install Docker or run the spec through make test-e2e'));
+            return;
+          }
+          reject(new Error(`SQL in ${db} failed (exit ${error.code ?? '?'}): ${String(err).trim()}`));
+          return;
+        }
+        resolve(String(out));
+      },
+    );
+  });
+  const rows = parseInt(stdout.trim().split('\n').pop() ?? '', 10);
+  if (!Number.isFinite(rows)) throw new Error(`Unexpected mysql output: ${JSON.stringify(stdout)}`);
+  return rows;
+}
+
+/**
+ * Mark a local user as an SSO (OIDC) user. The backend treats a user as SSO
+ * when `auth_provider` is neither empty nor "local" (handlers/users.go); the
+ * OIDC login writes "oidc". There is no API to create an SSO user, so create a
+ * local user through the API first (with a uniqueName username) and convert it.
+ * `externalId` defaults to `e2e-sso-<username>`.
+ * Throws unless exactly one row changed.
+ */
+export async function markUserAsSSO(username: string, externalId: string = `e2e-sso-${username}`): Promise<void> {
+  assertSafeSqlValue('username', username);
+  assertSafeSqlValue('externalId', externalId);
+  const rows = await execE2eSql(
+    `UPDATE users SET auth_provider='oidc', external_id='${externalId}' WHERE username='${username}'`,
+  );
+  if (rows !== 1) throw new Error(`markUserAsSSO(${username}): ${rows} rows changed, want 1`);
+}
+
+/**
+ * Enable a user directly in the database. Last-resort cleanup only (for
+ * example to bring back `admin` when the API path to enable it failed); a
+ * test should enable users through PUT /users/:id/enable.
+ * Returns the number of changed rows (0 when the user was enabled already).
+ */
+export async function enableUserInDb(username: string): Promise<number> {
+  assertSafeSqlValue('username', username);
+  return execE2eSql(`UPDATE users SET disabled=0 WHERE username='${username}'`);
+}
 
 /**
  * Mock a paged GET list endpoint with fixed items.
@@ -394,4 +500,34 @@ export async function instantiateTemplate(
   await page.waitForURL(/\/stack-definitions\/[^/]+\/edit/, { timeout: 10_000 });
 
   return defName;
+}
+
+/**
+ * Make sure the built-in `admin` can log in. last-admin.spec.ts disables
+ * `admin` for a moment and enables it again in afterAll; a worker that dies
+ * before its afterAll (SIGKILL, OOM) leaves `admin` disabled, and every later
+ * spec would fail with 403 "Account disabled" for that reason. On a 403
+ * "Account disabled", enable `admin` directly in the database (when E2E_DB_*
+ * are set) and return a warning for the test output; else return null.
+ * Throws when `admin` stays unusable.
+ */
+export async function ensureAdminEnabled(request: APIRequestContext): Promise<string | null> {
+  const login = () => request.post(`${API_BASE}/api/v1/auth/login`, { data: { username: 'admin', password: ADMIN_PASSWORD } });
+  let res = await login();
+  for (let attempt = 0; res.status() === 429 && attempt < 5; attempt++) {
+    await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+    res = await login();
+  }
+  if (res.status() === 200) return null;
+  const body = (await res.json().catch(() => ({}))) as { error?: string };
+  if (res.status() !== 403 || body.error !== 'Account disabled') {
+    throw new Error(`admin login failed: ${res.status()} ${JSON.stringify(body)}`);
+  }
+  if (!e2eDbConfigured()) {
+    throw new Error(`The built-in admin is disabled (an earlier last-admin run did not clean up?) and ${E2E_DB_SKIP_REASON}`);
+  }
+  const rows = await enableUserInDb('admin');
+  const after = await login();
+  expect(after.status(), 'admin login after enabling it in the database').toBe(200);
+  return `WARNING: the built-in admin was disabled (an earlier last-admin.spec.ts run did not reach its afterAll?); enabled it in the database (${rows} row changed)`;
 }

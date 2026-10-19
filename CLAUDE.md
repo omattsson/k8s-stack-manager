@@ -58,8 +58,8 @@ startHTTPServer              # main server, optional pprof and metrics servers
 | All backend tests (unit and integration) | `make test-backend-all` (starts MySQL) |
 | Frontend tests | `cd frontend && npm test` |
 | Unit tests (backend and frontend) | `make test` |
-| End-to-end tests | `make test-e2e` (starts infrastructure, backend and Playwright; no cluster access unless `E2E_KUBECONFIG` names a local kubeconfig; then restarts the backend with short session limits and runs the `session` project; CI: `.github/workflows/e2e.yml`) |
-| Session lifecycle e2e tests only | `make test-e2e-session` (backend with `E2E_SESSION_*` limits: access token 10s, idle 20s, maximum lifetime 60s, reuse grace 3s) |
+| End-to-end tests | `make test-e2e` (starts infrastructure, backend and Playwright; no cluster access unless `E2E_KUBECONFIG` names a local kubeconfig; then restarts the backend with short session limits and runs the `isolated` project; CI: `.github/workflows/e2e.yml`) |
+| Isolated e2e tests only | `make test-e2e-isolated` (project `isolated`, one worker; backend with `E2E_SESSION_*` limits: access token 10s, idle 20s, maximum lifetime 60s, reuse grace 3s) |
 | Swagger docs | `make docs` (runs `swag init -g api/main.go` in `backend`) |
 | Coverage (80% threshold) | `cd backend && make test-coverage` |
 | Format | `make fmt` |
@@ -460,7 +460,7 @@ frontend/src/
   utils/                       # roles, timeAgo, expiry, instanceName, instanceState, jwt, quantity, apiError, download, deployHistory, templateVersion, notificationEventTypes, notificationHelpers, recentTemplates, setupWizard, stopTime
 ```
 
-**Stack:** React 19, MUI v9, react-router-dom v7, Vite 8, TypeScript 6, Vitest 5, Playwright (30 specs in `frontend/e2e/`; the project `session` runs `session-lifecycle.spec.ts` only with `E2E_SESSION=1` against a short-limit backend; the project `mobile` runs `mobile.spec.ts` with the iPhone 13 viewport, the project `chromium` runs the rest).
+**Stack:** React 19, MUI v9, react-router-dom v7, Vite 8, TypeScript 6, Vitest 5, Playwright (32 specs in `frontend/e2e/`; the project `isolated` runs `session-lifecycle.spec.ts`, then its teardown project `isolated-last-admin` runs `last-admin.spec.ts` (it disables `admin` for a moment, so it runs last; `global-setup.ts` re-enables a left-over disabled `admin` in the database), only with `E2E_ISOLATED=1`, serially, against a restarted short-limit backend; the project `mobile` runs `mobile.spec.ts` with the iPhone 13 viewport, the project `chromium` runs the rest).
 
 **Patterns.**
 - Use MUI components (no raw HTML) and the `sx` prop for styling.
@@ -501,6 +501,7 @@ Developers use this application to configure, store and deploy multi-service Hel
 
 **Audit trail**
 - Every mutating API endpoint (POST, PUT, DELETE) must create an AuditLog entry. `middleware.NewAuditMiddleware` writes it.
+- A handler calls `middleware.SkipAudit(c)` for a successful request that changed nothing (a no-op), so no entry is written.
 - An operation that is not plain CRUD (deploy, stop, publish, test, bulk, ...) needs an entry in the route table `auditRoutes` (`middleware/audit.go`: action, entity type, ID parameter, details). Without an entry, the action comes from the HTTP method and the entity type from the last route segment.
 - Add new actions and entity types to `KnownAuditActions` and `KnownAuditEntityTypes`, and to the filter lists of `pages/AuditLog`.
 - `routes/audit_routes_test.go` fails for a mutating route with an unknown entity type.
@@ -605,7 +606,8 @@ Developers use this application to configure, store and deploy multi-service Hel
 - **User roles API:** `PUT /users/:id/role` (admin) changes the role of a local user.
   - An SSO user gives 409 (the identity provider sets the role at each login). The own role gives 403. An unchanged role is a no-op.
   - Delete, disable, enable and role change are guarded (`UserRepository.UpdateRole`, `SetDisabled`, `DeleteGuarded`). One transaction locks the admin rows (by ID), then the target.
-  - The caller must still be an enabled admin (403). The last enabled admin cannot be demoted, disabled or deleted (409).
+  - The caller must still be an enabled admin (403). The last enabled admin cannot be demoted, disabled or deleted. Over HTTP the own-account checks (403, 400) and the enabled-admin check (403) come first, so the repository guard (`ErrLastAdmin`, 409) is defense in depth.
+  - An unchanged role answers 200 with `changed: false` and writes no audit entry (`middleware.SkipAudit`).
   - Handlers use the stored ID after `FindByID` (MySQL compares IDs without case).
   - `UserRepository` has no full-row update. Use the targeted writes (`UpdatePassword`, `UpdateProfile` for the SSO sync and link, `UpdateRole`, `SetDisabled`), so concurrent changes are not lost.
   - Migration 50 indexes `users.role`.

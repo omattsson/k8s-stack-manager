@@ -280,6 +280,63 @@ func TestChangeUserRole_KeepsAPIKeys(t *testing.T) {
 	assert.ElementsMatch(t, []string{"key-target-1", "key-target-2"}, f.apiKeyIDs(t, revokeTargetID))
 }
 
+// TestChangeUserRole_AuditOnlyRealChanges checks that the audit middleware
+// records change_role for a real change and nothing for a no-op.
+func TestChangeUserRole_AuditOnlyRealChanges(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		seedRole  string
+		body      string
+		wantAudit bool
+	}{
+		{name: "real change is audited", seedRole: "user", body: `{"role":"devops"}`, wantAudit: true},
+		{name: "unchanged role is not audited", seedRole: "devops", body: `{"role":"devops"}`, wantAudit: false},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			gin.SetMode(gin.TestMode)
+
+			userRepo := NewMockUserRepository()
+			seedRoleUser(t, userRepo, "u1", tt.seedRole, "local", false)
+			seedCallerAdmin(userRepo, "admin-1", "admin")
+			auditRepo := NewMockAuditLogRepository()
+
+			r := gin.New()
+			r.Use(injectAuthContext("admin-1", "admin"))
+			r.Use(middleware.NewAuditMiddleware(auditRepo))
+			h := NewUserHandler(userRepo, nil, nil)
+			r.PUT("/api/v1/users/:id/role", middleware.RequireAdmin(), h.ChangeUserRole)
+
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(http.MethodPut, "/api/v1/users/u1/role", bytes.NewBufferString(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			r.ServeHTTP(w, req)
+			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+			countAudits := func() int {
+				auditRepo.mu.RLock()
+				defer auditRepo.mu.RUnlock()
+				return len(auditRepo.entries)
+			}
+			if tt.wantAudit {
+				// The middleware writes the entry in a goroutine.
+				assert.Eventually(t, func() bool { return countAudits() == 1 }, time.Second, 5*time.Millisecond)
+				auditRepo.mu.RLock()
+				assert.Equal(t, middleware.AuditActionChangeRole, auditRepo.entries[0].Action)
+				auditRepo.mu.RUnlock()
+			} else {
+				time.Sleep(30 * time.Millisecond)
+				assert.Equal(t, 0, countAudits(), "a no-op must not write an audit entry")
+			}
+		})
+	}
+}
+
 // seedRoleUser adds a user without a password hash (bcrypt is not needed).
 func seedRoleUser(t *testing.T, repo *MockUserRepository, id, role, provider string, disabled bool) {
 	t.Helper()

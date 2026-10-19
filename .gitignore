@@ -59,10 +59,6 @@ vendor/
 Thumbs.db
 
 # Playwright
-/frontend/test-results/
-/frontend/playwright-report/
-/frontend/playwright-report-session/
-/frontend/test-results-session/
 /frontend/blob-report/
 /frontend/playwright/.cache/
 /frontend/test-logs/
@@ -73,6 +69,9 @@ sonar-project.properties
 # MemPalace
 mempalace.yaml
 entities.json
+# Playwright reports and output, also of the isolated phase (any suffix).
+/frontend/playwright-report*/
+/frontend/test-results*/
 backend/test-results/
 
 # Snapshots of the Playwright MCP browser tool

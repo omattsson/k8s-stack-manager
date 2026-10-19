@@ -6,7 +6,7 @@ applyTo: "**/*.{ts,tsx}"
 
 ## Project setup
 
-The frontend is in `frontend/`. It uses Vite 8, React 19, and TypeScript 6 (strict mode), with `@vitejs/plugin-react` (JSX through Oxc). Tests: Vitest 5 and Testing Library (unit), Playwright (e2e, 29 specs in `e2e/`). Node 22.12 or later.
+The frontend is in `frontend/`. It uses Vite 8, React 19, and TypeScript 6 (strict mode), with `@vitejs/plugin-react` (JSX through Oxc). Tests: Vitest 5 and Testing Library (unit), Playwright (e2e, 32 specs in `e2e/`). Node 22.12 or later.
 
 ## Architecture
 

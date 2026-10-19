@@ -6,9 +6,10 @@ import { API_BASE, apiLogin, uniqueName } from './helpers';
  * Session lifecycle (#584): refresh, cross-tab single flight, refresh token
  * reuse, idle timeout, maximum lifetime, logout and logout-all.
  *
- * The spec needs a backend with short session limits. `make test-e2e-session`
- * (and the last phase of `make test-e2e`) starts one and runs the `session`
- * project with E2E_SESSION=1 and the limits below (same values as the backend).
+ * The spec needs a backend with short session limits. `make test-e2e-isolated`
+ * (and the last phase of `make test-e2e`) starts one and runs the project
+ * `isolated` with E2E_ISOLATED=1 and the limits below (same values as the
+ * backend).
  *
  * Notes on the setup:
  * - The tests log in through the API (`apiLogin` with `context.request`). The
@@ -358,8 +359,8 @@ function seconds(ms: number): string {
 
 test.describe('Session lifecycle', () => {
   test.skip(
-    !process.env.E2E_SESSION,
-    'Needs a backend with short session limits: run `make test-e2e-session` (sets E2E_SESSION=1)',
+    !process.env.E2E_ISOLATED,
+    'Needs a backend with short session limits: run `make test-e2e-isolated` (sets E2E_ISOLATED=1)',
   );
 
   test('1: an expired access token is refreshed once for two tabs, and the requests succeed', async ({
