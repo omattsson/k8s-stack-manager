@@ -489,7 +489,7 @@ Rules for delete, disable, enable, and role change (guarded admin changes):
 
 - The handler reads the user first. It uses the stored ID for the self-check, the change, and the revocation. MySQL compares IDs without case, so `/users/ADMIN-ID` is the own account of `admin-id`.
 - The change runs in one database transaction. The transaction locks the admin rows (ordered by ID), then the target row. Inside the lock, the caller must still be an enabled `admin`. Otherwise the API returns 403 "Admin role required" (for example when the caller was demoted or disabled after the token was issued).
-- The last enabled `admin` cannot be demoted, disabled, or deleted (409). Two admins who demote, disable, or delete each other at the same time are serialized: exactly one change succeeds, and the other gets 403. An index on `users.role` (migration 50) keeps the lock on the admin rows.
+- The last enabled `admin` cannot be demoted, disabled, or deleted. Over the API, the earlier rules already prevent it: an admin cannot change the own role (403), status or account (400), and the caller must be an enabled `admin` (403), so another enabled admin always exists. The database guard (409 "last enabled admin") is a second line of defense. Two admins who demote, disable, or delete each other at the same time are serialized: exactly one change succeeds, and the other gets 403. An index on `users.role` (migration 50) keeps the lock on the admin rows.
 - Every user change writes only its own columns (role, disabled, password hash, SSO profile). No change saves the full row. So a password reset or an SSO profile sync never undoes a concurrent role change or disable. An SSO login sets the role from the identity provider only for SSO users.
 
 Edit role (local users only) opens a dialog with a role select (`user`, `devops`, `admin`) and a warning that the user is signed out. It calls `PUT /api/v1/users/:id/role` with `{"role": "devops"}`. The rules are:
@@ -497,9 +497,9 @@ Edit role (local users only) opens a dialog with a role select (`user`, `devops`
 - Only an `admin` can change a role.
 - The role of an SSO user comes from the identity provider (`OIDC_ROLE_CLAIM`). It is set again at each SSO login. The API refuses the change with 409 "Role is managed by the identity provider". The page shows the role read-only with the hint "managed by SSO".
 - An `admin` cannot change the own role (403). The button on the own row is disabled.
-- The last enabled `admin` cannot lose the `admin` role (409), and the caller must still be an enabled `admin` (403). See the rules above.
-- An unchanged role is a no-op: 200 with `"changed": false`. The sessions of the user stay valid.
-- A change signs the user out (see [Revoking a User](#revoking-a-user)). The next request needs a new login, which gives a token with the new role. API keys stay valid and use the new role at once, because the API-key auth reads the role from the database on each request.
+- The last enabled `admin` cannot lose the `admin` role, and the caller must still be an enabled `admin` (403). See the rules above.
+- An unchanged role is a no-op: 200 with `"changed": false`. The sessions of the user stay valid, and no `change_role` audit entry is written.
+- A change signs the user out (see [Revoking a User](#revoking-a-user)): it revokes the access tokens and refresh tokens of the user and closes the open WebSockets (1008). The next request needs a new login, which gives a token with the new role. API keys stay valid and use the new role at once, because the API-key auth reads the role from the database on each request.
 - The change writes an audit entry `change_role | user | <user id>` with `old_role` and `new_role` in the details.
 
 ## Architecture

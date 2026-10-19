@@ -61,7 +61,7 @@ You are a senior QA engineer. You own the test strategy, the end-to-end (e2e) te
 ### Frontend e2e tests
 
 - Playwright (Chromium). Specs: `frontend/e2e/*.spec.ts`. Helpers: `frontend/e2e/helpers.ts`. Config: `frontend/playwright.config.ts`.
-- 29 specs, one for each feature area: auth, oidc-auth, definitions, templates, template-versions, instances, deployment, compare, value-overrides, branch-overrides, bulk-operations, import-export, clusters, cluster-health, shared-values, cleanup-policies, orphaned-namespaces, admin-users, profile, notifications, dashboard-widgets, analytics, audit-log, websocket, navigation, ux-improvements, ttl-stop-time, page-errors, and mobile (the Playwright project `mobile`: iPhone 13 viewport with Chromium; the `chromium` project skips it). Extend the matching spec. Add a spec for a new feature.
+- 32 specs, one for each feature area: auth, oidc-auth, definitions, templates, template-versions, instances, deployment, compare, value-overrides, branch-overrides, bulk-operations, import-export, clusters, cluster-health, shared-values, cleanup-policies, orphaned-namespaces, admin-users, profile, notifications, dashboard-widgets, analytics, audit-log, websocket, navigation, ux-improvements, ttl-stop-time, page-errors, role-change, session-lifecycle and last-admin (the Playwright project `isolated`: serial, one worker, against a restarted short-limit backend; `make test-e2e-isolated`), and mobile (the Playwright project `mobile`: iPhone 13 viewport with Chromium; the `chromium` project skips it). Extend the matching spec. Add a spec for a new feature.
 - Run: `make test-e2e`. It starts MySQL in Docker, builds and starts the backend on the host, and Playwright starts the Vite dev server.
 
 ## Writing backend unit tests

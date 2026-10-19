@@ -1,4 +1,4 @@
-.PHONY: e2e-prepare test-e2e-session dev dev-otel dev-api-only compose-api-only seed dev-backend dev-frontend dev-local dev-local-backend dev-local-frontend prod prod-backend prod-frontend build clean prune test test-backend test-backend-integration test-backend-all test-frontend test-e2e integration-infra-start integration-infra-stop install docs fmt lint loadtest loadtest-start loadtest-start-backend loadtest-start-frontend loadtest-stop loadtest-stop-backend loadtest-stop-frontend loadtest-backend loadtest-backend-run loadtest-stress loadtest-stress-run loadtest-frontend loadtest-frontend-run
+.PHONY: e2e-prepare test-e2e-isolated dev dev-otel dev-api-only compose-api-only seed dev-backend dev-frontend dev-local dev-local-backend dev-local-frontend prod prod-backend prod-frontend build clean prune test test-backend test-backend-integration test-backend-all test-frontend test-e2e integration-infra-start integration-infra-stop install docs fmt lint loadtest loadtest-start loadtest-start-backend loadtest-start-frontend loadtest-stop loadtest-stop-backend loadtest-stop-frontend loadtest-backend loadtest-backend-run loadtest-stress loadtest-stress-run loadtest-frontend loadtest-frontend-run
 
 # Development mode for both services
 dev:
@@ -107,12 +107,21 @@ test-frontend:
 E2E_DB_NAME ?= app_e2e
 E2E_HOME := $(CURDIR)/backend/tmp/e2e-home
 E2E_PID := $(CURDIR)/backend/tmp/e2e-backend.pid
+# Database access for the specs that change rows directly (helpers.ts, for
+# example to mark a user as an SSO user; there is no API for that).
+E2E_DB_PLAYWRIGHT_ENV = E2E_DB_NAME=$(E2E_DB_NAME) E2E_DB_USER=$${DB_USER:-root} E2E_DB_PASSWORD=$${DB_PASSWORD:-rootpassword}
 E2E_STOP_BACKEND = kill $$(cat $(E2E_PID) 2>/dev/null) 2>/dev/null; rm -rf $(E2E_HOME) $(E2E_PID)
 
-# Session lifecycle phase (#584): e2e/session-lifecycle.spec.ts needs a backend
-# with short session limits. `make test-e2e` runs it after the main suite with a
-# restarted backend; `make test-e2e-session` runs only this phase. The spec
-# reads the same values from the E2E_SESSION_* variables.
+# Isolated phase: the Playwright project `isolated` runs specs that must not run
+# next to the main suite, serially, against a restarted backend.
+# - session-lifecycle.spec.ts (#584) needs short session limits; it reads the
+#   same values from the E2E_SESSION_* variables.
+# - last-admin.spec.ts (#585) disables the built-in `admin` account for a moment.
+#   It is the teardown project `isolated-last-admin`, so `--project=isolated`
+#   runs it after session-lifecycle, also when that fails.
+# `make test-e2e` runs this phase after the main suite; `make test-e2e-isolated`
+# runs only this phase. It uses one worker: the specs must never overlap (the
+# last-admin spec disables `admin`, which the other specs log in as).
 E2E_SESSION_ACCESS_TTL ?= 10s
 E2E_SESSION_IDLE_TIMEOUT ?= 20s
 E2E_SESSION_MAX_LIFETIME ?= 60s
@@ -120,7 +129,7 @@ E2E_SESSION_REUSE_GRACE ?= 3s
 E2E_SESSION_BACKEND_ENV = ACCESS_TOKEN_EXPIRATION=$(E2E_SESSION_ACCESS_TTL) \
 	SESSION_IDLE_TIMEOUT=$(E2E_SESSION_IDLE_TIMEOUT) SESSION_MAX_LIFETIME=$(E2E_SESSION_MAX_LIFETIME) \
 	REFRESH_REUSE_GRACE=$(E2E_SESSION_REUSE_GRACE)
-E2E_SESSION_PLAYWRIGHT_ENV = E2E_SESSION=1 E2E_SESSION_ACCESS_TTL=$(E2E_SESSION_ACCESS_TTL) \
+E2E_ISOLATED_PLAYWRIGHT_ENV = E2E_ISOLATED=1 E2E_SESSION_ACCESS_TTL=$(E2E_SESSION_ACCESS_TTL) \
 	E2E_SESSION_IDLE_TIMEOUT=$(E2E_SESSION_IDLE_TIMEOUT) E2E_SESSION_MAX_LIFETIME=$(E2E_SESSION_MAX_LIFETIME) \
 	E2E_SESSION_REUSE_GRACE=$(E2E_SESSION_REUSE_GRACE)
 
@@ -181,14 +190,14 @@ define e2e_stop_backend_and_wait
 	done
 endef
 
-# Run the session lifecycle spec against the running (short-limit) backend.
+# Run the isolated project against the running (short-limit) backend.
 # It writes its HTML report and traces to separate folders, because Playwright
 # clears playwright-report/ and test-results/ at the start of a run, and the
 # main suite's report must survive for the CI artifact.
-define e2e_run_session_spec
-	@echo "Running the session lifecycle spec (access token $(E2E_SESSION_ACCESS_TTL), idle $(E2E_SESSION_IDLE_TIMEOUT), max lifetime $(E2E_SESSION_MAX_LIFETIME), reuse grace $(E2E_SESSION_REUSE_GRACE))..."
-	cd frontend && $(E2E_SESSION_PLAYWRIGHT_ENV) PLAYWRIGHT_HTML_OUTPUT_DIR=playwright-report-session \
-		bash -o pipefail -c 'npx playwright test --project=session --output=test-results-session 2>&1 | tee test-logs/playwright-session.log' || \
+define e2e_run_isolated_specs
+	@echo "Running the isolated specs (access token $(E2E_SESSION_ACCESS_TTL), idle $(E2E_SESSION_IDLE_TIMEOUT), max lifetime $(E2E_SESSION_MAX_LIFETIME), reuse grace $(E2E_SESSION_REUSE_GRACE))..."
+	cd frontend && $(E2E_ISOLATED_PLAYWRIGHT_ENV) $(E2E_DB_PLAYWRIGHT_ENV) PLAYWRIGHT_HTML_OUTPUT_DIR=playwright-report-isolated \
+		bash -o pipefail -c 'npx playwright test --project=isolated --workers=1 --output=test-results-isolated 2>&1 | tee test-logs/playwright-isolated.log' || \
 		($(E2E_STOP_BACKEND); $(MAKE) -C $(CURDIR) integration-infra-stop; exit 1)
 endef
 
@@ -211,7 +220,7 @@ e2e-prepare: integration-infra-start
 	@echo "Building backend..."
 	@cd backend && mkdir -p tmp && go build -o tmp/main ./api
 
-# A failed main suite does not skip the session phase: its exit status goes to
+# A failed main suite does not skip the isolated phase: its exit status goes to
 # E2E_MAIN_STATUS, and the target fails at the end when either phase failed.
 E2E_MAIN_STATUS := $(CURDIR)/backend/tmp/e2e-main.status
 
@@ -219,22 +228,22 @@ test-e2e: e2e-prepare
 	@echo "Starting backend..."
 	$(call e2e_start_backend,,backend.log)
 	@echo "Backend is ready, running Playwright tests..."
-	@cd frontend && bash -o pipefail -c 'npx playwright test 2>&1 | tee test-logs/playwright.log'; \
+	@cd frontend && $(E2E_DB_PLAYWRIGHT_ENV) bash -o pipefail -c 'npx playwright test 2>&1 | tee test-logs/playwright.log'; \
 		echo $$? > $(E2E_MAIN_STATUS)
-	@echo "Restarting backend with short session limits..."
+	@echo "Restarting backend for the isolated specs (short session limits)..."
 	$(call e2e_stop_backend_and_wait)
-	$(call e2e_start_backend,$(E2E_SESSION_BACKEND_ENV),backend-session.log)
-	$(call e2e_run_session_spec)
+	$(call e2e_start_backend,$(E2E_SESSION_BACKEND_ENV),backend-isolated.log)
+	$(call e2e_run_isolated_specs)
 	@echo "Stopping backend..."
 	@$(E2E_STOP_BACKEND) || true
 	$(MAKE) integration-infra-stop
 	@status=$$(cat $(E2E_MAIN_STATUS) 2>/dev/null || echo 1); rm -f $(E2E_MAIN_STATUS); \
 		if [ "$$status" != 0 ]; then echo "ERROR: the main e2e suite failed (see frontend/test-logs/playwright.log)."; exit 1; fi
 
-test-e2e-session: e2e-prepare ## Run only the session lifecycle e2e spec (short session limits)
+test-e2e-isolated: e2e-prepare ## Run only the isolated e2e specs (serial, short session limits)
 	@echo "Starting backend with short session limits..."
-	$(call e2e_start_backend,$(E2E_SESSION_BACKEND_ENV),backend-session.log)
-	$(call e2e_run_session_spec)
+	$(call e2e_start_backend,$(E2E_SESSION_BACKEND_ENV),backend-isolated.log)
+	$(call e2e_run_isolated_specs)
 	@echo "Stopping backend..."
 	@$(E2E_STOP_BACKEND) || true
 	$(MAKE) integration-infra-stop
