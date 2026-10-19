@@ -9,8 +9,9 @@ import (
 const (
 	defaultTimeout = 5 * time.Second
 	// maxTimeout allows a pre-deploy gate to wait for CI image builds: one
-	// build takes 4-9 minutes, and builds of several charts can queue.
-	maxTimeout = 30 * time.Minute
+	// build takes 4-9 minutes, but it can wait long for a free CI agent, and
+	// builds of several charts can queue.
+	maxTimeout = 60 * time.Minute
 )
 
 // Config holds dispatcher-wide settings and the registered subscriptions.
