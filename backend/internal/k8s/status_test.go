@@ -1103,7 +1103,7 @@ func TestGetNamespaceStatus_ContainerStates(t *testing.T) {
 				},
 			},
 			Status: corev1.PodStatus{
-				Phase: corev1.PodRunning,
+				Phase:     corev1.PodRunning,
 				StartTime: &metav1.Time{Time: metav1.Now().Add(-10 * time.Minute)},
 				Conditions: []corev1.PodCondition{
 					{Type: corev1.PodReady, Status: corev1.ConditionFalse, Reason: "ContainersNotReady", Message: "sidecar not ready"},

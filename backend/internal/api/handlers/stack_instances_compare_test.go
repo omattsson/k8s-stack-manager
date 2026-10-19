@@ -60,7 +60,8 @@ func TestCompareInstances(t *testing.T) {
 			name:       "missing left parameter returns 400",
 			queryLeft:  "",
 			queryRight: "right-id",
-			setup:      func(instRepo *MockStackInstanceRepository, defRepo *MockStackDefinitionRepository, ccRepo *MockChartConfigRepository, ovRepo *MockValueOverrideRepository) {},
+			setup: func(instRepo *MockStackInstanceRepository, defRepo *MockStackDefinitionRepository, ccRepo *MockChartConfigRepository, ovRepo *MockValueOverrideRepository) {
+			},
 			wantStatus: http.StatusBadRequest,
 			checkFn: func(t *testing.T, w *httptest.ResponseRecorder) {
 				t.Helper()
@@ -73,21 +74,24 @@ func TestCompareInstances(t *testing.T) {
 			name:       "missing right parameter returns 400",
 			queryLeft:  "left-id",
 			queryRight: "",
-			setup:      func(instRepo *MockStackInstanceRepository, defRepo *MockStackDefinitionRepository, ccRepo *MockChartConfigRepository, ovRepo *MockValueOverrideRepository) {},
+			setup: func(instRepo *MockStackInstanceRepository, defRepo *MockStackDefinitionRepository, ccRepo *MockChartConfigRepository, ovRepo *MockValueOverrideRepository) {
+			},
 			wantStatus: http.StatusBadRequest,
 		},
 		{
 			name:       "missing both parameters returns 400",
 			queryLeft:  "",
 			queryRight: "",
-			setup:      func(instRepo *MockStackInstanceRepository, defRepo *MockStackDefinitionRepository, ccRepo *MockChartConfigRepository, ovRepo *MockValueOverrideRepository) {},
+			setup: func(instRepo *MockStackInstanceRepository, defRepo *MockStackDefinitionRepository, ccRepo *MockChartConfigRepository, ovRepo *MockValueOverrideRepository) {
+			},
 			wantStatus: http.StatusBadRequest,
 		},
 		{
 			name:       "left instance not found returns 404",
 			queryLeft:  "nonexistent",
 			queryRight: "right-id",
-			setup:      func(instRepo *MockStackInstanceRepository, defRepo *MockStackDefinitionRepository, ccRepo *MockChartConfigRepository, ovRepo *MockValueOverrideRepository) {},
+			setup: func(instRepo *MockStackInstanceRepository, defRepo *MockStackDefinitionRepository, ccRepo *MockChartConfigRepository, ovRepo *MockValueOverrideRepository) {
+			},
 			wantStatus: http.StatusNotFound,
 			checkFn: func(t *testing.T, w *httptest.ResponseRecorder) {
 				t.Helper()

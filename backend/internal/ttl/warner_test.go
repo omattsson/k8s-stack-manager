@@ -112,7 +112,7 @@ func (m *warnerMockInstanceRepo) MarkExpiryWarned(id string, expiresAt, warnedAt
 
 // --- no-op stubs for the rest of the interface ---
 
-func (m *warnerMockInstanceRepo) Create(_ *models.StackInstance) error   { return nil }
+func (m *warnerMockInstanceRepo) Create(_ *models.StackInstance) error { return nil }
 func (m *warnerMockInstanceRepo) FindByID(_ string) (*models.StackInstance, error) {
 	return nil, nil
 }
@@ -154,8 +154,10 @@ func (m *warnerMockInstanceRepo) ListIDsByOwnerIDs(_ []string) (map[string][]str
 func (m *warnerMockInstanceRepo) ExistsByDefinitionAndStatus(_, _ string) (bool, error) {
 	return false, nil
 }
-func (m *warnerMockInstanceRepo) ListExpired() ([]*models.StackInstance, error)          { return nil, nil }
-func (m *warnerMockInstanceRepo) ListByStatus(_ string, _ int) ([]*models.StackInstance, error) { return nil, nil }
+func (m *warnerMockInstanceRepo) ListExpired() ([]*models.StackInstance, error) { return nil, nil }
+func (m *warnerMockInstanceRepo) ListByStatus(_ string, _ int) ([]*models.StackInstance, error) {
+	return nil, nil
+}
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -168,10 +170,10 @@ func TestWarner_SendsWarningForExpiringSoon(t *testing.T) {
 	repo := &warnerMockInstanceRepo{
 		expiringSoonItems: []*models.StackInstance{
 			{
-				ID:       "inst-1",
-				Name:     "my-stack",
-				OwnerID:  "user-42",
-				Status:   models.StackStatusRunning,
+				ID:        "inst-1",
+				Name:      "my-stack",
+				OwnerID:   "user-42",
+				Status:    models.StackStatusRunning,
 				ExpiresAt: &expiresAt,
 			},
 		},
@@ -196,10 +198,10 @@ func TestWarner_DeduplicatesWarnings(t *testing.T) {
 	repo := &warnerMockInstanceRepo{
 		expiringSoonItems: []*models.StackInstance{
 			{
-				ID:       "inst-1",
-				Name:     "my-stack",
-				OwnerID:  "user-42",
-				Status:   models.StackStatusRunning,
+				ID:        "inst-1",
+				Name:      "my-stack",
+				OwnerID:   "user-42",
+				Status:    models.StackStatusRunning,
 				ExpiresAt: &expiresAt,
 			},
 		},
@@ -305,10 +307,10 @@ func TestWarner_TTLExtensionResetsWarning(t *testing.T) {
 
 	expiresT1 := time.Now().Add(10 * time.Minute)
 	inst := &models.StackInstance{
-		ID:       "inst-1",
-		Name:     "my-stack",
-		OwnerID:  "user-42",
-		Status:   models.StackStatusRunning,
+		ID:        "inst-1",
+		Name:      "my-stack",
+		OwnerID:   "user-42",
+		Status:    models.StackStatusRunning,
 		ExpiresAt: &expiresT1,
 	}
 
@@ -326,10 +328,10 @@ func TestWarner_TTLExtensionResetsWarning(t *testing.T) {
 	// Simulate TTL extension: same instance, new ExpiresAt.
 	expiresT2 := time.Now().Add(20 * time.Minute)
 	extendedInst := &models.StackInstance{
-		ID:       "inst-1",
-		Name:     "my-stack",
-		OwnerID:  "user-42",
-		Status:   models.StackStatusRunning,
+		ID:        "inst-1",
+		Name:      "my-stack",
+		OwnerID:   "user-42",
+		Status:    models.StackStatusRunning,
 		ExpiresAt: &expiresT2,
 	}
 	repo.setExpiringSoon([]*models.StackInstance{extendedInst})

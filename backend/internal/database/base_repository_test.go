@@ -27,10 +27,10 @@ func TestBaseRepository_FindByID(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name      string
-		seed      bool
-		lookupID  string
-		wantErr   bool
+		name         string
+		seed         bool
+		lookupID     string
+		wantErr      bool
 		wantSentinel error
 	}{
 		{

@@ -61,8 +61,8 @@ type createChannelRequest struct {
 }
 
 type updateChannelRequest struct {
-	Name       string `json:"name,omitempty"`
-	WebhookURL string `json:"webhook_url,omitempty"`
+	Name       string  `json:"name,omitempty"`
+	WebhookURL string  `json:"webhook_url,omitempty"`
 	Secret     *string `json:"secret,omitempty"`
 	Enabled    *bool   `json:"enabled,omitempty"`
 	// Format replaces the body format ("generic" or "teams"). Omit it to

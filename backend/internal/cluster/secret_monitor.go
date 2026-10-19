@@ -46,9 +46,9 @@ type SecretMonitor struct {
 }
 
 const (
-	defaultSecretMonitorInterval  = 1 * time.Hour
-	defaultSecretExpiryThreshold  = 7 * 24 * time.Hour // 7 days
-	secretWarnCooldown            = 24 * time.Hour
+	defaultSecretMonitorInterval = 1 * time.Hour
+	defaultSecretExpiryThreshold = 7 * 24 * time.Hour // 7 days
+	secretWarnCooldown           = 24 * time.Hour
 )
 
 // NewSecretMonitor creates a new secret expiry monitor.

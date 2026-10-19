@@ -515,7 +515,6 @@ func TestDeployInstance(t *testing.T) {
 	}
 }
 
-
 // ---- StopInstance tests ----
 
 func TestStopInstance(t *testing.T) {
@@ -623,7 +622,6 @@ func TestStopInstance(t *testing.T) {
 		})
 	}
 }
-
 
 // ---- GetDeployLog tests ----
 

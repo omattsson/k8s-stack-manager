@@ -121,8 +121,10 @@ func (r *mockInstanceRepo) CountByStatus(string) (int, error) { return 0, nil }
 func (r *mockInstanceRepo) ExistsByDefinitionAndStatus(string, string) (bool, error) {
 	return false, nil
 }
-func (r *mockInstanceRepo) ListExpired() ([]*models.StackInstance, error)                        { return nil, nil }
-func (r *mockInstanceRepo) ListExpiringSoon(_ time.Duration) ([]*models.StackInstance, error) { return nil, nil }
+func (r *mockInstanceRepo) ListExpired() ([]*models.StackInstance, error) { return nil, nil }
+func (r *mockInstanceRepo) ListExpiringSoon(_ time.Duration) ([]*models.StackInstance, error) {
+	return nil, nil
+}
 func (*mockInstanceRepo) MarkExpiryWarned(_ string, _, _ time.Time) (bool, error) {
 	return false, nil
 }

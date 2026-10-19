@@ -475,7 +475,7 @@ func TestOIDCCallback(t *testing.T) {
 		_ = stateStore.SaveOIDCState(context.Background(), "valid-state-happy", sessionstore.OIDCStateData{
 			CodeVerifier: "test-verifier",
 			RedirectURL:  "/dashboard",
-			}, 5*time.Minute)
+		}, 5*time.Minute)
 
 		r := setupOIDCRouter(h.Callback, http.MethodGet, "/api/v1/auth/oidc/callback")
 
@@ -507,7 +507,7 @@ func TestOIDCCallback(t *testing.T) {
 		_ = stateStore.SaveOIDCState(context.Background(), "valid-state-role", sessionstore.OIDCStateData{
 			CodeVerifier: "test-verifier",
 			RedirectURL:  "/",
-			}, 5*time.Minute)
+		}, 5*time.Minute)
 
 		r := setupOIDCRouter(h.Callback, http.MethodGet, "/api/v1/auth/oidc/callback")
 
@@ -535,7 +535,7 @@ func TestOIDCCallback(t *testing.T) {
 		_ = stateStore.SaveOIDCState(context.Background(), "valid-state-noprov", sessionstore.OIDCStateData{
 			CodeVerifier: "test-verifier",
 			RedirectURL:  "/",
-			}, 5*time.Minute)
+		}, 5*time.Minute)
 
 		r := setupOIDCRouter(h.Callback, http.MethodGet, "/api/v1/auth/oidc/callback")
 
@@ -568,7 +568,7 @@ func TestOIDCCallback(t *testing.T) {
 		_ = stateStore.SaveOIDCState(context.Background(), "valid-state-existing", sessionstore.OIDCStateData{
 			CodeVerifier: "test-verifier",
 			RedirectURL:  "/",
-			}, 5*time.Minute)
+		}, 5*time.Minute)
 
 		r := setupOIDCRouter(h.Callback, http.MethodGet, "/api/v1/auth/oidc/callback")
 
@@ -596,7 +596,7 @@ func TestOIDCCallback(t *testing.T) {
 		_ = stateStore.SaveOIDCState(context.Background(), "valid-state-consumed", sessionstore.OIDCStateData{
 			CodeVerifier: "test-verifier",
 			RedirectURL:  "/",
-			}, 5*time.Minute)
+		}, 5*time.Minute)
 
 		r := setupOIDCRouter(h.Callback, http.MethodGet, "/api/v1/auth/oidc/callback")
 
@@ -649,7 +649,7 @@ func TestCallback_DuplicateKeyRaceCondition(t *testing.T) {
 	_ = stateStore.SaveOIDCState(context.Background(), "valid-state-race", sessionstore.OIDCStateData{
 		CodeVerifier: "test-verifier",
 		RedirectURL:  "/dashboard",
-		}, 5*time.Minute)
+	}, 5*time.Minute)
 
 	r := setupOIDCRouter(h.Callback, http.MethodGet, "/api/v1/auth/oidc/callback")
 
@@ -682,7 +682,7 @@ func TestCallback_DuplicateKeyRetryFails(t *testing.T) {
 	_ = stateStore.SaveOIDCState(context.Background(), "valid-state-retry-fail", sessionstore.OIDCStateData{
 		CodeVerifier: "test-verifier",
 		RedirectURL:  "/",
-		}, 5*time.Minute)
+	}, 5*time.Minute)
 
 	r := setupOIDCRouter(h.Callback, http.MethodGet, "/api/v1/auth/oidc/callback")
 
@@ -810,7 +810,7 @@ func TestCallback_FindByExternalIDReturnsUnexpectedError(t *testing.T) {
 	_ = stateStore.SaveOIDCState(context.Background(), "valid-state-dberr", sessionstore.OIDCStateData{
 		CodeVerifier: "test-verifier",
 		RedirectURL:  "/",
-		}, 5*time.Minute)
+	}, 5*time.Minute)
 
 	r := setupOIDCRouter(h.Callback, http.MethodGet, "/api/v1/auth/oidc/callback")
 
@@ -847,7 +847,7 @@ func TestCallback_UpdateExistingUserFails(t *testing.T) {
 	_ = stateStore.SaveOIDCState(context.Background(), "valid-state-update-fail", sessionstore.OIDCStateData{
 		CodeVerifier: "test-verifier",
 		RedirectURL:  "/",
-		}, 5*time.Minute)
+	}, 5*time.Minute)
 
 	r := setupOIDCRouter(h.Callback, http.MethodGet, "/api/v1/auth/oidc/callback")
 

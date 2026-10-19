@@ -16,7 +16,6 @@ import (
 
 const logKeyUserID = "user_id"
 
-
 // NotificationHandler handles notification endpoints.
 type NotificationHandler struct {
 	repo models.NotificationRepository

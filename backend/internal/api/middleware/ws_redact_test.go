@@ -144,8 +144,8 @@ func TestRedactWSToken_MatchesDescendantPathsButNotLookalikes(t *testing.T) {
 	// exact `/ws` and `/ws/<anything>` get scrubbed; `/wso`, `/wsdebug`,
 	// `/ws-debug` do NOT (the second segment must be path-separated).
 	cases := []struct {
-		path       string
-		wantScrub  bool
+		path      string
+		wantScrub bool
 	}{
 		{path: "/ws", wantScrub: true},
 		{path: "/ws/v2", wantScrub: true},

@@ -17,11 +17,11 @@ import (
 
 // OIDCUser represents the user information extracted from an OIDC ID token.
 type OIDCUser struct {
-	Subject          string
-	Email            string
-	Name             string // Display name (from name, given_name+family_name, or preferred_username)
+	Subject           string
+	Email             string
+	Name              string // Display name (from name, given_name+family_name, or preferred_username)
 	PreferredUsername string // Stable identifier (from preferred_username claim)
-	Roles            []string
+	Roles             []string
 }
 
 // Provider handles OIDC operations: authorization URL generation, code exchange, and token validation.
@@ -88,11 +88,11 @@ func (p *Provider) Exchange(ctx context.Context, code, codeVerifier string) (*OI
 	}
 
 	user := &OIDCUser{
-		Subject:          idToken.Subject,
-		Email:            claimString(claims, "email"),
-		Name:             claimString(claims, "name"),
+		Subject:           idToken.Subject,
+		Email:             claimString(claims, "email"),
+		Name:              claimString(claims, "name"),
 		PreferredUsername: claimString(claims, "preferred_username"),
-		Roles:            p.extractRoles(claims),
+		Roles:             p.extractRoles(claims),
 	}
 
 	// Display name fallbacks: given_name+family_name, then preferred_username.

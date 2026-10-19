@@ -29,12 +29,12 @@ const (
 	EventInstanceCreated     = "instance-created"
 
 	// Phase 2 notification events (#189–#193).
-	EventDeployTimeout          = "deploy-timeout"
-	EventCleanupPolicyExecuted  = "cleanup-policy-executed"
-	EventStackExpired           = "stack-expired"
-	EventStackExpiring          = "stack-expiring"
-	EventQuotaWarning           = "quota-warning"
-	EventSecretExpiring         = "secret-expiring"
+	EventDeployTimeout         = "deploy-timeout"
+	EventCleanupPolicyExecuted = "cleanup-policy-executed"
+	EventStackExpired          = "stack-expired"
+	EventStackExpiring         = "stack-expiring"
+	EventQuotaWarning          = "quota-warning"
+	EventSecretExpiring        = "secret-expiring"
 )
 
 // FailurePolicy controls how dispatch errors propagate to the caller.
@@ -61,17 +61,17 @@ const maxHookResponseBytes = 1 << 20 // 1 MiB
 
 // EventEnvelope is the JSON payload posted to subscriber URLs.
 type EventEnvelope struct {
-	APIVersion  string                 `json:"apiVersion"`
-	Kind        string                 `json:"kind"`
-	Event       string                 `json:"event"`
-	Timestamp   time.Time              `json:"timestamp"`
-	RequestID   string                 `json:"request_id"`
-	InstanceRef *InstanceRef           `json:"instance,omitempty"`
-	Deployment  *DeploymentRef         `json:"deployment,omitempty"`
-	Charts      []ChartRef             `json:"charts,omitempty"`
-	Values      map[string]any         `json:"values,omitempty"`
-	Metadata    map[string]string      `json:"metadata,omitempty"`
-	Extra       map[string]any         `json:"extra,omitempty"`
+	APIVersion  string            `json:"apiVersion"`
+	Kind        string            `json:"kind"`
+	Event       string            `json:"event"`
+	Timestamp   time.Time         `json:"timestamp"`
+	RequestID   string            `json:"request_id"`
+	InstanceRef *InstanceRef      `json:"instance,omitempty"`
+	Deployment  *DeploymentRef    `json:"deployment,omitempty"`
+	Charts      []ChartRef        `json:"charts,omitempty"`
+	Values      map[string]any    `json:"values,omitempty"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
+	Extra       map[string]any    `json:"extra,omitempty"`
 	// Trigger tells what started the operation (a user, a cleanup policy
 	// or the TTL reaper). Set for the deploy, stop, clean, rollback and
 	// delete events, and for cleanup-policy-executed.

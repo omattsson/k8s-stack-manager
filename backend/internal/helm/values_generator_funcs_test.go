@@ -22,7 +22,7 @@ func TestRegisterFunc_CustomFunctionsCallableFromTemplates(t *testing.T) {
 		RegisterFunc("upper", strings.ToUpper)
 
 	params := GenerateParams{
-		ChartName:    "web",
+		ChartName: "web",
 		DefaultValues: `host: "{{ .Owner | dnsify }}.example.com"
 label: "{{ upper .InstanceName }}"
 `,
@@ -47,9 +47,9 @@ func TestRegisterFunc_NilFuncMapDoesNotBreakBuiltins(t *testing.T) {
 
 	gen := NewValuesGenerator()
 	params := GenerateParams{
-		ChartName:    "web",
+		ChartName:     "web",
 		DefaultValues: `owner: "{{ .Owner }}"`,
-		TemplateVars: TemplateVars{Owner: "alice"},
+		TemplateVars:  TemplateVars{Owner: "alice"},
 	}
 	got, err := gen.GenerateValues(context.Background(), params)
 	require.NoError(t, err)

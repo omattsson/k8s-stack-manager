@@ -26,7 +26,7 @@ func TestHandleEvent_AllowsValidRequest(t *testing.T) {
 		Kind:       "EventEnvelope",
 		Event:      "pre-deploy",
 		RequestID:  "req-123",
-		Instance:   &struct {
+		Instance: &struct {
 			ID        string `json:"id"`
 			Name      string `json:"name"`
 			Namespace string `json:"namespace"`

@@ -220,9 +220,9 @@ func TestSecurityHeaders(t *testing.T) {
 			expectHSTS:     false,
 		},
 		{
-			name:           "direct TLS",
-			directTLS:      true,
-			expectHSTS:     true,
+			name:       "direct TLS",
+			directTLS:  true,
+			expectHSTS: true,
 		},
 		{
 			name:           "HTTPS uppercase",

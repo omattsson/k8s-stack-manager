@@ -15,7 +15,6 @@ const (
 	entityTemplateChart = "Template chart"
 )
 
-
 // AddTemplateChart godoc
 // @Summary     Add a chart to a template
 // @Description Add a new chart configuration to the working copy (draft) of a stack template. Users get the change after the next publish. Template owner or admin only.

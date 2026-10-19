@@ -86,7 +86,7 @@ func (r *testUserRepo) FindByID(id string) (*models.User, error) {
 	return &cp, nil
 }
 
-func (r *testUserRepo) Create(user *models.User) error                       { return nil }
+func (r *testUserRepo) Create(user *models.User) error { return nil }
 func (r *testUserRepo) FindByIDs(ids []string) (map[string]*models.User, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -103,15 +103,15 @@ func (r *testUserRepo) FindByUsername(username string) (*models.User, error) { r
 func (r *testUserRepo) FindByExternalID(provider, externalID string) (*models.User, error) {
 	return nil, nil
 }
-func (r *testUserRepo) Update(user *models.User) error   { return nil }
-func (r *testUserRepo) Delete(id string) error           { return nil }
-func (r *testUserRepo) List() ([]models.User, error)     { return nil, nil }
-func (r *testUserRepo) Count() (int64, error)            { return 0, nil }
+func (r *testUserRepo) Update(user *models.User) error                { return nil }
+func (r *testUserRepo) Delete(id string) error                        { return nil }
+func (r *testUserRepo) List() ([]models.User, error)                  { return nil, nil }
+func (r *testUserRepo) Count() (int64, error)                         { return 0, nil }
 func (r *testUserRepo) ListByRoles(_ []string) ([]models.User, error) { return nil, nil }
 func (r *testUserRepo) UpdateRole(_, _, _ string) (string, error)     { return "", nil }
 func (r *testUserRepo) SetDisabled(_, _ string, _ bool) error         { return nil }
-func (r *testUserRepo) DeleteGuarded(_, _ string) error                { return nil }
-func (r *testUserRepo) UpdatePassword(_, _ string) error { return nil }
+func (r *testUserRepo) DeleteGuarded(_, _ string) error               { return nil }
+func (r *testUserRepo) UpdatePassword(_, _ string) error              { return nil }
 func (r *testUserRepo) UpdateProfile(_ string, _ models.UserProfileUpdate) error {
 	return nil
 }
