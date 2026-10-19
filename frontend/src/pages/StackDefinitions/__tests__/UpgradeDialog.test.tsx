@@ -72,6 +72,26 @@ describe('UpgradeDialog', () => {
     });
   });
 
+  it.each([
+    [{ reason: 'up_to_date', current_version: '2.0.0', latest_version: '2.0.0' }, /latest version \(2\.0\.0\)/i],
+    [{ reason: 'no_source_template' }, /not linked to a template/i],
+    [{ reason: 'no_published_version', current_version: '1.0.0' }, /no published version \(this definition uses 1\.0\.0\)/i],
+  ])('explains why there is no upgrade (%o)', async (result, text) => {
+    (definitionService.checkUpgrade as ReturnType<typeof vi.fn>).mockResolvedValue({
+      upgrade_available: false,
+      ...result,
+    });
+    render(
+      <UpgradeDialog definitionId="d1" open={true} onClose={vi.fn()} />
+    );
+    await waitFor(() => {
+      expect(screen.getByText(text)).toBeInTheDocument();
+    });
+    if (result.reason !== 'up_to_date') {
+      expect(screen.queryByText(/latest version/i)).not.toBeInTheDocument();
+    }
+  });
+
   it('shows upgrade details when available', async () => {
     (definitionService.checkUpgrade as ReturnType<typeof vi.fn>).mockResolvedValue({
       upgrade_available: true,

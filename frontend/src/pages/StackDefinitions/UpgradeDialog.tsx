@@ -26,6 +26,27 @@ import ChartDiffList from '../../components/ChartDiffList';
 import { isNoPublishedVersionError, NO_PUBLISHED_VERSION_MESSAGE } from '../../utils/templateVersion';
 import type { UpgradeCheckResponse } from '../../types';
 
+/**
+ * Text and severity for a check result without an upgrade. Older servers send
+ * no reason; they then get the up-to-date text, as before.
+ */
+const noUpgradeMessage = (result: UpgradeCheckResponse): { severity: 'success' | 'info'; text: string } => {
+  switch (result.reason) {
+    case 'no_source_template':
+      return { severity: 'info', text: 'This definition is not linked to a template, so there is nothing to upgrade.' };
+    case 'no_published_version':
+      return {
+        severity: 'info',
+        text: `The source template has no published version${result.current_version ? ` (this definition uses ${result.current_version})` : ''}. Upgrades become available when the template is published.`,
+      };
+    default:
+      return {
+        severity: 'success',
+        text: `You are on the latest version${result.current_version ? ` (${result.current_version})` : ''}. No upgrade available.`,
+      };
+  }
+};
+
 interface UpgradeDialogProps {
   definitionId: string;
   open: boolean;
@@ -93,11 +114,10 @@ const UpgradeDialog = ({ definitionId, open, onClose, onUpgraded }: UpgradeDialo
 
         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
-        {checkResult && !checkResult.upgrade_available && (
-          <Alert severity="success">
-            You are on the latest version. No upgrade available.
-          </Alert>
-        )}
+        {checkResult && !checkResult.upgrade_available && (() => {
+          const { severity, text } = noUpgradeMessage(checkResult);
+          return <Alert severity={severity}>{text}</Alert>;
+        })()}
 
         {checkResult?.upgrade_available && (
           <Box>

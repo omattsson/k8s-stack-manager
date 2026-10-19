@@ -417,7 +417,7 @@ func TestDraftRelease_UsersGetLatestSnapshot(t *testing.T) {
 				e.editChart(t, "replicas: 3", "3.0.0")
 				w := serve(e.router, http.MethodGet, "/api/v1/stack-definitions/"+def.ID+"/check-upgrade", "")
 				require.Equal(t, http.StatusOK, w.Code)
-				assert.JSONEq(t, `{"upgrade_available":false}`, w.Body.String())
+				assert.JSONEq(t, `{"upgrade_available":false,"current_version":"1.0.0","latest_version":"1.0.0","reason":"up_to_date"}`, w.Body.String())
 
 				w, _ = e.publish(t, `{"version":"1.1.0"}`)
 				require.Equal(t, http.StatusOK, w.Code, w.Body.String())
@@ -457,7 +457,7 @@ func TestDraftRelease_UsersGetLatestSnapshot(t *testing.T) {
 				e.publish(t, `{"version":"1.1.0"}`)
 				require.Equal(t, http.StatusOK, serve(e.router, http.MethodPost, "/api/v1/templates/t1/unpublish", "").Code)
 				w := serve(e.router, http.MethodGet, "/api/v1/stack-definitions/"+def.ID+"/check-upgrade", "")
-				assert.JSONEq(t, `{"upgrade_available":false}`, w.Body.String())
+				assert.JSONEq(t, `{"upgrade_available":false,"current_version":"1.0.0","reason":"no_published_version"}`, w.Body.String())
 				w = serve(e.router, http.MethodPost, "/api/v1/stack-definitions/"+def.ID+"/upgrade", "{}")
 				assert.Equal(t, http.StatusConflict, w.Code)
 			},

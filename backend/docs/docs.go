@@ -3643,8 +3643,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
-                                "type": "integer",
-                                "format": "int64"
+                                "type": "integer"
                             }
                         }
                     },
@@ -4585,7 +4584,7 @@ const docTemplate = `{
         },
         "/api/v1/stack-definitions/{id}/check-upgrade": {
             "get": {
-                "description": "Check if the latest published snapshot of the source template has another version than the definition's current version. An unpublished template, or one without a snapshot, gives upgrade_available=false.\nchart_diffs has the shape of the version diff chart_diffs: left = the definition charts now (locked values from the current source version snapshot), right = the latest snapshot. change_type \"removed\" means the chart is only in the definition; the upgrade keeps it.",
+                "description": "Check if the latest published snapshot of the source template has another version than the definition's current version. An unpublished template, or one without a snapshot, gives upgrade_available=false.\nchart_diffs has the shape of the version diff chart_diffs: left = the definition charts now (locked values from the current source version snapshot), right = the charts as the upgrade writes them (default values, repository URL, deploy order, and chart version, chart path, source repository and build pipeline when the snapshot has them), with the locked values and required flags of the latest snapshot. change_type \"removed\" means the chart is only in the definition; the upgrade keeps it. changes lists the same charts by change_type, so both always agree.\nWithout an upgrade, reason says why: no_source_template (the definition has no source template), no_published_version (the template is not published or has no snapshot) or up_to_date (current_version is the latest_version).",
                 "consumes": [
                     "application/json"
                 ],
@@ -11690,6 +11689,9 @@ const docTemplate = `{
                 "has_differences": {
                     "type": "boolean"
                 },
+                "left_build_pipeline_id": {
+                    "type": "string"
+                },
                 "left_chart_path": {
                     "type": "string"
                 },
@@ -11709,7 +11711,13 @@ const docTemplate = `{
                 "left_sort_order": {
                     "type": "integer"
                 },
+                "left_source_repo_url": {
+                    "type": "string"
+                },
                 "left_values": {
+                    "type": "string"
+                },
+                "right_build_pipeline_id": {
                     "type": "string"
                 },
                 "right_chart_path": {
@@ -11729,6 +11737,9 @@ const docTemplate = `{
                 },
                 "right_sort_order": {
                     "type": "integer"
+                },
+                "right_source_repo_url": {
+                    "type": "string"
                 },
                 "right_values": {
                     "type": "string"
@@ -12457,6 +12468,15 @@ const docTemplate = `{
                 },
                 "latest_version": {
                     "type": "string"
+                },
+                "reason": {
+                    "description": "Reason says why there is no upgrade (only when upgrade_available is\nfalse): no_source_template, no_published_version or up_to_date.",
+                    "type": "string",
+                    "enum": [
+                        "no_source_template",
+                        "no_published_version",
+                        "up_to_date"
+                    ]
                 },
                 "upgrade_available": {
                     "type": "boolean"
