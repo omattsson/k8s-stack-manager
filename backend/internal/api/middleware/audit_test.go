@@ -150,6 +150,47 @@ func TestAuditMiddleware_AuditsSuccessfulMutations(t *testing.T) {
 	}
 }
 
+func TestAuditMiddleware_SkipAudit(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		skip      bool
+		wantCount int
+	}{
+		{"handler marks a no-op", true, 0},
+		{"handler does not mark", false, 1},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			logger := &mockAuditLogger{}
+			r := gin.New()
+			r.Use(NewAuditMiddleware(logger))
+			r.PUT("/api/v1/users/:id/role", func(c *gin.Context) {
+				if tt.skip {
+					SkipAudit(c)
+				}
+				c.JSON(http.StatusOK, gin.H{"id": c.Param("id"), "old_role": "user", "new_role": "user"})
+			})
+
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(http.MethodPut, "/api/v1/users/u1/role", nil)
+			r.ServeHTTP(w, req)
+
+			assert.Equal(t, http.StatusOK, w.Code)
+			if tt.wantCount > 0 {
+				assert.True(t, waitForAudit(logger, time.Second), "expected an audit entry")
+			} else {
+				time.Sleep(20 * time.Millisecond)
+			}
+			assert.Equal(t, tt.wantCount, logger.count())
+		})
+	}
+}
+
 func TestAuditMiddleware_SkipsFailedRequests(t *testing.T) {
 	t.Parallel()
 

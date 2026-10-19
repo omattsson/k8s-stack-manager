@@ -3643,7 +3643,8 @@ const docTemplate = `{
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
-                                "type": "integer"
+                                "type": "integer",
+                                "format": "int64"
                             }
                         }
                     },
@@ -10026,7 +10027,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Sets the role of a local user. Admin only. The role of an SSO user comes from the identity provider and cannot be changed here (409). An admin cannot change their own role (403), the caller must still be an enabled admin in the database (403), and the last enabled admin cannot lose the admin role (409). An unchanged role is a no-op (changed=false). A change revokes the user's current access tokens, all refresh tokens and open WebSocket connections, so the next request needs a new login with the new role. API keys stay valid and use the new role at once.",
+                "description": "Sets the role of a local user. Admin only. The role of an SSO user comes from the identity provider and cannot be changed here (409). An admin cannot change their own role (403), the caller must still be an enabled admin in the database (403), and the last enabled admin cannot lose the admin role (the own-role and enabled-admin checks reach this first; the 409 is defense in depth). An unchanged role is a no-op (changed=false) and writes no audit entry. A change revokes the user's current access tokens, all refresh tokens and open WebSocket connections, so the next request needs a new login with the new role. API keys stay valid and use the new role at once.",
                 "consumes": [
                     "application/json"
                 ],
