@@ -241,7 +241,9 @@ A replica can stop without a clean shutdown (SIGKILL, OOM kill, node loss). It t
 
 ## Observability
 
-`telemetry.Init` sets up OTLP (OpenTelemetry Protocol) traces and metrics (`OTEL_*`, `METRICS_ENABLED`).
+`telemetry.Init` sets up OTLP (OpenTelemetry Protocol) traces, metrics and logs (`OTEL_*`, `METRICS_ENABLED`).
+
+- With `OTEL_ENABLED`, the backend sends its `slog` records to the collector as OTel logs, with the trace and span ID of the request when one is known. The local output then uses the slog text format (`time=... level=... msg=...`) on stderr. `LOG_LEVEL` applies to both.
 
 - The HTTP metrics middleware is active when `OTEL_ENABLED` or `METRICS_ENABLED` is true. The tracing middleware and the span enrichment are active only when `OTEL_ENABLED` is true.
 - HTTP metrics and auth outcome counters come from the middleware. Database pool metrics and business KPIs come from `telemetry`.

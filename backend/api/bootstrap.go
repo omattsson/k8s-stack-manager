@@ -27,6 +27,7 @@ import (
 	"backend/internal/websocket"
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/pprof"
@@ -111,6 +112,33 @@ type leaderWorkers struct {
 	ExpiryWarner  *ttl.Warner
 	QuotaMonitor  *cluster.QuotaMonitor
 	SecretMonitor *cluster.SecretMonitor
+}
+
+// setupOTelLogging sends the logs also to the OTel log pipeline (OTLP to the
+// collector) when OTEL_ENABLED, with LOG_LEVEL for both outputs. Without an
+// OTel log pipeline it changes nothing.
+//
+// The local output is a slog text handler on stderr, not the package default
+// handler: after slog.SetDefault, the log package writes through the new
+// default, and the package default handler writes through the log package
+// again, which deadlocks (for example on a log.Print of a library). So with
+// OTEL_ENABLED the local lines use the slog text format (time=... level=...).
+func setupOTelLogging(tel *telemetry.Telemetry, logCfg config.LogConfig) {
+	setupOTelLoggingTo(tel, logCfg, os.Stderr)
+}
+
+// setupOTelLoggingTo is setupOTelLogging with the local output as a
+// parameter (tests).
+func setupOTelLoggingTo(tel *telemetry.Telemetry, logCfg config.LogConfig, local io.Writer) {
+	if tel == nil || tel.LoggerProvider == nil {
+		return
+	}
+	level := slog.LevelInfo
+	if l, err := logCfg.SlogLevel(); err == nil {
+		level = l
+	}
+	base := slog.NewTextHandler(local, &slog.HandlerOptions{Level: level})
+	slog.SetDefault(slog.New(tel.LogHandler(base, level)))
 }
 
 // initDatabase opens the GORM database connection and returns the generic

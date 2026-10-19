@@ -82,6 +82,7 @@ func main() {
 		slog.Error("Failed to initialize OpenTelemetry", "error", err)
 		os.Exit(1)
 	}
+	setupOTelLogging(tel, cfg.Logging)
 
 	// Leader election. With LEADER_ELECTION_ENABLED=true, startup fails
 	// here when the process does not run in a Kubernetes pod.

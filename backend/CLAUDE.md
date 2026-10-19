@@ -69,7 +69,7 @@ All configuration uses environment variables with a `.env` fallback (godotenv). 
 - `KUBECONFIG_PATH`, `KUBECONFIG_ENCRYPTION_KEY`.
 - `IN_CLUSTER_FALLBACK_KUBECONFIG` (local development only): the kubeconfig of an in-cluster cluster when the backend does not run in a pod. Empty (default): such a cluster is unreachable; the backend never falls back to `~/.kube/config`.
 - `HELM_BINARY`, `DEPLOYMENT_TIMEOUT`, `MAX_CONCURRENT_DEPLOYS` (default 5).
-- `LOG_LEVEL`: `debug`, `info` (default), `warn` or `error`. `main` applies it to the default `slog` logger. An invalid value stops the startup.
+- `LOG_LEVEL`: `debug`, `info` (default), `warn` or `error`. `main` applies it to the default `slog` logger. An invalid value stops the startup. With `OTEL_ENABLED`, it also applies to the logs that go to the collector.
 - `AZURE_DEVOPS_PAT`, `AZURE_DEVOPS_AUTH` (`pat` or `workload-identity`), `AZURE_DEVOPS_DEFAULT_ORG` (the organization of the provider health check), `GITHUB_TOKEN`, `GITHUB_ALLOWED_REPOSITORIES` (required with `GITHUB_TOKEN`), `GITLAB_TOKEN`, `GITLAB_BASE_URL` (an origin without a path).
 - `NAMESPACE_LABELS`: extra stack namespace labels, `k=v,k=v`.
 - `ALLOWED_CHART_REPOS`: chart repository URL prefixes (`config.ParseAllowedChartRepos`). `models.SetAllowedChartSources` sets them at startup.
@@ -120,7 +120,7 @@ All configuration uses environment variables with a `.env` fallback (godotenv). 
 - `SetupRoutes` returns `*RateLimiters` (API limiter and optional login limiter). Call `Stop()` on shutdown.
 
 ## Observability
-- `telemetry.Init(cfg.Otel)` in `api/main.go` sets up OTLP tracing and metrics.
+- `telemetry.Init(cfg.Otel)` in `api/main.go` sets up OTLP tracing, metrics and logs. `setupOTelLogging` (`api/bootstrap.go`) then makes the default `slog` logger write to stderr (slog text format) and to the OTel log pipeline (`telemetry.LogHandler`, the `otelslog` bridge), both at `LOG_LEVEL`. Do not wrap the package default slog handler: it writes through the `log` package, which writes back through the new default and deadlocks.
 - `telemetry.StartDBMetrics`, `telemetry.StartBusinessMetrics` and `telemetry.StartLeaderMetric` (`stackmanager_leader`) register gauges.
 - `internal/websocket/tracing.go` holds the hub and fan-out metrics: `websocket.fanout.events_written_total`, `events_dropped_total`, `events_delivered_total`, `events_skipped_total`, `poll_errors_total`, `delivery_lag`.
 - `middleware/metrics.go` records HTTP metrics. `middleware/auth_metrics.go` records auth outcomes. `middleware/otel.go` adds the user to spans.
