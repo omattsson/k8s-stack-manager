@@ -13888,6 +13888,9 @@ const docTemplate = `{
                 "title": {
                     "type": "string"
                 },
+                "trigger": {
+                    "$ref": "#/definitions/models.Trigger"
+                },
                 "type": {
                     "type": "string"
                 },
@@ -14409,6 +14412,25 @@ const docTemplate = `{
                 },
                 "version": {
                     "type": "string"
+                }
+            }
+        },
+        "models.Trigger": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string",
+                    "enum": [
+                        "user",
+                        "cleanup-policy",
+                        "ttl"
+                    ]
                 }
             }
         },

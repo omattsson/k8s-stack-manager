@@ -2405,6 +2405,8 @@ definitions:
         type: string
       title:
         type: string
+      trigger:
+        $ref: '#/definitions/models.Trigger'
       type:
         type: string
       user_id:
@@ -2807,6 +2809,19 @@ definitions:
       name:
         type: string
       version:
+        type: string
+    type: object
+  models.Trigger:
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+      type:
+        enum:
+        - user
+        - cleanup-policy
+        - ttl
         type: string
     type: object
   models.User:
