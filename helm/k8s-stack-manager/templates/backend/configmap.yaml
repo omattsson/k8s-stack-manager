@@ -54,6 +54,10 @@ data:
   {{- if not (hasKey $.Values.backend.env "DELIVERY_LOG_RETENTION_DAYS") }}
   DELIVERY_LOG_RETENTION_DAYS: {{ .deliveryLogDays | toString | quote }}
   {{- end }}
+  {{- /* hasKey: an old values file without actionRunDays keeps the backend default. */}}
+  {{- if and (hasKey . "actionRunDays") (not (hasKey $.Values.backend.env "ACTION_RUN_RETENTION_DAYS")) }}
+  ACTION_RUN_RETENTION_DAYS: {{ .actionRunDays | toString | quote }}
+  {{- end }}
   {{- if not (hasKey $.Values.backend.env "LOG_RETENTION_INTERVAL") }}
   LOG_RETENTION_INTERVAL: {{ .interval | quote }}
   {{- end }}

@@ -79,6 +79,8 @@ backend:
     auditLogDays: 365
     notificationDays: 90
     deliveryLogDays: 30
+    # action_runs: the run history of custom actions (by start time).
+    actionRunDays: 180
     # Time between two runs (at least 1m).
     interval: 1h
 

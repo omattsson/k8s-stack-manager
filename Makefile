@@ -621,6 +621,7 @@ helm-test: ## Verify Deployment, Argo Rollout, and External Secrets Helm renders
 	grep -q 'Source: k8s-stack-manager/templates/mysql/secret.yaml' "$$template_file"; \
 	grep -q 'DEPLOY_LOG_RETENTION_DAYS: "180"' "$$template_file" && grep -q 'AUDIT_LOG_RETENTION_DAYS: "365"' "$$template_file" \
 		&& grep -q 'NOTIFICATION_RETENTION_DAYS: "90"' "$$template_file" && grep -q 'DELIVERY_LOG_RETENTION_DAYS: "30"' "$$template_file" \
+		&& grep -q 'ACTION_RUN_RETENTION_DAYS: "180"' "$$template_file" \
 		|| { echo "backend ConfigMap must have the default log retention" >&2; exit 1; }; \
 	grep -q 'TRUSTED_PROXIES: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7"' "$$template_file" \
 		|| { echo "backend ConfigMap must trust the private ranges by default" >&2; exit 1; }; \
