@@ -269,12 +269,15 @@ func TestGetEffectiveQuota_RepositoryErrors(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
+		resolver     clusterIDResolver
 		name         string
+		instCluster  string
 		failOverride bool
 		failCluster  bool
 	}{
-		{name: "override repository error", failOverride: true},
-		{name: "cluster quota repository error", failCluster: true},
+		{name: "override repository error", instCluster: "cl-1", failOverride: true},
+		{name: "cluster quota repository error", instCluster: "cl-1", failCluster: true},
+		{name: "default cluster lookup error", resolver: fakeResolver{err: assert.AnError}},
 	}
 
 	for _, tt := range tests {
@@ -284,7 +287,7 @@ func TestGetEffectiveQuota_RepositoryErrors(t *testing.T) {
 
 			instRepo := NewMockStackInstanceRepository()
 			inst := seedInstance(t, instRepo, "inst-1", "my-stack", "def-1", "uid-1", models.StackStatusRunning)
-			inst.ClusterID = "cl-1"
+			inst.ClusterID = tt.instCluster
 			require.NoError(t, instRepo.Update(inst))
 			overrideRepo := NewMockInstanceQuotaOverrideRepository()
 			quotaRepo := NewMockResourceQuotaRepository()
@@ -296,6 +299,7 @@ func TestGetEffectiveQuota_RepositoryErrors(t *testing.T) {
 			}
 			h := NewInstanceQuotaOverrideHandler(overrideRepo, instRepo)
 			h.clusterQuotaRepo = quotaRepo
+			h.clusterResolver = tt.resolver
 
 			gin.SetMode(gin.TestMode)
 			r := gin.New()

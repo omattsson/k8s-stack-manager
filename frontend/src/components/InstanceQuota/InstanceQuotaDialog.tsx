@@ -139,9 +139,10 @@ const InstanceQuotaDialog = ({ open, instanceId, clusterQuota, limitToCluster, o
   );
 
   const clusterPods = clusterQuota?.pod_limit ?? 0;
-  const podHelp = clusterPods > 0
-    ? `${limitToCluster ? `At most ${clusterPods} (cluster quota)` : `Cluster quota: ${clusterPods}`}. 0 = no limit.`
-    : 'No cluster quota. 0 = no limit.';
+  let podHelp = 'No cluster quota. 0 = no limit.';
+  if (clusterPods > 0) {
+    podHelp = limitToCluster ? `At most ${clusterPods} (cluster quota)` : `Cluster quota: ${clusterPods}. 0 = no limit.`;
+  }
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>

@@ -170,14 +170,14 @@ describe('InstanceQuotaSection', () => {
     await waitFor(() => expect(instanceService.getEffectiveQuota).toHaveBeenCalled());
     await act(() => Promise.resolve());
     expect(screen.queryByRole('heading', { name: 'Resource quota' })).not.toBeInTheDocument();
-    expect(screen.queryByText('No quota applies to this stack.')).not.toBeInTheDocument();
+    expect(screen.queryByText('No quota is configured for this stack.')).not.toBeInTheDocument();
   });
 
   it('offers an override when no value applies and the user can modify the instance', async () => {
     (instanceService.getEffectiveQuota as MockFn).mockResolvedValue(noQuota(true));
     renderSection();
 
-    expect(await screen.findByText('No quota applies to this stack.')).toBeInTheDocument();
+    expect(await screen.findByText('No quota is configured for this stack.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Edit override' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Remove override' })).not.toBeInTheDocument();
   });
@@ -247,7 +247,7 @@ describe('InstanceQuotaSection', () => {
     const dialog = await openEditDialog(user);
     expect(within(dialog).getByText('At most 2 (cluster quota)')).toBeInTheDocument();
     expect(within(dialog).getByText('At most 2Gi (cluster quota)')).toBeInTheDocument();
-    expect(within(dialog).getByText('At most 10 (cluster quota). 0 = no limit.')).toBeInTheDocument();
+    expect(within(dialog).getByText('At most 10 (cluster quota)')).toBeInTheDocument();
   });
 
   it.each([
@@ -271,6 +271,21 @@ describe('InstanceQuotaSection', () => {
     // The dialog stays open with the input, and the section is not reloaded.
     expect(within(dialog).getByLabelText('CPU Limit')).toHaveValue('3');
     expect(instanceService.getEffectiveQuota).toHaveBeenCalledTimes(1);
+  });
+
+  it('blocks a save after the override failed to load', async () => {
+    const user = userEvent.setup();
+    (instanceService.getEffectiveQuota as MockFn).mockResolvedValue(mergedQuota(true));
+    (instanceService.getQuotaOverride as MockFn).mockRejectedValue(httpError(500, 'Internal server error'));
+    renderSection();
+
+    await user.click(await screen.findByRole('button', { name: 'Edit override' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Quota override' });
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(
+      'Failed to load the quota override (HTTP 500: Internal server error)',
+    );
+    expect(within(dialog).getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(instanceService.setQuotaOverride).not.toHaveBeenCalled();
   });
 
   it('blocks a save while a field is invalid', async () => {
@@ -303,6 +318,17 @@ describe('InstanceQuotaSection', () => {
     await waitFor(() => expect(within(field('CPU Limit')).getByText('2 cores')).toBeInTheDocument());
     expect(within(field('CPU Limit')).getByText('Cluster')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Remove override' })).not.toBeInTheDocument();
+  });
+
+  it('tells that the namespace keeps its quota when the cluster has none', async () => {
+    const user = userEvent.setup();
+    (instanceService.getEffectiveQuota as MockFn).mockResolvedValue({ ...mergedQuota(true), cluster: null });
+    renderSection();
+
+    await user.click(await screen.findByRole('button', { name: 'Remove override' }));
+    expect(await screen.findByRole('dialog', { name: 'Remove the quota override' })).toHaveTextContent(
+      'The cluster has no quota. The namespace keeps its current quota until the stack is cleaned.',
+    );
   });
 
   it('shows the server message when the remove fails', async () => {

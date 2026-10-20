@@ -140,7 +140,7 @@ const InstanceQuotaSection = ({ instanceId }: InstanceQuotaSectionProps) => {
         </Typography>
         {quota.can_modify && (
           <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-            <Button size="small" variant="outlined" onClick={() => setEditOpen(true)}>
+            <Button size="small" variant="outlined" onClick={() => setEditOpen(true)} disabled={removing}>
               Edit override
             </Button>
             {quota.override && (
@@ -159,9 +159,13 @@ const InstanceQuotaSection = ({ instanceId }: InstanceQuotaSectionProps) => {
         <>
           <RowGroup title="Namespace" rows={namespaceRows} />
           <RowGroup title="Per container" rows={containerRows} />
+          <Typography variant="caption" color="text.secondary" component="p">
+            A container without its own requests or limits gets the container defaults. Without container defaults,
+            it gets small fallback values (CPU 100m and 500m, memory 128Mi and 512Mi, ephemeral storage 128Mi and 1Gi).
+          </Typography>
         </>
       ) : (
-        <Typography variant="body2">No quota applies to this stack.</Typography>
+        <Typography variant="body2">No quota is configured for this stack.</Typography>
       )}
 
       {quota.can_modify && (
@@ -177,7 +181,9 @@ const InstanceQuotaSection = ({ instanceId }: InstanceQuotaSectionProps) => {
           <ConfirmDialog
             open={removeOpen}
             title="Remove the quota override"
-            message="The cluster quota applies to this stack again."
+            message={quota.cluster
+              ? 'The cluster quota applies to this stack again.'
+              : 'The cluster has no quota. The namespace keeps its current quota until the stack is cleaned.'}
             confirmText="Remove"
             onConfirm={handleRemove}
             onCancel={() => setRemoveOpen(false)}

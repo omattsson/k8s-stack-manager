@@ -374,7 +374,7 @@ test.describe('Per-instance quota overrides', () => {
     // The role user sees the cluster value as the upper limit of each field.
     await expect(dialog.getByText('At most 2 (cluster quota)')).toBeVisible();
     await expect(dialog.getByText('At most 2Gi (cluster quota)')).toBeVisible();
-    await expect(dialog.getByText('At most 10 (cluster quota). 0 = no limit.')).toBeVisible();
+    await expect(dialog.getByText('At most 10 (cluster quota)')).toBeVisible();
 
     // Above the cluster quota: 403.
     await cpuLimit.fill('3');
