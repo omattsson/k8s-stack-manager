@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import InstanceActionsMenu from '..';
 import {
@@ -69,12 +69,6 @@ const chunk = (over: Partial<ActionJobLog>): ActionJobLog => ({
 const httpError = (status: number, message: string, headers: Record<string, string> = {}) =>
   Object.assign(new Error(message), { response: { status, headers, data: { error: message } } });
 
-/**
- * Tolerance for timer checks. With shouldAdvanceTime the fake clock also
- * moves with real time, so a check exactly at the deadline is not stable.
- */
-const MARGIN_MS = 500;
-
 /** Use fake timers that userEvent can drive. */
 const setupFakeTimers = () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -104,6 +98,38 @@ const runJob = async (user: ReturnType<typeof userEvent.setup>) => {
   await within(dialog).findByTestId('job-log');
   return dialog;
 };
+
+/**
+ * Run the async action while the fake clock moves only through advance(), so
+ * wall time cannot fire a poll early (#633). userEvent, waitFor and findBy*
+ * wait for a timer of that clock, so this uses fireEvent.
+ */
+const runJobOnFakeClock = async () => {
+  render(<InstanceActionsMenu instanceId="i1" />);
+  await advance(0);
+  fireEvent.click(screen.getByRole('button', { name: 'Actions' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: /Refresh database/ }));
+  const dialog = screen.getByRole('dialog');
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Run' }));
+  await advance(0);
+  expect(within(dialog).getByTestId('job-log')).toBeInTheDocument();
+  return dialog;
+};
+
+/** Answer the polls in order (the last answer repeats) and record the clock time of each poll. */
+const answerPolls = (...answers: Array<ActionJobLog | Error>) => {
+  const times: number[] = [];
+  getActionJobLog.mockImplementation(() => {
+    times.push(Date.now());
+    const answer = answers[Math.min(times.length, answers.length) - 1];
+    return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer);
+  });
+  return times;
+};
+
+/** Delay before each poll: from start, then from the poll before. */
+const pollDelays = (times: number[], start: number) =>
+  times.map((t, i) => t - (i === 0 ? start : times[i - 1]));
 
 const openAction = async (user: ReturnType<typeof userEvent.setup>, label: string) => {
   await user.click(await screen.findByRole('button', { name: 'Actions' }));
@@ -270,23 +296,26 @@ describe('InstanceActionsMenu', () => {
   });
 
   it('polls the job log every 3 s with the next offset until the job is done', async () => {
-    const user = setupFakeTimers();
+    vi.useFakeTimers();
     startAsyncJob();
-    getActionJobLog
-      .mockResolvedValueOnce(chunk({ log: 'step 1\n', next_offset: 7, truncated: true }))
-      .mockResolvedValueOnce(chunk({ log: 'step 2\n', offset: 7, next_offset: 14 }))
-      .mockResolvedValueOnce(chunk({ log: 'step 3\n', offset: 14, next_offset: 21, status: 'succeeded', done: true }));
-    const dialog = await runJob(user);
+    const times = answerPolls(
+      chunk({ log: 'step 1\n', next_offset: 7, truncated: true }),
+      chunk({ log: 'step 2\n', offset: 7, next_offset: 14 }),
+      chunk({ log: 'step 3\n', offset: 14, next_offset: 21, status: 'succeeded', done: true }),
+    );
+    const dialog = await runJobOnFakeClock();
+    const start = Date.now();
 
     // The first poll waits one interval, so the subscriber can create the log.
     expect(getActionJobLog).not.toHaveBeenCalled();
     await advance(JOB_LOG_POLL_INTERVAL_MS);
-    // A truncated chunk is followed by an immediate poll.
-    await waitFor(() => expect(getActionJobLog).toHaveBeenCalledTimes(2));
-    await advance(JOB_LOG_POLL_INTERVAL_MS - MARGIN_MS);
+    expect(getActionJobLog).toHaveBeenCalledTimes(1);
+    // A truncated chunk is followed by an immediate poll (the fake clock runs a 0 ms timer 1 ms later).
+    await advance(1);
     expect(getActionJobLog).toHaveBeenCalledTimes(2);
-    await advance(MARGIN_MS);
-    await waitFor(() => expect(within(dialog).getByTestId('job-status')).toHaveTextContent('succeeded'));
+    await advance(JOB_LOG_POLL_INTERVAL_MS);
+    expect(within(dialog).getByTestId('job-status')).toHaveTextContent('succeeded');
+    expect(pollDelays(times, start)).toEqual([JOB_LOG_POLL_INTERVAL_MS, 1, JOB_LOG_POLL_INTERVAL_MS]);
 
     expect(within(dialog).getByTestId('job-log')).toHaveTextContent('step 1 step 2 step 3');
     expect(getActionJobLog.mock.calls.map((c) => c[3])).toEqual([0, 7, 14]);
@@ -326,41 +355,39 @@ describe('InstanceActionsMenu', () => {
   });
 
   it('backs off on 429 with Retry-After and keeps polling', async () => {
-    const user = setupFakeTimers();
+    vi.useFakeTimers();
     startAsyncJob();
-    getActionJobLog
-      .mockRejectedValueOnce(httpError(429, 'Rate limit exceeded', { 'retry-after': '10' }))
-      .mockResolvedValueOnce(chunk({ log: 'done\n', next_offset: 5, status: 'succeeded', done: true }));
-    const dialog = await runJob(user);
+    const times = answerPolls(
+      httpError(429, 'Rate limit exceeded', { 'retry-after': '10' }),
+      chunk({ log: 'done\n', next_offset: 5, status: 'succeeded', done: true }),
+    );
+    const dialog = await runJobOnFakeClock();
+    const start = Date.now();
 
     await advance(JOB_LOG_POLL_INTERVAL_MS);
-    await waitFor(() => expect(within(dialog).getByTestId('job-waiting')).toHaveTextContent('Waiting…'));
-    await advance(10000 - MARGIN_MS);
-    expect(getActionJobLog).toHaveBeenCalledTimes(1);
-    await advance(MARGIN_MS);
-    await waitFor(() => expect(within(dialog).getByTestId('job-status')).toHaveTextContent('succeeded'));
+    expect(within(dialog).getByTestId('job-waiting')).toHaveTextContent('Waiting…');
+    await advance(10000);
+    expect(within(dialog).getByTestId('job-status')).toHaveTextContent('succeeded');
+    expect(pollDelays(times, start)).toEqual([JOB_LOG_POLL_INTERVAL_MS, 10000]);
     expect(within(dialog).queryByTestId('job-waiting')).not.toBeInTheDocument();
     expect(within(dialog).queryByRole('alert', { name: /Failed/ })).not.toBeInTheDocument();
   });
 
   it('doubles the delay on network errors up to 30 s and keeps polling', async () => {
-    const user = setupFakeTimers();
+    vi.useFakeTimers();
     startAsyncJob();
-    const networkError = Object.assign(new Error('Network Error'), { code: 'ERR_NETWORK' });
-    getActionJobLog.mockRejectedValue(networkError);
-    const dialog = await runJob(user);
+    const times = answerPolls(Object.assign(new Error('Network Error'), { code: 'ERR_NETWORK' }));
+    const dialog = await runJobOnFakeClock();
+    const start = Date.now();
 
-    // Delays after each failure: 6 s, 12 s, 24 s, 30 s, 30 s.
-    const expectedDelays = [6000, 12000, 24000, JOB_LOG_MAX_BACKOFF_MS, JOB_LOG_MAX_BACKOFF_MS];
-    await advance(JOB_LOG_POLL_INTERVAL_MS);
-    await waitFor(() => expect(getActionJobLog).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(within(dialog).getByTestId('job-waiting')).toBeInTheDocument());
-    for (let i = 0; i < expectedDelays.length; i += 1) {
-      await advance(expectedDelays[i] - MARGIN_MS);
+    // The first poll after 3 s, then the doubled delay after each failure.
+    const planned = [JOB_LOG_POLL_INTERVAL_MS, 6000, 12000, 24000, JOB_LOG_MAX_BACKOFF_MS, JOB_LOG_MAX_BACKOFF_MS];
+    for (const [i, delay] of planned.entries()) {
+      await advance(delay);
       expect(getActionJobLog).toHaveBeenCalledTimes(i + 1);
-      await advance(MARGIN_MS);
-      await waitFor(() => expect(getActionJobLog).toHaveBeenCalledTimes(i + 2));
+      expect(within(dialog).getByTestId('job-waiting')).toBeInTheDocument();
     }
+    expect(pollDelays(times, start)).toEqual(planned);
     expect(within(dialog).queryByText(/Failed to read the job log/)).not.toBeInTheDocument();
   });
 
