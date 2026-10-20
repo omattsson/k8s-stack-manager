@@ -183,7 +183,16 @@ func (g guardTarget) wouldRemoveLastAdmin() bool {
 // time are serialized: the second one sees the result of the first one.
 // Inside the lock, the caller must still be an enabled admin
 // (ErrCallerNotAdmin). IDs compare without case, as the MySQL collation does.
+//
+// A lock conflict (next-key locks on idx_users_role, #639) runs the whole
+// transaction again, so fn must only write through tx.
 func (r *GORMUserRepository) guardedAdminChange(op, callerID, id string, fn func(tx *gorm.DB, t guardTarget) error) error {
+	return retryOnLockConflict(op, func() error {
+		return r.guardedAdminTx(op, callerID, id, fn)
+	})
+}
+
+func (r *GORMUserRepository) guardedAdminTx(op, callerID, id string, fn func(tx *gorm.DB, t guardTarget) error) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		var admins []models.User
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
