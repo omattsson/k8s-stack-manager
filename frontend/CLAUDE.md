@@ -51,7 +51,8 @@
   - Layout, AccessUrls, BranchSelector, BrandLogo, ConfirmDialog, EmptyState, EntityLink, ErrorBoundary, LoadingState, ProtectedRoute, StatusBadge, StopTimePicker, TtlSelector, YamlEditor.
   - ChartDiffList and TemplateFieldDiffList (template version diff).
   - DeployPreviewDialog (merged values before deploy, `GET /stack-instances/:id/deploy-preview`).
-  - DeploymentHistory (pinned rows, filters, compact rows, folded deploy runs, "Show more", output loaded on open), PodStatusDisplay, QuickDeployDialog, QuotaConfigDialog.
+  - DeploymentHistory (pinned rows, filters, compact rows, folded deploy runs, "Show more", output loaded on open), PodStatusDisplay, QuickDeployDialog, QuotaConfigDialog (`quotaFields.ts`: field list and validation).
+  - InstanceQuota (Resource quota section of the instance page: effective values, source chips, override dialog).
   - ExtendTtlMenu, FavoriteButton, FollowButton, NotificationCenter.
   - InstanceActionsMenu (custom actions of the instance "Actions" menu), JsonResultView.
   - SetupWizard (first-run checklist: cluster, template, instance).

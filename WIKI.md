@@ -216,6 +216,12 @@ Both list endpoints are paged (`page` and `pageSize`; default 25, maximum 100). 
 - These writes run in the background. Each write reads the stored quotas again, so two quick changes on the same backend replica do not undo each other. With more than one replica, or during a deploy, the last write wins.
 - The backend skips a namespace when the merged quota is not valid or when it cannot read the quotas. It logs the reason. The next deploy applies the quota.
 - If the merged quota is empty (no cluster quota and no override), the backend writes nothing. The namespace keeps its current ResourceQuota and LimitRange.
+
+**Resource quota on the instance page.** The section "Resource quota" shows each value that the namespace gets (the cluster quota merged with the override) and its source: "Override" or "Cluster".
+
+- The owner, a `devops` user and an `admin` can edit the override ("Edit override") and remove it ("Remove override"). Other users see the values only.
+- For the role `user`, each field shows the cluster value as the upper limit. The dialog shows the server message for a value above it (403) and for an order rule (400).
+- API: `GET /stack-instances/:id/quota` returns the effective values, the cluster quota, the override and the source of each field.
 - Warning: A quota that you lower below the current use of the namespace refuses new pods, also the surge pods of a rolling update. The Helm wait for that chart then fails (timeout), and the pod events show the quota message. Raise the quota or reduce the requests before you redeploy.
 
 **Per-container limits.** The cluster quota and the instance quota override have per-container fields for the namespace LimitRange (`stack-manager-limits`):
@@ -533,6 +539,7 @@ Template -> (instantiate) -> Definition + ChartConfigs -> (create instance) -> I
 
 - Authentication uses a JWT with the header `Authorization: Bearer <token>`, or an API key.
 - The role hierarchy is `admin` > `devops` > `user`.
+- Login: without the correct password, the answer is always 401 "Invalid username or password", also for an unknown, disabled or SSO-only user. The time is the same, because an unknown user also runs a bcrypt check. "Account disabled" (403) shows only after the correct password.
 - `POST /auth/register` needs a valid token. With `SELF_REGISTRATION=false` (the backend default), only an `admin` can register users. With `SELF_REGISTRATION=true`, any signed-in user can register a new `user` account. Only an `admin` can set another role or create a service account.
 - The Helm chart sets `SELF_REGISTRATION` to `"false"`, the same as the backend default. Docker Compose sets `true` for local development. The notes after `helm install` warn when it is `"true"`.
 - CORS: `CORS_ALLOWED_ORIGINS` is `*` (all origins; code default, development only), `same-origin` (no cross-origin requests; Helm chart default), or a comma-separated list of origins. With `same-origin` or a list, a request whose `Origin` host equals its `Host` header (the web UI behind the ingress) always passes. Another `Origin` gets 403. The WebSocket upgrade (`/ws`) uses the same rules (`middleware.OriginPolicy`). `*` or `same-origin` mixed with other entries stops the startup. The backend logs a warning for `*` when `GO_ENV=production`.
