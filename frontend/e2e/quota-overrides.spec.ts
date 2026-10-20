@@ -1,10 +1,11 @@
-import { test, expect, APIRequestContext, APIResponse } from '@playwright/test';
+import { test, expect, APIRequestContext, APIResponse, Locator, Page } from '@playwright/test';
 import {
   API_BASE,
   apiCreateDefinition,
   apiLogin,
   ensureDefaultCluster,
   loginAsAdmin,
+  skipSetupWizard,
   uniqueName,
 } from './helpers';
 
@@ -28,6 +29,8 @@ import {
  * - models/validation.go: validateQuotaQuantities (400 "<a> must not exceed <b>").
  * - handlers/clusters.go: checkOverrideConflicts (a cluster quota save checks
  *   the stored overrides).
+ * - GET /stack-instances/:id/quota and components/InstanceQuota: the
+ *   "Resource quota" section of the instance page (#629, #635).
  */
 
 const PASSWORD = 'e2e-test-password';
@@ -166,6 +169,33 @@ async function expectNoOverride(instanceId: string): Promise<void> {
   await expectError(await getOverride(instanceId, owner.token), 404, MSG_OVERRIDE_NOT_FOUND);
 }
 
+const getQuota = (instanceId: string, token: string) =>
+  api.get(`${API_BASE}/api/v1/stack-instances/${instanceId}/quota`, { headers: auth(token) });
+
+/** Use the token of an actor of this spec in the web UI. */
+async function loginWithToken(page: Page, token: string): Promise<void> {
+  await page.addInitScript((t) => {
+    localStorage.setItem('token', t);
+  }, token);
+  await skipSetupWizard(page);
+}
+
+/** Open the instance page and return its "Resource quota" section. */
+async function openQuotaSection(page: Page, s: Scenario): Promise<Locator> {
+  await page.goto(`/stack-instances/${s.instanceId}`);
+  await expect(page.getByRole('heading', { level: 1, name: s.instanceName })).toBeVisible({ timeout: 10_000 });
+  const section = page.getByRole('region', { name: 'Resource quota' });
+  await expect(section).toBeVisible({ timeout: 10_000 });
+  return section;
+}
+
+/** One value of the quota section: the readable value and the source chip ("Override" or "Cluster"). */
+async function expectQuotaValue(section: Locator, label: string, value: string, source: 'Override' | 'Cluster'): Promise<void> {
+  const item = section.getByRole('group', { name: label, exact: true });
+  await expect(item).toContainText(value, { timeout: 10_000 });
+  await expect(item).toContainText(source);
+}
+
 test.describe('Per-instance quota overrides', () => {
   test.beforeAll(async ({ playwright }) => {
     api = await playwright.request.newContext();
@@ -274,23 +304,113 @@ test.describe('Per-instance quota overrides', () => {
     await expect(dialog).toBeHidden();
   });
 
-  // The issue asks for the instance detail page to show the effective quota
-  // (cluster quota merged with the override). The web UI has no quota
-  // override view: no page or component calls instanceService.getQuotaOverride
-  // or setQuotaOverride (frontend/src/api/client.ts), and Detail.tsx has no
-  // quota section. No API returns the merged quota either. The view is
-  // tracked in a separate issue (follow-up issue: instance quota view).
-  // Enable this test when the detail page gets the view.
-  test.fixme('the instance detail page shows the effective quota values', async ({ page }) => {
+  // Instance page "Resource quota" section (#629, #635): GET
+  // /stack-instances/:id/quota and components/InstanceQuota.
+
+  test('the instance detail page shows the effective quota values', async ({ page }) => {
     const s = await setupScenario();
     const res = await putOverride(s.instanceId, owner.token, { cpu_limit: '1500m' });
-    expect(res.status()).toBe(200);
+    expect(res.status(), await res.text()).toBe(200);
+
+    // Any user who can view the instance reads the effective quota.
+    const expected = {
+      cluster_id: s.clusterId,
+      effective: { ...CLUSTER_QUOTA, cpu_limit: '1500m' },
+      sources: { cpu_limit: 'override', cpu_request: 'cluster', memory_limit: 'cluster', pod_limit: 'cluster' },
+      cluster: CLUSTER_QUOTA,
+      override: { stack_instance_id: s.instanceId, cpu_limit: '1500m', pod_limit: null },
+    };
+    for (const [actor, canModify] of [[otherUser, false], [owner, true]] as const) {
+      const quotaRes = await getQuota(s.instanceId, actor.token);
+      expect(quotaRes.status(), await quotaRes.text()).toBe(200);
+      expect(await quotaRes.json()).toMatchObject({ ...expected, can_modify: canModify });
+    }
+
     await loginAsAdmin(page);
-    await page.goto(`/stack-instances/${s.instanceId}`);
-    await expect(page.getByRole('heading', { level: 1, name: s.instanceName })).toBeVisible({ timeout: 10_000 });
-    // Override value and an inherited cluster value.
-    await expect(page.getByText('1500m')).toBeVisible();
-    await expect(page.getByText('2Gi')).toBeVisible();
+    const section = await openQuotaSection(page, s);
+    await expectQuotaValue(section, 'CPU Limit', '1.5 cores (1500m)', 'Override');
+    await expectQuotaValue(section, 'CPU Request', '1 core', 'Cluster');
+    await expectQuotaValue(section, 'Memory Limit', '2 GiB', 'Cluster');
+    await expectQuotaValue(section, 'Pod Limit', '10', 'Cluster');
+    await expectQuotaValue(section, 'Container CPU Max', '1 core', 'Cluster');
+    await expect(section.getByRole('button', { name: 'Edit override' })).toBeVisible();
+    await expect(section.getByRole('button', { name: 'Remove override' })).toBeVisible();
+
+    // Without the override, every value comes from the cluster quota again.
+    const del = await deleteOverride(s.instanceId, owner.token);
+    expect(del.status(), await del.text()).toBe(204);
+    await page.reload();
+    await expectQuotaValue(section, 'CPU Limit', '2 cores', 'Cluster');
+    await expect(section.getByRole('button', { name: 'Remove override' })).toHaveCount(0);
+  });
+
+  test('a user who cannot modify the instance sees the quota read-only', async ({ page }) => {
+    const s = await setupScenario();
+    const res = await putOverride(s.instanceId, owner.token, { cpu_limit: '1500m' });
+    expect(res.status(), await res.text()).toBe(200);
+
+    await loginWithToken(page, otherUser.token);
+    const section = await openQuotaSection(page, s);
+    await expectQuotaValue(section, 'CPU Limit', '1.5 cores (1500m)', 'Override');
+    await expectQuotaValue(section, 'Memory Limit', '2 GiB', 'Cluster');
+    await expect(section.getByRole('button', { name: 'Edit override' })).toHaveCount(0);
+    await expect(section.getByRole('button', { name: 'Remove override' })).toHaveCount(0);
+  });
+
+  test('the owner sets and removes the override on the instance page', async ({ page }) => {
+    const s = await setupScenario();
+    await loginWithToken(page, owner.token);
+    const section = await openQuotaSection(page, s);
+    await expectQuotaValue(section, 'CPU Limit', '2 cores', 'Cluster');
+    await expect(section.getByRole('button', { name: 'Remove override' })).toHaveCount(0);
+
+    await section.getByRole('button', { name: 'Edit override' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Quota override' });
+    await expect(dialog).toBeVisible();
+    const cpuLimit = dialog.getByLabel('CPU Limit', { exact: true });
+    const cpuRequest = dialog.getByLabel('CPU Request', { exact: true });
+    await expect(cpuLimit).toBeEnabled({ timeout: 10_000 });
+
+    // The role user sees the cluster value as the upper limit of each field.
+    await expect(dialog.getByText('At most 2 (cluster quota)')).toBeVisible();
+    await expect(dialog.getByText('At most 2Gi (cluster quota)')).toBeVisible();
+    await expect(dialog.getByText('At most 10 (cluster quota). 0 = no limit.')).toBeVisible();
+
+    // Above the cluster quota: 403.
+    await cpuLimit.fill('3');
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(dialog.getByRole('alert')).toHaveText(
+      'Failed to save the quota override (HTTP 403: cpu_limit 3 exceeds the cluster quota 2' + ABOVE_SUFFIX + ')',
+      { timeout: 10_000 },
+    );
+
+    // An order rule of the effective quota: 400.
+    await cpuLimit.fill('');
+    await cpuRequest.fill('3');
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(dialog.getByRole('alert')).toHaveText(
+      'Failed to save the quota override (HTTP 400: cpu_request 3 (instance override) exceeds the effective cpu_limit 2 (cluster quota))',
+      { timeout: 10_000 },
+    );
+    await expectNoOverride(s.instanceId);
+
+    await cpuRequest.fill('');
+    await cpuLimit.fill('1500m');
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(dialog).toBeHidden({ timeout: 10_000 });
+    await expect(page.getByText('Quota override saved')).toBeVisible();
+    await expectQuotaValue(section, 'CPU Limit', '1.5 cores (1500m)', 'Override');
+    await expectQuotaValue(section, 'CPU Request', '1 core', 'Cluster');
+    await expectStoredOverride(s.instanceId, owner.token, { cpu_limit: '1500m' });
+
+    await section.getByRole('button', { name: 'Remove override' }).click();
+    const confirm = page.getByRole('dialog', { name: 'Remove the quota override' });
+    await confirm.getByRole('button', { name: 'Remove' }).click();
+    await expect(confirm).toBeHidden();
+    await expect(page.getByText('Quota override removed')).toBeVisible();
+    await expectQuotaValue(section, 'CPU Limit', '2 cores', 'Cluster');
+    await expect(section.getByRole('button', { name: 'Remove override' })).toHaveCount(0);
+    await expectNoOverride(s.instanceId);
   });
 
   // Scenario 2 -------------------------------------------------------------

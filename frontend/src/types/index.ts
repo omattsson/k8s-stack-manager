@@ -785,6 +785,41 @@ export interface InstanceQuotaOverride {
   updated_at?: string;
 }
 
+/** Origin of an effective quota value. */
+export type QuotaValueSource = 'override' | 'cluster' | 'none';
+
+/** Quota values that apply to the namespace of an instance. An empty quantity means no value; pod_limit 0 means no limit. */
+export interface EffectiveQuotaValues {
+  cpu_request: string;
+  cpu_limit: string;
+  memory_request: string;
+  memory_limit: string;
+  storage_limit: string;
+  ephemeral_storage_limit: string;
+  container_cpu_request: string;
+  container_cpu_limit: string;
+  container_cpu_max: string;
+  container_memory_request: string;
+  container_memory_limit: string;
+  container_memory_max: string;
+  container_ephemeral_storage_request: string;
+  container_ephemeral_storage_limit: string;
+  pod_limit: number;
+}
+
+/** Response of GET /api/v1/stack-instances/:id/quota. */
+export interface EffectiveQuota {
+  /** Cluster of the instance (the default cluster when the instance has none); empty when there is none. */
+  cluster_id: string;
+  /** The cluster quota merged with the override. */
+  effective: EffectiveQuotaValues;
+  cluster: ResourceQuotaConfig | null;
+  override: InstanceQuotaOverride | null;
+  sources: Record<keyof EffectiveQuotaValues, QuotaValueSource>;
+  /** True when the caller may set or remove the override (owner, devops or admin). */
+  can_modify: boolean;
+}
+
 export interface NamespaceResourceUsage {
   namespace: string;
   cpu_used: string;

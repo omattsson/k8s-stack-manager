@@ -61,6 +61,7 @@ import type {
   PublishTemplateResult,
   UpgradeCheckResponse,
   InstanceQuotaOverride,
+  EffectiveQuota,
   DeployPreviewResponse,
   DashboardResponse,
   NotificationChannel,
@@ -1587,6 +1588,21 @@ export const instanceService = {
       return response.data;
     } catch (error) {
       console.error('Failed to compare instances:', error);
+      throw error;
+    }
+  },
+  /**
+   * Get the effective resource quota of a stack instance: the cluster quota merged with the instance override.
+   * @param instanceId - Stack instance ID
+   * @returns The effective values, the cluster quota, the override, the source of each field and whether the caller may change the override
+   * @see GET /api/v1/stack-instances/:id/quota
+   */
+  getEffectiveQuota: async (instanceId: string): Promise<EffectiveQuota> => {
+    try {
+      const response = await api.get<EffectiveQuota>(`/api/v1/stack-instances/${instanceId}/quota`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch the effective quota:', error);
       throw error;
     }
   },

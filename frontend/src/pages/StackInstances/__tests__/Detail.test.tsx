@@ -149,6 +149,12 @@ vi.mock('../../../components/DeploymentHistory', () => ({
   ) : null),
 }));
 
+vi.mock('../../../components/InstanceQuota', () => ({
+  default: ({ instanceId }: { instanceId: string }) => (
+    <div data-testid="instance-quota-section">{instanceId}</div>
+  ),
+}));
+
 vi.mock('../../../components/PodStatusDisplay', () => ({
   default: ({ loading }: { loading: boolean }) => (
     <div data-testid="pod-status-display">
@@ -321,6 +327,12 @@ describe('StackInstances Detail', () => {
   afterEach(() => {
     vi.clearAllMocks();
     authState.user = { id: 'user1', username: 'alice', role: 'user', display_name: 'Alice' };
+  });
+
+  it('shows the resource quota section of the instance', async () => {
+    setupMocks({ status: 'draft' }, { deployLogReject: true });
+    renderDetail();
+    expect(await screen.findByTestId('instance-quota-section')).toHaveTextContent('123');
   });
 
   it('passes the source repositories of all charts to the instance-level branch picker', async () => {

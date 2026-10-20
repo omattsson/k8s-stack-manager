@@ -39,6 +39,7 @@ import PodStatusDisplay from '../../components/PodStatusDisplay';
 import AccessUrls from '../../components/AccessUrls';
 import FavoriteButton from '../../components/FavoriteButton';
 import FollowButton from '../../components/FollowButton';
+import InstanceQuotaSection from '../../components/InstanceQuota';
 import { instanceService, definitionService, branchOverrideService } from '../../api/client';
 import type { RollbackResponse, StackInstance, ChartConfig, ValueOverride, ChartBranchOverride, DeploymentLog, NamespaceStatus } from '../../types';
 import YamlEditor from '../../components/YamlEditor';
@@ -1134,6 +1135,8 @@ const Detail = () => {
           </Box>
         </Paper>
       )}
+
+      <InstanceQuotaSection key={`quota-${instance.id}`} instanceId={instance.id} />
 
       <DeploymentHistory
         key={id ?? instance.id}
