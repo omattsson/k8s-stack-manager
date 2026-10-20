@@ -23,6 +23,10 @@ import (
 // only finds and queues per channel, so it stays short (#649).
 const dispatchQueueSize = 1000
 
+// stopDrainTimeout is the longest time that Stop lets the queued channel
+// events go out before it cancels the deliveries (#649).
+const stopDrainTimeout = 2 * time.Second
+
 // Notifier creates notification records and broadcasts them in real time.
 type Notifier struct {
 	repo              models.NotificationRepository
@@ -35,6 +39,11 @@ type Notifier struct {
 	done              chan struct{}
 	workerExited      chan struct{}
 	cancelDispatch    context.CancelFunc
+	// stopDrain: 0 means stopDrainTimeout; tests change it.
+	stopDrain time.Duration
+	// queueMu: enqueueDispatch sends under RLock; Stop closes done under
+	// Lock, so no event enters the queue after Stop has started.
+	queueMu sync.RWMutex
 	// publicURL is APP_PUBLIC_URL without a trailing slash; empty: no
 	// instance_url in the channel payload.
 	publicURL string
@@ -101,20 +110,27 @@ func (n *Notifier) WithChannelDispatcher(d *channel.Dispatcher) *Notifier {
 	return n
 }
 
+// dispatchWorker passes each queued event to the dispatcher. After done it
+// passes the rest of the queue (Stop accepts no new event), then returns. It
+// returns at once when ctx ends.
 func (n *Notifier) dispatchWorker(ctx context.Context) {
 	defer close(n.workerExited)
-	for {
-		// A closed done wins over a waiting payload.
+	for ctx.Err() == nil {
 		select {
-		case <-n.done:
-			return
-		default:
-		}
-		select {
-		case <-n.done:
+		case <-ctx.Done():
 			return
 		case payload := <-n.dispatchQueue:
 			n.channelDispatcher.Dispatch(ctx, n.withClusterName(ctx, payload))
+		case <-n.done:
+			for ctx.Err() == nil {
+				select {
+				case payload := <-n.dispatchQueue:
+					n.channelDispatcher.Dispatch(ctx, n.withClusterName(ctx, payload))
+				default:
+					return
+				}
+			}
+			return
 		}
 	}
 }
@@ -130,8 +146,10 @@ func (n *Notifier) withClusterName(ctx context.Context, payload channel.EventPay
 	return payload
 }
 
-// Stop shuts down the intake worker and the channel workers: it cancels the
-// lookups and deliveries in progress, counts the queued events as dropped
+// Stop shuts down the intake worker and the channel workers. It accepts no
+// new event. For at most stopDrainTimeout (2 s) the queued events still go
+// out, so the last events of a shutdown reach healthy channels. Then it
+// cancels the lookups and deliveries in progress, counts the rest as dropped
 // (reason shutdown) and waits until all workers have returned. Safe to call
 // multiple times and when no dispatcher is configured.
 func (n *Notifier) Stop() {
@@ -139,11 +157,26 @@ func (n *Notifier) Stop() {
 		if n.done == nil {
 			return
 		}
+		n.queueMu.Lock()
 		close(n.done)
+		n.queueMu.Unlock()
+
+		drain := n.stopDrain
+		if drain <= 0 {
+			drain = stopDrainTimeout
+		}
+		deadline := time.Now().Add(drain)
+		timer := time.NewTimer(drain)
+		select {
+		case <-n.workerExited:
+		case <-timer.C:
+		}
+		timer.Stop()
+
 		n.cancelDispatch()
 		<-n.workerExited
 		n.discardQueued()
-		n.channelDispatcher.Stop()
+		n.channelDispatcher.Shutdown(time.Until(deadline))
 	})
 }
 
@@ -153,7 +186,7 @@ func (n *Notifier) discardQueued() {
 	for {
 		select {
 		case payload := <-n.dispatchQueue:
-			n.channelDispatcher.RecordDrop(payload.EventType, "", channel.DropReasonShutdown)
+			n.channelDispatcher.RecordIntakeDrop(payload.EventType, channel.DropReasonShutdown)
 		default:
 			return
 		}
@@ -162,22 +195,23 @@ func (n *Notifier) discardQueued() {
 
 // enqueueDispatch queues payload for the intake worker. It never blocks: a
 // full queue, or a stopped notifier, drops the event. The dispatcher counts
-// the drop and logs at most one warning per minute for each event type and
-// reason (#649).
+// the drop and logs at most one warning per minute and reason (#649).
 func (n *Notifier) enqueueDispatch(payload channel.EventPayload) {
 	if n.dispatchQueue == nil {
 		return
 	}
+	n.queueMu.RLock()
+	defer n.queueMu.RUnlock()
 	select {
 	case <-n.done:
-		n.channelDispatcher.RecordDrop(payload.EventType, "", channel.DropReasonShutdown)
+		n.channelDispatcher.RecordIntakeDrop(payload.EventType, channel.DropReasonShutdown)
 		return
 	default:
 	}
 	select {
 	case n.dispatchQueue <- payload:
 	default:
-		n.channelDispatcher.RecordDrop(payload.EventType, "", channel.DropReasonQueueFull)
+		n.channelDispatcher.RecordIntakeDrop(payload.EventType, channel.DropReasonQueueFull)
 	}
 }
 

@@ -3,6 +3,7 @@ package channel
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -375,4 +376,227 @@ func TestDispatch_EncodeOncePerFormat(t *testing.T) {
 	require.Len(t, bodies, 2)
 	assert.Equal(t, bodies["/a"], bodies["/b"])
 	assert.Equal(t, "t", bodies["/a"]["title"])
+}
+
+// gateServer holds the request of event "gate" until release, so the test
+// can change the channel while the next event waits in the queue. It records
+// all requests.
+type gateServer struct {
+	*httptest.Server
+	started chan struct{}
+	release chan struct{}
+	mu      sync.Mutex
+	reqs    []capturedRequest
+}
+
+func newGateServer(t *testing.T) *gateServer {
+	t.Helper()
+	s := &gateServer{started: make(chan struct{}, 10), release: make(chan struct{})}
+	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		event := r.Header.Get("X-StackManager-Event")
+		s.mu.Lock()
+		s.reqs = append(s.reqs, capturedRequest{body: b, signature: r.Header.Get("X-StackManager-Signature"), event: event})
+		s.mu.Unlock()
+		if event == "gate" {
+			s.started <- struct{}{}
+			<-s.release
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(s.Close)
+	return s
+}
+
+func (s *gateServer) requests() []capturedRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]capturedRequest(nil), s.reqs...)
+}
+
+// TestChannelWorker_ReadsChannelAgain checks that a queued event uses the
+// stored channel at send time (#649): a deleted or disabled channel gets
+// nothing (drop reason channel_removed, no delivery log), and a new URL,
+// secret or format applies.
+func TestChannelWorker_ReadsChannelAgain(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		// change edits the stored channel; nil deletes it.
+		change      func(ch *models.NotificationChannel, otherURL string)
+		wantRemoved bool
+		// check gets the second request (on the first or the other server).
+		check   func(t *testing.T, req capturedRequest)
+		onOther bool
+	}{
+		{name: "deleted", wantRemoved: true},
+		{name: "disabled", change: func(ch *models.NotificationChannel, _ string) { ch.Enabled = false }, wantRemoved: true},
+		{
+			name:    "new URL",
+			change:  func(ch *models.NotificationChannel, otherURL string) { ch.WebhookURL = otherURL },
+			onOther: true,
+			check: func(t *testing.T, req capturedRequest) {
+				assert.Equal(t, "deployment.success", req.event)
+			},
+		},
+		{
+			name:   "new secret",
+			change: func(ch *models.NotificationChannel, _ string) { ch.Secret = "rotated" },
+			check: func(t *testing.T, req capturedRequest) {
+				assert.Equal(t, sign(req.body, "rotated"), req.signature)
+			},
+		},
+		{
+			name:   "new format",
+			change: func(ch *models.NotificationChannel, _ string) { ch.Format = models.NotificationChannelFormatTeams },
+			check: func(t *testing.T, req capturedRequest) {
+				var body map[string]any
+				require.NoError(t, json.Unmarshal(req.body, &body))
+				assert.Contains(t, body, "attachments", "the body is encoded again as a Teams card")
+				assert.Equal(t, sign(req.body, "s"), req.signature, "the signature covers the new body")
+			},
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			gate, other := newGateServer(t), newGateServer(t)
+			repo := &mockChannelRepo{channels: []models.NotificationChannel{
+				{ID: "ch-1", Name: "chat", WebhookURL: gate.URL, Secret: "s", Enabled: true},
+			}}
+			d := newTestDispatcher(t, repo)
+			reader := useTestCounter(t, d)
+
+			d.Dispatch(context.Background(), EventPayload{EventType: "gate"})
+			waitSignal(t, gate.started)
+			d.Dispatch(context.Background(), EventPayload{EventType: "deployment.success", Title: "queued"})
+			if tt.change == nil {
+				repo.updateChannel("ch-1", nil)
+			} else {
+				repo.updateChannel("ch-1", func(ch *models.NotificationChannel) { tt.change(ch, other.URL) })
+			}
+			close(gate.release)
+
+			if tt.wantRemoved {
+				require.Eventually(t, func() bool {
+					return droppedSum(t, reader, "deployment.success", "ch-1", DropReasonChannelRemoved) == 1
+				}, 5*time.Second, 5*time.Millisecond)
+				d.Stop()
+				logs := repo.Deliveries()
+				require.Len(t, logs, 1, "no delivery log for the removed channel")
+				assert.Equal(t, "gate", logs[0].EventType)
+				assert.Len(t, gate.requests(), 1)
+				assert.Empty(t, other.requests())
+				return
+			}
+
+			logs := waitDeliveries(t, repo, 2)
+			assert.Equal(t, "success", logs[1].Status)
+			assert.Empty(t, logs[1].ErrorMessage)
+			reqs := gate.requests()[1:]
+			if tt.onOther {
+				reqs = other.requests()
+			}
+			require.Len(t, reqs, 1)
+			tt.check(t, reqs[0])
+			assert.Zero(t, droppedSum(t, reader, "deployment.success", "ch-1", DropReasonChannelRemoved))
+		})
+	}
+}
+
+func waitSignal(t *testing.T, ch <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout")
+	}
+}
+
+// TestChannelWorker_LookupErrorUsesQueuedCopy checks that a failed channel
+// read sends with the queued copy and warns at most once per minute.
+func TestChannelWorker_LookupErrorUsesQueuedCopy(t *testing.T) {
+	t.Parallel()
+
+	healthy := newRecordingServer(t)
+	repo := &mockChannelRepo{channels: []models.NotificationChannel{
+		{ID: "ch-1", Name: "chat", WebhookURL: healthy.URL, Enabled: true},
+	}}
+	repo.setGetErr(errors.New("db down"))
+	d := newTestDispatcher(t, repo)
+	buf := useTestLogger(t, &d.lookups)
+
+	for i := 0; i < 3; i++ {
+		d.Dispatch(context.Background(), EventPayload{EventType: "deployment.success"})
+	}
+	for _, l := range waitDeliveries(t, repo, 3) {
+		assert.Equal(t, "success", l.Status)
+	}
+	lines := buf.lines("channel lookup failed")
+	require.Len(t, lines, 1)
+	assert.Contains(t, lines[0], "channel=chat")
+	assert.Contains(t, lines[0], "count=1")
+}
+
+// TestDispatcher_ShutdownDrain checks that Shutdown lets the queued events go
+// out within the grace time, and cancels a channel that does not answer
+// when the grace time ends.
+func TestDispatcher_ShutdownDrain(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		slow  bool
+		grace time.Duration
+	}{
+		// A long grace: Shutdown returns when the queues are empty.
+		{name: "healthy channel gets all queued events", grace: time.Minute},
+		{name: "slow channel is cancelled after the grace time", slow: true, grace: 50 * time.Millisecond},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			healthy := newRecordingServer(t)
+			repo := &mockChannelRepo{channels: []models.NotificationChannel{
+				{ID: "healthy", Name: "healthy", WebhookURL: healthy.URL, Enabled: true},
+			}}
+			var slow *blockingServer
+			if tt.slow {
+				slow = newBlockingServer(t)
+				repo.channels = append(repo.channels, models.NotificationChannel{ID: "slow", Name: "slow", WebhookURL: slow.URL, Enabled: true})
+			}
+			d := newTestDispatcher(t, repo)
+			d.retryDelay = time.Minute
+			reader := useTestCounter(t, d)
+
+			const events = 20
+			for i := 0; i < events; i++ {
+				d.Dispatch(context.Background(), EventPayload{EventType: "deployment.success"})
+			}
+			if tt.slow {
+				slow.waitStarted(t, 1)
+			}
+			start := time.Now()
+			d.Shutdown(tt.grace)
+			assert.Less(t, time.Since(start), tt.grace+5*time.Second)
+			assert.Zero(t, d.workers.running.Load())
+
+			n := 0
+			for _, l := range repo.Deliveries() {
+				if l.ChannelID == "healthy" {
+					n++
+				}
+			}
+			if !tt.slow {
+				assert.Equal(t, events, n, "the queued events go out before Shutdown returns")
+				assert.Zero(t, droppedSum(t, reader, "deployment.success", "healthy", DropReasonShutdown))
+				return
+			}
+			assert.Equal(t, int64(events-1), droppedSum(t, reader, "deployment.success", "slow", DropReasonShutdown))
+			require.Eventually(t, func() bool { return slow.cancelled.Load() >= 1 }, 5*time.Second, 5*time.Millisecond)
+		})
+	}
 }

@@ -16,6 +16,8 @@ import (
 
 	"backend/internal/hooks"
 	"backend/internal/models"
+
+	"go.opentelemetry.io/otel/metric"
 )
 
 const (
@@ -33,12 +35,17 @@ var errInvalidWebhookURL = errors.New("creating request: invalid webhook URL")
 // Each channel has its own worker and queue (workers.go). Call Stop at
 // shutdown when Dispatch was used.
 type Dispatcher struct {
-	repo    models.NotificationChannelRepository
-	client  *http.Client
-	workers workerPool
-	drops   dropLog
+	repo        models.NotificationChannelRepository
+	client      *http.Client
+	dropCounter metric.Int64Counter // nil: droppedEvents; tests set it
 	// retryDelay: 0 means the retryDelay constant; tests change it.
 	retryDelay time.Duration
+	workers    workerPool
+	// Warnings at most once per minute: drops per channel and reason,
+	// failed deliveries and failed channel reads per channel (#649).
+	drops    limitedLog
+	failures limitedLog
+	lookups  limitedLog
 }
 
 // NewDispatcher creates a channel dispatcher. It starts no goroutine: the
@@ -60,14 +67,14 @@ func NewDispatcher(repo models.NotificationChannelRepository) *Dispatcher {
 // queues one job per channel. It does not wait for the deliveries: the
 // worker of each channel sends its events in order and writes one delivery
 // log per event. A channel that the filters skip gets no delivery log (only
-// a debug log line). A full channel queue drops the event (RecordDrop). ctx
+// a debug log line). A full channel queue drops the event (recordDrop). ctx
 // limits the channel lookup only; a cancelled lookup counts as a shutdown
 // drop.
 func (d *Dispatcher) Dispatch(ctx context.Context, payload EventPayload) {
 	found, err := d.repo.FindChannelsByEvent(ctx, payload.EventType)
 	if err != nil {
 		if ctx.Err() != nil {
-			d.RecordDrop(payload.EventType, "", DropReasonShutdown)
+			d.RecordIntakeDrop(payload.EventType, DropReasonShutdown)
 			return
 		}
 		slog.Error("notification channel: failed to find channels", "event", payload.EventType, "error", err)
@@ -94,7 +101,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, payload EventPayload) {
 				bodies[format] = body
 			}
 		}
-		job := channelJob{channel: ch, eventType: payload.EventType, body: body}
+		job := channelJob{channel: ch, eventType: payload.EventType, format: format, body: body, payload: payload}
 		if body == nil {
 			job.errMsg = "failed to encode the payload"
 		}
@@ -155,9 +162,9 @@ func (d *Dispatcher) deliver(ctx context.Context, ch *models.NotificationChannel
 		}
 	}
 
-	slog.Warn("notification channel: delivery failed",
-		"channel", ch.Name, "event", eventType,
-		"status_code", statusCode, "error", err)
+	d.failures.add(ch.ID, msgDeliveryFailed,
+		"channel", ch.Name, "channel_id", ch.ID, "event", eventType,
+		"status_code", statusCode, "error", err.Error())
 	return "failed", statusCode, err.Error()
 }
 

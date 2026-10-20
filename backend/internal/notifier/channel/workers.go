@@ -2,12 +2,14 @@ package channel
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"backend/internal/models"
+	"backend/pkg/dberrors"
 
 	"github.com/google/uuid"
 )
@@ -21,12 +23,15 @@ const (
 	deliveryLogTimeout = 5 * time.Second
 )
 
-// channelJob is one event for one channel. A job without a body records a
-// failed delivery with errMsg and sends nothing.
+// channelJob is one event for one channel. body is encoded in format; a job
+// without a body records a failed delivery with errMsg and sends nothing.
+// channel is the copy of Dispatch, used only when the new read fails.
 type channelJob struct {
 	body      []byte
 	eventType string
+	format    string
 	errMsg    string
+	payload   EventPayload
 	channel   models.NotificationChannel
 }
 
@@ -37,8 +42,11 @@ type channelWorker struct {
 // workerPool runs one worker per channel ID, so a slow channel does not
 // delay the others (#649). The zero value is ready to use.
 type workerPool struct {
-	ctx     context.Context
-	cancel  context.CancelFunc
+	ctx    context.Context
+	cancel context.CancelFunc
+	// drain is closed by Shutdown: each worker sends its queued jobs, then
+	// returns.
+	drain   chan struct{}
 	workers map[string]*channelWorker
 	// queueSize and idleTimeout: 0 means the defaults; tests set them.
 	queueSize   int
@@ -58,6 +66,7 @@ func (p *workerPool) initLocked() {
 	}
 	p.workers = make(map[string]*channelWorker)
 	p.ctx, p.cancel = context.WithCancel(context.Background())
+	p.drain = make(chan struct{})
 	if p.queueSize <= 0 {
 		p.queueSize = channelQueueSize
 	}
@@ -73,6 +82,15 @@ func (p *workerPool) workerCount() int {
 	return len(p.workers)
 }
 
+// remove deletes w from the pool when it is still the worker of id.
+func (p *workerPool) remove(id string, w *channelWorker) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.workers[id] == w {
+		delete(p.workers, id)
+	}
+}
+
 // submit queues job for the worker of its channel and starts the worker when
 // none runs. It never blocks: a full queue drops the job.
 func (d *Dispatcher) submit(job channelJob) {
@@ -81,7 +99,7 @@ func (d *Dispatcher) submit(job channelJob) {
 	p.mu.Lock()
 	if p.stopped {
 		p.mu.Unlock()
-		d.RecordDrop(job.eventType, id, DropReasonShutdown)
+		d.recordDrop(job.eventType, id, job.channel.Name, DropReasonShutdown)
 		return
 	}
 	p.initLocked()
@@ -98,12 +116,13 @@ func (d *Dispatcher) submit(job channelJob) {
 		p.mu.Unlock()
 	default:
 		p.mu.Unlock()
-		d.RecordDrop(job.eventType, id, DropReasonQueueFull)
+		d.recordDrop(job.eventType, id, job.channel.Name, DropReasonQueueFull)
 	}
 }
 
 // runWorker delivers the jobs of one channel in order. It returns after
-// idleTimeout without a job, or when Stop cancels the pool.
+// idleTimeout without a job, after the drain of Shutdown, or when the pool
+// is cancelled.
 func (d *Dispatcher) runWorker(id string, w *channelWorker) {
 	p := &d.workers
 	defer p.wg.Done()
@@ -119,6 +138,9 @@ func (d *Dispatcher) runWorker(id string, w *channelWorker) {
 		select {
 		case <-p.ctx.Done():
 			d.discard(id, w)
+			return
+		case <-p.drain:
+			d.drainQueue(id, w)
 			return
 		case job := <-w.jobs:
 			d.runJob(p.ctx, job)
@@ -146,19 +168,30 @@ func (p *workerPool) exitIfIdle(id string, w *channelWorker) bool {
 	return true
 }
 
-// discard removes w from the pool and counts the jobs that are still queued
-// at Stop. Stop has set stopped, so no new job arrives.
-func (d *Dispatcher) discard(id string, w *channelWorker) {
+// drainQueue sends the queued jobs until the queue is empty or the pool is
+// cancelled. Shutdown has set stopped, so no new job arrives.
+func (d *Dispatcher) drainQueue(id string, w *channelWorker) {
 	p := &d.workers
-	p.mu.Lock()
-	if p.workers[id] == w {
-		delete(p.workers, id)
+	for p.ctx.Err() == nil {
+		select {
+		case job := <-w.jobs:
+			d.runJob(p.ctx, job)
+		default:
+			p.remove(id, w)
+			return
+		}
 	}
-	p.mu.Unlock()
+	d.discard(id, w)
+}
+
+// discard removes w from the pool and counts the jobs that are still queued
+// when the pool is cancelled.
+func (d *Dispatcher) discard(id string, w *channelWorker) {
+	d.workers.remove(id, w)
 	for {
 		select {
 		case job := <-w.jobs:
-			d.RecordDrop(job.eventType, job.channel.ID, DropReasonShutdown)
+			d.recordDrop(job.eventType, id, job.channel.Name, DropReasonShutdown)
 		default:
 			return
 		}
@@ -167,10 +200,24 @@ func (d *Dispatcher) discard(id string, w *channelWorker) {
 
 // runJob delivers one job and writes its delivery log.
 func (d *Dispatcher) runJob(ctx context.Context, job channelJob) {
-	ch := &job.channel
-	status, statusCode, errMsg := "failed", 0, job.errMsg
-	if job.body != nil {
-		status, statusCode, errMsg = d.deliver(ctx, ch, job.eventType, job.body)
+	ch, ok := d.currentChannel(ctx, job)
+	if !ok {
+		return
+	}
+	body, errMsg := job.body, job.errMsg
+	if format := bodyFormat(ch); format != job.format {
+		var err error
+		body, err = encodeBody(format, job.payload)
+		errMsg = ""
+		if err != nil {
+			slog.Error("notification channel: failed to marshal payload", "format", format, "error", err)
+			body, errMsg = nil, "failed to encode the payload"
+		}
+	}
+
+	status, statusCode := "failed", 0
+	if body != nil {
+		status, statusCode, errMsg = d.deliver(ctx, ch, job.eventType, body)
 	}
 
 	// The row of a request that Stop cancelled is written too.
@@ -191,28 +238,72 @@ func (d *Dispatcher) runJob(ctx context.Context, job channelJob) {
 	}
 }
 
+// currentChannel reads the channel of job again: a channel deleted or
+// disabled on any replica gets no queued event, and a new URL, secret or
+// format applies (#649). On a lookup error it returns the queued copy.
+func (d *Dispatcher) currentChannel(ctx context.Context, job channelJob) (*models.NotificationChannel, bool) {
+	ch, err := d.repo.GetChannel(ctx, job.channel.ID)
+	switch {
+	case err == nil && ch != nil && ch.Enabled:
+		return ch, true
+	case err == nil || errors.Is(err, dberrors.ErrNotFound):
+		d.recordDrop(job.eventType, job.channel.ID, job.channel.Name, DropReasonChannelRemoved)
+		return nil, false
+	case ctx.Err() != nil:
+		d.recordDrop(job.eventType, job.channel.ID, job.channel.Name, DropReasonShutdown)
+		return nil, false
+	default:
+		d.lookups.add(job.channel.ID, msgLookupFailed,
+			"channel", job.channel.Name, "channel_id", job.channel.ID, "error", err)
+		return &job.channel, true
+	}
+}
+
 // Stop cancels the deliveries in progress, drops the queued events (counted
-// with reason shutdown) and waits for all channel workers. It then logs the
-// drops that no warning has reported yet. Later events are dropped. Safe to
-// call more than once.
+// with reason shutdown) and waits for all channel workers. Same as
+// Shutdown(0).
 func (d *Dispatcher) Stop() {
+	d.Shutdown(0)
+}
+
+// Shutdown stops the dispatcher. New events are dropped (reason shutdown).
+// For at most grace, the workers send their queued events; then Shutdown
+// cancels the deliveries in progress, drops the rest and waits for all
+// workers. At the end it logs the counts that no warning has reported yet.
+// Safe to call more than once.
+func (d *Dispatcher) Shutdown(grace time.Duration) {
 	p := &d.workers
 	p.stopOnce.Do(func() {
 		p.mu.Lock()
 		p.stopped = true
+		if p.drain != nil {
+			close(p.drain)
+		}
+		p.mu.Unlock()
+
+		if grace > 0 {
+			drained := make(chan struct{})
+			go func() {
+				p.wg.Wait()
+				close(drained)
+			}()
+			timer := time.NewTimer(grace)
+			select {
+			case <-drained:
+			case <-timer.C:
+			}
+			timer.Stop()
+			defer func() { <-drained }()
+		}
+
+		p.mu.Lock()
 		if p.cancel != nil {
 			p.cancel()
 		}
 		p.mu.Unlock()
 		p.wg.Wait()
 		d.drops.flush()
+		d.failures.flush()
+		d.lookups.flush()
 	})
-}
-
-// RecordDrop counts one event that a channel did not get: the metric
-// notification.channel.dropped, and at most one warning per event type,
-// channel and reason per minute. channelID is empty for the intake queue of
-// the notifier.
-func (d *Dispatcher) RecordDrop(eventType, channelID, reason string) {
-	d.drops.record(eventType, channelID, reason)
 }

@@ -19,16 +19,26 @@ const (
 	// DropReasonShutdown: the event was still queued, or came in, when the
 	// server stopped.
 	DropReasonShutdown = "shutdown"
+	// DropReasonChannelRemoved: the channel was deleted or disabled while
+	// the event waited in its queue.
+	DropReasonChannelRemoved = "channel_removed"
 )
 
-// dropWarnInterval is the shortest time between two drop warnings of one key.
-const dropWarnInterval = time.Minute
+// warnInterval is the shortest time between two warnings of one key, and
+// between two sweeps of all keys.
+const warnInterval = time.Minute
+
+const (
+	msgEventsDropped  = "notification channel: events dropped"
+	msgDeliveryFailed = "notification channel: delivery failed"
+	msgLookupFailed   = "notification channel: channel lookup failed, sending with the queued copy"
+)
 
 // notifierMeter is the OTel meter scope of the notification channels.
 var notifierMeter = otel.Meter("notifier")
 
-// droppedEvents counts the events that no channel got, by event type,
-// channel ID (empty for the intake queue) and reason.
+// droppedEvents counts the events that a channel did not get, by event
+// type, channel ID (empty for the intake queue) and reason.
 var droppedEvents metric.Int64Counter
 
 func init() {
@@ -43,38 +53,17 @@ func init() {
 	}
 }
 
-type dropKey struct {
-	eventType string
-	channelID string
-	reason    string
+// RecordIntakeDrop counts one event that the intake queue of the notifier
+// dropped (channel_id empty). See recordDrop.
+func (d *Dispatcher) RecordIntakeDrop(eventType, reason string) {
+	d.recordDrop(eventType, "", "", reason)
 }
 
-type dropCount struct {
-	lastWarn time.Time
-	pending  int64
-}
-
-type dropWarning struct {
-	key   dropKey
-	count int64
-}
-
-// dropLog counts dropped events and logs at most one warning per key per
-// dropWarnInterval, with the drops since the last warning (#649). The zero
-// value is ready to use.
-type dropLog struct {
-	counter metric.Int64Counter // nil: droppedEvents
-	logger  *slog.Logger        // nil: slog.Default()
-	now     func() time.Time    // nil: time.Now
-	keys    map[dropKey]*dropCount
-	mu      sync.Mutex
-}
-
-// record counts one dropped event. It logs the drops of each key whose last
-// warning is older than dropWarnInterval, so the count of a key that stops
-// dropping comes with the next drop of any key (or with flush).
-func (l *dropLog) record(eventType, channelID, reason string) {
-	counter := l.counter
+// recordDrop adds one to notification.channel.dropped and logs at most one
+// warning per channel and reason per minute, with the drops since the last
+// warning (#649).
+func (d *Dispatcher) recordDrop(eventType, channelID, channelName, reason string) {
+	counter := d.dropCounter
 	if counter == nil {
 		counter = droppedEvents
 	}
@@ -85,7 +74,39 @@ func (l *dropLog) record(eventType, channelID, reason string) {
 			attribute.String("reason", reason),
 		))
 	}
+	d.drops.add(channelID+"\x00"+reason, msgEventsDropped,
+		"channel", channelName, "channel_id", channelID, "reason", reason)
+}
 
+// limitedLog writes at most one warning per key per warnInterval. Each
+// warning has the attributes of the latest occurrence and the count since
+// the last warning. The zero value is ready to use.
+type limitedLog struct {
+	nextSweep time.Time
+	logger    *slog.Logger     // nil: slog.Default()
+	now       func() time.Time // nil: time.Now
+	entries   map[string]*limitedEntry
+	mu        sync.Mutex
+}
+
+type limitedEntry struct {
+	lastWarn time.Time
+	msg      string
+	attrs    []any
+	pending  int64
+}
+
+type limitedLine struct {
+	msg   string
+	attrs []any
+	count int64
+}
+
+// add counts one occurrence of key. It warns when the last warning of key is
+// older than warnInterval. At most once per warnInterval it also warns for
+// the other keys whose window has passed, so a key that stopped still
+// reports its count, and it removes the keys without a pending count.
+func (l *limitedLog) add(key, msg string, attrs ...any) {
 	now := time.Now
 	if l.now != nil {
 		now = l.now
@@ -93,60 +114,73 @@ func (l *dropLog) record(eventType, channelID, reason string) {
 	t := now()
 
 	l.mu.Lock()
-	if l.keys == nil {
-		l.keys = make(map[dropKey]*dropCount)
+	if l.entries == nil {
+		l.entries = make(map[string]*limitedEntry)
 	}
-	key := dropKey{eventType: eventType, channelID: channelID, reason: reason}
-	c := l.keys[key]
-	if c == nil {
-		c = &dropCount{}
-		l.keys[key] = c
+	e := l.entries[key]
+	if e == nil {
+		e = &limitedEntry{}
+		l.entries[key] = e
 	}
-	c.pending++
-	var due []dropWarning
-	for k, v := range l.keys {
-		if !v.lastWarn.IsZero() && t.Sub(v.lastWarn) < dropWarnInterval {
-			continue
+	e.pending++
+	e.msg, e.attrs = msg, attrs
+	var due []limitedLine
+	if e.lastWarn.IsZero() || t.Sub(e.lastWarn) >= warnInterval {
+		due = append(due, e.take(t))
+	}
+	if !t.Before(l.nextSweep) {
+		l.nextSweep = t.Add(warnInterval)
+		for k, v := range l.entries {
+			if v == e || t.Sub(v.lastWarn) < warnInterval {
+				continue
+			}
+			if v.pending == 0 {
+				delete(l.entries, k)
+				continue
+			}
+			due = append(due, v.take(t))
 		}
-		if v.pending == 0 {
-			// Same effect as no entry: the next drop warns at once.
-			delete(l.keys, k)
-			continue
-		}
-		due = append(due, dropWarning{key: k, count: v.pending})
-		v.pending = 0
-		v.lastWarn = t
 	}
 	l.mu.Unlock()
 
-	for _, w := range due {
-		l.warn(w)
-	}
+	l.write(due)
 }
 
-// flush logs the drops that no warning has reported yet. Stop calls it.
-func (l *dropLog) flush() {
+func (e *limitedEntry) take(t time.Time) limitedLine {
+	line := limitedLine{msg: e.msg, attrs: e.attrs, count: e.pending}
+	e.pending = 0
+	e.lastWarn = t
+	return line
+}
+
+// flush warns for every key with a pending count. Stop calls it.
+func (l *limitedLog) flush() {
 	l.mu.Lock()
-	var due []dropWarning
-	for k, v := range l.keys {
+	var due []limitedLine
+	for _, v := range l.entries {
 		if v.pending > 0 {
-			due = append(due, dropWarning{key: k, count: v.pending})
+			due = append(due, limitedLine{msg: v.msg, attrs: v.attrs, count: v.pending})
 		}
 	}
-	l.keys = nil
+	l.entries = nil
+	l.nextSweep = time.Time{}
 	l.mu.Unlock()
 
-	for _, w := range due {
-		l.warn(w)
-	}
+	l.write(due)
 }
 
-func (l *dropLog) warn(w dropWarning) {
+func (l *limitedLog) write(lines []limitedLine) {
+	if len(lines) == 0 {
+		return
+	}
 	logger := l.logger
 	if logger == nil {
 		logger = slog.Default()
 	}
-	logger.Warn("notification channel: events dropped",
-		"event", w.key.eventType, "channel_id", w.key.channelID,
-		"reason", w.key.reason, "count", w.count)
+	for _, line := range lines {
+		args := make([]any, 0, len(line.attrs)+2)
+		args = append(args, line.attrs...)
+		args = append(args, "count", line.count)
+		logger.Warn(line.msg, args...)
+	}
 }

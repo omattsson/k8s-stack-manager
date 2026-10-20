@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"backend/internal/models"
+	"backend/pkg/dberrors"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -21,6 +22,7 @@ type mockChannelRepo struct {
 	channels    []models.NotificationChannel
 	deliveries  []models.NotificationDeliveryLog
 	findErr     error
+	getErr      error
 	deliveryErr error
 	mu          sync.Mutex
 }
@@ -54,8 +56,41 @@ func waitDeliveries(t *testing.T, repo *mockChannelRepo, n int) []models.Notific
 func (m *mockChannelRepo) CreateChannel(_ context.Context, _ *models.NotificationChannel) error {
 	return nil
 }
-func (m *mockChannelRepo) GetChannel(_ context.Context, _ string) (*models.NotificationChannel, error) {
-	return nil, nil
+func (m *mockChannelRepo) GetChannel(_ context.Context, id string) (*models.NotificationChannel, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.getErr != nil {
+		return nil, m.getErr
+	}
+	for _, ch := range m.channels {
+		if ch.ID == id {
+			return &ch, nil
+		}
+	}
+	return nil, dberrors.NewDatabaseError("get_channel", dberrors.ErrNotFound)
+}
+
+// updateChannel changes the stored channel id; a nil change deletes it.
+func (m *mockChannelRepo) updateChannel(id string, change func(*models.NotificationChannel)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	kept := m.channels[:0:0]
+	for _, ch := range m.channels {
+		if ch.ID == id {
+			if change == nil {
+				continue
+			}
+			change(&ch)
+		}
+		kept = append(kept, ch)
+	}
+	m.channels = kept
+}
+
+func (m *mockChannelRepo) setGetErr(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.getErr = err
 }
 func (m *mockChannelRepo) UpdateChannel(_ context.Context, _ *models.NotificationChannel, _ bool) error {
 	return nil
@@ -77,10 +112,12 @@ func (m *mockChannelRepo) CountSubscriptionsByChannel(_ context.Context) (map[st
 	return nil, nil
 }
 func (m *mockChannelRepo) FindChannelsByEvent(_ context.Context, _ string) ([]models.NotificationChannel, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.findErr != nil {
 		return nil, m.findErr
 	}
-	return m.channels, nil
+	return append([]models.NotificationChannel(nil), m.channels...), nil
 }
 func (m *mockChannelRepo) CreateDeliveryLog(_ context.Context, log *models.NotificationDeliveryLog) error {
 	m.mu.Lock()
