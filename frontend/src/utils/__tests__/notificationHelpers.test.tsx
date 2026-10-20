@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { timeAgo, notificationIcon, entityRoute } from '../notificationHelpers';
+import { timeAgo, notificationIcon, entityRoute, formatTrigger } from '../notificationHelpers';
 
 describe('notificationHelpers', () => {
   describe('timeAgo', () => {
@@ -129,6 +129,47 @@ describe('notificationHelpers', () => {
 
     it('returns empty string for undefined', () => {
       expect(entityRoute(undefined)).toBe('');
+    });
+  });
+
+  describe('formatTrigger', () => {
+    it('names the user who did the action', () => {
+      expect(formatTrigger({ type: 'user', id: 'u2', name: 'alice' }, 'u1')).toBe('by alice');
+    });
+
+    it('returns "by you" when the receiver did the action', () => {
+      expect(formatTrigger({ type: 'user', id: 'u1', name: 'bob' }, 'u1')).toBe('by you');
+    });
+
+    it('names the user when the current user is unknown', () => {
+      expect(formatTrigger({ type: 'user', id: 'u1', name: 'bob' })).toBe('by bob');
+    });
+
+    it('returns "by a user" for a user trigger without a name', () => {
+      expect(formatTrigger({ type: 'user', id: 'u2' }, 'u1')).toBe('by a user');
+    });
+
+    it('returns "by TTL expiry" for the TTL reaper', () => {
+      expect(formatTrigger({ type: 'ttl' }, 'u1')).toBe('by TTL expiry');
+    });
+
+    it('names the cleanup policy', () => {
+      expect(formatTrigger({ type: 'cleanup-policy', id: 'p1', name: 'nightly' }, 'u1')).toBe(
+        'by Cleanup policy nightly',
+      );
+    });
+
+    it('returns "by a cleanup policy" for a policy without a name', () => {
+      expect(formatTrigger({ type: 'cleanup-policy', id: 'p1' }, 'u1')).toBe('by a cleanup policy');
+    });
+
+    it('returns null without a trigger', () => {
+      expect(formatTrigger(undefined, 'u1')).toBeNull();
+    });
+
+    it('returns null for an unknown trigger type', () => {
+      const trigger = { type: 'robot' } as unknown as Parameters<typeof formatTrigger>[0];
+      expect(formatTrigger(trigger, 'u1')).toBeNull();
     });
   });
 });
