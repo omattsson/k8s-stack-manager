@@ -249,7 +249,7 @@ backend/
     database/repository.go       # NewRepository() factory; repository_factory.go wires all domain repositories
     database/*_repository.go     # One GORM repository per domain model
     database/instance_delete.go  # DeleteInstanceRecord, DeleteInstanceWithOwnedDefinition
-    database/lock_retry.go       # retryOnLockConflict: runs a transaction again on MySQL 1213 (deadlock) and 1205 (lock wait timeout), 3 attempts
+    database/lock_retry.go       # retryOnDeadlock: runs a transaction again on MySQL 1213 (deadlock), 3 attempts
     database/migrations.go       # Versioned migrations through schema.Migrator, run on startup
     database/errors.go           # Re-exports from pkg/dberrors (single source of truth)
     database/schema/             # Migrator and versioned migration structs
@@ -610,7 +610,7 @@ Developers use this application to configure, store and deploy multi-service Hel
   - `ephemeral_storage_limit` sets `requests.ephemeral-storage` and `limits.ephemeral-storage`.
   - A user without the admin or devops role can set an instance quota override only at or below each cluster quota value, also for the per-container fields (`models.CheckOverrideWithinClusterQuota`, 403). The check runs on write and on clone. A value equal to the stored override passes. `pod_limit: 0` counts as no limit.
   - The quota monitor raises quota warnings through the notifier. The `quota-warning` hook constant is defined but not dispatched.
-  - `GET /stack-instances/:id/quota` (any user who can view the instance, #629) returns `effective` (the cluster quota merged with the override, `MergeQuotaOverride`), `cluster`, `override`, `sources` (each field: `override`, `cluster` or `none`, `models.QuotaSources`), `cluster_id` and `can_modify`. It shows the cluster quota to every viewer of the instance. The instance page shows it in the "Resource quota" section (`components/InstanceQuota`). Owner, devops and admin edit or remove the override there. The role `user` sees the cluster value as the upper limit of each field.
+  - `GET /stack-instances/:id/quota` (any user who can view the instance, #629) returns `effective` (the cluster quota merged with the override, `MergeQuotaOverride`), `cluster`, `override`, `sources` (each field: `override`, `cluster` or `none`, `models.QuotaSources`), `cluster_id`, `can_modify`, and `valid` and `invalid_reason` (`models.ValidateEffectiveQuota`, the check of the deployer: a deploy fails while it is false, and the section shows a warning). It shows the cluster quota to every viewer of the instance. The instance page shows it in the "Resource quota" section (`components/InstanceQuota`). Owner, devops and admin edit or remove the override there. The role `user` sees the cluster value as the upper limit of each field.
   - A quota change applies at once, in the background (`handlers/quota_apply.go`).
     - A cluster quota save writes the effective quota (cluster quota merged with the instance override) to the namespace of each instance, and the cluster quota to the other stack namespaces. It skips Terminating namespaces.
     - An override set or delete writes the effective quota to the namespace of a deployed instance (not draft or cleaning).
@@ -627,7 +627,7 @@ Developers use this application to configure, store and deploy multi-service Hel
   - Handlers use the stored ID after `FindByID` (MySQL compares IDs without case).
   - `UserRepository` has no full-row update. Use the targeted writes (`UpdatePassword`, `UpdateProfile` for the SSO sync and link, `UpdateRole`, `SetDisabled`), so concurrent changes are not lost.
   - Migration 50 indexes `users.role`.
-  - `guardedAdminChange` runs its transaction again on MySQL error 1213 (deadlock) or 1205 (lock wait timeout), at most 3 attempts, with a random 10 to 50 ms wait (`database/lock_retry.go`, #639). The side effects (token block, refresh-token revoke, WebSocket disconnect, audit) run once, in the handler, after the commit.
+  - `guardedAdminChange` runs its transaction again on MySQL error 1213 (deadlock), at most 3 attempts, with a random 10 to 50 ms wait (`database/lock_retry.go`, #639). A lock wait timeout (1205) is not retried. `UpdateProfile` (the SSO role sync) with a role change locks the admin rows first, in the same order (`lockAdminRows`), and also retries on 1213. The side effects (token block, refresh-token revoke, WebSocket disconnect, audit) run once, in the handler, after the commit.
   - A change runs `revokeUserAccess` (user block, refresh tokens, WebSocket disconnect). The audit action is `change_role` with `old_role` and `new_role`.
 - **Definition access:**
   - Create definition, import, export and add or remove chart need `RequireDevOps`.

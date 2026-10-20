@@ -218,11 +218,13 @@ Both list endpoints are paged (`page` and `pageSize`; default 25, maximum 100). 
 - If the merged quota is empty (no cluster quota and no override), the backend writes nothing. The namespace keeps its current ResourceQuota and LimitRange.
 - Warning: A quota that you lower below the current use of the namespace refuses new pods, also the surge pods of a rolling update. The Helm wait for that chart then fails (timeout), and the pod events show the quota message. Raise the quota or reduce the requests before you redeploy.
 
-**Resource quota on the instance page.** The section "Resource quota" shows each value that the namespace gets (the cluster quota merged with the override) and its source: "Override" or "Cluster".
+**Resource quota on the instance page.** The section "Resource quota" shows each value (the cluster quota merged with the override) and its source: "Override" or "Cluster". A deploy applies these values to the stack namespace, also the first deploy of a draft. A change to a deployed stack applies at once.
 
 - The owner, a `devops` user and an `admin` can edit the override ("Edit override") and remove it ("Remove override"). Other users see the values only.
 - For the role `user`, each field shows the cluster value as the upper limit. The dialog shows the server message for a value above it (403) and for an order rule (400).
-- API: `GET /stack-instances/:id/quota` returns the effective values, the cluster quota, the override and the source of each field.
+- When the merged quota is not valid, the section shows a warning with the reason. A deploy of the stack fails until the quota is fixed.
+- The dialog does not close while a save runs.
+- API: `GET /stack-instances/:id/quota` returns the effective values, the cluster quota, the override, the source of each field, and whether the merged quota is valid (`valid`, `invalid_reason`).
 
 **Per-container limits.** The cluster quota and the instance quota override have per-container fields for the namespace LimitRange (`stack-manager-limits`):
 
