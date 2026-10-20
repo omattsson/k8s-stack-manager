@@ -689,6 +689,8 @@ Developers use this application to configure, store and deploy multi-service Hel
   - Optional `filters`: `instance_name_patterns` (globs through `path.Match`), `owner_ids`, `definition_ids`, `cluster_ids`. Filters combine with AND, values inside a filter with OR. An empty filter means all.
   - `channel.Dispatcher` matches the filters against `EventPayload.Instances`. An event without an instance goes only to channels without filters. `cleanup.policy.executed` goes to a channel when one affected instance matches.
   - A bad glob gives 400. An unknown ID adds a `warnings` entry.
+  - Delivery (#649): each channel has its own worker and queue (100 events). A slow or down channel does not delay the other channels. Events to one channel stay in order. The notifier intake queue holds 1000 events. Its worker finds and filters the channels, encodes the body once per format and queues one job per channel.
+  - A full queue drops the event. The counter `notification.channel.dropped` counts it (`event_type`, `channel_id` (empty for the intake queue), `reason`: `queue_full` or `shutdown`). The backend logs at most one warning per key per minute, with the drop count.
   - `webhook_url` must be a valid https URL with a host (400 "Webhook URL must start with https://" or "Webhook URL is not a valid URL"). Error texts, delivery logs and log lines never contain the URL, because it can hold a token.
   - `format`: `generic` (default, the event JSON) or `teams` (a Microsoft Teams Adaptive Card envelope for a Teams workflow made from the template "Post to a channel when a webhook request is received"). An unknown format gives 400. The signature covers the sent body. The test send uses the format. Migration 60 adds the column.
   - Payload (`channel.EventPayload`): instance events also carry `trigger` (`type` `user`, `cleanup-policy` or `ttl`, `id`, `name`; the struct of the hook envelope), `owner_display_name`, `namespace`, `branch`, `cluster_id`, `cluster_name`, `site_url` and `instance_url`, each omitted when empty. `user_display_name` is the owner (`System` for system events) and is deprecated.
@@ -777,6 +779,7 @@ Developers use this application to configure, store and deploy multi-service Hel
 - WebSocket messages and socket revocations reach all replicas through the hub fan-out (`WS_FANOUT_ENABLED`, `ws_events`, 500ms poll).
   - The hub send never blocks. A full buffer drops the row. The `ws_events` writes also go to the MySQL binary log.
   - Send through `Broadcast`, `BroadcastToInstance` or `BroadcastToUser`. Revoke through `DisconnectUser`, `DisconnectToken` or `DisconnectAPIKey`.
+- Notification channel workers (#649): a channel worker starts with the first event of the channel and exits after 10 minutes without work. One mutex guards the worker map and the idle exit. `Notifier.Stop` cancels the lookups and the requests in progress, counts the queued events as dropped (`shutdown`) and waits for all workers. A cancelled request still writes its delivery log.
 - Deploy, rollback, stop and clean run on the replica that took the request.
   - Each deploy log stores the process identity (`deployment_logs.replica_id`).
   - Every replica writes a heartbeat (`replica_heartbeats`, every 30s).
