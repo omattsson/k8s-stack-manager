@@ -129,8 +129,12 @@ E2E_STOP_BACKEND = kill $$(cat $(E2E_PID) 2>/dev/null) 2>/dev/null; rm -rf $(E2E
 E2E_STUB_DIR := $(CURDIR)/backend/tmp/e2e-stub
 E2E_HOOKS_CONFIG := $(CURDIR)/frontend/e2e/fixtures/hooks-e2e.json
 E2E_ACTION_SECRET ?= e2e-action-secret
-E2E_STUB_BACKEND_ENV = HOOKS_CONFIG_FILE=$(E2E_HOOKS_CONFIG) E2E_ACTION_SECRET=$(E2E_ACTION_SECRET)
-E2E_STUB_PLAYWRIGHT_ENV = E2E_ACTION_SECRET=$(E2E_ACTION_SECRET)
+# Public web UI URL of the e2e backend: notification channel cards get the
+# "Stack Manager" button (instance_url) with it (#642).
+E2E_APP_PUBLIC_URL ?= https://stacks.e2e.example
+E2E_STUB_BACKEND_ENV = HOOKS_CONFIG_FILE=$(E2E_HOOKS_CONFIG) E2E_ACTION_SECRET=$(E2E_ACTION_SECRET) \
+	APP_PUBLIC_URL=$(E2E_APP_PUBLIC_URL)
+E2E_STUB_PLAYWRIGHT_ENV = E2E_ACTION_SECRET=$(E2E_ACTION_SECRET) E2E_APP_PUBLIC_URL=$(E2E_APP_PUBLIC_URL)
 ifeq ($(shell uname -s),Linux)
 E2E_STUB_BACKEND_ENV += SSL_CERT_DIR=/etc/ssl/certs:$(E2E_STUB_DIR)/trust
 E2E_STUB_PLAYWRIGHT_ENV += E2E_STUB_TLS=1
@@ -813,6 +817,32 @@ helm-test: ## Verify Deployment, Argo Rollout, and External Secrets Helm renders
 		--set ingress.traefik.tls.secretName=stack-manager-tls --set backend.env.SECURE_COOKIES=false > "$$template_file"; \
 	grep -q 'SECURE_COOKIES: "false"' "$$template_file"; \
 	[ "$$(grep -c 'SECURE_COOKIES' "$$template_file")" -eq 1 ]; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
+		--set ingress.host=stacks.example.com --set ingress.traefik.tls.secretName=stack-manager-tls > "$$template_file"; \
+	grep -q 'APP_PUBLIC_URL: "https://stacks.example.com"' "$$template_file" \
+		|| { echo "APP_PUBLIC_URL must be https://<ingress.host> with TLS (traefik)" >&2; exit 1; }; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
+		--set ingress.type=ingress --set ingress.host=stacks.example.com --set ingress.tls[0].secretName=stack-manager-tls > "$$template_file"; \
+	grep -q 'APP_PUBLIC_URL: "https://stacks.example.com"' "$$template_file" \
+		|| { echo "APP_PUBLIC_URL must be https://<ingress.host> with TLS (ingress)" >&2; exit 1; }; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
+		--set ingress.host=stacks.example.com --set ingress.traefik.tls.secretName=stack-manager-tls \
+		--set backend.env.APP_PUBLIC_URL=https://ui.example.org > "$$template_file"; \
+	grep -q 'APP_PUBLIC_URL: "https://ui.example.org"' "$$template_file" \
+		|| { echo "an explicit backend.env.APP_PUBLIC_URL must win" >&2; exit 1; }; \
+	[ "$$(grep -c 'APP_PUBLIC_URL' "$$template_file")" -eq 1 ] \
+		|| { echo "APP_PUBLIC_URL must render once" >&2; exit 1; }; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
+		--set ingress.host=stacks.example.com > "$$template_file"; \
+	if grep -q 'APP_PUBLIC_URL' "$$template_file"; then echo "unexpected APP_PUBLIC_URL without TLS" >&2; exit 1; fi; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
+		--set ingress.traefik.tls.secretName=stack-manager-tls > "$$template_file"; \
+	if grep -q 'APP_PUBLIC_URL' "$$template_file"; then echo "unexpected APP_PUBLIC_URL without ingress.host" >&2; exit 1; fi; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
 		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template > "$$template_file"; \
 	if grep -q 'NAMESPACE_LABELS' "$$template_file"; then echo "unexpected NAMESPACE_LABELS without backend.namespaceLabels" >&2; exit 1; fi; \
