@@ -21,7 +21,7 @@ const (
 	loginReasonRecheckFailed    = "recheck_failed"    // the user was deleted after the token was signed
 	loginReasonSessionRevoked   = "session_revoked"   // the new session was revoked before the response (401 "Session revoked")
 
-	// Account state (403).
+	// Account state (403), checked only after a correct password (#632).
 	loginReasonDisabled             = "disabled"
 	loginReasonLocalLoginNotAllowed = "local_login_not_allowed" // OIDC is on and the user is not a service account
 

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"backend/internal/api/middleware"
@@ -34,6 +35,28 @@ const (
 // logins would spawn 100 goroutines all competing for CPU, starving other requests.
 var bcryptSem = make(chan struct{}, runtime.NumCPU())
 
+// passwordHashCost is the bcrypt cost of every stored password hash and of
+// the dummy hash of the login.
+const passwordHashCost = bcrypt.DefaultCost
+
+var (
+	dummyHashOnce sync.Once
+	dummyHash     []byte
+)
+
+// dummyPasswordHash returns the hash that the login compares against when the
+// user has no usable hash, so the answer takes the same time (#632).
+func dummyPasswordHash() []byte {
+	dummyHashOnce.Do(func() {
+		hash, err := bcrypt.GenerateFromPassword([]byte(rand.Text()), passwordHashCost)
+		if err != nil {
+			panic("auth: dummy password hash: " + err.Error())
+		}
+		dummyHash = hash
+	})
+	return dummyHash
+}
+
 // AuthHandler handles authentication and user management endpoints.
 type AuthHandler struct {
 	userRepo         models.UserRepository
@@ -42,17 +65,27 @@ type AuthHandler struct {
 	oidcCfg          *config.OIDCConfig
 	sessionStore     sessionstore.SessionStore
 	wsRevoker        websocket.ClientRevoker
-	loginCache       *cache.TTLCache[struct{}] // key: verified credentials; value unused
-	logger           *slog.Logger              // login failure log; nil uses slog.Default() (tests set it)
+	loginCache       *cache.TTLCache[struct{}]                   // key: verified credentials; value unused
+	logger           *slog.Logger                                // login failure log; nil uses slog.Default() (tests set it)
+	compareHash      func(hashedPassword, password []byte) error // bcrypt.CompareHashAndPassword; tests wrap it
 }
 
 // NewAuthHandler creates a new AuthHandler.
 func NewAuthHandler(userRepo models.UserRepository, cfg *config.AuthConfig, oidcCfg *config.OIDCConfig) *AuthHandler {
-	h := &AuthHandler{userRepo: userRepo, cfg: cfg, oidcCfg: oidcCfg}
+	h := &AuthHandler{userRepo: userRepo, cfg: cfg, oidcCfg: oidcCfg, compareHash: bcrypt.CompareHashAndPassword}
 	if cfg.LoginCacheTTL > 0 {
 		h.loginCache = cache.New[struct{}](cfg.LoginCacheTTL, cfg.LoginCacheTTL)
 	}
+	// Create the dummy hash now: the first login of an unknown user must not take longer.
+	dummyPasswordHash()
 	return h
+}
+
+// comparePassword runs one bcrypt compare. bcryptSem limits the concurrent compares.
+func (h *AuthHandler) comparePassword(hash []byte, password string) error {
+	bcryptSem <- struct{}{}
+	defer func() { <-bcryptSem }()
+	return h.compareHash(hash, []byte(password))
 }
 
 // SetRefreshTokenRepo sets the refresh token repository for refresh token support.
@@ -103,7 +136,7 @@ type RegisterRequest struct {
 
 // Login godoc
 // @Summary     User login
-// @Description Authenticate with username and password, returns a JWT access token and sets a refresh token cookie
+// @Description Authenticate with username and password, returns a JWT access token and sets a refresh token cookie. Without the correct password the answer is always 401 "Invalid username or password". A disabled account (403) or the SSO-only restriction (403) is shown only after a correct password.
 // @Tags        auth
 // @Accept      json
 // @Produce     json
@@ -139,27 +172,18 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	const msgAccountDisabled = "Account disabled"
 	const msgLocalLoginRestricted = "Local login is restricted to service accounts. Please use SSO."
 
+	// Without the correct password, every answer is the same 401 after one bcrypt
+	// compare, so it does not show whether the user exists or its state (#632).
 	user, err := h.userRepo.FindByUsername(req.Username)
 	if err != nil {
-		// An unknown username is an invalid credential. Another lookup error
-		// is a server-side failure (500): a 401 would tell the client that
-		// the password is wrong.
-		if isNotFoundError(err) {
-			fail(loginFailure{reason: loginReasonUserNotFound, status: "invalid", httpCode: http.StatusUnauthorized}, msgInvalidCredentials)
-		} else {
+		// A lookup error other than "not found" is a server-side failure
+		// (500): a 401 would tell the client that the password is wrong.
+		if !isNotFoundError(err) {
 			fail(loginFailure{reason: loginReasonLookupError, status: "failure", httpCode: http.StatusInternalServerError, err: err}, msgInternalServerError)
+			return
 		}
-		return
-	}
-
-	if user.Disabled {
-		fail(loginFailure{reason: loginReasonDisabled, status: "disabled", httpCode: http.StatusForbidden, userID: user.ID}, msgAccountDisabled)
-		return
-	}
-
-	// When OIDC is enabled and local auth is not explicitly allowed, only service accounts can use local login.
-	if h.oidcCfg != nil && h.oidcCfg.Enabled && !h.oidcCfg.LocalAuth && !user.ServiceAccount {
-		fail(loginFailure{reason: loginReasonLocalLoginNotAllowed, status: "restricted", httpCode: http.StatusForbidden, userID: user.ID}, msgLocalLoginRestricted)
+		_ = h.comparePassword(dummyPasswordHash(), req.Password)
+		fail(loginFailure{reason: loginReasonUserNotFound, status: "invalid", httpCode: http.StatusUnauthorized}, msgInvalidCredentials)
 		return
 	}
 
@@ -176,16 +200,19 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 
 	if !cacheHit {
-		// Limit concurrent bcrypt to NumCPU to prevent CPU starvation under spike.
-		bcryptSem <- struct{}{}
-		bcryptErr := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password))
-		<-bcryptSem
+		// bcrypt rejects an unusable hash (SSO-linked user: empty) without the
+		// key derivation, so spend the time on the dummy hash.
+		if _, costErr := bcrypt.Cost([]byte(user.PasswordHash)); costErr != nil {
+			_ = h.comparePassword(dummyPasswordHash(), req.Password)
+			fail(loginFailure{reason: loginReasonHashInvalid, status: "failure", httpCode: http.StatusUnauthorized, userID: user.ID, err: costErr}, msgInvalidCredentials)
+			return
+		}
+		bcryptErr := h.comparePassword([]byte(user.PasswordHash), req.Password)
 
 		if bcryptErr != nil {
 			// A password mismatch is an invalid credential. Any other bcrypt
-			// error (for example a malformed stored hash, or the empty hash of
-			// an SSO-linked user) is counted as a failure, but the answer
-			// stays the generic 401: a different answer would reveal the user.
+			// error is counted as a failure, but the answer stays the generic
+			// 401: a different answer would reveal the user.
 			if errors.Is(bcryptErr, bcrypt.ErrMismatchedHashAndPassword) {
 				fail(loginFailure{reason: loginReasonPasswordMismatch, status: "invalid", httpCode: http.StatusUnauthorized, userID: user.ID}, msgInvalidCredentials)
 			} else {
@@ -221,6 +248,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		fail(loginFailure{reason: loginReasonDisabled, status: "disabled", httpCode: http.StatusForbidden, userID: user.ID}, msgAccountDisabled)
 		return
 	}
+	// When OIDC is enabled and local auth is not explicitly allowed, only service accounts can use local login.
 	if h.oidcCfg != nil && h.oidcCfg.Enabled && !h.oidcCfg.LocalAuth && !user.ServiceAccount {
 		fail(loginFailure{reason: loginReasonLocalLoginNotAllowed, status: "restricted", httpCode: http.StatusForbidden, userID: user.ID}, msgLocalLoginRestricted)
 		return
@@ -335,7 +363,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		role = req.Role
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), passwordHashCost)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
@@ -406,7 +434,7 @@ func (h *AuthHandler) EnsureAdminUser() {
 		return // Admin already exists.
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(h.cfg.AdminPassword), bcrypt.DefaultCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte(h.cfg.AdminPassword), passwordHashCost)
 	if err != nil {
 		slog.Error("Failed to hash admin password", "error", err)
 		return

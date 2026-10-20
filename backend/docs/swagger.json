@@ -1372,7 +1372,7 @@
         },
         "/api/v1/auth/login": {
             "post": {
-                "description": "Authenticate with username and password, returns a JWT access token and sets a refresh token cookie",
+                "description": "Authenticate with username and password, returns a JWT access token and sets a refresh token cookie. Without the correct password the answer is always 401 \"Invalid username or password\". A disabled account (403) or the SSO-only restriction (403) is shown only after a correct password.",
                 "consumes": [
                     "application/json"
                 ],

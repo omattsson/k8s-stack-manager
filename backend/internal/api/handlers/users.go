@@ -331,7 +331,7 @@ func (h *UserHandler) ResetUserPassword(c *gin.Context) {
 	}
 
 	bcryptSem <- struct{}{}
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), passwordHashCost)
 	<-bcryptSem
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
