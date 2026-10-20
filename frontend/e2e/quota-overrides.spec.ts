@@ -437,15 +437,20 @@ test.describe('Per-instance quota overrides', () => {
         'cpu_request 1800m (cluster quota) exceeds the effective cpu_limit 1500m (instance override))',
       { timeout: 10_000 },
     );
-    // The error toast (bottom left, z-index above the dialog, 8 s) covers the
-    // dialog buttons while it shows. Close the dialog with Escape (focus must
-    // be inside it), then dismiss the toast, so it cannot cover the next Save.
-    await dialog.getByLabel('CPU Request', { exact: true }).focus();
-    await page.keyboard.press('Escape');
+    // The error toast (8 s) shows at the top of the screen, above the dialog,
+    // and does not cover the dialog buttons (#630). Cancel takes the click at
+    // once while the toast shows. A short click timeout makes a covered button
+    // fail the test: Playwright waits while another element takes the click.
+    // The open dialog sets aria-hidden on the page root, so the toast query
+    // includes hidden elements. Only the toast has a Close button.
+    const errorToast = page
+      .getByRole('alert', { includeHidden: true })
+      .filter({ hasText: /^Failed to save quota configuration/ })
+      .filter({ has: page.getByRole('button', { name: 'Close', includeHidden: true }) });
+    await expect(errorToast).toBeVisible();
+    await dialog.getByRole('button', { name: 'Cancel' }).click({ timeout: 2_000 });
     await expect(dialog).toBeHidden();
-    const errorToast = page.getByRole('alert').filter({ hasText: /^Failed to save quota configuration/ });
-    await errorToast.getByRole('button', { name: 'Close' }).click();
-    await expect(errorToast).toHaveCount(0);
+    await expect(errorToast).toBeVisible();
 
     // The owner deletes the override; a second delete finds nothing.
     const del = await deleteOverride(s.instanceId, owner.token);
