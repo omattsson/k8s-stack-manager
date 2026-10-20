@@ -561,6 +561,12 @@ definitions:
         type: string
       effective:
         $ref: '#/definitions/handlers.EffectiveQuotaValues'
+      invalid_reason:
+        description: InvalidReason is the validation error of the merged quota (empty
+          when valid).
+        example: cpu_request 3 (instance override) exceeds the effective cpu_limit
+          2 (cluster quota)
+        type: string
       override:
         $ref: '#/definitions/models.InstanceQuotaOverride'
       sources:
@@ -569,6 +575,10 @@ definitions:
         description: Sources maps each field of effective to "override", "cluster"
           or "none".
         type: object
+      valid:
+        description: Valid is false when the merged quota breaks a quota rule; a deploy
+          then fails.
+        type: boolean
     type: object
   handlers.EffectiveQuotaValues:
     properties:
@@ -7744,9 +7754,13 @@ paths:
         sources names the origin of each field of effective: override, cluster or
         none. In effective, an empty quantity means no value and pod_limit 0 means
         no limit. cluster and override are null when they are not set; cluster_id
-        is empty when the instance has no cluster and no default cluster exists. can_modify
-        is true when the caller may set or delete the override (the owner, admin or
-        devops). Any authenticated user can read it.'
+        is empty when the instance has no cluster and no default cluster exists. valid
+        is false when the merged quota breaks a quota rule (models.ValidateEffectiveQuota,
+        the check of the deployer and of the background quota write); invalid_reason
+        then names the field, the values and their source, and a deploy of the instance
+        fails until the quota is fixed. can_modify is true when the caller may set
+        or delete the override (the owner, admin or devops). Any authenticated user
+        can read it.'
       parameters:
       - description: Stack Instance ID
         in: path

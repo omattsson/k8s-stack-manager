@@ -19,10 +19,12 @@ import (
 // effectiveQuotaSchema is the JSON schema of GET /stack-instances/:id/quota.
 const effectiveQuotaSchema = `{
 "type": "object",
-"required": ["cluster_id", "effective", "cluster", "override", "sources", "can_modify"],
+"required": ["cluster_id", "effective", "cluster", "override", "sources", "can_modify", "valid"],
 "additionalProperties": false,
 "properties": {
 "cluster_id": {"type": "string"},
+"valid": {"type": "boolean"},
+"invalid_reason": {"type": "string", "minLength": 1},
 "effective": {"type": "object", "required": ["cpu_limit", "pod_limit", "container_cpu_max"]},
 "cluster": {"type": ["object", "null"]},
 "override": {"type": ["object", "null"]},
@@ -55,6 +57,7 @@ func TestGetEffectiveQuota(t *testing.T) {
 		wantEffective map[string]any
 		wantSources   map[string]string
 		name          string
+		wantInvalid   string
 		instanceID    string
 		instCluster   string
 		callerID      string
@@ -119,6 +122,22 @@ func TestGetEffectiveQuota(t *testing.T) {
 				"cpu_request": "cluster", "cpu_limit": "override", "memory_limit": "cluster",
 				"container_memory_max": "override", "storage_limit": "none", "pod_limit": "cluster",
 			},
+		},
+		{
+			name:          "an invalid merged quota is shown with the reason",
+			instCluster:   clusterID,
+			cluster:       clusterQuota,
+			override:      &models.InstanceQuotaOverride{CPURequest: "3"},
+			callerID:      ownerID,
+			callerRole:    "user",
+			wantStatus:    http.StatusOK,
+			wantClusterID: clusterID,
+			wantCluster:   true,
+			wantOverride:  true,
+			wantCanModify: true,
+			wantInvalid:   "cpu_request 3 (instance override) exceeds the effective cpu_limit 2 (cluster quota)",
+			wantEffective: map[string]any{"cpu_request": "3", "cpu_limit": "2"},
+			wantSources:   map[string]string{"cpu_request": "override", "cpu_limit": "cluster"},
 		},
 		{
 			name:          "instance without a cluster uses the default cluster",
@@ -239,14 +258,18 @@ func TestGetEffectiveQuota(t *testing.T) {
 			assert.True(t, result.Valid(), "%v", result.Errors())
 
 			var resp struct {
-				Effective map[string]any                `json:"effective"`
-				Cluster   *models.ResourceQuotaConfig   `json:"cluster"`
-				Override  *models.InstanceQuotaOverride `json:"override"`
-				Sources   map[string]string             `json:"sources"`
-				ClusterID string                        `json:"cluster_id"`
-				CanModify bool                          `json:"can_modify"`
+				Effective     map[string]any                `json:"effective"`
+				Cluster       *models.ResourceQuotaConfig   `json:"cluster"`
+				Override      *models.InstanceQuotaOverride `json:"override"`
+				Sources       map[string]string             `json:"sources"`
+				ClusterID     string                        `json:"cluster_id"`
+				InvalidReason string                        `json:"invalid_reason"`
+				CanModify     bool                          `json:"can_modify"`
+				Valid         bool                          `json:"valid"`
 			}
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			assert.Equal(t, tt.wantInvalid == "", resp.Valid, "valid")
+			assert.Equal(t, tt.wantInvalid, resp.InvalidReason)
 			assert.Equal(t, tt.wantClusterID, resp.ClusterID)
 			assert.Equal(t, tt.wantCanModify, resp.CanModify)
 			assert.Equal(t, tt.wantCluster, resp.Cluster != nil, "cluster")

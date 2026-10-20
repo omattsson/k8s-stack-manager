@@ -7548,7 +7548,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns the quota that applies to the namespace of the instance: the cluster quota of the instance's cluster (the default cluster when the instance has none) merged with the instance quota override, with the same merge as the deployer. A non-empty override quantity replaces the cluster value, and an override pod_limit (also 0) replaces the cluster pod_limit. sources names the origin of each field of effective: override, cluster or none. In effective, an empty quantity means no value and pod_limit 0 means no limit. cluster and override are null when they are not set; cluster_id is empty when the instance has no cluster and no default cluster exists. can_modify is true when the caller may set or delete the override (the owner, admin or devops). Any authenticated user can read it.",
+                "description": "Returns the quota that applies to the namespace of the instance: the cluster quota of the instance's cluster (the default cluster when the instance has none) merged with the instance quota override, with the same merge as the deployer. A non-empty override quantity replaces the cluster value, and an override pod_limit (also 0) replaces the cluster pod_limit. sources names the origin of each field of effective: override, cluster or none. In effective, an empty quantity means no value and pod_limit 0 means no limit. cluster and override are null when they are not set; cluster_id is empty when the instance has no cluster and no default cluster exists. valid is false when the merged quota breaks a quota rule (models.ValidateEffectiveQuota, the check of the deployer and of the background quota write); invalid_reason then names the field, the values and their source, and a deploy of the instance fails until the quota is fixed. can_modify is true when the caller may set or delete the override (the owner, admin or devops). Any authenticated user can read it.",
                 "produces": [
                     "application/json"
                 ],
@@ -11288,6 +11288,11 @@ const docTemplate = `{
                 "effective": {
                     "$ref": "#/definitions/handlers.EffectiveQuotaValues"
                 },
+                "invalid_reason": {
+                    "description": "InvalidReason is the validation error of the merged quota (empty when valid).",
+                    "type": "string",
+                    "example": "cpu_request 3 (instance override) exceeds the effective cpu_limit 2 (cluster quota)"
+                },
                 "override": {
                     "$ref": "#/definitions/models.InstanceQuotaOverride"
                 },
@@ -11297,6 +11302,10 @@ const docTemplate = `{
                     "additionalProperties": {
                         "type": "string"
                     }
+                },
+                "valid": {
+                    "description": "Valid is false when the merged quota breaks a quota rule; a deploy then fails.",
+                    "type": "boolean"
                 }
             }
         },

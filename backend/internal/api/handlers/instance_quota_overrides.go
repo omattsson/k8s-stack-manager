@@ -274,7 +274,11 @@ type EffectiveQuotaResponse struct {
 	// Sources maps each field of effective to "override", "cluster" or "none".
 	Sources   map[string]string `json:"sources"`
 	ClusterID string            `json:"cluster_id"`
-	CanModify bool              `json:"can_modify"`
+	// InvalidReason is the validation error of the merged quota (empty when valid).
+	InvalidReason string `json:"invalid_reason,omitempty" example:"cpu_request 3 (instance override) exceeds the effective cpu_limit 2 (cluster quota)"`
+	CanModify     bool   `json:"can_modify"`
+	// Valid is false when the merged quota breaks a quota rule; a deploy then fails.
+	Valid bool `json:"valid"`
 }
 
 func effectiveQuotaValues(q *models.ResourceQuotaConfig) EffectiveQuotaValues {
@@ -299,7 +303,7 @@ func effectiveQuotaValues(q *models.ResourceQuotaConfig) EffectiveQuotaValues {
 
 // GetEffectiveQuota godoc
 // @Summary     Get the effective quota of an instance
-// @Description Returns the quota that applies to the namespace of the instance: the cluster quota of the instance's cluster (the default cluster when the instance has none) merged with the instance quota override, with the same merge as the deployer. A non-empty override quantity replaces the cluster value, and an override pod_limit (also 0) replaces the cluster pod_limit. sources names the origin of each field of effective: override, cluster or none. In effective, an empty quantity means no value and pod_limit 0 means no limit. cluster and override are null when they are not set; cluster_id is empty when the instance has no cluster and no default cluster exists. can_modify is true when the caller may set or delete the override (the owner, admin or devops). Any authenticated user can read it.
+// @Description Returns the quota that applies to the namespace of the instance: the cluster quota of the instance's cluster (the default cluster when the instance has none) merged with the instance quota override, with the same merge as the deployer. A non-empty override quantity replaces the cluster value, and an override pod_limit (also 0) replaces the cluster pod_limit. sources names the origin of each field of effective: override, cluster or none. In effective, an empty quantity means no value and pod_limit 0 means no limit. cluster and override are null when they are not set; cluster_id is empty when the instance has no cluster and no default cluster exists. valid is false when the merged quota breaks a quota rule (models.ValidateEffectiveQuota, the check of the deployer and of the background quota write); invalid_reason then names the field, the values and their source, and a deploy of the instance fails until the quota is fixed. can_modify is true when the caller may set or delete the override (the owner, admin or devops). Any authenticated user can read it.
 // @Tags        stack-instances
 // @Produce     json
 // @Param       id  path     string true "Stack Instance ID"
@@ -338,14 +342,20 @@ func (h *InstanceQuotaOverrideHandler) GetEffectiveQuota(c *gin.Context) {
 		override = nil
 	}
 
-	c.JSON(http.StatusOK, EffectiveQuotaResponse{
+	resp := EffectiveQuotaResponse{
 		Effective: effectiveQuotaValues(models.MergeQuotaOverride(clusterQuota, override)),
 		Cluster:   clusterQuota,
 		Override:  override,
 		Sources:   models.QuotaSources(clusterQuota, override),
 		ClusterID: clusterID,
 		CanModify: canModifyInstance(c, inst),
-	})
+		Valid:     true,
+	}
+	if err := models.ValidateEffectiveQuota(clusterQuota, override); err != nil {
+		resp.Valid = false
+		resp.InvalidReason = err.Error()
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // SetQuotaOverride godoc
