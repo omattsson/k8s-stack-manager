@@ -107,12 +107,34 @@ test-frontend:
 #   specs create and delete stack namespaces. Without it, the specs that need
 #   a cluster are skipped.
 E2E_DB_NAME ?= app_e2e
+# Run only some specs of the main suite, for example
+# make test-e2e E2E_SPECS=e2e/custom-actions.spec.ts (default: all). With
+# E2E_SPECS, the isolated phase does not run.
+E2E_SPECS ?=
 E2E_HOME := $(CURDIR)/backend/tmp/e2e-home
 E2E_PID := $(CURDIR)/backend/tmp/e2e-backend.pid
 # Database access for the specs that change rows directly (helpers.ts, for
 # example to mark a user as an SSO user; there is no API for that).
 E2E_DB_PLAYWRIGHT_ENV = E2E_DB_NAME=$(E2E_DB_NAME) E2E_DB_USER=$${DB_USER:-root} E2E_DB_PASSWORD=$${DB_PASSWORD:-rootpassword}
 E2E_STOP_BACKEND = kill $$(cat $(E2E_PID) 2>/dev/null) 2>/dev/null; rm -rf $(E2E_HOME) $(E2E_PID)
+
+# Test stub of the specs (frontend/e2e/stub/server.ts; global-setup.ts starts it):
+# - Custom actions (#588): the backend gets HOOKS_CONFIG_FILE=$(E2E_HOOKS_CONFIG). Its actions call
+#   the stub on http://127.0.0.1:18090 and sign with E2E_ACTION_SECRET.
+# - Notification channels (#592): the backend sends only to https:// webhooks
+#   and checks the certificate. e2e-prepare makes a self-signed certificate for
+#   127.0.0.1 in E2E_STUB_DIR. On Linux the backend trusts it through
+#   SSL_CERT_DIR, and the specs get E2E_STUB_TLS=1. Go on macOS ignores
+#   SSL_CERT_DIR, so the specs that need a successful delivery skip there.
+E2E_STUB_DIR := $(CURDIR)/backend/tmp/e2e-stub
+E2E_HOOKS_CONFIG := $(CURDIR)/frontend/e2e/fixtures/hooks-e2e.json
+E2E_ACTION_SECRET ?= e2e-action-secret
+E2E_STUB_BACKEND_ENV = HOOKS_CONFIG_FILE=$(E2E_HOOKS_CONFIG) E2E_ACTION_SECRET=$(E2E_ACTION_SECRET)
+E2E_STUB_PLAYWRIGHT_ENV = E2E_ACTION_SECRET=$(E2E_ACTION_SECRET)
+ifeq ($(shell uname -s),Linux)
+E2E_STUB_BACKEND_ENV += SSL_CERT_DIR=/etc/ssl/certs:$(E2E_STUB_DIR)/trust
+E2E_STUB_PLAYWRIGHT_ENV += E2E_STUB_TLS=1
+endif
 
 # Isolated phase: the Playwright project `isolated` runs specs that must not run
 # next to the main suite, serially, against a restarted backend.
@@ -156,7 +178,7 @@ define e2e_start_backend
 		ADMIN_USERNAME=admin ADMIN_PASSWORD=admin SELF_REGISTRATION=true \
 		HELM_BINARY=$${HELM_BINARY:-helm} \
 		CORS_ALLOWED_ORIGINS=http://localhost:3000 \
-		RATE_LIMIT=10000 LOGIN_RATE_LIMIT=10000 PORT=8081 UNIQUE_INSTANCE_NAMES=true $(1) \
+		RATE_LIMIT=10000 LOGIN_RATE_LIMIT=10000 PORT=8081 UNIQUE_INSTANCE_NAMES=true $(E2E_STUB_BACKEND_ENV) $(1) \
 		./tmp/main > ../frontend/test-logs/$(2) 2>&1 & echo $$! > $(E2E_PID)
 	@echo "Waiting for backend to be healthy..."
 	@n=0; until curl -sf http://localhost:8081/health/live >/dev/null 2>&1; do \
@@ -198,7 +220,7 @@ endef
 # main suite's report must survive for the CI artifact.
 define e2e_run_isolated_specs
 	@echo "Running the isolated specs (access token $(E2E_SESSION_ACCESS_TTL), idle $(E2E_SESSION_IDLE_TIMEOUT), max lifetime $(E2E_SESSION_MAX_LIFETIME), reuse grace $(E2E_SESSION_REUSE_GRACE))..."
-	cd frontend && $(E2E_ISOLATED_PLAYWRIGHT_ENV) $(E2E_DB_PLAYWRIGHT_ENV) PLAYWRIGHT_HTML_OUTPUT_DIR=playwright-report-isolated \
+	cd frontend && $(E2E_ISOLATED_PLAYWRIGHT_ENV) $(E2E_DB_PLAYWRIGHT_ENV) $(E2E_STUB_PLAYWRIGHT_ENV) PLAYWRIGHT_HTML_OUTPUT_DIR=playwright-report-isolated \
 		bash -o pipefail -c 'npx playwright test --project=isolated --workers=1 --output=test-results-isolated 2>&1 | tee test-logs/playwright-isolated.log' || \
 		($(E2E_STOP_BACKEND); $(MAKE) -C $(CURDIR) integration-infra-stop; exit 1)
 endef
@@ -219,6 +241,13 @@ e2e-prepare: integration-infra-start
 		fi; \
 		sleep 2; \
 	done; rm -f $(CURDIR)/backend/tmp/e2e-db.err
+	@echo "Creating the certificate of the e2e stub..."
+	@rm -rf $(E2E_STUB_DIR) && mkdir -p $(E2E_STUB_DIR)/trust
+	@openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj "/CN=127.0.0.1" \
+		-addext "subjectAltName=IP:127.0.0.1" -keyout $(E2E_STUB_DIR)/stub.key \
+		-out $(E2E_STUB_DIR)/trust/stub.pem >$(E2E_STUB_DIR)/openssl.log 2>&1 || \
+		{ echo "WARNING: openssl could not create the stub certificate (see $(E2E_STUB_DIR)/openssl.log). The specs that need the HTTPS stub skip."; \
+		rm -f $(E2E_STUB_DIR)/trust/stub.pem; }
 	@echo "Building backend..."
 	@cd backend && mkdir -p tmp && go build -o tmp/main ./api
 
@@ -230,12 +259,16 @@ test-e2e: e2e-prepare
 	@echo "Starting backend..."
 	$(call e2e_start_backend,,backend.log)
 	@echo "Backend is ready, running Playwright tests..."
-	@cd frontend && $(E2E_DB_PLAYWRIGHT_ENV) bash -o pipefail -c 'npx playwright test 2>&1 | tee test-logs/playwright.log'; \
+	@cd frontend && $(E2E_DB_PLAYWRIGHT_ENV) $(E2E_STUB_PLAYWRIGHT_ENV) bash -o pipefail -c 'npx playwright test $(E2E_SPECS) 2>&1 | tee test-logs/playwright.log'; \
 		echo $$? > $(E2E_MAIN_STATUS)
+ifeq ($(strip $(E2E_SPECS)),)
 	@echo "Restarting backend for the isolated specs (short session limits)..."
 	$(call e2e_stop_backend_and_wait)
 	$(call e2e_start_backend,$(E2E_SESSION_BACKEND_ENV),backend-isolated.log)
 	$(call e2e_run_isolated_specs)
+else
+	@echo "E2E_SPECS is set: the isolated phase does not run."
+endif
 	@echo "Stopping backend..."
 	@$(E2E_STOP_BACKEND) || true
 	$(MAKE) integration-infra-stop
