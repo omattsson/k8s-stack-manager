@@ -355,7 +355,7 @@ An operator can register custom actions on the server, for example "refresh-db" 
 - The instance detail page has an **Actions** menu. The custom actions are the first group of the menu. The menu also has Export values, Clone, and (for a user who can change the instance) Clean namespace and Delete.
 - Every user who can see the instance sees the custom actions. Only the owner, an `admin`, or a `devops` user can run an action. For other users the items are disabled.
 - A click on an action opens a dialog. The dialog shows the description of the action and, if the action has one, a warning text. Read the warning before you click **Run**.
-- Some actions have parameters. The dialog shows a form with a text field, a switch, or a list. A field marked with `*` is required.
+- Some actions have parameters. The dialog shows a form with a text field, a switch, or a list. A field marked with `*` is required. A secret parameter (`sensitive: true`) shows as a password field.
 - After the run, the dialog shows the status code and the result of the action. A status code that is not 2xx is an error.
 - Some actions start a job that runs in the background. The dialog then shows the job log and the job status (`running`, `succeeded`, `failed`).
   - The log updates every 3 seconds until the job ends.
@@ -363,7 +363,15 @@ An operator can register custom actions on the server, for example "refresh-db" 
   - Click **Stop following** to stop the updates.
   - The dialog stops the updates after 60 minutes and keeps the last 1 MiB of log text.
   - Closing the dialog or stopping the updates does not stop the job. The job continues on the server.
-- The CLI and other API clients use the same endpoints: `GET /api/v1/stack-instances/:id/actions`, `POST /api/v1/stack-instances/:id/actions/:name`, and `GET /api/v1/stack-instances/:id/actions/:name/jobs/:job_id/log?offset=N`.
+- The instance detail page has an **Action runs** list below the Deployment History. It shows the stored runs of the custom actions, newest first, 10 at a time. Click **Show more** for older runs.
+  - Every user who can see the instance sees the list.
+  - Each run shows the action, the user who started it, the start time, the parameters, and the result: "OK (200)", "Failed (409)", "Unreachable" (the subscriber did not answer), "Job started", or the final job status (for example `succeeded`).
+  - The list shows a secret parameter as `[redacted]`. The server never stores its value.
+  - A run of a deleted user shows "Unknown user".
+  - Only the owner, an `admin`, or a `devops` user sees **Show log**. It opens the job log of a past run. When the subscriber does not keep the job any more, the dialog shows "The job log is no longer available."
+  - "Job started" means that nobody read the job log to its end yet. Click **Show log** to read it. The row then shows the final status.
+  - The list refreshes after your own run and when the job of your run ends. To see the runs of other users, reload the page.
+- The CLI and other API clients use the same endpoints: `GET /api/v1/stack-instances/:id/actions`, `POST /api/v1/stack-instances/:id/actions/:name`, `GET /api/v1/stack-instances/:id/actions/:name/jobs/:job_id/log?offset=N`, and `GET /api/v1/stack-instances/:id/action-runs?limit=N&cursor=C`.
 
 ### Value Override
 
@@ -478,7 +486,7 @@ A cluster can store **container registry credentials** (`registry_url`, `registr
 
 ### Log retention
 
-The leader replica deletes old rows of four tables once at the start and then every `LOG_RETENTION_INTERVAL` (default 1 hour). `0` keeps the rows of a table forever.
+The leader replica deletes old rows of five tables once at the start and then every `LOG_RETENTION_INTERVAL` (default 1 hour). `0` keeps the rows of a table forever.
 
 | Table | Setting | Default | Age from |
 |---|---|---|---|
@@ -486,6 +494,7 @@ The leader replica deletes old rows of four tables once at the start and then ev
 | `audit_logs` | `AUDIT_LOG_RETENTION_DAYS` | 365 days | `timestamp` |
 | `notifications` (read and unread) | `NOTIFICATION_RETENTION_DAYS` | 90 days | `created_at` |
 | Notification channel delivery logs | `DELIVERY_LOG_RETENTION_DAYS` | 30 days | `created_at` |
+| `action_runs` | `ACTION_RUN_RETENTION_DAYS` | 180 days | `started_at` |
 
 - For each instance that exists, the deploy log retention keeps:
   - the running logs;
@@ -494,9 +503,10 @@ The leader replica deletes old rows of four tables once at the start and then ev
   - the two newest successful deploy or rollback logs. The values drift warning reads the newest one, and a rollback without a target reads the branch of the second newest.
 - Other old logs go, also old stop and clean logs. All old logs of a deleted instance go.
 - A rollback to a target deploy (`target_log_id`) that the retention deleted gives 404.
+- An instance delete removes the action runs of the instance at once.
 - The age uses the database time. The worker deletes 1000 rows per statement (100 for deploy logs, which are large) with a short pause, so a large first run does not lock a table.
 - Each run logs the deleted rows per table. The metric `log_retention.deleted_rows_total` (attribute `table`) counts them.
-- Helm: `backend.logRetention` (`deployLogDays`, `auditLogDays`, `notificationDays`, `deliveryLogDays`, `interval`).
+- Helm: `backend.logRetention` (`deployLogDays`, `auditLogDays`, `notificationDays`, `deliveryLogDays`, `actionRunDays`, `interval`).
 - An upgrade from a version without retention deletes the older rows at the first run. To keep them, set the days (or `0`) before the upgrade.
 
 ### Users
