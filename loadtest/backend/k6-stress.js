@@ -319,7 +319,20 @@ export function setup() {
   const cluster = ensureDefaultCluster(BASE_URL, authHeaders(token));
   console.log(`setup: default cluster ${cluster.name} (${cluster.id})`);
 
-  return { apiKey: keyBody.raw_key, userId: userId, apiKeyId: keyBody.id };
+  // The soak instance lifecycle uses this definition. Other soak iterations
+  // delete their own definitions, so a listed one can be gone before the create.
+  let soakDefinitionId = null;
+  if (isEnabled('soak')) {
+    const def = createDefinition(authHeaders(token), `soak-base-${Date.now()}`);
+    if (!def) {
+      // k6 skips teardown() when setup() throws.
+      http.del(`${BASE_URL}/api/v1/users/${userId}/api-keys/${keyBody.id}`, null, { headers: authHeaders(token) });
+      throw new Error('setup: create soak definition failed');
+    }
+    soakDefinitionId = def.id;
+  }
+
+  return { apiKey: keyBody.raw_key, userId: userId, apiKeyId: keyBody.id, soakDefinitionId };
 }
 
 export function teardown(data) {
@@ -342,6 +355,16 @@ export function teardown(data) {
     { headers: authHeaders(token) },
   );
   console.log(`teardown: deleted API key ${data.apiKeyId} (status ${delRes.status})`);
+
+  if (data.soakDefinitionId) {
+    const defRes = http.del(
+      `${BASE_URL}/api/v1/stack-definitions/${data.soakDefinitionId}`,
+      null,
+      { headers: authHeaders(token) },
+    );
+    const log = defRes.status === 204 ? console.log : console.warn;
+    log(`teardown: deleted soak definition ${data.soakDefinitionId} (status ${defRes.status})`);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -752,7 +775,7 @@ export function soakTest(data) {
     case 2:
       // Write: create instance + extend TTL + delete
       group('Soak: Instance Lifecycle', () => {
-        // Use first available definition
+        // Read load only: keeps the request mix of earlier runs comparable.
         const listRes = http.get(`${BASE_URL}/api/v1/stack-definitions`, {
           headers,
           tags: { name: 'GET /stack-definitions (soak)' },
@@ -760,20 +783,7 @@ export function soakTest(data) {
         apiCalls.add(1);
         if (listRes.status !== 200) return;
 
-        let defs;
-        try {
-          const body = JSON.parse(listRes.body);
-          defs = Array.isArray(body) ? body : body.data || [];
-        } catch { return; }
-
-        if (defs.length === 0) {
-          // Create one
-          const def = createDefinition(headers, `soak-base-${suffix}`);
-          if (!def) return;
-          defs = [def];
-        }
-
-        const inst = createInstance(headers, defs[0].id, `soak-${suffix}`);
+        const inst = createInstance(headers, data.soakDefinitionId, `soak-${suffix}`);
         if (!inst) return;
 
         // Extend TTL
@@ -884,6 +894,10 @@ const SCENARIO_FUNCTIONS = {
   soak: soakTest,
   'otel-overhead': otelOverheadTest,
 };
+
+if (SELECTED && !SCENARIO_FUNCTIONS[SELECTED]) {
+  throw new Error(`unknown SCENARIO "${SELECTED}"; use one of: ${Object.keys(SCENARIO_FUNCTIONS).join(', ')}`);
+}
 
 export default function (data) {
   (SCENARIO_FUNCTIONS[SELECTED] || soakTest)(data);
