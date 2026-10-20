@@ -4,11 +4,13 @@ package database
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 
 	"backend/internal/models"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -131,4 +133,86 @@ func TestDatabaseUserIDCaseInsensitive(t *testing.T) {
 	u, err := repo.FindByID("USER-ABC")
 	require.NoError(t, err)
 	assert.Equal(t, "user-abc", u.ID)
+}
+
+// TestDatabaseUserGuardedChangesNoDeadlock runs concurrent guarded deletes and
+// role changes, SSO role syncs and admin creates on different users: no call
+// may fail with a deadlock, and the deadlocks that happen are retried (#639).
+func TestDatabaseUserGuardedChangesNoDeadlock(t *testing.T) {
+	const (
+		caller     = "admin-root"
+		goroutines = 8 // more goroutines can use up the 3 attempts of one call
+		minRounds  = 10
+		maxRounds  = 50
+	)
+	admin, user := models.RoleAdmin, models.RoleUser
+	ops := []struct {
+		run      func(r *GORMUserRepository, target string) error
+		name     string
+		oldRole  string // "": run creates the user
+		provider string
+	}{
+		{name: "delete", oldRole: user, provider: "local", run: func(r *GORMUserRepository, target string) error {
+			return r.DeleteGuarded(caller, target)
+		}},
+		{name: "promote", oldRole: user, provider: "local", run: func(r *GORMUserRepository, target string) error {
+			_, err := r.UpdateRole(caller, target, admin)
+			return err
+		}},
+		{name: "demote", oldRole: admin, provider: "local", run: func(r *GORMUserRepository, target string) error {
+			_, err := r.UpdateRole(caller, target, user)
+			return err
+		}},
+		{name: "sso-promote", oldRole: user, provider: "oidc", run: func(r *GORMUserRepository, target string) error {
+			return r.UpdateProfile(target, models.UserProfileUpdate{Role: &admin})
+		}},
+		{name: "sso-demote", oldRole: admin, provider: "oidc", run: func(r *GORMUserRepository, target string) error {
+			return r.UpdateProfile(target, models.UserProfileUpdate{Role: &user})
+		}},
+		{name: "create-admin", run: func(r *GORMUserRepository, target string) error {
+			return r.Create(&models.User{ID: target, Username: "new-" + target, Role: admin})
+		}},
+	}
+
+	db := setupMySQLTestDB(t)
+	repo := NewGORMUserRepository(db)
+	retriesBefore := deadlockRetries.Load()
+
+	// Run until at least one deadlock was retried, so the test proves the retry path.
+	for round := 0; round < maxRounds && (round < minRounds || deadlockRetries.Load() == retriesBefore); round++ {
+		require.NoError(t, db.Exec("DELETE FROM users").Error)
+		require.NoError(t, repo.Create(&models.User{ID: caller, Username: caller, Role: admin}))
+		// Random IDs as in production: the deadlock needs a promoted user whose ID sorts before the admin rows.
+		targets := make([]string, goroutines)
+		for i := range targets {
+			op := ops[i%len(ops)]
+			targets[i] = uuid.New().String()
+			if op.oldRole != "" {
+				require.NoError(t, repo.Create(&models.User{ID: targets[i], Username: fmt.Sprintf("u-%02d-%s", i, op.name),
+					Role: op.oldRole, AuthProvider: op.provider}))
+			}
+		}
+
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		errs := make([]error, goroutines)
+		for i := range targets {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				<-start
+				errs[i] = ops[i%len(ops)].run(repo, targets[i])
+			}(i)
+		}
+		close(start)
+		wg.Wait()
+
+		for i, err := range errs {
+			assert.False(t, isDeadlockError(err), "round %d, %s: deadlock after the retries: %v", round, ops[i%len(ops)].name, err)
+			assert.NoError(t, err, "round %d, %s", round, ops[i%len(ops)].name)
+		}
+	}
+	// MySQL decides when it deadlocks, so zero retries is not a failure.
+	// TestGuardedAdminChange_RetriesTransaction proves the retry path.
+	t.Logf("deadlock retries: %d", deadlockRetries.Load()-retriesBefore)
 }

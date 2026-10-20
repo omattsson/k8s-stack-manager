@@ -103,3 +103,49 @@ func TestCheckOverrideWithinClusterQuota(t *testing.T) {
 		})
 	}
 }
+
+func TestQuotaSources(t *testing.T) {
+	t.Parallel()
+
+	zero := 0
+	five := 5
+	tests := []struct {
+		cluster  *ResourceQuotaConfig
+		override *InstanceQuotaOverride
+		want     map[string]string
+		name     string
+	}{
+		{
+			name: "both nil",
+			want: map[string]string{"cpu_limit": QuotaSourceNone, "container_memory_max": QuotaSourceNone, "pod_limit": QuotaSourceNone},
+		},
+		{
+			name:    "cluster only",
+			cluster: &ResourceQuotaConfig{CPULimit: "2", ContainerMemoryMax: "1Gi", PodLimit: 10},
+			want:    map[string]string{"cpu_limit": QuotaSourceCluster, "container_memory_max": QuotaSourceCluster, "pod_limit": QuotaSourceCluster, "cpu_request": QuotaSourceNone},
+		},
+		{
+			name:     "override only",
+			override: &InstanceQuotaOverride{CPULimit: "1", PodLimit: &five},
+			want:     map[string]string{"cpu_limit": QuotaSourceOverride, "pod_limit": QuotaSourceOverride, "memory_limit": QuotaSourceNone},
+		},
+		{
+			name:     "override wins per field and pod_limit 0 is an override value",
+			cluster:  &ResourceQuotaConfig{CPULimit: "2", MemoryLimit: "2Gi", PodLimit: 10},
+			override: &InstanceQuotaOverride{CPULimit: "1500m", PodLimit: &zero},
+			want:     map[string]string{"cpu_limit": QuotaSourceOverride, "memory_limit": QuotaSourceCluster, "pod_limit": QuotaSourceOverride, "storage_limit": QuotaSourceNone},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := QuotaSources(tt.cluster, tt.override)
+			assert.Len(t, got, len(quotaQuantityFields)+1)
+			for field, want := range tt.want {
+				assert.Equal(t, want, got[field], field)
+			}
+		})
+	}
+}

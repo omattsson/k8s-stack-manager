@@ -194,7 +194,7 @@ backend/
       branch_overrides.go        # BranchOverrideHandler: per-chart branch overrides
       bulk_operations.go         # BulkHandler: bulk deploy, stop, clean, delete (up to 50 instances)
       bulk_template_operations.go # TemplateHandler: bulk delete, publish, unpublish (up to 50 templates)
-      instance_quota_overrides.go # InstanceQuotaOverrideHandler: per-instance resource quota overrides
+      instance_quota_overrides.go # InstanceQuotaOverrideHandler: per-instance resource quota overrides, effective quota (GET /:id/quota)
       quota_apply.go             # Writes the effective quota (cluster quota merged with the override) to stack namespaces after a quota change
       chart_configs.go           # Chart config management (nested under definitions), chartSourceChanged
       cleanup_policies.go        # CleanupPolicyHandler: CRUD and manual run
@@ -251,6 +251,7 @@ backend/
     database/repository.go       # NewRepository() factory; repository_factory.go wires all domain repositories
     database/*_repository.go     # One GORM repository per domain model
     database/instance_delete.go  # DeleteInstanceRecord, DeleteInstanceWithOwnedDefinition
+    database/lock_retry.go       # retryOnDeadlock: runs a transaction again on MySQL 1213 (deadlock), 3 attempts
     database/migrations.go       # Versioned migrations through schema.Migrator, run on startup
     database/errors.go           # Re-exports from pkg/dberrors (single source of truth)
     database/schema/             # Migrator and versioned migration structs
@@ -334,7 +335,8 @@ backend/
 - API-key auth skips the blocklist.
 - Delete, disable, password reset and role change block earlier tokens and revoke refresh tokens. Delete also removes the API keys. A role change keeps them, because API-key auth reads the current role.
 - `MAX_REFRESH_TOKENS_PER_USER` (default 10) caps the active refresh tokens of a user at about that number. A new token revokes only the least recently used ones (issued or rotated; `RevokeOldestForUser`), never all of them: revoking all also killed the new session of a concurrent login (401 "Session revoked", #619). Concurrent logins can exceed the cap by up to N-1 until the next token is issued.
-- Every failed login writes one log line `Login failed` with a fixed `reason` (`user_not_found`, `password_mismatch`, `hash_changed`, `session_revoked`, `disabled`, `lookup_error`, ...), the username, `cache_hit`, `client_ip` and `request_id`, and `auth.login.total` gets the `reason` label (`handlers/login_failure.go`). Never the password, hash or token. The client keeps the generic 401; a database error gives 500, not 401.
+- Every failed login writes one log line `Login failed` with a fixed `reason` (`user_not_found`, `password_mismatch`, `no_password` (a user without a local password, for example an SSO user; status `invalid`), `hash_invalid` (only a malformed stored hash), `hash_changed`, `session_revoked`, `disabled`, `lookup_error`, ...), the username, `cache_hit`, `client_ip` and `request_id`, and `auth.login.total` gets the `reason` label (`handlers/login_failure.go`). Never the password, hash or token. The client keeps the generic 401; a database error gives 500, not 401.
+- Login checks the password before the account state (#632). An unknown user, or a user without a usable hash, runs one bcrypt compare against a dummy hash (`dummyPasswordHash`, cost `passwordHashCost`). Without the correct password, every case gets the same 401 "Invalid username or password". "Account disabled" (403) and the SSO-only 403 come only after a correct password.
 - A login cache hit (`LOGIN_CACHE_TTL`) skips only bcrypt. After the password check, the login reads the user again and uses that record (disabled check, token role). A changed password hash gives 401.
 - All auth paths (login, refresh, OIDC, API key) reject `User.Disabled`.
 - Register (`POST /auth/register`) needs an admin, or `SELF_REGISTRATION=true` (code and Helm chart default `false`; Docker Compose sets `true` for development).
@@ -424,11 +426,12 @@ frontend/src/
     InstanceActionsMenu/       # Custom actions (`useInstanceActions`: first group of the instance "Actions" menu), parameter form, result, job log polling
     JsonResultView/            # Readable view of a JSON action result
     LoadingState/              # Centered CircularProgress wrapper
+    InstanceQuota/             # Resource quota section of the instance page: effective values and their source, override edit and remove (InstanceQuotaDialog)
     PodStatusDisplay/          # Kubernetes pod status display
     ProtectedRoute/            # Auth-gated route wrapper (optional requiredRole)
     NotificationCenter/        # Notification bell dropdown in the app bar
     QuickDeployDialog/         # One-click template deploy modal
-    QuotaConfigDialog/         # Resource quota configuration modal
+    QuotaConfigDialog/         # Resource quota configuration modal; quotaFields.ts has the field list and validation (shared with InstanceQuota)
     SetupWizard/               # First-run checklist (cluster, template, instance), can be dismissed
     StatusBadge/               # Colored status chip
     StopTimePicker/            # Stop time picker (datetime-local with min and max, time left); used by TtlSelector and ExtendTtlMenu
@@ -612,6 +615,7 @@ Developers use this application to configure, store and deploy multi-service Hel
   - `ephemeral_storage_limit` sets `requests.ephemeral-storage` and `limits.ephemeral-storage`.
   - A user without the admin or devops role can set an instance quota override only at or below each cluster quota value, also for the per-container fields (`models.CheckOverrideWithinClusterQuota`, 403). The check runs on write and on clone. A value equal to the stored override passes. `pod_limit: 0` counts as no limit.
   - The quota monitor raises quota warnings through the notifier. The `quota-warning` hook constant is defined but not dispatched.
+  - `GET /stack-instances/:id/quota` (any user who can view the instance, #629) returns `effective` (the cluster quota merged with the override, `MergeQuotaOverride`), `cluster`, `override`, `sources` (each field: `override`, `cluster` or `none`, `models.QuotaSources`), `cluster_id`, `can_modify`, and `valid` and `invalid_reason` (`models.ValidateEffectiveQuota`, the check of the deployer: a deploy fails while it is false, and the section shows a warning). It shows the cluster quota to every viewer of the instance. The instance page shows it in the "Resource quota" section (`components/InstanceQuota`). Owner, devops and admin edit or remove the override there. The role `user` sees the cluster value as the upper limit of each field.
   - A quota change applies at once, in the background (`handlers/quota_apply.go`).
     - A cluster quota save writes the effective quota (cluster quota merged with the instance override) to the namespace of each instance, and the cluster quota to the other stack namespaces. It skips Terminating namespaces.
     - An override set or delete writes the effective quota to the namespace of a deployed instance (not draft or cleaning).
@@ -629,6 +633,7 @@ Developers use this application to configure, store and deploy multi-service Hel
   - Handlers use the stored ID after `FindByID` (MySQL compares IDs without case).
   - `UserRepository` has no full-row update. Use the targeted writes (`UpdatePassword`, `UpdateProfile` for the SSO sync and link, `UpdateRole`, `SetDisabled`), so concurrent changes are not lost.
   - Migration 50 indexes `users.role`.
+  - `guardedAdminChange` runs its transaction again on MySQL error 1213 (deadlock), at most 3 attempts, with a random 10 to 50 ms wait (`database/lock_retry.go`, #639). A lock wait timeout (1205) is not retried. `UpdateProfile` (the SSO role sync) with a role change locks the admin rows first, in the same order (`lockAdminRows`), and also retries on 1213. The side effects (token block, refresh-token revoke, WebSocket disconnect, audit) run once, in the handler, after the commit.
   - A change runs `revokeUserAccess` (user block, refresh tokens, WebSocket disconnect). The audit action is `change_role` with `old_role` and `new_role`.
 - **Definition access:**
   - Create definition, import, export and add or remove chart need `RequireDevOps`.
@@ -716,7 +721,7 @@ Developers use this application to configure, store and deploy multi-service Hel
 | Bulk Operations | `/api/v1/stack-instances/bulk` | Bulk deploy, stop, clean, delete (up to 50 instances, devops) |
 | Value Overrides | `/api/v1/stack-instances/:id/overrides` | Per-chart value overrides |
 | Branch Overrides | `/api/v1/stack-instances/:id/branches` | Per-chart branch overrides (list, get, set, delete for each chart) |
-| Quota Overrides | `/api/v1/stack-instances/:id/quota-overrides` | Per-instance resource quota overrides (`PUT` replaces all fields) |
+| Quota Overrides | `/api/v1/stack-instances/:id/quota-overrides` | Per-instance resource quota overrides (`PUT` replaces all fields); the effective quota is `GET /api/v1/stack-instances/:id/quota` |
 | Git | `/api/v1/git` | Branch listing, validation, provider status |
 | Audit Logs | `/api/v1/audit-logs` | Filterable audit log viewer (devops or admin) and export (admin) |
 | Users | `/api/v1/users` | User management (admin): list, delete, disable, enable, password reset, role change |

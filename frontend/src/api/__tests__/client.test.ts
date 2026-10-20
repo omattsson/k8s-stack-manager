@@ -2117,6 +2117,16 @@ describe('instanceService — bulk & compare & quotas', () => {
     expect(result).toEqual(data);
   });
 
+  it('getEffectiveQuota sends GET and returns the effective quota', async () => {
+    const api = mockApi;
+    const data = { cluster_id: 'c1', effective: { cpu_limit: '2' }, cluster: null, override: null, sources: { cpu_limit: 'cluster' }, can_modify: false };
+    api.get.mockResolvedValueOnce(mockResponse(data));
+
+    const result = await instanceService.getEffectiveQuota('i1');
+    expect(api.get).toHaveBeenCalledWith('/api/v1/stack-instances/i1/quota');
+    expect(result).toEqual(data);
+  });
+
   it('getQuotaOverride sends GET and returns override', async () => {
     const api = mockApi;
     const data = { id: 'qo1', cpu_request: '100m' };

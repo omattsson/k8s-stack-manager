@@ -93,9 +93,16 @@ func TestLogin_FailureReasonLogged(t *testing.T) {
 			wantCode: http.StatusUnauthorized, wantBody: `{"error":"Invalid username or password"}`, wantLevel: "WARN",
 		},
 		{
-			name: "stored hash unusable (SSO-linked user)", username: "alice", reason: loginReasonHashInvalid,
+			name: "no local password (SSO user)", username: "alice", reason: loginReasonNoPassword,
 			setup: func(t *testing.T, repo *scriptedUserRepo, _ *AuthHandler, _ *MockRefreshTokenRepository) {
-				require.NoError(t, repo.Create(&models.User{ID: "uid-1", Username: "alice", Role: "user"}))
+				require.NoError(t, repo.Create(&models.User{ID: "uid-1", Username: "alice", Role: "user", AuthProvider: "oidc"}))
+			},
+			wantCode: http.StatusUnauthorized, wantBody: `{"error":"Invalid username or password"}`, wantLevel: "WARN",
+		},
+		{
+			name: "stored hash malformed", username: "alice", reason: loginReasonHashInvalid,
+			setup: func(t *testing.T, repo *scriptedUserRepo, _ *AuthHandler, _ *MockRefreshTokenRepository) {
+				require.NoError(t, repo.Create(&models.User{ID: "uid-1", Username: "alice", Role: "user", PasswordHash: "not-a-hash"}))
 			},
 			wantCode: http.StatusUnauthorized, wantBody: `{"error":"Invalid username or password"}`, wantLevel: "WARN", // Warn: any client can trigger it
 		},
@@ -364,6 +371,8 @@ func TestLoginHandler_MetricReasons(t *testing.T) {
 	require.NoError(t, userRepo.Create(&models.User{
 		ID: "u2", Username: "bob", PasswordHash: hashPassword(t, "pw"), Disabled: true,
 	}))
+	require.NoError(t, userRepo.Create(&models.User{ID: "u3", Username: "carol", AuthProvider: "oidc"}))
+	require.NoError(t, userRepo.Create(&models.User{ID: "u4", Username: "dave", PasswordHash: "not-a-hash"}))
 	h := NewAuthHandler(userRepo, testAuthConfig(false), &config.OIDCConfig{})
 	h.logger = slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
 	gin.SetMode(gin.TestMode)
@@ -379,6 +388,8 @@ func TestLoginHandler_MetricReasons(t *testing.T) {
 	post(`{"username":"alice","password":"wrong"}`)
 	post(`{"username":"alice","password":"wrong"}`)
 	post(`{"username":"bob","password":"pw"}`)
+	post(`{"username":"carol","password":"pw"}`)
+	post(`{"username":"dave","password":"pw"}`)
 	post(`{"username":"alice","password":"correct-horse"}`)
 
 	tests := []struct {
@@ -388,6 +399,8 @@ func TestLoginHandler_MetricReasons(t *testing.T) {
 	}{
 		{status: "invalid", reason: loginReasonUserNotFound, want: 1},
 		{status: "invalid", reason: loginReasonPasswordMismatch, want: 2},
+		{status: "invalid", reason: loginReasonNoPassword, want: 1},
+		{status: "failure", reason: loginReasonHashInvalid, want: 1},
 		{status: "disabled", reason: loginReasonDisabled, want: 1},
 		{status: "success", reason: "", want: 1},
 	}

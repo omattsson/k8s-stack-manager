@@ -108,6 +108,43 @@ func MergeQuotaOverride(cluster *ResourceQuotaConfig, override *InstanceQuotaOve
 	return &merged
 }
 
+// Sources of an effective quota value (QuotaSources).
+const (
+	QuotaSourceOverride = "override"
+	QuotaSourceCluster  = "cluster"
+	QuotaSourceNone     = "none"
+)
+
+// QuotaSources returns, for each quota field (JSON name), where the value of
+// MergeQuotaOverride(cluster, override) comes from: QuotaSourceOverride,
+// QuotaSourceCluster or QuotaSourceNone. A cluster pod_limit of 0 (no limit)
+// counts as no value. Either argument may be nil.
+func QuotaSources(cluster *ResourceQuotaConfig, override *InstanceQuotaOverride) map[string]string {
+	if cluster == nil {
+		cluster = &ResourceQuotaConfig{}
+	}
+	sources := make(map[string]string, len(quotaQuantityFields)+1)
+	for _, f := range quotaQuantityFields {
+		switch {
+		case override != nil && *f.override(override) != "":
+			sources[f.name] = QuotaSourceOverride
+		case *f.cluster(cluster) != "":
+			sources[f.name] = QuotaSourceCluster
+		default:
+			sources[f.name] = QuotaSourceNone
+		}
+	}
+	switch {
+	case override != nil && override.PodLimit != nil:
+		sources["pod_limit"] = QuotaSourceOverride
+	case cluster.PodLimit != 0:
+		sources["pod_limit"] = QuotaSourceCluster
+	default:
+		sources["pod_limit"] = QuotaSourceNone
+	}
+	return sources
+}
+
 // effectiveQuotaField is one merged quota value and where it comes from.
 type effectiveQuotaField struct {
 	qty    resource.Quantity
