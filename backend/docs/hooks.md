@@ -715,8 +715,9 @@ GET /api/v1/stack-instances/:id/action-runs?limit=<n>&cursor=<next_cursor>
 What a run holds:
 - `user_id`: the caller (the user of the JWT or of the API key). `started_by` is the username. It is missing when the user no longer exists. A user delete keeps the runs of that user.
 - `parameters`: only the declared parameters. The backend never stores an undeclared parameter. It stores a `sensitive` parameter as `[redacted]`. `parameters` is always an object (`{}` when there are none).
-- `status_code`: the HTTP status of the subscriber. `0` means no answer (unreachable, timeout). An answer that the backend cannot forward keeps its status, for example `302` for a redirect with an HTML body.
-- `message`: the reason of a refusal (status 400 or higher, the same text as `message` of the invoke envelope), or a fixed text: `Subscriber unreachable`, `Subscriber returned a non-JSON body` or `Subscriber returned a too large body`. It never holds a URL or the error detail.
+- `status_code`: the HTTP status of the subscriber. `0` means no answer (unreachable, timeout, or the client closed the request). An answer that the backend cannot forward keeps its status, for example `302` for a redirect with an HTML body.
+- `message`: the reason of a refusal (status 400 or higher, the text of `message` in the invoke envelope), or a fixed text: `Subscriber unreachable`, `Subscriber returned a non-JSON body`, `Subscriber returned a body that is too large` or `The client closed the request before the answer`. It never holds a URL or the error detail.
+- Every viewer reads `message`. Never put a parameter value or a secret in it. As a safety net, the backend replaces the value of each `sensitive` parameter of the call with `[redacted]` in the stored message. The invoke envelope keeps the message unchanged for the caller.
 - `job_id`: the `job_id` of the invoke envelope (asynchronous actions with `log_path`).
 - `request_id`: the `X-StackManager-Request-Id` of the invoke call, for the subscriber logs.
 - A run never holds the result body, the subscriber URL, headers or the secret.

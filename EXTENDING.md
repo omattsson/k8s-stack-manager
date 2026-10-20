@@ -461,9 +461,10 @@ The list endpoint never returns `url` or `secret_env`. The dialog shows the resu
 ### Action runs: history on the instance page
 
 The backend stores one action run for each invoke that reached your subscriber, also a refusal or an unreachable subscriber. The instance page lists the runs under **Action runs** (`GET /api/v1/stack-instances/:id/action-runs`, newest first, cursor paging).
-- Every user who can view the instance sees the list: who ran which action, when, the parameters and the result.
+- Every user who can view the instance sees the list: who ran which action, when, the parameters and the result status.
 - A run stores only the declared parameters. Undeclared parameters are never stored. A `sensitive` parameter is stored as `[redacted]`. Do not put secrets in a parameter without `sensitive: true`.
 - A run stores the status code of your answer (`0` when there was no answer), the `message` of a refusal, and the `job_id` of an asynchronous action. It never stores your result body.
+- Every viewer reads `message`. Never put a parameter value or a secret in it. The backend replaces the values of `sensitive` parameters with `[redacted]` in the stored message, but this is only a safety net.
 - The leader deletes runs older than `ACTION_RUN_RETENTION_DAYS` (default 180). An instance delete deletes its runs.
 
 The full contract is in [backend/docs/hooks.md](backend/docs/hooks.md#action-run-history).
