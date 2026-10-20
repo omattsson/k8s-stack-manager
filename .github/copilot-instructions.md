@@ -212,6 +212,7 @@ backend/
       definition_template_link.go # DefinitionHandler: link a definition to a template version (PUT template-link), import link lookup
       stack_instances.go         # InstanceHandler: CRUD, clone, deploy, stop, clean, deploy-preview, compare, extend TTL
       instance_rollback.go       # Rollback response type and values-drift message
+      deploy_log_history.go      # Deploy log list parameters (view, action, status), summary rows, started_by lookup
       instance_actions.go        # InstanceHandler: custom action list (UI metadata, can_invoke) and async job log proxy
       instance_followers.go      # InstanceHandler: follow and unfollow
       stack_templates.go         # TemplateHandler: CRUD, publish, instantiate, clone
@@ -409,7 +410,7 @@ frontend/src/
     ChartDiffList/             # Chart changes of a template version diff
     ConfirmDialog/             # Reusable confirmation modal
     DeployPreviewDialog/       # Merged values preview before deploy (GET /stack-instances/:id/deploy-preview)
-    DeploymentLogViewer/       # Deployment log display: stored output of a running log, then the streamed lines (utils/liveLogLines)
+    DeploymentHistory/         # Deployment History of the instance page: pinned rows (running, current, last failure), filters, compact rows, folded deploy runs, "Show more"; a row loads its output on open (a running log: stored output, then the streamed lines, utils/liveLogLines)
     EmptyState/                # Placeholder for empty lists
     EntityLink/                # Link to a related entity
     ErrorBoundary/             # React error boundary wrapper
@@ -453,6 +454,7 @@ frontend/src/
   hooks/
     useCountdown.ts            # Countdown timer hook (for example TTL display)
     useUnsavedChanges.ts       # Unsaved changes warning hook
+    useDeployHistory.ts        # Deployment History paging (10 rows, next_cursor), filters, highlights, refresh; useRollbackTargets (successful deploys)
     useWebSocket.ts            # WebSocket hook for real-time updates (one shared connection)
   theme/
     index.ts                   # MUI theme export (palette, typography, components)
@@ -463,7 +465,7 @@ frontend/src/
   utils/                       # roles, timeAgo, expiry, instanceName, instanceState, jwt, quantity, apiError, download, deployHistory, templateVersion, notificationEventTypes, notificationHelpers, recentTemplates, setupWizard, stopTime
 ```
 
-**Stack:** React 19, MUI v9, react-router-dom v7, Vite 8, TypeScript 6, Vitest 5, Playwright (39 specs in `frontend/e2e/`; the project `isolated` runs `session-lifecycle.spec.ts`, then its teardown project `isolated-last-admin` runs `last-admin.spec.ts`, serially against a restarted short-limit backend; the project `mobile` runs `mobile.spec.ts` with the iPhone 13 viewport, the project `chromium` runs the rest).
+**Stack:** React 19, MUI v9, react-router-dom v7, Vite 8, TypeScript 6, Vitest 5, Playwright (40 specs in `frontend/e2e/`; the project `isolated` runs `session-lifecycle.spec.ts`, then its teardown project `isolated-last-admin` runs `last-admin.spec.ts`, serially against a restarted short-limit backend; the project `mobile` runs `mobile.spec.ts` with the iPhone 13 viewport, the project `chromium` runs the rest).
 
 **Patterns.**
 - Use MUI components (no raw HTML) and the `sx` prop for styling.
@@ -586,6 +588,13 @@ Developers use this application to configure, store and deploy multi-service Hel
   - `rollback-completed` fires on either outcome. `post-rollback` fires only on success.
   - A successful rollback sets `LastDeployedValues` to the running values.
   - `values_drift` (rollback response, deploy preview, GET instance) shows that the stored overrides differ. The next deploy then undoes the rollback.
+- **Deployment history (#626):** `GET /stack-instances/:id/deploy-log` takes `limit`, `offset`, `cursor`, `view`, `action` and `status`.
+  - Without `view` (or `view=full`), each row has all fields, also `output` (`stackctl stack logs` reads it). An empty `output` has no key (`omitempty`). The response has `next_cursor` when more rows exist, also on the offset path. `limit` is at most 100 (a larger value counts as 100).
+  - `view=summary` returns the row columns only (no `output`, `values_snapshot` or `chart_versions`). Without a cursor, it adds `highlights`: `running` (the newest running log), `current` (the deploy whose values run now: the newest successful or partial deploy; for a newer successful rollback, its target) and `latest_failure` (the newest `error` log, only when it is newer than that deploy or rollback). The highlights ignore the filters. A highlights error omits `highlights` (the UI then computes them from the loaded rows).
+  - `action` and `status` are comma lists. An unknown value gives 400. `total` counts the filtered rows; a cursor page has `total: -1`.
+  - Each row has `started_by` (the username of `user_id`, one batch lookup).
+  - `GET /stack-instances/:id/deploy-log/:logId` returns one log with `output` (no values snapshot). A log of another instance gives 404.
+  - The web UI (`DeploymentHistory`, `useDeployHistory`) shows the highlights pinned on top, then 10 rows with "Show more", action and status filters, and folds 3 or more adjacent successful deploys of one branch into one row. A row loads its output when it opens. The rollback targets come from a separate request (`action=deploy&status=success&limit=50`).
 - **Pod problems:**
   - During the Helm and stabilize phases of a deploy or rollback, `deployer.podEventWatch` polls namespace Warning events and container waiting reasons every 10s (`k8s.Client.ListPodProblems`).
   - It writes new ones as `Pod event:` lines to the deploy log, grouped by reason and object with a count (`(x18)`). The most relevant one (quota first) goes into the error message.
@@ -696,7 +705,7 @@ Developers use this application to configure, store and deploy multi-service Hel
 | Quick Deploy | `/api/v1/templates/:id/quick-deploy` | One-click template deployment |
 | Bulk Template Ops | `/api/v1/templates/bulk` | Bulk delete, publish, unpublish templates (up to 50, devops) |
 | Stack Definitions | `/api/v1/stack-definitions` | CRUD, nested chart management, import and export, template link, upgrade check and upgrade |
-| Stack Instances | `/api/v1/stack-instances` | CRUD, clone, values export, deploy, deploy-preview, stop, clean, rollback, status, pods, deploy-log, recent, compare, extend TTL, follow and unfollow, custom actions (list, invoke, job log) |
+| Stack Instances | `/api/v1/stack-instances` | CRUD, clone, values export, deploy, deploy-preview, stop, clean, rollback, status, pods, deploy-log (list, one entry, values), recent, compare, extend TTL, follow and unfollow, custom actions (list, invoke, job log) |
 | Bulk Operations | `/api/v1/stack-instances/bulk` | Bulk deploy, stop, clean, delete (up to 50 instances, devops) |
 | Value Overrides | `/api/v1/stack-instances/:id/overrides` | Per-chart value overrides |
 | Branch Overrides | `/api/v1/stack-instances/:id/branches` | Per-chart branch overrides (list, get, set, delete for each chart) |

@@ -199,14 +199,50 @@ export interface DeploymentLog {
   action: 'deploy' | 'stop' | 'clean' | 'rollback';
   /** `partial`: the deploy finished, but not all workloads are ready (same meaning as the instance status). */
   status: 'running' | 'success' | 'partial' | 'error';
-  output: string;
+  /** Log output. The list (`view=summary`) does not send it; `GET /deploy-log/:logId` does. */
+  output?: string;
   error_message?: string;
   /** Branch of the deploy, when the API sends it. */
   branch?: string;
   /** For a rollback: the deploy log that was the rollback target. */
   target_log_id?: string;
+  /** ID of the user who started the operation. */
+  user_id?: string;
+  /** Username of the user who started the operation, when the API sends it. */
+  started_by?: string;
   started_at: string;
   completed_at?: string;
+}
+
+/**
+ * Important logs of an instance, from the first page of the summary list.
+ * They ignore the list filters. Each field can be missing.
+ */
+export interface DeployLogHighlights {
+  /** The newest running operation. */
+  running?: DeploymentLog;
+  /** The deploy whose values run now (for a rollback: its target deploy). */
+  current?: DeploymentLog;
+  /** The newest failure, only when it is newer than the newest successful deploy or rollback. */
+  latest_failure?: DeploymentLog;
+}
+
+/** One page of `GET /stack-instances/:id/deploy-log?view=summary`. */
+export interface DeployLogPage {
+  /** Logs of the page, newest first, without output. */
+  data: DeploymentLog[];
+  /** Number of logs that match the filters. -1 on a page after the first (with a cursor). */
+  total: number;
+  /** Cursor of the next page. Missing on the last page. */
+  next_cursor?: string;
+  /** Only on the first page. Older servers do not send it. */
+  highlights?: DeployLogHighlights;
+}
+
+/** Filters of the deployment history list. An empty filter matches all logs. */
+export interface DeployLogFilters {
+  action?: DeploymentLog['action'];
+  status?: DeploymentLog['status'];
 }
 
 export interface ChartStatus {

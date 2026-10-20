@@ -1392,6 +1392,7 @@ func TestSetupRoutes_AllHandlers_RegistersCompleteAPI(t *testing.T) {
 		{"POST", "/api/v1/stack-instances/:id/follow"},
 		{"DELETE", "/api/v1/stack-instances/:id/follow"},
 		{"GET", "/api/v1/stack-instances/:id/deploy-log"},
+		{"GET", "/api/v1/stack-instances/:id/deploy-log/:logId"},
 		{"GET", "/api/v1/stack-instances/:id/deploy-log/:logId/values"},
 		{"POST", "/api/v1/stack-instances/:id/rollback"},
 		{"GET", "/api/v1/stack-instances/:id/status"},

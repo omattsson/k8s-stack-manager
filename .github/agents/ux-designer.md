@@ -60,7 +60,7 @@ The theme is in `src/theme/`:
 - `StatusBadge`: status to `Chip` color (draft, deploying, stabilizing, running, partial, stopped, stopping, cleaning, error).
 - `ConfirmDialog`: confirmation modal for destructive actions.
 - `YamlEditor`: Monaco-based YAML editor with validation.
-- `DeploymentLogViewer`, `PodStatusDisplay`, `BranchSelector`, `TtlSelector`, `ExtendTtlMenu`, `FavoriteButton`, `FollowButton`, `EntityLink`, `AccessUrls`, `InstanceActionsMenu`, `JsonResultView`, `ChartDiffList`, `TemplateFieldDiffList`.
+- `DeploymentHistory`, `PodStatusDisplay`, `BranchSelector`, `TtlSelector`, `ExtendTtlMenu`, `FavoriteButton`, `FollowButton`, `EntityLink`, `AccessUrls`, `InstanceActionsMenu`, `JsonResultView`, `ChartDiffList`, `TemplateFieldDiffList`.
 - `ProtectedRoute`: login and role guard (`requiredRole`).
 - `LoadingState`, `EmptyState`, `ErrorBoundary`: shared states.
 - `NotificationCenter`: bell menu with unread badge.

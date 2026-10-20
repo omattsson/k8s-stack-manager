@@ -37,7 +37,7 @@ You are a senior frontend engineer for React, TypeScript, and Material UI (MUI).
 - `NotificationContext`: toast messages. `ThemeContext`: light and dark theme.
 - `useWebSocket`: real-time status and deploy log events.
 - `utils/roles.ts`: `hasAtLeastRole`, `canModifyInstance`. Use them to show or hide actions.
-- Components in `src/components/`: `LoadingState`, `EmptyState`, `ErrorBoundary`, `ConfirmDialog`, `StatusBadge`, `YamlEditor`, `BranchSelector`, `TtlSelector`, `NotificationCenter`, `QuickDeployDialog`, `QuotaConfigDialog`, `DeployPreviewDialog`, `InstanceActionsMenu`, `SetupWizard`, `FavoriteButton`, `FollowButton`, `AccessUrls`, `PodStatusDisplay`, `DeploymentLogViewer`.
+- Components in `src/components/`: `LoadingState`, `EmptyState`, `ErrorBoundary`, `ConfirmDialog`, `StatusBadge`, `YamlEditor`, `BranchSelector`, `TtlSelector`, `NotificationCenter`, `QuickDeployDialog`, `QuotaConfigDialog`, `DeployPreviewDialog`, `InstanceActionsMenu`, `SetupWizard`, `FavoriteButton`, `FollowButton`, `AccessUrls`, `PodStatusDisplay`, `DeploymentHistory`.
 
 ## Role rules in the UI
 

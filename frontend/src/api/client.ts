@@ -25,6 +25,7 @@ import type {
   CreateAPIKeyRequest,
   CreateAPIKeyResponse,
   DeploymentLog,
+  DeployLogPage,
   NamespaceStatus,
   OrphanedNamespace,
   Cluster,
@@ -161,6 +162,18 @@ async function fetchAllPages<T extends { id: string }>(url: string): Promise<T[]
     if (added === 0 || shortPage || rows.length >= total) break;
   }
   return rows;
+}
+
+/** Options of `instanceService.getDeployLogPage`. */
+export interface DeployLogPageOptions {
+  /** Page size (server default 50). */
+  limit?: number;
+  /** `next_cursor` of the previous page. */
+  cursor?: string;
+  /** Only these actions (one value or a list). */
+  action?: DeploymentLog['action'] | DeploymentLog['action'][];
+  /** Only these statuses (one value or a list). */
+  status?: DeploymentLog['status'] | DeploymentLog['status'][];
 }
 
 /** A downloaded file: the raw body and the file name to save it under. */
@@ -1336,18 +1349,53 @@ export const instanceService = {
     }
   },
   /**
-   * Fetch deployment logs for an instance.
+   * Fetch one page of the deployment history of an instance, newest first.
+   * The rows have no output (view=summary). The first page also has the
+   * total and the highlights (running, current, latest failure).
    * @param id - Instance ID
-   * @returns Array of deployment log entries
-   * @see GET /api/v1/stack-instances/:id/deploy-log
+   * @param options - Page size, cursor of the next page, and action and status filters
+   * @returns The page: rows, total (-1 with a cursor), next cursor and highlights
+   * @see GET /api/v1/stack-instances/:id/deploy-log?view=summary
    */
-  getDeployLog: async (id: string): Promise<DeploymentLog[]> => {
+  getDeployLogPage: async (id: string, options: DeployLogPageOptions = {}): Promise<DeployLogPage> => {
+    const csv = (v: string | string[] | undefined) => (Array.isArray(v) ? v.join(',') : v) || undefined;
     try {
-      const response = await api.get(`/api/v1/stack-instances/${id}/deploy-log`);
+      const response = await api.get(`/api/v1/stack-instances/${id}/deploy-log`, {
+        params: {
+          view: 'summary',
+          limit: options.limit,
+          cursor: options.cursor || undefined,
+          action: csv(options.action),
+          status: csv(options.status),
+        },
+      });
       const payload = response.data;
-      return Array.isArray(payload) ? payload : payload.data ?? [];
+      // An older server can send a bare array.
+      const data: DeploymentLog[] = Array.isArray(payload) ? payload : payload?.data ?? [];
+      return {
+        data,
+        total: typeof payload?.total === 'number' ? payload.total : data.length,
+        next_cursor: payload?.next_cursor || undefined,
+        highlights: payload?.highlights ?? undefined,
+      };
     } catch (error) {
       console.error('Failed to fetch deployment logs:', error);
+      throw error;
+    }
+  },
+  /**
+   * Fetch one deployment log with its output and error message.
+   * @param id - Instance ID
+   * @param logId - Deployment log ID
+   * @returns The deployment log with output
+   * @see GET /api/v1/stack-instances/:id/deploy-log/:logId
+   */
+  getDeployLogEntry: async (id: string, logId: string): Promise<DeploymentLog> => {
+    try {
+      const response = await api.get(`/api/v1/stack-instances/${id}/deploy-log/${encodeURIComponent(logId)}`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch the deployment log:', error);
       throw error;
     }
   },

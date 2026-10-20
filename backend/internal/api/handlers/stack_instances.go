@@ -1957,16 +1957,26 @@ func (h *InstanceHandler) CleanInstance(c *gin.Context) {
 
 // GetDeployLog godoc
 // @Summary     Get deployment logs
-// @Description Get deployment log history for a stack instance. Supports cursor-based pagination for efficient large dataset traversal.
+// @Description Get deployment log history for a stack instance, newest first. Supports cursor-based pagination for efficient large dataset traversal.
+// @Description The default view (full) returns all fields of each log. The summary view returns the row columns only (no output, values_snapshot or chart_versions) and, without a cursor, highlights (running log, current deploy, latest failure; computed over all logs of the instance, the filters do not apply).
+// @Description The offset path returns total and, when more rows follow, next_cursor. The cursor path returns total: -1.
+// @Description When the highlights cannot be read, the response has no highlights (the list is still returned).
 // @Tags        stack-instances
 // @Produce     json
+// @Security    BearerAuth
 // @Param       id     path  string true  "Instance ID"
-// @Param       limit  query int    false "Page size (default 50)"
+// @Param       limit  query int    false "Page size (default 50, maximum 100; a larger value gives 100)"
 // @Param       offset query int    false "Offset for traditional pagination (default 0)"
 // @Param       cursor query string false "Cursor from previous page for cursor-based pagination (overrides offset)"
+// @Param       view   query string false "Response view (default full)" Enums(full, summary)
+// @Param       action query string false "Comma list of actions: deploy, rollback, stop, clean"
+// @Param       status query string false "Comma list of statuses: running, success, error, partial"
 // @Success     200 {object} models.DeploymentLogResult
 // @Failure     400 {object} map[string]string
+// @Failure     401 {object} map[string]string
 // @Failure     404 {object} map[string]string
+// @Failure     500 {object} map[string]string
+// @Failure     503 {object} map[string]string
 // @Router      /api/v1/stack-instances/{id}/deploy-log [get]
 func (h *InstanceHandler) GetDeployLog(c *gin.Context) {
 	id := c.Param("id")
@@ -1980,17 +1990,43 @@ func (h *InstanceHandler) GetDeployLog(c *gin.Context) {
 		return
 	}
 
-	// Verify instance exists.
-	if _, err := h.instanceRepo.FindByID(id); err != nil {
+	// Verify instance exists. The queries use the stored ID (MySQL
+	// compares IDs without case).
+	inst, err := h.instanceRepo.FindByID(id)
+	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
+	id = inst.ID
 
 	filters := models.DeploymentLogFilters{
 		InstanceID: id,
 		Cursor:     c.Query("cursor"),
 	}
+
+	switch c.Query("view") {
+	case "", deployLogViewFull:
+	case deployLogViewSummary:
+		filters.Summary = true
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidDeployLogView})
+		return
+	}
+
+	actions, ok := parseDeployLogList(c.Query("action"), models.IsDeployLogAction)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidDeployLogAction})
+		return
+	}
+	filters.Actions = actions
+
+	statuses, ok := parseDeployLogList(c.Query("status"), models.IsDeployLogStatus)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidDeployLogStatus})
+		return
+	}
+	filters.Statuses = statuses
 
 	if limitStr := c.Query("limit"); limitStr != "" {
 		l, err := strconv.Atoi(limitStr)
@@ -1998,7 +2034,8 @@ func (h *InstanceHandler) GetDeployLog(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid limit parameter"})
 			return
 		}
-		filters.Limit = l
+		// A larger limit gives the maximum (no 400: older clients send more).
+		filters.Limit = min(l, models.MaxDeployLogPageSize)
 	}
 
 	if offsetStr := c.Query("offset"); offsetStr != "" {
@@ -2016,6 +2053,27 @@ func (h *InstanceHandler) GetDeployLog(c *gin.Context) {
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
+
+	// Highlights are for the first page of the summary view only. Without
+	// them the client finds the logs in the list, so an error omits them.
+	if reader, isReader := h.deployLogRepo.(models.DeploymentLogHighlightReader); isReader && filters.Summary && filters.Cursor == "" {
+		highlights, hlErr := reader.HistoryHighlights(c.Request.Context(), id)
+		if hlErr != nil {
+			slog.Warn("Failed to read deploy history highlights", logKeyInstanceID, id, "error", hlErr)
+		} else {
+			result.Highlights = highlights
+		}
+	}
+
+	rows := deployLogResultRows(result)
+	if filters.Summary {
+		for _, row := range rows {
+			if row != nil {
+				summaryDeployLog(row)
+			}
+		}
+	}
+	setDeployLogStartedBy(h.userRepo, rows)
 
 	c.JSON(http.StatusOK, result)
 }
@@ -2775,6 +2833,62 @@ func (h *InstanceHandler) RollbackInstance(c *gin.Context) {
 	c.JSON(http.StatusAccepted, resp)
 }
 
+// GetDeployLogEntry godoc
+// @Summary     Get one deployment log entry
+// @Description Returns one deployment log of the instance with its output, error message and started_by. The values snapshot and the chart versions are not in the response (see the values endpoint).
+// @Tags        stack-instances
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id    path     string true "Instance ID"
+// @Param       logId path     string true "Deployment Log ID"
+// @Success     200 {object} models.DeploymentLog
+// @Failure     400 {object} map[string]string
+// @Failure     401 {object} map[string]string
+// @Failure     404 {object} map[string]string
+// @Failure     500 {object} map[string]string
+// @Failure     503 {object} map[string]string
+// @Router      /api/v1/stack-instances/{id}/deploy-log/{logId} [get]
+func (h *InstanceHandler) GetDeployLogEntry(c *gin.Context) {
+	instanceID := c.Param("id")
+	logID := c.Param("logId")
+	if instanceID == "" || logID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Instance ID and log ID are required"})
+		return
+	}
+
+	if h.deployLogRepo == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Deployment log service not configured"})
+		return
+	}
+
+	inst, err := h.instanceRepo.FindByID(instanceID)
+	if err != nil {
+		status, message := mapError(err, entityStackInstance)
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	logEntry, err := h.deployLogRepo.FindByID(c.Request.Context(), logID)
+	if err != nil {
+		status, message := mapError(err, "Deployment log")
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	// Compare with the stored ID: MySQL finds the instance without case.
+	if logEntry.StackInstanceID != inst.ID {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Deployment log not found for this instance"})
+		return
+	}
+
+	// The values endpoint serves the values snapshot.
+	logEntry.ValuesSnapshot = ""
+	logEntry.ChartVersions = ""
+	setDeployLogStartedBy(h.userRepo, []*models.DeploymentLog{logEntry})
+
+	c.JSON(http.StatusOK, logEntry)
+}
+
 // GetDeployLogValues godoc
 // @Summary     Get values snapshot for a deployment log entry
 // @Description Returns the merged Helm values that were used for a specific deployment
@@ -2801,7 +2915,8 @@ func (h *InstanceHandler) GetDeployLogValues(c *gin.Context) {
 		return
 	}
 
-	if _, err := h.instanceRepo.FindByID(instanceID); err != nil {
+	inst, err := h.instanceRepo.FindByID(instanceID)
+	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -2814,7 +2929,8 @@ func (h *InstanceHandler) GetDeployLogValues(c *gin.Context) {
 		return
 	}
 
-	if logEntry.StackInstanceID != instanceID {
+	// Compare with the stored ID: MySQL finds the instance without case.
+	if logEntry.StackInstanceID != inst.ID {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Deployment log not found for this instance"})
 		return
 	}

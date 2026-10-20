@@ -14,7 +14,7 @@ type DeploymentLog struct {
 	StackInstanceID string     `json:"stack_instance_id" gorm:"size:36"`
 	Action          string     `json:"action" gorm:"size:50"` // "deploy", "stop", "clean", "rollback"
 	Status          string     `json:"status" gorm:"size:50"` // "running", "success", "error", "partial" (deploy only)
-	Output          string     `json:"output" gorm:"type:longtext"`
+	Output          string     `json:"output,omitempty" gorm:"type:longtext"`
 	ErrorMessage    string     `json:"error_message,omitempty" gorm:"type:text"`
 	ValuesSnapshot  string     `json:"values_snapshot,omitempty" gorm:"type:longtext"`
 	TargetLogID     string     `json:"target_log_id,omitempty" gorm:"size:36"`
@@ -33,6 +33,9 @@ type DeploymentLog struct {
 	// the composite index idx_deployment_logs_user_action (user_id, action,
 	// started_at, completed_at, status) for SummarizeByUsers.
 	UserID string `json:"user_id,omitempty" gorm:"size:36"`
+	// StartedBy is the username of UserID. The deploy log handlers set it
+	// with one batch lookup. Empty when the user is not known.
+	StartedBy string `json:"started_by,omitempty" gorm:"-"`
 	// ReplicaID is the process identity of the replica that runs the
 	// operation (POD_NAME or host name plus a random suffix per process, the
 	// same value as its heartbeat row). The leader uses it to find
@@ -92,19 +95,76 @@ const (
 	DeployLogPartial = "partial"
 )
 
+// IsDeployLogAction reports whether action is a deployment log action.
+func IsDeployLogAction(action string) bool {
+	switch action {
+	case DeployActionDeploy, DeployActionRollback, DeployActionStop, DeployActionClean:
+		return true
+	}
+	return false
+}
+
+// IsDeployLogStatus reports whether status is a deployment log status.
+func IsDeployLogStatus(status string) bool {
+	switch status {
+	case DeployLogRunning, DeployLogSuccess, DeployLogError, DeployLogPartial:
+		return true
+	}
+	return false
+}
+
+// MaxDeployLogPageSize is the largest page of the deployment log list. A
+// larger limit gives this size.
+const MaxDeployLogPageSize = 100
+
 // DeploymentLogFilters holds optional filters and pagination for querying deployment logs.
 type DeploymentLogFilters struct {
 	InstanceID string
 	Cursor     string
-	Limit      int
-	Offset     int
+	// Actions and Statuses limit the rows (and the total) to these values.
+	// Empty means all.
+	Actions  []string
+	Statuses []string
+	Limit    int
+	Offset   int
+	// Summary selects only the row columns: id, stack_instance_id, action,
+	// status, branch, error_message, target_log_id, user_id, started_at and
+	// completed_at. No output, values snapshot or chart versions.
+	Summary bool
 }
 
 // DeploymentLogResult holds the result of a paginated deployment log query.
 type DeploymentLogResult struct {
-	Data       []DeploymentLog `json:"data"`
-	Total      int64           `json:"total"`
-	NextCursor string          `json:"next_cursor,omitempty"`
+	// Highlights is set only in the summary view without a cursor.
+	Highlights *DeployLogHighlights `json:"highlights,omitempty"`
+	Data       []DeploymentLog      `json:"data"`
+	Total      int64                `json:"total"`
+	NextCursor string               `json:"next_cursor,omitempty"`
+}
+
+// DeployLogHighlights holds the deploy logs that the history view shows
+// first. The fields are summary rows (see DeploymentLogFilters.Summary). A
+// field is nil when no log matches. The action and status filters do not
+// apply.
+type DeployLogHighlights struct {
+	// Running is the newest running log (any action).
+	Running *DeploymentLog `json:"running,omitempty"`
+	// Current is the deploy whose values run now: the newest successful or
+	// partial deploy, or the target of a newer successful rollback. Nil when
+	// that rollback has no target or its target is not a log of the
+	// instance.
+	Current *DeploymentLog `json:"current,omitempty"`
+	// LatestFailure is the newest error log that started after the newest
+	// successful or partial deploy or rollback (any error log when there is
+	// none). A partial log is never a failure here.
+	LatestFailure *DeploymentLog `json:"latest_failure,omitempty"`
+}
+
+// DeploymentLogHighlightReader is implemented by the GORM deployment log
+// repository. HistoryHighlights returns the highlights of the deploy
+// history of the instance. No matching log is not an error.
+type DeploymentLogHighlightReader interface {
+	HistoryHighlights(ctx context.Context, instanceID string) (*DeployLogHighlights, error)
 }
 
 // DeployLogSummary provides lightweight aggregate counts for an instance's

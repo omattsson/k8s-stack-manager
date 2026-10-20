@@ -12,6 +12,7 @@ import {
   runE2eSql,
   uniqueName,
 } from './helpers';
+import { mockDeployLog } from './deployLogMock';
 
 /**
  * Rollback (#590): POST /stack-instances/:id/rollback and RollbackDialog.tsx.
@@ -100,9 +101,7 @@ async function mockInstance(
     const body = { ...(await res.json()), status: 'running', ...state.patch };
     return route.fulfill({ response: res, json: body });
   });
-  await page.route(new RegExp(`/api/v1/stack-instances/${instanceId}/deploy-log(\\?.*)?$`), (route) =>
-    route.fulfill({ json: { data: state.logs, total: state.logs.length } }),
-  );
+  await mockDeployLog(page, instanceId, () => state.logs);
 }
 
 async function openRollbackDialog(page: Page, instanceId: string) {
@@ -183,8 +182,9 @@ test.describe('Rollback', () => {
     await mockInstance(page, inst.id, { logs: deployLogs(inst.id), patch: {} });
     await page.goto(`/stack-instances/${inst.id}`);
 
-    // Open the row of the oldest successful deploy (branch main, 08:00).
-    const rows = page.getByRole('button', { name: /deploy\s*success/i });
+    // Open the row of the oldest successful deploy (branch main, 08:00). The
+    // pinned area repeats the current deploy, so use the list only.
+    const rows = page.getByRole('list', { name: 'Operations', exact: true }).getByRole('button', { name: /deploy\s*success/i });
     await expect(rows).toHaveCount(3);
     await rows.nth(2).click();
     await page.getByRole('button', { name: 'Roll back to this deploy' }).click();
@@ -240,9 +240,7 @@ test.describe('Rollback', () => {
 
     // The UI shows the message of the server. Only the list of targets is mocked.
     await loginAsAdmin(page);
-    await page.route(new RegExp(`/api/v1/stack-instances/${inst.id}/deploy-log(\\?.*)?$`), (route) =>
-      route.fulfill({ json: { data: deployLogs(inst.id), total: 4 } }),
-    );
+    await mockDeployLog(page, inst.id, () => deployLogs(inst.id));
     const dialog = await openRollbackDialog(page, inst.id);
     await dialog.getByRole('button', { name: 'Roll Back' }).click();
     await expect(page.getByText(`Failed to start rollback (HTTP 404: ${MSG_TARGET_NOT_FOUND})`)).toBeVisible();
@@ -277,10 +275,11 @@ test.describe('Rollback', () => {
     await dialog.getByRole('button', { name: 'Roll Back' }).click();
     await expect(page.getByText('Rollback started. Follow the deployment log.')).toBeVisible();
     await expect(page.getByText('Deployment History (5)')).toBeVisible();
-    // The history keeps the row that was open (the current deploy). Open the
-    // rejected rollback: it shows the reason of the hook.
-    await page.getByRole('button', { name: /rollback\s*error/i }).click();
-    await expect(page.getByText(`Error: ${REJECT_REASON}`)).toBeVisible();
+    // The rejected rollback is pinned as the last failure. Open it in the
+    // list: it shows the reason of the hook.
+    await expect(page.getByRole('list', { name: 'Pinned operations' }).getByText('Last failure', { exact: true })).toBeVisible();
+    await page.getByRole('list', { name: 'Operations', exact: true }).getByRole('button', { name: /rollback\s*error/i }).click();
+    await expect(page.getByTestId(`deploy-log-output-${inst.id}-r1`)).toContainText(`Error: ${REJECT_REASON}`);
   });
 
   test('a real rollback restores the values snapshot of the target (E2E_KUBECONFIG)', async () => {

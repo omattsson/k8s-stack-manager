@@ -2,7 +2,7 @@
 
 ## Project Setup
 - The frontend uses Vite 8, React 19 and TypeScript 6 (strict mode). It uses `@vitejs/plugin-react` (Vite 8 transforms JSX with Oxc).
-- Unit tests run on Vitest 5 with Testing Library. End-to-end tests run on Playwright (`e2e/`, 39 specs). `e2e/global-setup.ts` starts the test stub (`e2e/stub/`).
+- Unit tests run on Vitest 5 with Testing Library. End-to-end tests run on Playwright (`e2e/`, 40 specs). `e2e/global-setup.ts` starts the test stub (`e2e/stub/`).
 - Node 22 or later is required. The Dockerfile uses `node:26-alpine`.
 
 ## Architecture
@@ -19,7 +19,7 @@
   - `BrandingContext.tsx`: branding from `GET /api/v1/ui-config`.
   - `NotificationContext.tsx`: toasts and snackbars.
   - `ThemeContext.tsx`: light and dark toggle.
-- **Hooks** (`src/hooks/`): `useCountdown.ts` (countdown timer), `useUnsavedChanges.ts` (unsaved changes warning), `useWebSocket.ts` (real-time updates).
+- **Hooks** (`src/hooks/`): `useCountdown.ts` (countdown timer), `useUnsavedChanges.ts` (unsaved changes warning), `useDeployHistory.ts` (Deployment History paging, filters and highlights; `useRollbackTargets`), `useWebSocket.ts` (real-time updates).
 - **Theme** (`src/theme/`): `index.ts` (MUI theme export), `palette.ts`, `typography.ts`, `components.ts` (default props and style overrides).
 - **Types:** `src/types/index.ts` has the shared TypeScript types.
 - **Utils** (`src/utils/`):
@@ -51,7 +51,7 @@
   - Layout, AccessUrls, BranchSelector, BrandLogo, ConfirmDialog, EmptyState, EntityLink, ErrorBoundary, LoadingState, ProtectedRoute, StatusBadge, StopTimePicker, TtlSelector, YamlEditor.
   - ChartDiffList and TemplateFieldDiffList (template version diff).
   - DeployPreviewDialog (merged values before deploy, `GET /stack-instances/:id/deploy-preview`).
-  - DeploymentLogViewer, PodStatusDisplay, QuickDeployDialog, QuotaConfigDialog.
+  - DeploymentHistory (pinned rows, filters, compact rows, folded deploy runs, "Show more", output loaded on open), PodStatusDisplay, QuickDeployDialog, QuotaConfigDialog.
   - ExtendTtlMenu, FavoriteButton, FollowButton, NotificationCenter.
   - InstanceActionsMenu (custom actions of the instance "Actions" menu), JsonResultView.
   - SetupWizard (first-run checklist: cluster, template, instance).

@@ -3670,7 +3670,8 @@ const docTemplate = `{
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
-                                "type": "integer"
+                                "type": "integer",
+                                "format": "int64"
                             }
                         }
                     },
@@ -6527,7 +6528,12 @@ const docTemplate = `{
         },
         "/api/v1/stack-instances/{id}/deploy-log": {
             "get": {
-                "description": "Get deployment log history for a stack instance. Supports cursor-based pagination for efficient large dataset traversal.",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Get deployment log history for a stack instance, newest first. Supports cursor-based pagination for efficient large dataset traversal.\nThe default view (full) returns all fields of each log. The summary view returns the row columns only (no output, values_snapshot or chart_versions) and, without a cursor, highlights (running log, current deploy, latest failure; computed over all logs of the instance, the filters do not apply).\nThe offset path returns total and, when more rows follow, next_cursor. The cursor path returns total: -1.\nWhen the highlights cannot be read, the response has no highlights (the list is still returned).",
                 "produces": [
                     "application/json"
                 ],
@@ -6545,7 +6551,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "integer",
-                        "description": "Page size (default 50)",
+                        "description": "Page size (default 50, maximum 100; a larger value gives 100)",
                         "name": "limit",
                         "in": "query"
                     },
@@ -6559,6 +6565,28 @@ const docTemplate = `{
                         "type": "string",
                         "description": "Cursor from previous page for cursor-based pagination (overrides offset)",
                         "name": "cursor",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "full",
+                            "summary"
+                        ],
+                        "type": "string",
+                        "description": "Response view (default full)",
+                        "name": "view",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma list of actions: deploy, rollback, stop, clean",
+                        "name": "action",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma list of statuses: running, success, error, partial",
+                        "name": "status",
                         "in": "query"
                     }
                 ],
@@ -6578,8 +6606,121 @@ const docTemplate = `{
                             }
                         }
                     },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/stack-instances/{id}/deploy-log/{logId}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns one deployment log of the instance with its output, error message and started_by. The values snapshot and the chart versions are not in the response (see the values endpoint).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "stack-instances"
+                ],
+                "summary": "Get one deployment log entry",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Instance ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Deployment Log ID",
+                        "name": "logId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.DeploymentLog"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -13210,6 +13351,35 @@ const docTemplate = `{
                 }
             }
         },
+        "models.DeployLogHighlights": {
+            "type": "object",
+            "properties": {
+                "current": {
+                    "description": "Current is the deploy whose values run now: the newest successful or\npartial deploy, or the target of a newer successful rollback. Nil when\nthat rollback has no target or its target is not a log of the\ninstance.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.DeploymentLog"
+                        }
+                    ]
+                },
+                "latest_failure": {
+                    "description": "LatestFailure is the newest error log that started after the newest\nsuccessful or partial deploy or rollback (any error log when there is\nnone). A partial log is never a failure here.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.DeploymentLog"
+                        }
+                    ]
+                },
+                "running": {
+                    "description": "Running is the newest running log (any action).",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.DeploymentLog"
+                        }
+                    ]
+                }
+            }
+        },
         "models.DeploymentLog": {
             "type": "object",
             "properties": {
@@ -13243,6 +13413,10 @@ const docTemplate = `{
                 "started_at": {
                     "type": "string"
                 },
+                "started_by": {
+                    "description": "StartedBy is the username of UserID. The deploy log handlers set it\nwith one batch lookup. Empty when the user is not known.",
+                    "type": "string"
+                },
                 "status": {
                     "description": "\"running\", \"success\", \"error\", \"partial\" (deploy only)",
                     "type": "string"
@@ -13267,6 +13441,14 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/models.DeploymentLog"
                     }
+                },
+                "highlights": {
+                    "description": "Highlights is set only in the summary view without a cursor.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.DeployLogHighlights"
+                        }
+                    ]
                 },
                 "next_cursor": {
                     "type": "string"

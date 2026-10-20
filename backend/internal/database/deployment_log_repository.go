@@ -21,6 +21,7 @@ var (
 	_ models.DeploymentLogRepository       = (*GORMDeploymentLogRepository)(nil)
 	_ models.DeploymentLogDeadlineExtender = (*GORMDeploymentLogRepository)(nil)
 	_ models.DeploymentLogOutputWriter     = (*GORMDeploymentLogRepository)(nil)
+	_ models.DeploymentLogHighlightReader  = (*GORMDeploymentLogRepository)(nil)
 )
 
 // GORMDeploymentLogRepository implements models.DeploymentLogRepository using GORM.
@@ -157,17 +158,42 @@ func (r *GORMDeploymentLogRepository) ListByInstance(ctx context.Context, instan
 	return logs, nil
 }
 
+// deployLogSummaryColumns are the columns of a summary row (history list
+// summary view and highlights): no output, values snapshot or chart versions.
+const deployLogSummaryColumns = "id, stack_instance_id, action, status, branch, error_message, target_log_id, user_id, started_at, completed_at"
+
 // ListByInstancePaginated returns deployment logs for a given stack instance with
 // cursor-based or offset-based pagination. When filters.Cursor is set, keyset
 // pagination is used for efficient deep-page traversal. Otherwise, traditional
-// OFFSET pagination is used for backward compatibility.
+// OFFSET pagination is used for backward compatibility. The action and status
+// filters apply to both paths and to the total. filters.Summary selects only
+// the summary columns.
 func (r *GORMDeploymentLogRepository) ListByInstancePaginated(ctx context.Context, filters models.DeploymentLogFilters) (*models.DeploymentLogResult, error) {
-	query := r.db.WithContext(ctx).Model(&models.DeploymentLog{}).Where("stack_instance_id = ?", filters.InstanceID)
+	// baseQuery builds a new query for each use, so the count and the select
+	// do not share state.
+	baseQuery := func() *gorm.DB {
+		q := r.db.WithContext(ctx).Model(&models.DeploymentLog{}).Where("stack_instance_id = ?", filters.InstanceID)
+		if len(filters.Actions) > 0 {
+			q = q.Where("action IN ?", filters.Actions)
+		}
+		if len(filters.Statuses) > 0 {
+			q = q.Where("status IN ?", filters.Statuses)
+		}
+		return q
+	}
+	selectQuery := func() *gorm.DB {
+		q := baseQuery()
+		if filters.Summary {
+			q = q.Select(deployLogSummaryColumns)
+		}
+		return q
+	}
 
 	limit := filters.Limit
 	if limit <= 0 {
 		limit = 50
 	}
+	limit = min(limit, models.MaxDeployLogPageSize)
 
 	// Cursor-based pagination path.
 	if filters.Cursor != "" {
@@ -175,7 +201,7 @@ func (r *GORMDeploymentLogRepository) ListByInstancePaginated(ctx context.Contex
 		if err != nil {
 			return nil, dberrors.NewDatabaseError("list_by_instance", fmt.Errorf("%w: %s", dberrors.ErrValidation, err.Error()))
 		}
-		query = query.Where(
+		query := selectQuery().Where(
 			"(started_at < ?) OR (started_at = ? AND id < ?)",
 			cursorTS, cursorTS, cursorID,
 		)
@@ -199,19 +225,93 @@ func (r *GORMDeploymentLogRepository) ListByInstancePaginated(ctx context.Contex
 
 	// Traditional OFFSET pagination path.
 	var total int64
-	if err := query.Count(&total).Error; err != nil {
+	if err := baseQuery().Count(&total).Error; err != nil {
 		return nil, dberrors.NewDatabaseError("count", err)
 	}
 
 	var logs []models.DeploymentLog
-	if err := query.Order("started_at DESC, id DESC").Limit(limit).Offset(filters.Offset).Find(&logs).Error; err != nil {
+	if err := selectQuery().Order("started_at DESC, id DESC").Limit(limit).Offset(filters.Offset).Find(&logs).Error; err != nil {
 		return nil, dberrors.NewDatabaseError("list_by_instance", err)
 	}
 
-	return &models.DeploymentLogResult{
+	result := &models.DeploymentLogResult{
 		Data:  logs,
 		Total: total,
-	}, nil
+	}
+	// A next cursor lets a client load the first page with the total and
+	// continue with the cursor path.
+	if len(logs) > 0 && int64(filters.Offset+len(logs)) < total {
+		last := logs[len(logs)-1]
+		result.NextCursor = encodeDeployLogCursor(last.StartedAt, last.ID)
+	}
+	return result, nil
+}
+
+// HistoryHighlights returns the running log, the current deploy and the
+// latest failure of the instance (see models.DeployLogHighlights). Each
+// lookup is a LIMIT 1 query on the summary columns, newest first
+// (started_at DESC, id DESC). No matching log gives a nil field.
+func (r *GORMDeploymentLogRepository) HistoryHighlights(ctx context.Context, instanceID string) (*models.DeployLogHighlights, error) {
+	h := &models.DeployLogHighlights{}
+
+	running, err := r.newestSummaryRow(ctx, "stack_instance_id = ? AND status = ?", instanceID, models.DeployLogRunning)
+	if err != nil {
+		return nil, err
+	}
+	h.Running = running
+
+	// The newest successful or partial deploy or rollback sets the current
+	// deploy. A partial deploy sets the running values too.
+	lastGood, err := r.newestSummaryRow(ctx, "stack_instance_id = ? AND action IN ? AND status IN ?",
+		instanceID, []string{models.DeployActionDeploy, models.DeployActionRollback},
+		[]string{models.DeployLogSuccess, models.DeployLogPartial})
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case lastGood == nil:
+	case lastGood.Action == models.DeployActionDeploy:
+		h.Current = lastGood
+	case lastGood.TargetLogID != "":
+		// The target must be a log of the same instance.
+		target, targetErr := r.newestSummaryRow(ctx, "id = ? AND stack_instance_id = ?", lastGood.TargetLogID, instanceID)
+		if targetErr != nil {
+			return nil, targetErr
+		}
+		h.Current = target
+	}
+
+	// A failure counts only when it is newer than the last good deploy.
+	failureQuery := "stack_instance_id = ? AND status = ?"
+	failureArgs := []interface{}{instanceID, models.DeployLogError}
+	if lastGood != nil {
+		failureQuery += " AND started_at > ?"
+		failureArgs = append(failureArgs, lastGood.StartedAt)
+	}
+	failure, err := r.newestSummaryRow(ctx, failureQuery, failureArgs...)
+	if err != nil {
+		return nil, err
+	}
+	h.LatestFailure = failure
+	return h, nil
+}
+
+// newestSummaryRow returns the newest log (summary columns) that matches
+// the condition, or nil when no log matches.
+func (r *GORMDeploymentLogRepository) newestSummaryRow(ctx context.Context, query string, args ...interface{}) (*models.DeploymentLog, error) {
+	var logs []models.DeploymentLog
+	if err := r.db.WithContext(ctx).Model(&models.DeploymentLog{}).
+		Select(deployLogSummaryColumns).
+		Where(query, args...).
+		Order("started_at DESC, id DESC").
+		Limit(1).
+		Find(&logs).Error; err != nil {
+		return nil, dberrors.NewDatabaseError("history_highlights", err)
+	}
+	if len(logs) == 0 {
+		return nil, nil
+	}
+	return &logs[0], nil
 }
 
 // encodeDeployLogCursor creates an opaque cursor from a timestamp and ID.
