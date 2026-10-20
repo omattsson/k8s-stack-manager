@@ -556,6 +556,9 @@ func (h *NotificationChannelHandler) TestChannel(c *gin.Context) {
 	msg := "Test notification sent successfully"
 	switch {
 	case success:
+	case statusCode == 0 && webhookURLError(channel.WebhookURL) != "":
+		// A URL stored before the check (or written to the database directly).
+		msg = "Invalid webhook URL"
 	case statusCode == 0:
 		msg = "Connection failed"
 	default:

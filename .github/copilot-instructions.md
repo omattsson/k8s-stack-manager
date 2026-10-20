@@ -362,7 +362,7 @@ backend/
 - A `pre-*` subscriber with `failure_policy: fail` can abort the operation.
   - `hooks.UserMessage` builds the safe reason (hook name and subscriber message, never the URL).
   - The reason goes into the `error_message` of the instance and of the deploy log, and into an `ERROR:` line of the log output.
-- A stop, a clean or a new deploy cancels a running `pre-deploy` or `pre-rollback` call.
+- A stop cancels a running `pre-deploy` or `pre-rollback` call. A clean or a new deploy answers 409 while the instance is deploying.
   - The deployer checks the instance at each stabilize poll interval (`DEPLOY_STABILIZE_POLL_INTERVAL`, default 5s), as for blocking `post-deploy` (`deployer/hook_watch.go`). It closes the request when the status is no longer `deploying` or a newer deploy log exists.
   - The log ends with `WARNING: deploy cancelled ...` (or `rollback cancelled ...`). Helm does not run, and the other operation keeps its status. `failure_policy` does not apply. A shutdown stays a hook failure.
   - The status watcher of the leader never sets a `deploying` instance to `error`. The deploy sets the final status.

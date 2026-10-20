@@ -166,6 +166,7 @@ func TestNotificationChannelHandler_TestChannel_InvalidStoredURL(t *testing.T) {
 			var result map[string]interface{}
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
 			assert.Equal(t, false, result["success"])
+			assert.Equal(t, "Invalid webhook URL", result["message"])
 			assert.NotContains(t, w.Body.String(), "sig=TOKEN")
 			assert.NotContains(t, w.Body.String(), "hooks.example.com")
 

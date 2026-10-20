@@ -360,8 +360,28 @@ func (w *Watcher) handleStatusTransition(inst *models.StackInstance, nsStatus *N
 			return false
 		}
 		if inst.Status != models.StackStatusError {
+			const msg = "namespace resources in error state"
+			if marker, ok := w.instanceRepo.(models.InstanceErrorMarker); ok {
+				// The status read at the start of the poll can be old: a deploy
+				// can have started since. Write only when the status allows it.
+				changed, err := marker.MarkNamespaceError(inst.ID, msg, w.clock())
+				if err != nil {
+					slog.Error("Failed to update instance status",
+						"instance_id", inst.ID,
+						"error", err,
+					)
+					return true
+				}
+				if !changed {
+					// Another operation owns the status now. A later poll checks again.
+					return false
+				}
+				inst.Status = models.StackStatusError
+				inst.ErrorMessage = msg
+				return true
+			}
 			inst.Status = models.StackStatusError
-			inst.ErrorMessage = "namespace resources in error state"
+			inst.ErrorMessage = msg
 			if err := w.instanceRepo.Update(inst); err != nil {
 				slog.Error("Failed to update instance status",
 					"instance_id", inst.ID,

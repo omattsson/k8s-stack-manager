@@ -221,7 +221,8 @@ func NewManager(cfg ManagerConfig) *Manager {
 	}
 
 	stabilizePoll := cfg.StabilizePollInterval
-	if stabilizePoll == 0 {
+	if stabilizePoll <= 0 {
+		// A ticker needs a positive interval. Every hooked deploy starts one.
 		stabilizePoll = 5 * time.Second
 	}
 
@@ -584,10 +585,10 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 	hookErr := preHook.err
 	hookOutput := progress.String()
 	if preHook.lost {
-		// A stop, clean or new deploy took the instance during the hook,
-		// and the watcher cancelled the hook call. The hook error is the
-		// result of that cancel, not a denial. Close the log and keep the
-		// status of the other operation.
+		// A stop took the instance during the hook, and the watcher
+		// cancelled the hook call. The hook error is the result of that
+		// cancel, not a denial. Close the log and keep the status of the
+		// other operation.
 		m.cancelDeployAfterPreHook(instanceID, deployLog, hookOutput, preHook.status, lastDeployedValues)
 		return
 	}
@@ -1025,6 +1026,10 @@ func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.Deployment
 	m.finalizeDeployWith(instanceID, deployLog, output, deployErr, partialDeploy, lastDeployedValues, readinessWarning, nil)
 }
 
+// msgFinalizeInstanceUnreadable is the error of a deploy log whose instance
+// could not be read at the end of the deploy.
+const msgFinalizeInstanceUnreadable = "The deploy ended, but the stack could not be read. Check the stack status and deploy again."
+
 // finalizeDeployWith is finalizeDeploy with the failures of blocking
 // post-deploy subscribers that have failure_policy=ignore: each gives the
 // owner a warning notification.
@@ -1035,6 +1040,13 @@ func (m *Manager) finalizeDeployWith(instanceID string, deployLog *models.Deploy
 	if err != nil {
 		slog.Error("failed to find instance for finalization",
 			"instance_id", instanceID, "error", err)
+		// End the log anyway. A running log of a live replica never ends:
+		// the interrupted operation recovery needs a stopped replica.
+		deployLog.Output = truncateString(output, maxOutputLen)
+		deployLog.CompletedAt = &now
+		deployLog.Status = models.DeployLogError
+		deployLog.ErrorMessage = msgFinalizeInstanceUnreadable
+		m.fallbackLogUpdate(instanceID, deployLog)
 		return
 	}
 
@@ -2036,7 +2048,7 @@ func (m *Manager) executeRollback(job rollbackJob) {
 		return
 	}
 
-	// Another operation (a stop, clean or deploy) during a long hook wins:
+	// Another operation (a stop) during a long hook wins:
 	// do not touch the releases or the instance. This check covers a hook
 	// that answers before the next watcher poll of firePreHook.
 	if owned, current := m.ownsInstance(instanceID, deployLog.ID, models.StackStatusDeploying); !owned {

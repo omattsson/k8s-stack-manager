@@ -30,7 +30,7 @@ minimal Go starting point.
 
 | Event | Fires when | Semantics |
 |---|---|---|
-| `pre-deploy` | Just before a deployment starts, after the cluster is resolved. | Synchronous, with progress streaming (`LOG:` lines go to the deploy log). A subscriber with `failure_policy=fail` can abort. The deploy log then ends with status `error` and the hook reason. The instance gets status `error` with the reason in `error_message`. A stop, clean or new deploy during the call closes the request (see [Another operation during pre-deploy or pre-rollback](#another-operation-during-pre-deploy-or-pre-rollback)). |
+| `pre-deploy` | Just before a deployment starts, after the cluster is resolved. | Synchronous, with progress streaming (`LOG:` lines go to the deploy log). A subscriber with `failure_policy=fail` can abort. The deploy log then ends with status `error` and the hook reason. The instance gets status `error` with the reason in `error_message`. A stop during the call closes the request (see [Another operation during pre-deploy or pre-rollback](#another-operation-during-pre-deploy-or-pre-rollback)). |
 | `post-deploy` | After a deployment completes **successfully** (also a partial deploy). | Fire-and-forget (default `failure_policy=ignore`). A subscription with `blocking: true` is called earlier, and the deploy waits for it. See [Blocking post-deploy subscribers](#blocking-post-deploy-subscribers). |
 | `deploy-finalized` | After a deployment ends, **successfully or not**, and after the blocking post-deploy subscribers. | Fire-and-forget. `metadata.post_deploy_failed` lists the blocking subscribers with `failure_policy=ignore` that failed. |
 | `deploy-timeout` | After a deployment failed because Helm or the deploy budget timed out. A failed blocking post-deploy subscriber does not fire it. | Fire-and-forget. |
@@ -38,7 +38,7 @@ minimal Go starting point.
 | `clean-completed` | After a clean ends, successfully (`draft`) or not (`error`). It also fires for the clean of an API delete. Then `metadata.operation` is `delete` and `delete-completed` follows. A notifier can skip this event and post only the delete. | Fire-and-forget. |
 | `delete-completed` | After an instance is deleted: by the API (at once for a draft, or after its clean) or by a cleanup policy. | Fire-and-forget. |
 | `cleanup-policy-executed` | Once for each cleanup policy run (scheduled or manual) with at least one matching instance. It also fires for a dry run. It does not fire for a scheduled run that the end of a leadership term interrupted. | Fire-and-forget. See [Cleanup policy runs](#cleanup-policy-runs). |
-| `pre-rollback` | Before a rollback runs (`POST /stack-instances/:id/rollback`). It runs in the background after the API answered 202. | Synchronous for the rollback, with progress streaming (`LOG:` lines go to the rollback log). `failure_policy=fail` aborts. The rollback log then ends with status `error` and the hook reason. The instance gets its previous status back. A stop, clean or new deploy during the call closes the request (see [Another operation during pre-deploy or pre-rollback](#another-operation-during-pre-deploy-or-pre-rollback)). |
+| `pre-rollback` | Before a rollback runs (`POST /stack-instances/:id/rollback`). It runs in the background after the API answered 202. | Synchronous for the rollback, with progress streaming (`LOG:` lines go to the rollback log). `failure_policy=fail` aborts. The rollback log then ends with status `error` and the hook reason. The instance gets its previous status back. A stop during the call closes the request (see [Another operation during pre-deploy or pre-rollback](#another-operation-during-pre-deploy-or-pre-rollback)). |
 | `post-rollback` | After a rollback completes **successfully**. | Fire-and-forget. |
 | `rollback-completed` | After a rollback ends: succeeded, failed, rejected by `pre-rollback`, or cancelled because another operation (stop, clean, deploy) started meanwhile. `metadata.outcome` is `succeeded`, `failed`, `rejected` or `cancelled`. | Fire-and-forget. |
 | `pre-instance-create` | After validation and before the instance is written to the database. | Synchronous. `failure_policy=fail` aborts the create (HTTP 403). |
@@ -229,8 +229,9 @@ For `target`:
 ### Another operation during pre-deploy or pre-rollback
 
 A `pre-deploy` or `pre-rollback` subscriber (for example a CI gate) can run
-for many minutes. Another operation can take the instance meanwhile: a stop
-(API, bulk, TTL reaper or a cleanup policy), a clean or a new deploy.
+for many minutes. A stop can take the instance meanwhile (API, bulk, TTL
+reaper or a cleanup policy). A clean and a new deploy answer 409 while the
+instance is deploying.
 
 1. While the subscriber runs, the deployer checks the instance at every
    stabilize poll interval (`DEPLOY_STABILIZE_POLL_INTERVAL`, default 5 s).

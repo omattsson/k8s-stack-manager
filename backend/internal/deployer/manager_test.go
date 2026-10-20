@@ -1213,8 +1213,17 @@ func TestManager_FinalizeDeploy_InstanceNotFound(t *testing.T) {
 	})
 
 	// Should not panic when instance is not found.
-	orphanLog := &models.DeploymentLog{ID: "some-log-id", StackInstanceID: "nonexistent-id"}
+	orphanLog := &models.DeploymentLog{ID: "some-log-id", StackInstanceID: "nonexistent-id", Action: models.DeployActionDeploy, Status: models.DeployLogRunning}
+	require.NoError(t, logRepo.Create(context.Background(), orphanLog))
 	mgr.finalizeDeploy("nonexistent-id", orphanLog, "output", nil, false, "", "")
+
+	// The log ends anyway: a running log of a live replica would stay running.
+	stored, err := logRepo.FindByID(context.Background(), "some-log-id")
+	require.NoError(t, err)
+	assert.Equal(t, models.DeployLogError, stored.Status)
+	assert.Equal(t, msgFinalizeInstanceUnreadable, stored.ErrorMessage)
+	assert.NotNil(t, stored.CompletedAt)
+	assert.Equal(t, "output", stored.Output)
 }
 
 func TestManager_BroadcastStatusWithError_NilHub(t *testing.T) {
@@ -1576,6 +1585,18 @@ func TestManager_FinalizeDeploy_OutputTruncation(t *testing.T) {
 }
 
 // ---- mock helm executor ----
+
+// waitForInstallCalls waits until the mock got n Helm installs. The deploy
+// runs in a goroutine. A fixed sleep is too short when all test packages run
+// at the same time.
+func waitForInstallCalls(t *testing.T, h *mockHelmExecutor, n int) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return len(h.installCalls) >= n
+	}, 10*time.Second, 10*time.Millisecond)
+}
 
 type mockHelmExecutor struct {
 	mu             sync.Mutex
@@ -2722,7 +2743,7 @@ func TestManager_ExecuteDeploy_OCIChartRef(t *testing.T) {
 	assert.NotEmpty(t, logID)
 
 	// Wait for async completion.
-	time.Sleep(300 * time.Millisecond)
+	waitForInstallCalls(t, helmMock, 1)
 
 	// Verify the install was called with the OCI chart ref (repo+path combined).
 	helmMock.mu.Lock()
@@ -2788,7 +2809,7 @@ func TestManager_ExecuteDeploy_HTTPRepoRef(t *testing.T) {
 	assert.NotEmpty(t, logID)
 
 	// Wait for async completion.
-	time.Sleep(300 * time.Millisecond)
+	waitForInstallCalls(t, helmMock, 1)
 
 	helmMock.mu.Lock()
 	require.Len(t, helmMock.installCalls, 1)
@@ -2855,7 +2876,7 @@ func TestManager_ExecuteDeploy_ValuesFileWritten(t *testing.T) {
 	assert.NotEmpty(t, logID)
 
 	// Wait for async completion.
-	time.Sleep(300 * time.Millisecond)
+	waitForInstallCalls(t, helmMock, 2)
 
 	helmMock.mu.Lock()
 	require.Len(t, helmMock.installCalls, 2)

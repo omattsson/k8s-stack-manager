@@ -13,6 +13,7 @@ import (
 
 // Compile-time interface check.
 var _ models.StackInstanceRepository = (*GORMStackInstanceRepository)(nil)
+var _ models.InstanceErrorMarker = (*GORMStackInstanceRepository)(nil)
 
 // GORMStackInstanceRepository implements models.StackInstanceRepository using GORM.
 type GORMStackInstanceRepository struct {
@@ -145,6 +146,25 @@ func (r *GORMStackInstanceRepository) MarkCleanStart(id string, fromStatuses []s
 		return conflict
 	}
 	return nil
+}
+
+// MarkNamespaceError implements models.InstanceErrorMarker: one conditional
+// update, so a deploy, stop or clean that started after the read of the
+// status watcher keeps its status.
+func (r *GORMStackInstanceRepository) MarkNamespaceError(id, message string, now time.Time) (bool, error) {
+	res := r.db.Model(&models.StackInstance{}).
+		Where("id = ?", id).
+		Where("status IN ? OR (status = ? AND (post_deploy_hook_until IS NULL OR post_deploy_hook_until < ?))",
+			[]string{models.StackStatusRunning, models.StackStatusPartial}, models.StackStatusStabilizing, now.UTC()).
+		Updates(map[string]any{
+			"status":        models.StackStatusError,
+			"error_message": message,
+			"updated_at":    time.Now().UTC(),
+		})
+	if res.Error != nil {
+		return false, dberrors.NewDatabaseError("mark_namespace_error", res.Error)
+	}
+	return res.RowsAffected > 0, nil
 }
 
 // ClearDeleteAfterClean clears delete_after_clean of the instance.

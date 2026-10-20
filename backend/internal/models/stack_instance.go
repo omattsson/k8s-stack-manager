@@ -111,6 +111,19 @@ type CleanStartMarker interface {
 	ClearDeleteAfterClean(id string) error
 }
 
+// InstanceErrorMarker is implemented by stack instance repositories that set
+// the error status of the k8s status watcher with a conditional update. The
+// watcher reads the instances first and writes later. With a plain update it
+// could overwrite the status of an operation that started in between (for
+// example a deploy). The watcher uses it when the repository implements it.
+type InstanceErrorMarker interface {
+	// MarkNamespaceError sets status error and the error message when the
+	// status is running or partial, or stabilizing without active blocking
+	// post-deploy hooks (post_deploy_hook_until empty or before now). It
+	// reports whether the row changed.
+	MarkNamespaceError(id, message string, now time.Time) (bool, error)
+}
+
 // InstanceNameLookup is implemented by stack instance repositories that can
 // look up instance names on a cluster. UNIQUE_INSTANCE_NAMES needs it.
 type InstanceNameLookup interface {
