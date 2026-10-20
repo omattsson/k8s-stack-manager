@@ -558,7 +558,8 @@ func buildHandlers(
 		return nil, fmt.Errorf("create quick deploy handler: %w", err)
 	}
 	quickDeployHandler.WithSharedValues(repos.SharedValues).WithTemplateVersions(repos.TemplateVersion).
-		WithUniqueInstanceNames(cfg.App.UniqueInstanceNames).WithMaxTTLDays(cfg.App.MaxInstanceTTLDays)
+		WithUniqueInstanceNames(cfg.App.UniqueInstanceNames).WithMaxTTLDays(cfg.App.MaxInstanceTTLDays).
+		WithNotifier(svc.LifecycleNotifier)
 
 	// Cluster shared values are the lowest values layer of every deploy.
 	// Warn loudly if they are not wired: deploys would silently skip them.
