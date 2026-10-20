@@ -365,7 +365,7 @@ An operator can register custom actions on the server, for example "refresh-db" 
   - Closing the dialog or stopping the updates does not stop the job. The job continues on the server.
 - The instance detail page has an **Action runs** list below the Deployment History. It shows the stored runs of the custom actions, newest first, 10 at a time. Click **Show more** for older runs.
   - Every user who can see the instance sees the list.
-  - Each run shows the action, the user who started it, the start time, the parameters, and the result: "OK (200)", "Failed (409)", "Unreachable" (the subscriber did not answer), "Job started", or the final job status (for example `succeeded`).
+  - Each run shows the action, the user who started it, the start time, the parameters, and the result: "OK (200)", "Failed (409)", "Unreachable" (the subscriber did not answer), "Unusable answer (200)" (the body was not JSON or was too large), "Job started", or the final job status (for example `succeeded`).
   - The list shows a secret parameter as `[redacted]`. The server never stores its value.
   - A run of a deleted user shows "Unknown user".
   - Only the owner, an `admin`, or a `devops` user sees **Show log**. It opens the job log of a past run. When the subscriber does not keep the job any more, the dialog shows "The job log is no longer available."
