@@ -703,6 +703,10 @@ Developers use this application to configure, store and deploy multi-service Hel
   - Instance events use `Notifier.NotifyInstance(models.NotificationTarget, ...)`. The receivers are the owner and the followers (no duplicates). Each receiver is filtered by the own event-type preferences (`DisabledUserIDs`, one query, fail open). The actor is not excluded. One channel dispatch for each event.
   - `NotifySystem` and `NotifySystemForInstances` (admin and devops) apply the preferences too.
   - Read the followers with `FollowerIDs` before an instance delete, and put them in `NotificationTarget.FollowerIDs`.
+  - Each in-app notification of an instance event stores its trigger (#652, migration 64: `trigger_type`, `trigger_id`, `trigger_name`, nullable). `NotifyInstance` takes it from the `WithTrigger` option, else from the context (`hooks.WithTrigger`). `Notify` and `NotifySystem` store no trigger.
+  - The API and `notification.new` return `trigger` (`type` `user`, `cleanup-policy` or `ttl`; `id`; `name`). A notification without a trigger has no `trigger` field. The bell menu and the Notifications page show "by alice", "by you" (the receiver did the action), "by TTL expiry" or "by Cleanup policy <name>" after the time (`formatTrigger` in `utils/notificationHelpers.tsx`).
+  - Create, clone and quick deploy send `instance.created` through `notifyInstanceCreated` (`handlers/stack_instances.go`), with the caller as the trigger (#650).
+  - A cleanup-policy stop or clean gives one notification (#651). The deploy manager sends it when the operation ends: `cleanup.policy.stop` or `cleanup.policy.clean` with a `cleanup-policy` trigger, else `deployment.stopped` or `clean.completed`. The scheduler sends only the summary `cleanup.policy.executed`. The TTL reaper sends `stack.expired`, then `deployment.stopped`.
 - **Favorites:** users can bookmark templates and instances (`UserFavorite` entities). A favorite does not follow the instance.
 - **Analytics and dashboard:**
   - `/analytics/*` (devops) gives read-only aggregation of instance counts, deploy stats, template usage and user activity. `/analytics/users` needs admin.
