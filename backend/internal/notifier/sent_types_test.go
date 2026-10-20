@@ -23,14 +23,17 @@ import (
 type notifySend struct {
 	typeArg int
 	args    int
+	// variadic: the function takes options after args (NotifyInstance), so
+	// a call has at least args arguments.
+	variadic bool
 }
 
 var notifyTypeArg = map[string]notifySend{
-	"Notify":                   {typeArg: 2, args: 7}, // ctx, userID, notifType, title, message, entityType, entityID
-	"NotifyInstance":           {typeArg: 2, args: 5}, // ctx, target, notifType, title, message
-	"NotifySystem":             {typeArg: 1, args: 6}, // ctx, notifType, title, message, entityType, entityID
-	"NotifySystemForInstances": {typeArg: 1, args: 7}, // ctx, notifType, title, message, entityType, entityID, instances
-	"notifyInstance":           {typeArg: 1, args: 4}, // target, notifType, title, message
+	"Notify":                   {typeArg: 2, args: 7},                 // ctx, userID, notifType, title, message, entityType, entityID
+	"NotifyInstance":           {typeArg: 2, args: 5, variadic: true}, // ctx, target, notifType, title, message, opts...
+	"NotifySystem":             {typeArg: 1, args: 6},                 // ctx, notifType, title, message, entityType, entityID
+	"NotifySystemForInstances": {typeArg: 1, args: 7},                 // ctx, notifType, title, message, entityType, entityID, instances
+	"notifyInstance":           {typeArg: 1, args: 4, variadic: true}, // target, notifType, title, message, opts...
 }
 
 // TestSentEventTypesAreKnown scans the backend source for every call that
@@ -89,7 +92,7 @@ func TestSentEventTypesAreKnown(t *testing.T) {
 					return true
 				}
 				send, ok := notifyTypeArg[callee]
-				if !ok || len(call.Args) != send.args {
+				if !ok || len(call.Args) < send.args || (!send.variadic && len(call.Args) != send.args) {
 					return true
 				}
 				idx := send.typeArg

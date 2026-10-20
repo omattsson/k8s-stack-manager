@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"backend/internal/database"
+	"backend/internal/hooks"
 	"backend/internal/models"
+	"backend/internal/notifier"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -57,9 +59,14 @@ type notifyCall struct {
 	EntityType  string
 	EntityID    string
 	FollowerIDs []string
+	Target      models.NotificationTarget
+	// Trigger and SiteURL are the notifier options of the call.
+	Trigger *hooks.Trigger
+	SiteURL string
 }
 
-func (m *mockNotifier) NotifyInstance(_ context.Context, target models.NotificationTarget, notifType, title, message string) error {
+func (m *mockNotifier) NotifyInstance(_ context.Context, target models.NotificationTarget, notifType, title, message string, opts ...notifier.InstanceOption) error {
+	o := notifier.ResolveInstanceOptions(opts...)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.calls = append(m.calls, notifyCall{
@@ -70,6 +77,9 @@ func (m *mockNotifier) NotifyInstance(_ context.Context, target models.Notificat
 		EntityType:  "stack_instance",
 		EntityID:    target.InstanceID,
 		FollowerIDs: target.FollowerIDs,
+		Target:      target,
+		Trigger:     o.Trigger,
+		SiteURL:     o.SiteURL,
 	})
 	return nil
 }

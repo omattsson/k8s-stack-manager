@@ -358,6 +358,10 @@ type Config struct {
 type AppConfig struct {
 	Name        string
 	Environment string
+	// PublicURL (APP_PUBLIC_URL) is the public base URL of the web UI, an
+	// https URL without a trailing slash (see ParsePublicURL). Empty: the
+	// notification channel cards have no link to the instance page.
+	PublicURL string
 	// maxInstanceTTLDaysErr is the parse error of MAX_INSTANCE_TTL_DAYS.
 	// Validate returns it, so an invalid value stops the start.
 	maxInstanceTTLDaysErr     error
@@ -552,6 +556,11 @@ func (c *AppConfig) Validate() error {
 	if c.maxInstanceTTLDaysErr != nil {
 		return c.maxInstanceTTLDaysErr
 	}
+	publicURL, err := ParsePublicURL(c.PublicURL)
+	if err != nil {
+		return err
+	}
+	c.PublicURL = publicURL
 	if maxMinutes := c.MaxInstanceTTLDays * 24 * 60; c.MaxInstanceTTLDays > 0 && c.DefaultInstanceTTLMinutes > maxMinutes {
 		return fmt.Errorf("DEFAULT_INSTANCE_TTL_MINUTES (%d) must not exceed MAX_INSTANCE_TTL_DAYS (%d days, %d minutes)",
 			c.DefaultInstanceTTLMinutes, c.MaxInstanceTTLDays, maxMinutes)
@@ -794,6 +803,7 @@ func loadAppConfig() AppConfig {
 	return AppConfig{
 		Name:                      getEnv("APP_NAME", "backend-api"),
 		Environment:               getEnv("GO_ENV", "development"),
+		PublicURL:                 getEnv("APP_PUBLIC_URL", ""),
 		DefaultInstanceTTLMinutes: int(getEnvInt32("DEFAULT_INSTANCE_TTL_MINUTES", 0)),
 		Debug:                     getEnvBool("APP_DEBUG", true),
 		EnableSwagger:             getEnvBool("ENABLE_SWAGGER", false),

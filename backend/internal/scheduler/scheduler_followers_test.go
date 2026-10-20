@@ -5,7 +5,9 @@ import (
 	"sync"
 	"testing"
 
+	"backend/internal/hooks"
 	"backend/internal/models"
+	"backend/internal/notifier"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -18,13 +20,16 @@ type recordingCleanupNotifier struct {
 	followerCalls []string
 	instanceCalls []models.NotificationTarget
 	instanceTypes []string
+	triggers      []*hooks.Trigger
 	summary       []models.NotificationTarget
 	summaryCalls  int
 }
 
-func (n *recordingCleanupNotifier) NotifyInstance(_ context.Context, target models.NotificationTarget, notifType, _, _ string) error {
+func (n *recordingCleanupNotifier) NotifyInstance(_ context.Context, target models.NotificationTarget, notifType, _, _ string, opts ...notifier.InstanceOption) error {
+	o := notifier.ResolveInstanceOptions(opts...)
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	n.triggers = append(n.triggers, o.Trigger)
 	n.instanceCalls = append(n.instanceCalls, target)
 	n.instanceTypes = append(n.instanceTypes, notifType)
 	return nil
@@ -60,6 +65,8 @@ func TestScheduler_PolicyRunNotificationTargets(t *testing.T) {
 			wantInstanceCalls: 0},
 		{name: "stop lets the notifier read the followers", action: "stop",
 			wantInstanceCalls: 1},
+		{name: "clean notifies with the policy trigger", action: "clean",
+			wantInstanceCalls: 1},
 		{name: "dry run sends only the summary", action: "delete", dryRun: true},
 	}
 	for _, tt := range tests {
@@ -72,7 +79,7 @@ func TestScheduler_PolicyRunNotificationTargets(t *testing.T) {
 			p.DryRun = tt.dryRun
 			require.NoError(t, policyRepo.Create(p))
 			instanceRepo := &mockInstanceRepo{instances: []models.StackInstance{
-				{ID: "i1", Name: "team-a-1", OwnerID: "u1", StackDefinitionID: "d1", ClusterID: "c1", Status: models.StackStatusStopped},
+				{ID: "i1", Name: "team-a-1", OwnerID: "u1", StackDefinitionID: "d1", ClusterID: "c1", Namespace: "stack-team-a-1-u1", Branch: "main", Status: models.StackStatusStopped},
 				{ID: "i2", Name: "running", OwnerID: "u2", Status: models.StackStatusRunning},
 			}}
 			notif := &recordingCleanupNotifier{followers: map[string][]string{"i1": {"f1"}}}
@@ -92,6 +99,10 @@ func TestScheduler_PolicyRunNotificationTargets(t *testing.T) {
 				assert.Equal(t, "cleanup.policy."+tt.action, notif.instanceTypes[0])
 				assert.Equal(t, "u1", notif.instanceCalls[0].OwnerID)
 				assert.Equal(t, tt.wantFollowers, notif.instanceCalls[0].FollowerIDs)
+				assert.Equal(t, "stack-team-a-1-u1", notif.instanceCalls[0].Namespace)
+				assert.Equal(t, "main", notif.instanceCalls[0].Branch)
+				require.NotNil(t, notif.triggers[0], "the card says Triggered by: Cleanup policy <name>")
+				assert.Equal(t, hooks.Trigger{Type: hooks.TriggerCleanupPolicy, ID: "p1", Name: p.Name}, *notif.triggers[0])
 			}
 		})
 	}

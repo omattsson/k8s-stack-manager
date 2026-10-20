@@ -8,6 +8,7 @@ import (
 
 	"backend/internal/database"
 	"backend/internal/models"
+	"backend/internal/notifier"
 	"backend/internal/scheduler"
 	"backend/internal/ttl"
 
@@ -24,7 +25,7 @@ type countingNotifier struct {
 	calls atomic.Int32
 }
 
-func (n *countingNotifier) NotifyInstance(context.Context, models.NotificationTarget, string, string, string) error {
+func (n *countingNotifier) NotifyInstance(context.Context, models.NotificationTarget, string, string, string, ...notifier.InstanceOption) error {
 	n.calls.Add(1)
 	return nil
 }

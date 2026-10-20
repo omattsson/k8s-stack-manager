@@ -24,6 +24,7 @@ import (
 	"backend/internal/hooks"
 	"backend/internal/k8s"
 	"backend/internal/models"
+	"backend/internal/notifier"
 	"backend/pkg/dberrors"
 
 	"github.com/gin-gonic/gin"
@@ -670,14 +671,15 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 	// Post-instance-create hook: ignore-by-default. Cannot undo the create at
 	// this point; subscribers exist for downstream notification (CMDB sync,
 	// audit logs, etc).
-	_ = h.fireInstanceHook(hookTriggerCtx(c), hooks.EventPostInstanceCreate, &inst)
+	hookCtx := hookTriggerCtx(c)
+	_ = h.fireInstanceHook(hookCtx, hooks.EventPostInstanceCreate, &inst)
 
 	if h.notifier != nil {
 		// A new instance has no followers yet.
 		target := models.NewNotificationTarget(&inst)
 		target.FollowerIDs = []string{}
 		_ = h.notifier.NotifyInstance(c.Request.Context(), target, "instance.created", "Stack created",
-			fmt.Sprintf("Stack %s has been created", inst.Name))
+			fmt.Sprintf("Stack %s has been created", inst.Name), notifyTriggerOpt(hookCtx))
 	}
 
 	h.deployManager.BroadcastInstanceCreated(inst.ID)
@@ -997,8 +999,18 @@ func (h *InstanceHandler) afterInstanceDeleted(ctx context.Context, inst *models
 			target.FollowerIDs = []string{}
 		}
 		_ = h.notifier.NotifyInstance(ctx, target, "instance.deleted", "Stack deleted",
-			fmt.Sprintf("Stack %s has been deleted", inst.Name))
+			fmt.Sprintf("Stack %s has been deleted", inst.Name), notifyTriggerOpt(ctx))
 	}
+}
+
+// notifyTriggerOpt is the notifier option with the trigger of ctx
+// (hooks.WithTrigger, see hookTriggerCtx); none when ctx has no trigger.
+func notifyTriggerOpt(ctx context.Context) notifier.InstanceOption {
+	t, ok := hooks.TriggerFromContext(ctx)
+	if !ok || t.Type == "" {
+		return notifier.WithTrigger(nil)
+	}
+	return notifier.WithTrigger(&t)
 }
 
 type invokeActionRequest struct {

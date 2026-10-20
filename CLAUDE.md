@@ -163,6 +163,7 @@ Key values in `values.yaml`:
 - `backend.namespaceLabels`: map of extra stack namespace labels, rendered as sorted `NAMESPACE_LABELS`. The chart renders it only when it is not empty. The keys `managed-by` and `k8s-stack-manager.io/instance-name` fail the render.
 - `mysql.enabled`, `mysql.auth.*`, `mysql.persistence.enabled`: bundled database
 - `ingress.type`, `ingress.host`, `ingress.traefik.*` (`priority`), `ingress.className`, `ingress.tls`: ingress settings
+- `backend.env.APP_PUBLIC_URL`: public https URL of the web UI for the links in notification channel cards. Default: `https://<ingress.host>` when `ingress.host` is set and the ingress has TLS; a set value wins.
 - `otel.enabled`, `metrics.enabled`, `metrics.serviceMonitor.enabled`, `metrics.grafanaDashboard.enabled`: observability
 - `hooks.enabled`, `hooks.subscriptions`, `hooks.actions`: outbound webhook subscriptions and custom actions (see `EXTENDING.md`)
 - `branding.title`, `branding.logoUrl`, `branding.faviconUrl`: set `APP_TITLE`, `APP_LOGO_URL`, `APP_FAVICON_URL` in the backend ConfigMap
@@ -690,6 +691,12 @@ Developers use this application to configure, store and deploy multi-service Hel
   - A bad glob gives 400. An unknown ID adds a `warnings` entry.
   - `webhook_url` must be a valid https URL with a host (400 "Webhook URL must start with https://" or "Webhook URL is not a valid URL"). Error texts, delivery logs and log lines never contain the URL, because it can hold a token.
   - `format`: `generic` (default, the event JSON) or `teams` (a Microsoft Teams Adaptive Card envelope for a Teams workflow made from the template "Post to a channel when a webhook request is received"). An unknown format gives 400. The signature covers the sent body. The test send uses the format. Migration 60 adds the column.
+  - Payload (`channel.EventPayload`): instance events also carry `trigger` (`type` `user`, `cleanup-policy` or `ttl`, `id`, `name`; the struct of the hook envelope), `owner_display_name`, `namespace`, `branch`, `cluster_id`, `cluster_name`, `site_url` and `instance_url`, each omitted when empty. `user_display_name` is the owner (`System` for system events) and is deprecated.
+    - The callers pass the trigger with `NotifyInstance` options (deployer `m.triggerFor`, TTL reaper `ttl`, cleanup policy, handler). An operation that a restart interrupted and the expiry warning have no trigger.
+    - `site_url` is the primary Ingress URL (the rule of `GET /stack-instances/:id/status`), only for `deployment.success`, `deployment.partial` and `rollback.completed`. A failed status read gives no URL.
+    - `instance_url` is `<APP_PUBLIC_URL>/stack-instances/<id>`, not for `instance.deleted`.
+  - `APP_PUBLIC_URL`: public https base URL of the web UI (a host, optional path prefix). http, a same-origin path, a query or a fragment stop the start. Empty: no `instance_url` and no "Stack Manager" button. The Helm chart sets `https://<ingress.host>` when the ingress has TLS and `backend.env.APP_PUBLIC_URL` is not set; a set value wins.
+  - `teams` card (Adaptive Card version 1.5, for the TextBlock style `heading`) of an instance event: the title `<mark> <title> — <stack name>` (heading, bolder, medium, event colour), the message, the facts Namespace, Branch, Cluster, Triggered by and Owner (each only when set), and the buttons "Open site" (`site_url`) and "Stack Manager" (`instance_url`). "Triggered by" is the username, "TTL expiry", "Cleanup policy <name>" or "a user". System events (`cleanup.policy.executed`, `quota.warning`, `secret.expiring`, the test send) keep the facts Event, By and Time.
 - **Notifications:**
   - In-app notifications for deploy, stop and clean events. Each user has notification preferences and an unread count for the badge.
   - Dispatch uses the `notifier` package. The WebSocket message `notification.new` goes only to the sockets of the notified user (`Hub.BroadcastToUser`).

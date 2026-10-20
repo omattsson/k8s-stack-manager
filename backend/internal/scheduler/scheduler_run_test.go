@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"backend/internal/models"
+	"backend/internal/notifier"
 
 	"github.com/robfig/cron/v3"
 	"github.com/stretchr/testify/assert"
@@ -229,7 +230,7 @@ type countingCleanupNotifier struct {
 	calls atomic.Int32
 }
 
-func (n *countingCleanupNotifier) NotifyInstance(context.Context, models.NotificationTarget, string, string, string) error {
+func (n *countingCleanupNotifier) NotifyInstance(context.Context, models.NotificationTarget, string, string, string, ...notifier.InstanceOption) error {
 	n.calls.Add(1)
 	return nil
 }

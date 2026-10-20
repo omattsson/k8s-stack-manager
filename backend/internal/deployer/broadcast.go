@@ -4,6 +4,7 @@ import (
 	"log/slog"
 
 	"backend/internal/models"
+	"backend/internal/notifier"
 	"backend/internal/websocket"
 )
 
@@ -100,13 +101,14 @@ func (m *Manager) broadcastLog(instanceID, logID, line string) {
 
 // notifyInstance sends the in-app notification of an instance event to the
 // owner and the followers of the instance. Silently returns if no notifier
-// is configured.
-func (m *Manager) notifyInstance(target models.NotificationTarget, notifType, title, message string) {
+// is configured. m.shutdownCtx carries no trigger, so the caller passes it
+// in opts (notifier.WithTrigger(m.triggerFor(logID))).
+func (m *Manager) notifyInstance(target models.NotificationTarget, notifType, title, message string, opts ...notifier.InstanceOption) {
 	if m.notifier == nil {
 		return
 	}
 
-	if err := m.notifier.NotifyInstance(m.shutdownCtx, target, notifType, title, message); err != nil {
+	if err := m.notifier.NotifyInstance(m.shutdownCtx, target, notifType, title, message, opts...); err != nil {
 		slog.Error("failed to create lifecycle notification",
 			"instance_id", target.InstanceID, "type", notifType, "error", err)
 	}

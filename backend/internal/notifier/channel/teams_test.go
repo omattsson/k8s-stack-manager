@@ -13,15 +13,27 @@ import (
 	"testing"
 	"time"
 
+	"backend/internal/hooks"
 	"backend/internal/models"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// decodeTeamsCard decodes a Teams envelope body and checks the fixed
-// fields. It returns the card body elements.
+// decodeTeamsCard decodes a Teams envelope body of a card without actions
+// (a system card) and checks the fixed fields. It returns the card body
+// elements.
 func decodeTeamsCard(t *testing.T, body []byte) []map[string]interface{} {
+	t.Helper()
+	blocks, actions := decodeTeamsCardWithActions(t, body)
+	assert.Nil(t, actions, "a system card has no actions")
+	return blocks
+}
+
+// decodeTeamsCardWithActions decodes a Teams envelope body and checks the
+// fixed fields. It returns the card body elements and the actions (nil when
+// the card has none).
+func decodeTeamsCardWithActions(t *testing.T, body []byte) ([]map[string]interface{}, []map[string]interface{}) {
 	t.Helper()
 	var env struct {
 		Type        string `json:"type"`
@@ -32,7 +44,7 @@ func decodeTeamsCard(t *testing.T, body []byte) []map[string]interface{} {
 				Type    string                   `json:"type"`
 				Version string                   `json:"version"`
 				Body    []map[string]interface{} `json:"body"`
-				Actions []interface{}            `json:"actions"`
+				Actions []map[string]interface{} `json:"actions"`
 			} `json:"content"`
 		} `json:"attachments"`
 	}
@@ -44,9 +56,8 @@ func decodeTeamsCard(t *testing.T, body []byte) []map[string]interface{} {
 	assert.Equal(t, "application/vnd.microsoft.card.adaptive", att.ContentType)
 	assert.Equal(t, "http://adaptivecards.io/schemas/adaptive-card.json", att.Content.Schema)
 	assert.Equal(t, "AdaptiveCard", att.Content.Type)
-	assert.Equal(t, "1.4", att.Content.Version)
-	assert.Nil(t, att.Content.Actions, "no actions without a public URL")
-	return att.Content.Body
+	assert.Equal(t, "1.5", att.Content.Version)
+	return att.Content.Body, att.Content.Actions
 }
 
 func factsOf(t *testing.T, block map[string]interface{}) map[string]string {
@@ -63,6 +74,10 @@ func factsOf(t *testing.T, block map[string]interface{}) map[string]string {
 	return out
 }
 
+// TestEncodeBody_Teams checks the card of an event without one instance
+// (cleanup.policy.executed, quota.warning, secret.expiring, test): it keeps
+// the facts Event, By and Time. Instance events get the instance card
+// (TestEncodeBody_TeamsInstanceCard).
 func TestEncodeBody_Teams(t *testing.T) {
 	t.Parallel()
 
@@ -136,6 +151,8 @@ func TestEncodeBody_Teams(t *testing.T) {
 			assert.Equal(t, "Bolder", title["weight"])
 			assert.Equal(t, "Medium", title["size"])
 			assert.Equal(t, true, title["wrap"])
+			assert.NotContains(t, title, "color", "a system card keeps the old title")
+			assert.NotContains(t, title, "style")
 
 			next := 1
 			if tt.wantMessage != "" {
@@ -162,7 +179,15 @@ func TestEncodeBody_Teams(t *testing.T) {
 func TestEncodeBody_GenericAndUnknownFormat(t *testing.T) {
 	t.Parallel()
 
-	payload := EventPayload{EventType: "deployment.success", Title: "Deployed", Message: "ok"}
+	payload := EventPayload{
+		EventType: "deployment.success", Title: "Deployed", Message: "ok",
+		UserDisplayName: "Jane Owner", OwnerDisplayName: "Jane Owner",
+		EntityType: "stack_instance", EntityID: "inst-1",
+		Trigger:   &hooks.Trigger{Type: hooks.TriggerUser, ID: "u-2", Name: "devops-dan"},
+		Namespace: "stack-web-jane", Branch: "feature/x", ClusterID: "c-1", ClusterName: "prod",
+		SiteURL: "https://web.example.com", InstanceURL: "https://stacks.example.com/stack-instances/inst-1",
+		Instances: []models.NotificationTarget{{InstanceID: "inst-1", InstanceName: "web"}},
+	}
 	tests := []struct {
 		name   string
 		format string
@@ -177,13 +202,41 @@ func TestEncodeBody_GenericAndUnknownFormat(t *testing.T) {
 			t.Parallel()
 			body, err := encodeBody(tt.format, payload)
 			require.NoError(t, err)
-			var got EventPayload
+			var got map[string]interface{}
 			require.NoError(t, json.Unmarshal(body, &got))
-			assert.Equal(t, "deployment.success", got.EventType)
-			assert.Equal(t, "Deployed", got.Title)
+			assert.Equal(t, "deployment.success", got["event_type"])
+			assert.Equal(t, "Deployed", got["title"])
+			assert.Equal(t, "Jane Owner", got["user_display_name"], "the deprecated field stays (the owner)")
+			assert.Equal(t, "Jane Owner", got["owner_display_name"])
+			assert.Equal(t, map[string]interface{}{"type": "user", "id": "u-2", "name": "devops-dan"}, got["trigger"])
+			assert.Equal(t, "stack-web-jane", got["namespace"])
+			assert.Equal(t, "feature/x", got["branch"])
+			assert.Equal(t, "c-1", got["cluster_id"])
+			assert.Equal(t, "prod", got["cluster_name"])
+			assert.Equal(t, "https://web.example.com", got["site_url"])
+			assert.Equal(t, "https://stacks.example.com/stack-instances/inst-1", got["instance_url"])
+			assert.NotContains(t, got, "Instances", "the filter data is not sent")
+			assert.NotContains(t, got, "instances")
 			assert.NotContains(t, string(body), "AdaptiveCard")
 		})
 	}
+}
+
+// TestEncodeBody_GenericOmitsEmptyNewFields checks that an event without
+// the new data has the old JSON keys only.
+func TestEncodeBody_GenericOmitsEmptyNewFields(t *testing.T) {
+	t.Parallel()
+
+	body, err := encodeBody(models.NotificationChannelFormatGeneric, EventPayload{
+		EventType: "quota.warning", Title: "Quota", Message: "m", UserDisplayName: "System",
+	})
+	require.NoError(t, err)
+	var got map[string]interface{}
+	require.NoError(t, json.Unmarshal(body, &got))
+	for _, key := range []string{"trigger", "owner_display_name", "namespace", "branch", "cluster_id", "cluster_name", "site_url", "instance_url"} {
+		assert.NotContains(t, got, key)
+	}
+	assert.Equal(t, "System", got["user_display_name"])
 }
 
 type capturedRequest struct {

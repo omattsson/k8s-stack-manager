@@ -15,16 +15,25 @@ import { STUB_HTTPS_URL, STUB_TLS_TRUSTED, expectedSignature, stubHealth, stubRe
  * A real event: instance.created fires when an instance is created (no cluster
  * needed). Each channel filters on the unique name of its own instance, so
  * parallel specs do not reach it.
+ *
+ * The channel payload of an instance event (#642) has the trigger, the owner,
+ * the namespace, the branch, the cluster and instance_url
+ * (<APP_PUBLIC_URL>/stack-instances/<id>). `make test-e2e` starts the backend
+ * with APP_PUBLIC_URL and gives Playwright the same value in
+ * E2E_APP_PUBLIC_URL.
  */
 
 const PASSWORD = 'e2e-test-password';
 /** Nothing listens here: a delivery fails with "Connection failed". */
 const CLOSED_URL = 'https://127.0.0.1:18444/webhook/closed';
 const TLS_SKIP = 'Needs a backend that trusts the e2e stub certificate (make test-e2e on Linux sets E2E_STUB_TLS=1).';
+/** APP_PUBLIC_URL of the e2e backend (Makefile E2E_APP_PUBLIC_URL), without a trailing slash. */
+const APP_PUBLIC_URL = (process.env.E2E_APP_PUBLIC_URL || 'https://stacks.e2e.example').replace(/\/+$/, '');
 
 interface Actor {
   id: string;
   username: string;
+  displayName: string;
   token: string;
 }
 
@@ -41,13 +50,16 @@ const CHANNELS = `${API_BASE}/api/v1/admin/notification-channels`;
 
 async function registerDevops(): Promise<Actor> {
   const username = uniqueName('e2e-nc-devops');
+  // A display name that differs from the username: the channel payload has
+  // the owner's display name and the trigger's username.
+  const displayName = `NC Devops ${username}`;
   const res = await api.post(`${API_BASE}/api/v1/auth/register`, {
     headers: auth(adminToken),
-    data: { username, password: PASSWORD, role: 'devops' },
+    data: { username, password: PASSWORD, role: 'devops', display_name: displayName },
   });
   expect(res.status(), `register ${username}: ${await res.text()}`).toBe(201);
   const { id } = await res.json();
-  return { id, username, token: await apiLogin(api, username, PASSWORD) };
+  return { id, username, displayName, token: await apiLogin(api, username, PASSWORD) };
 }
 
 /** Create a channel through the API and subscribe it to the event types. */
@@ -63,9 +75,10 @@ async function createChannel(data: Record<string, unknown>, eventTypes: string[]
   return id;
 }
 
-async function createInstance(name: string): Promise<string> {
+/** Create an instance as the user of the token (default: admin). */
+async function createInstance(name: string, token: string = adminToken): Promise<string> {
   const res = await api.post(`${API_BASE}/api/v1/stack-instances`, {
-    headers: auth(adminToken),
+    headers: auth(token),
     data: { stack_definition_id: definitionId, name, branch: 'main' },
   });
   expect(res.status(), `create instance: ${await res.text()}`).toBe(201);
@@ -97,6 +110,47 @@ async function openPage(page: Page) {
   await page.addInitScript((t) => localStorage.setItem('token', t), devops.token);
   await page.goto('/admin/notification-channels');
   await expect(page.getByRole('heading', { name: 'Notification Channels' })).toBeVisible();
+}
+
+/**
+ * Create a channel that filters on a new instance name, create that instance
+ * as the devops user and another instance that the filter skips, and return
+ * the parsed body of the one instance.created request that the stub got.
+ */
+async function receiveInstanceCreated(format: 'generic' | 'teams', key: string, instanceName: string): Promise<{ instanceId: string; body: string }> {
+  const channelId = await createChannel(
+    { name: uniqueName(`e2e-nc-${format}-ch`), webhook_url: `${STUB_HTTPS_URL}/webhook/${key}`, format, filters: { instance_name_patterns: [instanceName] } },
+    ['instance.created'],
+  );
+  const instanceId = await createInstance(instanceName, devops.token);
+  await createInstance(uniqueName('e2e-nc-other'), devops.token);
+  const delivery = await waitForDelivery(channelId, 'instance.created');
+  expect(delivery.status, delivery.error_message).toBe('success');
+
+  const recs = (await stubRecords(api, `/webhook/${key}`)).filter((r) => r.headers['x-stackmanager-event'] === 'instance.created');
+  expect(recs).toHaveLength(1);
+  return { instanceId, body: recs[0].body };
+}
+
+interface TeamsFact { title: string; value: string }
+interface TeamsAction { type: string; title: string; url: string }
+interface TeamsEnvelope {
+  type: string;
+  attachments: {
+    contentType: string;
+    content: {
+      type: string;
+      body: { type: string; text?: string; style?: string; weight?: string; facts?: TeamsFact[] }[];
+      actions?: TeamsAction[];
+    };
+  }[];
+}
+
+/** The instance as GET /stack-instances/:id returns it (namespace, branch, cluster_name). */
+async function getInstance(id: string): Promise<{ namespace: string; branch: string; cluster_id?: string; cluster_name?: string }> {
+  const res = await api.get(`${API_BASE}/api/v1/stack-instances/${id}`, { headers: auth(devops.token) });
+  expect(res.ok(), `get instance: ${await res.text()}`).toBe(true);
+  return res.json();
 }
 
 const rowOf = (page: Page, name: string) => page.getByRole('row').filter({ hasText: name });
@@ -296,6 +350,78 @@ test.describe('Notification channels', () => {
     expect(card.attachments[0].content.type).toBe('AdaptiveCard');
     // No signature without a secret.
     expect(recs[0].headers['x-stackmanager-signature']).toBeUndefined();
+  });
+
+  test('format teams: an instance event card has the mark, the facts and the Stack Manager button (#642)', async () => {
+    test.skip(!tlsReady, TLS_SKIP);
+    const instanceName = uniqueName('e2e-nc-tcard');
+    const { instanceId, body: raw } = await receiveInstanceCreated('teams', uniqueName('tcard'), instanceName);
+    const envelope = JSON.parse(raw) as TeamsEnvelope;
+    const inst = await getInstance(instanceId);
+
+    expect(envelope.type).toBe('message');
+    const card = envelope.attachments[0].content;
+    expect(card.type).toBe('AdaptiveCard');
+
+    // Title: "<mark> <title> — <stack name>" (instance.created: U+1F195 "NEW").
+    const title = card.body[0];
+    expect(title.type).toBe('TextBlock');
+    expect(title.text).toBe(`\u{1F195} Stack created \u2014 ${instanceName}`);
+    expect(title.style).toBe('heading');
+    expect(title.weight).toBe('Bolder');
+
+    const factList = card.body.find((b) => b.type === 'FactSet')?.facts ?? [];
+    expect(factList.length, JSON.stringify(card.body)).toBeGreaterThan(0);
+    const facts = Object.fromEntries(factList.map((f) => [f.title, f.value]));
+    // The old system facts are not on an instance card.
+    expect(facts).not.toHaveProperty('Event');
+    expect(facts).not.toHaveProperty('By');
+    expect(facts).not.toHaveProperty('Time');
+    expect(facts['Namespace']).toBe(inst.namespace);
+    expect(facts['Branch']).toBe('main');
+    if (inst.cluster_name) expect(facts['Cluster']).toBe(inst.cluster_name);
+    // The creator started it (username) and owns it (display name).
+    expect(facts['Triggered by']).toBe(devops.username);
+    expect(facts['Owner']).toBe(devops.displayName);
+    // Fact order: Namespace, Branch, Cluster, Triggered by, Owner.
+    const order = factList.map((f) => f.title).filter((t) => t !== 'Cluster');
+    expect(order).toEqual(['Namespace', 'Branch', 'Triggered by', 'Owner']);
+
+    // Buttons: no site before a deploy, the instance page from APP_PUBLIC_URL.
+    const actions = card.actions ?? [];
+    expect(actions.find((a) => a.title === 'Open site')).toBeUndefined();
+    expect(actions).toEqual([
+      { type: 'Action.OpenUrl', title: 'Stack Manager', url: `${APP_PUBLIC_URL}/stack-instances/${instanceId}` },
+    ]);
+  });
+
+  test('format generic: the payload has trigger, owner_display_name and instance_url (#642)', async () => {
+    test.skip(!tlsReady, TLS_SKIP);
+    const instanceName = uniqueName('e2e-nc-gen');
+    const { instanceId, body: raw } = await receiveInstanceCreated('generic', uniqueName('generic'), instanceName);
+    const body = JSON.parse(raw) as Record<string, unknown>;
+    const inst = await getInstance(instanceId);
+
+    expect(body).toMatchObject({
+      event_type: 'instance.created',
+      title: 'Stack created',
+      entity_type: 'stack_instance',
+      entity_id: instanceId,
+      trigger: { type: 'user', id: devops.id, name: devops.username },
+      owner_display_name: devops.displayName,
+      // Deprecated, kept for compatibility: the owner's display name.
+      user_display_name: devops.displayName,
+      namespace: inst.namespace,
+      branch: 'main',
+      instance_url: `${APP_PUBLIC_URL}/stack-instances/${instanceId}`,
+    });
+    if (inst.cluster_id) expect(body.cluster_id).toBe(inst.cluster_id);
+    if (inst.cluster_name) expect(body.cluster_name).toBe(inst.cluster_name);
+    // Only deploy and rollback events carry the site URL.
+    expect(body).not.toHaveProperty('site_url');
+    // The filter targets are internal: never sent.
+    expect(body).not.toHaveProperty('instances');
+    expect(body).not.toHaveProperty('Instances');
   });
 
   test('the delivery logs show the test send and a real event', async ({ page }) => {

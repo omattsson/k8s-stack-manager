@@ -13,6 +13,7 @@ import (
 
 	"backend/internal/hooks"
 	"backend/internal/models"
+	"backend/internal/notifier"
 
 	"github.com/robfig/cron/v3"
 	"go.opentelemetry.io/otel/attribute"
@@ -46,7 +47,7 @@ type CleanupResult struct {
 // notifier.Notifier implements it.
 type CleanupNotifier interface {
 	// NotifyInstance notifies the owner and the followers of an instance.
-	NotifyInstance(ctx context.Context, target models.NotificationTarget, notifType, title, message string) error
+	NotifyInstance(ctx context.Context, target models.NotificationTarget, notifType, title, message string, opts ...notifier.InstanceOption) error
 	// NotifySystemForInstances notifies the admin and devops users and the
 	// channels whose filters match at least one of the instances.
 	NotifySystemForInstances(ctx context.Context, notifType, title, message, entityType, entityID string, instances []models.NotificationTarget) error
@@ -619,6 +620,9 @@ func (s *Scheduler) notifyPolicyExecuted(ctx context.Context, policy *models.Cle
 	if policy.DryRun {
 		return
 	}
+	// The context of this call has no trigger: pass the policy as the
+	// trigger of each instance event ("Triggered by: Cleanup policy <name>").
+	trigger := policyTrigger(policy)
 	for _, r := range results {
 		// The executor sends the owner instance.deleted for a delete, as
 		// the API delete path does.
@@ -639,6 +643,7 @@ func (s *Scheduler) notifyPolicyExecuted(ctx context.Context, policy *models.Cle
 		_ = s.notifier.NotifyInstance(ctx, r.target, notifType,
 			fmt.Sprintf("Stack %q %s by cleanup policy", r.InstanceName, actionPastTense(r.Action)),
 			fmt.Sprintf("Cleanup policy %q performed %s on the stack %q", policy.Name, r.Action, r.InstanceName),
+			notifier.WithTrigger(&trigger),
 		)
 	}
 }

@@ -155,6 +155,15 @@ backend:
     # Set it explicitly to override, for example "true" when TLS terminates at
     # a load balancer in front of the ingress, or "false" to opt out.
     # SECURE_COOKIES: "true"
+    # APP_PUBLIC_URL — public https base URL of the web UI, without a path.
+    # Notification channel cards link to <APP_PUBLIC_URL>/stack-instances/<id>
+    # ("Stack Manager" button, instance_url). The backend refuses a non-https
+    # URL or a URL with a path at startup. When unset, the chart renders
+    # "https://<ingress.host>" if ingress.host is set and the ingress has TLS
+    # (same TLS rule as SECURE_COOKIES). Set it explicitly to override, for
+    # example when TLS terminates at a load balancer. Without a value, cards
+    # have no "Stack Manager" button.
+    # APP_PUBLIC_URL: "https://stacks.example.com"
     ADMIN_USERNAME: admin
     # OIDC (disabled by default)
     OIDC_ENABLED: "false"

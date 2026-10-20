@@ -12,6 +12,7 @@ import (
 
 	"backend/internal/hooks"
 	"backend/internal/models"
+	"backend/internal/notifier"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -76,7 +77,7 @@ type systemNotifier struct {
 	owners   []string
 }
 
-func (n *systemNotifier) NotifyInstance(_ context.Context, _ models.NotificationTarget, notifType, _, _ string) error {
+func (n *systemNotifier) NotifyInstance(_ context.Context, _ models.NotificationTarget, notifType, _, _ string, _ ...notifier.InstanceOption) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.owners = append(n.owners, notifType)

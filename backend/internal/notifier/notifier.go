@@ -6,9 +6,12 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
+	"backend/internal/hooks"
 	"backend/internal/models"
 	"backend/internal/notifier/channel"
 	"backend/internal/websocket"
@@ -25,10 +28,14 @@ type Notifier struct {
 	userRepo          models.UserRepository
 	followerRepo      models.InstanceFollowerRepository
 	channelDispatcher *channel.Dispatcher
+	clusterNames      *hooks.ClusterNameResolver
 	dispatchQueue     chan channel.EventPayload
 	done              chan struct{}
-	initOnce          sync.Once
-	stopOnce          sync.Once
+	// publicURL is APP_PUBLIC_URL without a trailing slash; empty: no
+	// instance_url in the channel payload.
+	publicURL string
+	initOnce  sync.Once
+	stopOnce  sync.Once
 }
 
 // NewNotifier creates a new Notifier. hub and userRepo may be nil if real-time
@@ -46,6 +53,24 @@ func NewNotifier(repo models.NotificationRepository, hub *websocket.Hub, userRep
 // gets instance notifications. Returns n for chaining.
 func (n *Notifier) WithFollowers(repo models.InstanceFollowerRepository) *Notifier {
 	n.followerRepo = repo
+	return n
+}
+
+// WithClusterNames sets the resolver of cluster_name in the channel payload
+// of an instance event. The dispatch worker resolves the name, so the caller
+// never waits for the lookup. Without it the payload has no cluster_name.
+// Call it before the first event. Returns n for chaining.
+func (n *Notifier) WithClusterNames(r *hooks.ClusterNameResolver) *Notifier {
+	n.clusterNames = r
+	return n
+}
+
+// WithPublicURL sets the public base URL of the web UI (APP_PUBLIC_URL,
+// validated by config.ParsePublicURL). The channel payload of an instance
+// event then has instance_url = <publicURL>/stack-instances/<id> (not for
+// instance.deleted). Call it before the first event. Returns n for chaining.
+func (n *Notifier) WithPublicURL(publicURL string) *Notifier {
+	n.publicURL = strings.TrimRight(publicURL, "/")
 	return n
 }
 
@@ -71,9 +96,21 @@ func (n *Notifier) dispatchWorker() {
 		case <-n.done:
 			return
 		case payload := <-n.dispatchQueue:
-			n.channelDispatcher.Dispatch(context.Background(), payload)
+			ctx := context.Background()
+			n.channelDispatcher.Dispatch(ctx, n.withClusterName(ctx, payload))
 		}
 	}
+}
+
+// withClusterName returns payload with cluster_name from the resolver. It
+// runs in the dispatch worker, so the caller of NotifyInstance never waits
+// for the lookup. Without a resolver, without a cluster ID or when the name
+// is set already, payload is returned as it is.
+func (n *Notifier) withClusterName(ctx context.Context, payload channel.EventPayload) channel.EventPayload {
+	if payload.ClusterName == "" && payload.ClusterID != "" {
+		payload.ClusterName = n.clusterNames.NameFor(ctx, payload.ClusterID)
+	}
+	return payload
 }
 
 // Stop shuts down the dispatch worker. Safe to call multiple times and
@@ -177,6 +214,50 @@ func (n *Notifier) FollowerIDs(ctx context.Context, instanceID string) []string 
 	return ids
 }
 
+// InstanceOptions is the data of an instance event that only the caller
+// knows. NotifyInstance puts it into the channel payload; the in-app
+// notification does not use it.
+type InstanceOptions struct {
+	// Trigger is what started the operation (payload field trigger). Nil:
+	// no trigger.
+	Trigger *hooks.Trigger
+	// SiteURL is the primary URL of the stack (payload field site_url).
+	SiteURL string
+}
+
+// InstanceOption sets one field of InstanceOptions.
+type InstanceOption func(*InstanceOptions)
+
+// WithTrigger sets the trigger of the event. A nil trigger sets none.
+func WithTrigger(t *hooks.Trigger) InstanceOption {
+	return func(o *InstanceOptions) {
+		if t == nil {
+			o.Trigger = nil
+			return
+		}
+		cp := *t
+		o.Trigger = &cp
+	}
+}
+
+// WithSiteURL sets the primary URL of the stack (deployment.success,
+// deployment.partial and rollback.completed only). Empty sets none.
+func WithSiteURL(siteURL string) InstanceOption {
+	return func(o *InstanceOptions) { o.SiteURL = siteURL }
+}
+
+// ResolveInstanceOptions applies opts in order and returns the result. Test
+// doubles of NotifyInstance use it to read the options.
+func ResolveInstanceOptions(opts ...InstanceOption) InstanceOptions {
+	var o InstanceOptions
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&o)
+		}
+	}
+	return o
+}
+
 // NotifyInstance creates the in-app notification of an instance event for
 // the owner and for each follower of the instance, and dispatches the event
 // once to the external channels whose filters match the instance.
@@ -188,9 +269,14 @@ func (n *Notifier) FollowerIDs(ctx context.Context, instanceID string) []string 
 // owner before followers existed, an actor who is the owner or a follower
 // gets the notification of the own operation.
 //
+// The channel payload also has the owner, the namespace, the branch, the
+// cluster (ID, and the name when a resolver is set), the instance URL (with
+// a public URL, not for instance.deleted) and the data of opts (trigger,
+// site URL).
+//
 // It returns the error of the owner's database insert; errors for followers
 // are logged.
-func (n *Notifier) NotifyInstance(ctx context.Context, target models.NotificationTarget, notifType, title, message string) error {
+func (n *Notifier) NotifyInstance(ctx context.Context, target models.NotificationTarget, notifType, title, message string, opts ...InstanceOption) error {
 	followers := target.FollowerIDs
 	if followers == nil {
 		followers = n.FollowerIDs(ctx, target.InstanceID)
@@ -221,18 +307,73 @@ func (n *Notifier) NotifyInstance(ctx context.Context, target models.Notificatio
 	}
 
 	if n.channelDispatcher != nil {
-		n.enqueueDispatch(channel.EventPayload{
-			EventType:       notifType,
-			Timestamp:       time.Now().UTC(),
-			Title:           title,
-			Message:         message,
-			UserDisplayName: n.displayName(target.OwnerID),
-			EntityType:      EntityTypeStackInstance,
-			EntityID:        target.InstanceID,
-			Instances:       []models.NotificationTarget{target},
-		})
+		n.enqueueDispatch(n.instancePayload(target, notifType, title, message, ResolveInstanceOptions(opts...)))
 	}
 	return ownerErr
+}
+
+// instancePayload builds the channel payload of an instance event.
+func (n *Notifier) instancePayload(target models.NotificationTarget, notifType, title, message string, o InstanceOptions) channel.EventPayload {
+	owner := n.findUser(target.OwnerID)
+	payload := channel.EventPayload{
+		EventType:  notifType,
+		Timestamp:  time.Now().UTC(),
+		Title:      title,
+		Message:    message,
+		EntityType: EntityTypeStackInstance,
+		EntityID:   target.InstanceID,
+		Trigger:    n.resolveTrigger(o.Trigger),
+		Namespace:  target.Namespace,
+		Branch:     target.Branch,
+		ClusterID:  target.ClusterID,
+		SiteURL:    o.SiteURL,
+		Instances:  []models.NotificationTarget{target},
+	}
+	if owner != nil {
+		// user_display_name keeps its old value (the owner's display
+		// name) for compatibility.
+		payload.UserDisplayName = owner.DisplayName
+		payload.OwnerDisplayName = owner.DisplayName
+		if payload.OwnerDisplayName == "" {
+			payload.OwnerDisplayName = owner.Username
+		}
+	}
+	if n.publicURL != "" && target.InstanceID != "" && notifType != eventInstanceDeleted {
+		payload.InstanceURL = n.publicURL + "/stack-instances/" + url.PathEscape(target.InstanceID)
+	}
+	return payload
+}
+
+// eventInstanceDeleted has no instance page, so its payload has no
+// instance_url.
+const eventInstanceDeleted = "instance.deleted"
+
+// resolveTrigger returns a copy of t. A user trigger without a name gets the
+// username of its ID, when the user exists.
+func (n *Notifier) resolveTrigger(t *hooks.Trigger) *hooks.Trigger {
+	if t == nil || t.Type == "" {
+		return nil
+	}
+	cp := *t
+	if cp.Type == hooks.TriggerUser && cp.Name == "" && cp.ID != "" {
+		if u := n.findUser(cp.ID); u != nil {
+			cp.Name = u.Username
+		}
+	}
+	return &cp
+}
+
+// findUser returns the user, or nil without a user repository, for an empty
+// ID or on a lookup error.
+func (n *Notifier) findUser(userID string) *models.User {
+	if n.userRepo == nil || userID == "" {
+		return nil
+	}
+	user, err := n.userRepo.FindByID(userID)
+	if err != nil {
+		return nil
+	}
+	return user
 }
 
 // disabledReceivers returns the receivers that switched off notifType. On a
@@ -251,10 +392,7 @@ func (n *Notifier) disabledReceivers(ctx context.Context, notifType string, user
 }
 
 func (n *Notifier) displayName(userID string) string {
-	if n.userRepo == nil || userID == "" {
-		return ""
-	}
-	if user, err := n.userRepo.FindByID(userID); err == nil && user != nil {
+	if user := n.findUser(userID); user != nil {
 		return user.DisplayName
 	}
 	return ""

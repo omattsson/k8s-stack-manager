@@ -14,6 +14,10 @@ data:
   {{- if and (not (hasKey .Values.backend.env "SECURE_COOKIES")) (eq (include "k8s-stack-manager.ingressTLSEnabled" .) "true") }}
   SECURE_COOKIES: "true"
   {{- end }}
+  {{- /* Public https URL of the web UI (links in notification cards); an explicit backend.env.APP_PUBLIC_URL wins. */}}
+  {{- if and (not (hasKey .Values.backend.env "APP_PUBLIC_URL")) .Values.ingress.host (eq (include "k8s-stack-manager.ingressTLSEnabled" .) "true") }}
+  APP_PUBLIC_URL: {{ printf "https://%s" .Values.ingress.host | quote }}
+  {{- end }}
   {{- if .Values.mysql.enabled }}
   DB_HOST: {{ include "k8s-stack-manager.mysql.serviceName" . | quote }}
   DB_PORT: "3306"

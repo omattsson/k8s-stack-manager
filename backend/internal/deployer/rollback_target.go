@@ -295,15 +295,21 @@ func rollbackHookOpts(req RollbackRequest, regCfg *models.RegistryConfig, previo
 
 // rollbackReadiness waits for the pods after a successful rollback when
 // readiness gating is configured (as deploy does). It returns a warning line
-// for the output on timeout, else "".
-func (m *Manager) rollbackReadiness(k8sClient *k8s.Client, instanceID, namespace, logID string, rollbackErr error) string {
-	if rollbackErr != nil || m.stabilizeTimeout <= 0 || k8sClient == nil {
-		return ""
+// for the output on timeout (else ""), and the primary URL of the stack for
+// the channel payload of rollback.completed ("" after a failed rollback or
+// when no Ingress URL is known).
+func (m *Manager) rollbackReadiness(k8sClient *k8s.Client, instanceID, namespace, logID string, rollbackErr error) (warning, siteURL string) {
+	if rollbackErr != nil {
+		return "", ""
 	}
-	if err := m.awaitReadiness(k8sClient, instanceID, namespace, logID); err != nil {
-		return fmt.Sprintf("WARNING: %s\n", err.Error())
+	if m.stabilizeTimeout <= 0 || k8sClient == nil {
+		return "", m.siteURLFor(k8sClient, namespace, nil, false)
 	}
-	return ""
+	last, err := m.awaitReadiness(k8sClient, instanceID, namespace, logID)
+	if err != nil {
+		warning = fmt.Sprintf("WARNING: %s\n", err.Error())
+	}
+	return warning, m.siteURLFor(k8sClient, namespace, last, true)
 }
 
 // rollbackJob is the work of one async rollback.
@@ -553,5 +559,5 @@ func (m *Manager) finalizeRollbackRejected(job rollbackJob, output string, hookE
 	}
 	_ = m.fireDeployHook(m.shutdownCtx, hooks.EventRollbackCompleted, instance, deployLog.ID, deployLog.StartedAt, outcomeOpts(rollbackOutcomeRejected))
 	m.notifyInstance(models.NewNotificationTarget(instance), "rollback.error", "Rollback rejected",
-		fmt.Sprintf("Rollback of %s was rejected: %s", instance.Name, reason))
+		fmt.Sprintf("Rollback of %s was rejected: %s", instance.Name, reason), m.triggerOpt(deployLog.ID))
 }

@@ -7,7 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"backend/internal/hooks"
 	"backend/internal/models"
+	"backend/internal/notifier"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,6 +21,8 @@ import (
 
 type notifyCall struct {
 	userID, notifType, title, message, entityType, entityID string
+	// trigger is the notifier.WithTrigger option of the call.
+	trigger *hooks.Trigger
 }
 
 type mockExpiryNotifier struct {
@@ -26,7 +30,8 @@ type mockExpiryNotifier struct {
 	calls []notifyCall
 }
 
-func (m *mockExpiryNotifier) NotifyInstance(_ context.Context, target models.NotificationTarget, notifType, title, message string) error {
+func (m *mockExpiryNotifier) NotifyInstance(_ context.Context, target models.NotificationTarget, notifType, title, message string, opts ...notifier.InstanceOption) error {
+	o := notifier.ResolveInstanceOptions(opts...)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.calls = append(m.calls, notifyCall{
@@ -36,6 +41,7 @@ func (m *mockExpiryNotifier) NotifyInstance(_ context.Context, target models.Not
 		message:    message,
 		entityType: "stack_instance",
 		entityID:   target.InstanceID,
+		trigger:    o.Trigger,
 	})
 	return nil
 }
@@ -189,6 +195,7 @@ func TestWarner_SendsWarningForExpiringSoon(t *testing.T) {
 	assert.Equal(t, "stack.expiring", calls[0].notifType)
 	assert.Equal(t, "stack_instance", calls[0].entityType)
 	assert.Equal(t, "inst-1", calls[0].entityID)
+	assert.Nil(t, calls[0].trigger, "an expiry warning has no operation, so no trigger")
 }
 
 func TestWarner_DeduplicatesWarnings(t *testing.T) {

@@ -434,7 +434,42 @@ The application records every mutating API call (POST, PUT, DELETE) with the use
 - An event without an instance (quota warning, secret expiry) goes only to channels without filters.
 - A cleanup policy run (`cleanup.policy.executed`) goes to a filtered channel when at least one affected instance matches.
 - A channel that the filters skip gets no delivery log entry (the backend logs it at debug level).
-- **Format** (`format`) sets the body of the webhook request. `generic` (the default) sends the event JSON. `teams` sends a Microsoft Teams Adaptive Card envelope (title, message, and the facts Event, By, and Time). Use `teams` for a Teams workflow made from the template "Post to a channel when a webhook request is received". The workflow then needs no change. An unknown format gives 400. The signature (`X-StackManager-Signature`) covers the body that is sent. The test send uses the format of the channel.
+- **Format** (`format`) sets the body of the webhook request. `generic` (the default) sends the event JSON. `teams` sends a Microsoft Teams Adaptive Card envelope (see below). Use `teams` for a Teams workflow made from the template "Post to a channel when a webhook request is received". The workflow then needs no change. An unknown format gives 400. The signature (`X-StackManager-Signature`) covers the body that is sent. The test send uses the format of the channel.
+- **`generic` payload.** Instance events have these fields in addition to `event_type`, `timestamp`, `title`, `message`, `entity_type`, `entity_id` and `metadata`. Each field is omitted when it is empty.
+  - `trigger`: what started the operation, with the names of the hook envelope: `type` (`user`, `cleanup-policy` or `ttl`), `id` and `name` (username or policy name). An operation that a restart interrupted and the expiry warning have no trigger.
+  - `owner_display_name`: the display name of the instance owner (else the username).
+  - `namespace`, `branch`, `cluster_id`, `cluster_name`: the instance. An instance on the default cluster has no cluster ID.
+  - `site_url`: the primary Ingress URL of the stack (the same rule as the instance status page). Only for `deployment.success`, `deployment.partial` and `rollback.completed`.
+  - `instance_url`: `<APP_PUBLIC_URL>/stack-instances/<id>`, only when `APP_PUBLIC_URL` is set. Not for `instance.deleted`.
+  - `user_display_name` is still there, but it is deprecated. It is the owner, not the user who started the operation (`System` for system events). Use `trigger` and `owner_display_name`.
+- **`APP_PUBLIC_URL`** is the public base URL of the web UI, for example `https://stacks.example.com`. It must be an https URL with a host (an optional path prefix is allowed). An http URL, a same-origin path, a query or a fragment stops the start. Without it, cards have no "Stack Manager" button and payloads no `instance_url`. The Helm chart sets `https://<ingress.host>` when the ingress has TLS and `backend.env.APP_PUBLIC_URL` is not set. A set value wins.
+- **`teams` card of an instance event** (Adaptive Card version 1.5):
+  - The title `<mark> <title> — <stack name>` in the colour of the event (see the table). An instance event that is not in the table uses the event title without a mark.
+  - The message of the event.
+  - The facts Namespace, Branch, Cluster, Triggered by and Owner, each only when it has a value. "Triggered by" is the username, "TTL expiry", "Cleanup policy <name>", or "a user" when the name is unknown.
+  - The buttons "Open site" (`site_url`) and "Stack Manager" (`instance_url`), each only when it has a value.
+  - System events (`cleanup.policy.executed`, `quota.warning`, `secret.expiring`) and the test send keep the old card: title, message, and the facts Event, By, and Time.
+
+| Event | Mark | Title | Colour |
+|---|---|---|---|
+| `deployment.success` | ✅ | Deploy succeeded | good |
+| `deployment.partial` | ⚠️ | Deploy partly succeeded | warning |
+| `deployment.warning` | ⚠️ | Deploy succeeded with a warning | warning |
+| `deployment.error` | ❌ | Deploy failed | attention |
+| `deploy.timeout` | ⏱ | Deploy timed out | attention |
+| `deployment.stopped` | ⏹ | Stack stopped | default |
+| `stop.error` | ❌ | Stop failed | attention |
+| `clean.completed` | 🧹 | Stack cleaned | default |
+| `clean.error` | ❌ | Clean failed | attention |
+| `instance.created` | 🆕 | Stack created | default |
+| `instance.deleted` | 🗑 | Stack deleted | default |
+| `rollback.completed` | ↩ | Rollback succeeded | good |
+| `rollback.error` | ❌ | Rollback failed | attention |
+| `stack.expiring` | ⏳ | Stack expires soon | warning |
+| `stack.expired` | ⏹ | Stack expired | warning |
+| `cleanup.policy.stop` | 🧹 | Stopped by a cleanup policy | default |
+| `cleanup.policy.clean` | 🧹 | Cleaned by a cleanup policy | default |
+
 - **Test** (`POST /admin/notification-channels/:id/test`) sends one test payload (event type `test`, one attempt, no redirect), also to a disabled channel. Each test send is in the delivery log with the event type `test`. The response has `success`, `message`, `status_code`, and `channel_enabled`.
 - The backend does not follow a redirect from a channel webhook. A 3xx answer is a failed delivery: the delivery log has the status code and `HTTP <code>: redirect not followed`. Delivery log messages never contain the webhook URL. Configure the final URL.
 - The save checks the patterns. An invalid pattern gives 400. An owner, definition, or cluster ID that does not exist gives a warning in the response (`warnings`), and the channel is saved. There are at most 50 values for each filter.

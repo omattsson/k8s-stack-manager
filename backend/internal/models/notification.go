@@ -59,6 +59,10 @@ type NotificationTarget struct {
 	OwnerID      string
 	DefinitionID string
 	ClusterID    string
+	// Namespace and Branch are display data for the channel payload (the
+	// namespace and the default branch of the instance).
+	Namespace string
+	Branch    string
 	// FollowerIDs are the followers of the instance when the caller read
 	// them before the instance was deleted (a delete also deletes the
 	// follower rows). When FollowerIDs is nil, the notifier reads them.
@@ -77,5 +81,7 @@ func NewNotificationTarget(inst *StackInstance) NotificationTarget {
 		OwnerID:      inst.OwnerID,
 		DefinitionID: inst.StackDefinitionID,
 		ClusterID:    inst.ClusterID,
+		Namespace:    inst.Namespace,
+		Branch:       inst.Branch,
 	}
 }

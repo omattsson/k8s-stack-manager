@@ -18,6 +18,7 @@ import (
 	"backend/internal/hooks"
 	"backend/internal/k8s"
 	"backend/internal/models"
+	"backend/internal/notifier"
 	"backend/internal/websocket"
 
 	"github.com/google/uuid"
@@ -50,7 +51,7 @@ type ClusterResolver interface {
 type LifecycleNotifier interface {
 	// NotifyInstance notifies the owner and the followers of the instance
 	// and dispatches the event to the matching channels.
-	NotifyInstance(ctx context.Context, target models.NotificationTarget, notifType, title, message string) error
+	NotifyInstance(ctx context.Context, target models.NotificationTarget, notifType, title, message string, opts ...notifier.InstanceOption) error
 	// FollowerIDs returns the followers of the instance. Read them before
 	// an instance delete (the delete removes the follower rows).
 	FollowerIDs(ctx context.Context, instanceID string) []string
@@ -303,6 +304,14 @@ func (m *Manager) triggerFor(logID string) *hooks.Trigger {
 	}
 	t := v.(hooks.Trigger)
 	return &t
+}
+
+// triggerOpt is the notifier option with the trigger of the operation of
+// logID (none when it is unknown). m.notifyInstance uses m.shutdownCtx, which
+// has no trigger, so each finalize passes it. Call it before the deferred
+// logTriggers.Delete of the operation goroutine runs.
+func (m *Manager) triggerOpt(logID string) notifier.InstanceOption {
+	return notifier.WithTrigger(m.triggerFor(logID))
 }
 
 // fireDeployHook dispatches event to configured hook subscribers using a
@@ -921,10 +930,20 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 
 	// Wait for pods to become ready when at least some charts succeeded.
 	var readinessWarning string
+	var lastStatus *k8s.NamespaceStatus
+	readinessRan := false
 	if deployErr == nil && m.stabilizeTimeout > 0 && k8sClient != nil {
-		if waitErr := m.awaitReadiness(k8sClient, instanceID, namespace, deployLog.ID); waitErr != nil {
+		readinessRan = true
+		var waitErr error
+		if lastStatus, waitErr = m.awaitReadiness(k8sClient, instanceID, namespace, deployLog.ID); waitErr != nil {
 			readinessWarning = waitErr.Error()
 		}
+	}
+	// The primary URL of the stack for the "Open site" button of the
+	// channel card (deployment.success and deployment.partial).
+	var siteURL string
+	if deployErr == nil || len(failedCharts) < len(charts) {
+		siteURL = m.siteURLFor(k8sClient, namespace, lastStatus, readinessRan)
 	}
 
 	// The pods are no longer awaited: stop reading the events. The most
@@ -961,16 +980,18 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 		postDeployIgnored = res.ignored
 	}
 
-	m.finalizeDeployWith(instanceID, deployLog, allOutput, deployErr, partialDeploy, lastDeployedValues, readinessWarning, postDeployIgnored)
+	m.finalizeDeployWith(instanceID, deployLog, allOutput, deployErr, partialDeploy, lastDeployedValues, readinessWarning, postDeployIgnored, siteURL)
 }
 
 // awaitReadiness polls namespace status until all deployments are healthy or the
 // stabilize timeout expires. A timeout is returned as an error (treated as a
-// warning by the caller, not a hard deploy failure).
-func (m *Manager) awaitReadiness(k8sClient *k8s.Client, instanceID, namespace, logID string) error {
+// warning by the caller, not a hard deploy failure). It also returns the last
+// namespace status that it read (nil when no read succeeded), for the
+// primary URL of the stack (see primaryURL).
+func (m *Manager) awaitReadiness(k8sClient *k8s.Client, instanceID, namespace, logID string) (*k8s.NamespaceStatus, error) {
 	inst, err := m.instanceRepo.FindByID(instanceID)
 	if err != nil {
-		return fmt.Errorf("find instance for stabilize: %w", err)
+		return nil, fmt.Errorf("find instance for stabilize: %w", err)
 	}
 	inst.Status = models.StackStatusStabilizing
 	if err := m.instanceRepo.Update(inst); err != nil {
@@ -985,17 +1006,18 @@ func (m *Manager) awaitReadiness(k8sClient *k8s.Client, instanceID, namespace, l
 	ticker := time.NewTicker(m.stabilizePollInterval)
 	defer ticker.Stop()
 
+	var last *k8s.NamespaceStatus
 	for {
 		select {
 		case <-stabilizeCtx.Done():
 			m.broadcastLog(instanceID, logID, fmt.Sprintf("WARNING: readiness timeout after %s", m.stabilizeTimeout))
-			return fmt.Errorf("readiness timeout after %s", m.stabilizeTimeout)
+			return last, fmt.Errorf("readiness timeout after %s", m.stabilizeTimeout)
 		case <-ticker.C:
 			// Abort early if the instance was stopped/cleaned while stabilizing.
 			if current, findErr := m.instanceRepo.FindByID(instanceID); findErr == nil {
 				if current.Status != models.StackStatusStabilizing {
 					m.broadcastLog(instanceID, logID, fmt.Sprintf("Stabilization aborted: instance status changed to %s", current.Status))
-					return fmt.Errorf("stabilization aborted: status changed to %s", current.Status)
+					return last, fmt.Errorf("stabilization aborted: status changed to %s", current.Status)
 				}
 			}
 
@@ -1007,10 +1029,11 @@ func (m *Manager) awaitReadiness(k8sClient *k8s.Client, instanceID, namespace, l
 				slog.Warn("readiness poll failed", "instance_id", instanceID, "error", statusErr)
 				continue
 			}
+			last = nsStatus
 
 			if nsStatus.Status == k8s.StatusHealthy {
 				m.broadcastLog(instanceID, logID, "All pods healthy")
-				return nil
+				return last, nil
 			}
 
 			slog.Debug("readiness poll", "instance_id", instanceID, "status", nsStatus.Status)
@@ -1023,7 +1046,7 @@ func (m *Manager) awaitReadiness(k8sClient *k8s.Client, instanceID, namespace, l
 // extra FindByID call. readinessWarning is non-empty when pod readiness timed
 // out (deploy still succeeds, but the hook payload includes the warning).
 func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.DeploymentLog, output string, deployErr error, partialDeploy bool, lastDeployedValues string, readinessWarning string) {
-	m.finalizeDeployWith(instanceID, deployLog, output, deployErr, partialDeploy, lastDeployedValues, readinessWarning, nil)
+	m.finalizeDeployWith(instanceID, deployLog, output, deployErr, partialDeploy, lastDeployedValues, readinessWarning, nil, "")
 }
 
 // msgFinalizeInstanceUnreadable is the error of a deploy log whose instance
@@ -1032,8 +1055,10 @@ const msgFinalizeInstanceUnreadable = "The deploy ended, but the stack could not
 
 // finalizeDeployWith is finalizeDeploy with the failures of blocking
 // post-deploy subscribers that have failure_policy=ignore: each gives the
-// owner a warning notification.
-func (m *Manager) finalizeDeployWith(instanceID string, deployLog *models.DeploymentLog, output string, deployErr error, partialDeploy bool, lastDeployedValues string, readinessWarning string, postDeployIgnored []hooks.IgnoredFailure) {
+// owner a warning notification. siteURL is the primary URL of the stack for
+// the channel payload of deployment.success and deployment.partial ("" for
+// none).
+func (m *Manager) finalizeDeployWith(instanceID string, deployLog *models.DeploymentLog, output string, deployErr error, partialDeploy bool, lastDeployedValues string, readinessWarning string, postDeployIgnored []hooks.IgnoredFailure, siteURL string) {
 	now := time.Now().UTC()
 
 	instance, err := m.instanceRepo.FindByID(instanceID)
@@ -1155,10 +1180,12 @@ func (m *Manager) finalizeDeployWith(instanceID string, deployLog *models.Deploy
 	}
 	_ = m.fireDeployHook(hookCtx, hooks.EventDeployFinalized, instance, deployLog.ID, deployLog.StartedAt, finalizeHookOpts)
 
+	trigger := m.triggerOpt(deployLog.ID)
 	for _, f := range postDeployIgnored {
 		m.notifyInstance(models.NewNotificationTarget(instance), "deployment.warning",
 			fmt.Sprintf("Post-deploy step %s failed", f.Hook),
-			fmt.Sprintf("Deployment of %s: %s", instance.Name, f.UserMessage(hooks.EventPostDeploy, "deployment")))
+			fmt.Sprintf("Deployment of %s: %s", instance.Name, f.UserMessage(hooks.EventPostDeploy, "deployment")),
+			trigger)
 	}
 
 	if deployErr != nil && !partialDeploy {
@@ -1167,19 +1194,22 @@ func (m *Manager) finalizeDeployWith(instanceID string, deployLog *models.Deploy
 		if isTimeoutError(deployErr) && !isPostDeployHookError(deployErr) {
 			m.notifyInstance(models.NewNotificationTarget(instance), "deploy.timeout",
 				"Deployment timed out",
-				fmt.Sprintf("Deployment of %s exceeded the timeout threshold", instance.Name))
+				fmt.Sprintf("Deployment of %s exceeded the timeout threshold", instance.Name), trigger)
 			_ = m.fireDeployHook(hookCtx, hooks.EventDeployTimeout, instance, deployLog.ID, deployLog.StartedAt, hookOpts{})
 		} else {
 			m.notifyInstance(models.NewNotificationTarget(instance), "deployment.error",
 				"Deployment failed",
-				fmt.Sprintf("Deployment of %s failed: %s", instance.Name, instance.ErrorMessage))
+				fmt.Sprintf("Deployment of %s failed: %s", instance.Name, instance.ErrorMessage), trigger)
 		}
 	} else if partialDeploy {
 		m.notifyInstance(models.NewNotificationTarget(instance), "deployment.partial",
 			"Deployment partially succeeded",
-			fmt.Sprintf("Deployment of %s partially succeeded: %s", instance.Name, instance.ErrorMessage))
+			fmt.Sprintf("Deployment of %s partially succeeded: %s", instance.Name, instance.ErrorMessage),
+			trigger, notifier.WithSiteURL(siteURL))
 	} else {
-		m.notifyInstance(models.NewNotificationTarget(instance), "deployment.success", "Deployment succeeded", fmt.Sprintf("Deployment of %s completed successfully", instance.Name))
+		m.notifyInstance(models.NewNotificationTarget(instance), "deployment.success", "Deployment succeeded",
+			fmt.Sprintf("Deployment of %s completed successfully", instance.Name),
+			trigger, notifier.WithSiteURL(siteURL))
 	}
 }
 
@@ -1399,9 +1429,11 @@ func (m *Manager) finalizeStop(instanceID string, deployLog *models.DeploymentLo
 
 	_ = m.fireDeployHook(m.shutdownCtx, hooks.EventStopCompleted, instance, deployLog.ID, deployLog.StartedAt, hookOpts{})
 	if stopErr != nil {
-		m.notifyInstance(models.NewNotificationTarget(instance), "stop.error", "Stop failed", fmt.Sprintf("Stopping %s failed: %s", instance.Name, instance.ErrorMessage))
+		m.notifyInstance(models.NewNotificationTarget(instance), "stop.error", "Stop failed", fmt.Sprintf("Stopping %s failed: %s", instance.Name, instance.ErrorMessage),
+			m.triggerOpt(deployLog.ID))
 	} else {
-		m.notifyInstance(models.NewNotificationTarget(instance), "deployment.stopped", "Stack stopped", fmt.Sprintf("Stack %s has been stopped", instance.Name))
+		m.notifyInstance(models.NewNotificationTarget(instance), "deployment.stopped", "Stack stopped", fmt.Sprintf("Stack %s has been stopped", instance.Name),
+			m.triggerOpt(deployLog.ID))
 	}
 }
 
@@ -1839,19 +1871,21 @@ func (m *Manager) finalizeClean(instanceID string, deployLog *models.DeploymentL
 	_ = m.fireDeployHook(m.shutdownCtx, hooks.EventCleanCompleted, instance, deployLog.ID, deployLog.StartedAt, cleanOpts)
 
 	if cleanErr != nil {
-		m.notifyInstance(target, "clean.error", "Cleanup failed", fmt.Sprintf("Cleanup of %s failed: %s", instance.Name, instance.ErrorMessage))
+		m.notifyInstance(target, "clean.error", "Cleanup failed", fmt.Sprintf("Cleanup of %s failed: %s", instance.Name, instance.ErrorMessage),
+			m.triggerOpt(deployLog.ID))
 	} else if deleted {
 		message := fmt.Sprintf("Stack %s has been deleted", instance.Name)
 		if trigger := m.triggerFor(deployLog.ID); trigger != nil && trigger.Type == hooks.TriggerCleanupPolicy && trigger.Name != "" {
 			// The same text as the direct delete of a cleanup policy.
 			message = fmt.Sprintf("Stack %s has been deleted by cleanup policy %q", instance.Name, trigger.Name)
 		}
-		m.notifyInstance(target, "instance.deleted", "Stack deleted", message)
+		m.notifyInstance(target, "instance.deleted", "Stack deleted", message, m.triggerOpt(deployLog.ID))
 		// The same events as the API delete of a draft instance.
 		_ = m.fireDeployHook(m.shutdownCtx, hooks.EventPostInstanceDelete, instance, deployLog.ID, deployLog.StartedAt, hookOpts{})
 		_ = m.fireDeployHook(m.shutdownCtx, hooks.EventDeleteCompleted, instance, deployLog.ID, deployLog.StartedAt, hookOpts{})
 	} else {
-		m.notifyInstance(models.NewNotificationTarget(instance), "clean.completed", "Cleanup completed", fmt.Sprintf("Stack %s has been cleaned and returned to draft", instance.Name))
+		m.notifyInstance(models.NewNotificationTarget(instance), "clean.completed", "Cleanup completed", fmt.Sprintf("Stack %s has been cleaned and returned to draft", instance.Name),
+			m.triggerOpt(deployLog.ID))
 	}
 }
 
@@ -2092,11 +2126,11 @@ func (m *Manager) executeRollback(job rollbackJob) {
 		defer cancel()
 		output, applied, err := m.rollbackToTarget(ctx, helm, k8sClient, streaming, instanceID, job.instance.Name, deployLog, namespace, charts, job.target)
 		rollbackErr = err
-		readiness := m.rollbackReadiness(k8sClient, instanceID, namespace, deployLog.ID, rollbackErr)
+		readiness, siteURL := m.rollbackReadiness(k8sClient, instanceID, namespace, deployLog.ID, rollbackErr)
 		podEventLines, podEvent := podWatch.stop()
 		rollbackErr = withPodEvent(rollbackErr, podEvent)
 		output = allOutput + output + podEventLines + readiness
-		m.finalizeRollback(instanceID, deployLog, output, rollbackErr, applied)
+		m.finalizeRollback(instanceID, deployLog, output, rollbackErr, applied, siteURL)
 		return
 	}
 
@@ -2173,12 +2207,12 @@ func (m *Manager) executeRollback(job rollbackJob) {
 		collect = rolledBack
 	}
 	running := m.collectChartValues(context.Background(), helm, namespace, collect) //nolint:gosec // G118: intentional — must outlive HTTP request
-	readiness := m.rollbackReadiness(k8sClient, instanceID, namespace, deployLog.ID, rollbackErr)
+	readiness, siteURL := m.rollbackReadiness(k8sClient, instanceID, namespace, deployLog.ID, rollbackErr)
 	podEventLines, podEvent := podWatch.stop()
 	rollbackErr = withPodEvent(rollbackErr, podEvent)
 	allOutput += podEventLines + readiness
 
-	m.finalizeRollback(instanceID, deployLog, allOutput, rollbackErr, running)
+	m.finalizeRollback(instanceID, deployLog, allOutput, rollbackErr, running, siteURL)
 }
 
 // collectChartValues returns the current user-supplied values YAML of each
@@ -2201,7 +2235,7 @@ func (m *Manager) collectChartValues(ctx context.Context, helm HelmExecutor, nam
 // rollback status. On success, applied (chart name -> values YAML that now
 // run) is merged into the instance's LastDeployedValues, and the merged
 // values become the values snapshot of the rollback log.
-func (m *Manager) finalizeRollback(instanceID string, deployLog *models.DeploymentLog, output string, rollbackErr error, applied map[string]string) {
+func (m *Manager) finalizeRollback(instanceID string, deployLog *models.DeploymentLog, output string, rollbackErr error, applied map[string]string, siteURL string) {
 	now := time.Now().UTC()
 
 	instance, err := m.instanceRepo.FindByID(instanceID)
@@ -2282,9 +2316,11 @@ func (m *Manager) finalizeRollback(instanceID string, deployLog *models.Deployme
 	_ = m.fireDeployHook(hookCtx, hooks.EventRollbackCompleted, instance, deployLog.ID, deployLog.StartedAt, outcomeOpts(outcome))
 	if rollbackErr == nil {
 		_ = m.fireDeployHook(hookCtx, hooks.EventPostRollback, instance, deployLog.ID, deployLog.StartedAt, hookOpts{})
-		m.notifyInstance(models.NewNotificationTarget(instance), "rollback.completed", "Rollback completed", fmt.Sprintf("Stack %s has been rolled back successfully", instance.Name))
+		m.notifyInstance(models.NewNotificationTarget(instance), "rollback.completed", "Rollback completed", fmt.Sprintf("Stack %s has been rolled back successfully", instance.Name),
+			m.triggerOpt(deployLog.ID), notifier.WithSiteURL(siteURL))
 	} else {
-		m.notifyInstance(models.NewNotificationTarget(instance), "rollback.error", "Rollback failed", fmt.Sprintf("Rollback of %s failed: %s", instance.Name, instance.ErrorMessage))
+		m.notifyInstance(models.NewNotificationTarget(instance), "rollback.error", "Rollback failed", fmt.Sprintf("Rollback of %s failed: %s", instance.Name, instance.ErrorMessage),
+			m.triggerOpt(deployLog.ID))
 	}
 }
 
