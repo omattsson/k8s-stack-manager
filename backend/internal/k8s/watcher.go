@@ -333,11 +333,22 @@ func countReadyReplicas(ns *NamespaceStatus) int32 {
 
 // handleStatusTransition updates the instance status in the repository when
 // the Kubernetes namespace status degrades. It returns false when it skipped
-// an error because blocking post-deploy hooks run (the caller then does not
-// store the status), else true.
+// an error because a deploy runs or blocking post-deploy hooks run (the caller
+// then does not store the status), else true.
 func (w *Watcher) handleStatusTransition(inst *models.StackInstance, nsStatus *NamespaceStatus) bool {
 	switch nsStatus.Status {
 	case StatusError:
+		if inst.Status == models.StackStatusDeploying {
+			// The deploy owns the status until it ends, and it sets the final
+			// status. Pods of an earlier deploy can be in error meanwhile. An
+			// error status here would end the deploy: a running pre-deploy
+			// hook is cancelled when the status changes (#623).
+			slog.Debug("Instance namespace in error during a deploy, status kept",
+				"instance_id", inst.ID,
+				"namespace", inst.Namespace,
+			)
+			return false
+		}
 		if blockingPostDeployRuns(inst, w.clock()) {
 			// Blocking post-deploy hooks work on the namespace (for example
 			// a database restore); pods can fail meanwhile. The deploy ends

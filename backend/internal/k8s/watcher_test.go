@@ -696,12 +696,13 @@ func TestWatcherHandleStatusTransition_ErrorAlreadyInErrorState(t *testing.T) {
 	}))
 
 	// Note: The instance is in error status, so the watcher skips it
-	// (only monitors "running" and "deploying"). We need deploying to test this.
-	// Let's use deploying status instead to make it get polled.
+	// (it monitors running, partial, deploying and stabilizing instances).
+	// Use running to make it get polled. A deploying instance keeps its
+	// status (TestWatcherHandleStatusTransition_DeployingKeepsStatus).
 	require.NoError(t, repo.Update(&models.StackInstance{
 		ID:           "inst-already-error",
 		Namespace:    ns,
-		Status:       models.StackStatusDeploying,
+		Status:       models.StackStatusRunning,
 		ErrorMessage: "",
 	}))
 
@@ -885,6 +886,36 @@ func TestWatcherHandleStatusTransition_BlockingPostDeploy(t *testing.T) {
 			w.handleStatusTransition(inst, &NamespaceStatus{Status: StatusError})
 
 			assert.Equal(t, tt.expect, repo.getStatus("inst-blocking"))
+		})
+	}
+}
+
+func TestWatcherHandleStatusTransition_DeployingKeepsStatus(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		status     string
+		expect     string
+		wantStored bool
+	}{
+		{name: "deploying keeps its status (the deploy sets the final status)", status: models.StackStatusDeploying, expect: models.StackStatusDeploying, wantStored: false},
+		{name: "running gives error", status: models.StackStatusRunning, expect: models.StackStatusError, wantStored: true},
+		{name: "partial gives error", status: models.StackStatusPartial, expect: models.StackStatusError, wantStored: true},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			repo := newMockInstanceRepo()
+			inst := &models.StackInstance{ID: "inst-deploying", Namespace: "ns", Status: tt.status}
+			require.NoError(t, repo.Create(inst))
+			w := NewWatcher(&mockClientProvider{}, repo, &mockBroadcaster{}, time.Second)
+
+			stored := w.handleStatusTransition(inst, &NamespaceStatus{Status: StatusError})
+
+			assert.Equal(t, tt.wantStored, stored)
+			assert.Equal(t, tt.expect, repo.getStatus("inst-deploying"))
 		})
 	}
 }
