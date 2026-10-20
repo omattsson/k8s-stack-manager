@@ -41,8 +41,10 @@ const steps = [
   {
     label: 'Deploy an Instance',
     icon: <RocketLaunchOutlinedIcon sx={{ fontSize: 48 }} />,
-    description: 'Deploy a running instance of your stack to a cluster. Instances are created from templates or stack definitions.',
-    route: '/stack-instances/new',
+    description: 'Deploy a running instance of your stack to a cluster. Open a template and use Quick Deploy or Use Template.',
+    // The templates page, not the instance form: the form needs a stack
+    // definition, and a new setup has only a template at this step.
+    route: '/templates',
   },
 ];
 

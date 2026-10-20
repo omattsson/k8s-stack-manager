@@ -1315,6 +1315,79 @@ describe('Dashboard', () => {
       expect(screen.getByRole('button', { name: 'Create a Template' })).toBeInTheDocument();
     });
 
+    it('shows wizard at step 3 when a cluster and a template exist but no instance', async () => {
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      await waitFor(() => {
+        expect(screen.getByText('Welcome to K8s Stack Manager')).toBeInTheDocument();
+      });
+      expect(screen.getByText('Step 3 of 3')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Deploy an Instance' })).toBeInTheDocument();
+      expect(screen.queryByRole('heading', { level: 1, name: 'Stack Instances' })).not.toBeInTheDocument();
+    });
+
+    it('does not show wizard at step 3 when dismissed', async () => {
+      (isSetupWizardDismissed as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      await waitFor(() => {
+        expect(screen.getByText(/no stack instances found/i)).toBeInTheDocument();
+      });
+      expect(screen.queryByText('Welcome to K8s Stack Manager')).not.toBeInTheDocument();
+    });
+
+    it('does not show wizard when a search matches no instance', async () => {
+      const user = userEvent.setup();
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([mockInstance()]);
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      await waitFor(() => {
+        expect(screen.getByText('Test Instance')).toBeInTheDocument();
+      });
+      await user.type(screen.getByPlaceholderText('Search instances...'), 'no-match-xyz');
+      await waitFor(() => {
+        expect(screen.getByText(/no stack instances found/i)).toBeInTheDocument();
+      });
+      expect(screen.queryByText('Welcome to K8s Stack Manager')).not.toBeInTheDocument();
+    });
+
+    it('does not show wizard when a status filter matches no instance', async () => {
+      const user = userEvent.setup();
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([mockInstance({ status: 'running' })]);
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      await waitFor(() => {
+        expect(screen.getByText('Test Instance')).toBeInTheDocument();
+      });
+      await user.click(screen.getByRole('button', { name: 'stopped' }));
+      await waitFor(() => {
+        expect(screen.getByText(/no stack instances found/i)).toBeInTheDocument();
+      });
+      expect(screen.queryByText('Welcome to K8s Stack Manager')).not.toBeInTheDocument();
+    });
+
     it('does not show wizard when dismissed', async () => {
       (isSetupWizardDismissed as ReturnType<typeof vi.fn>).mockReturnValue(true);
       (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([]);
