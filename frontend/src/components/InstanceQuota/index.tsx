@@ -167,8 +167,10 @@ const InstanceQuotaSection = ({ instanceId }: InstanceQuotaSectionProps) => {
           <RowGroup title="Per container" rows={containerRows} />
           <Typography variant="caption" color="text.secondary" component="p">
             A container without its own request or limit gets the container default. If a resource has a quota value
-            but no container default, the container gets a small fallback default: CPU 100m and 500m, memory 128Mi and
-            512Mi, ephemeral storage 128Mi and 1Gi. A resource without a quota value gets no default.
+            but no container default, the container gets a small fallback default, at most CPU 100m and 500m, memory
+            128Mi and 512Mi, ephemeral storage 128Mi and 1Gi, and never above the quota. The fallback limit applies only
+            when the resource has a namespace limit or a container max. A resource without a quota value gets no
+            default.
           </Typography>
         </>
       ) : (
