@@ -388,7 +388,7 @@ func TestFinalizeRollback_ConcurrentStopKeepsStatus(t *testing.T) {
 	require.NoError(t, logRepo.Create(context.Background(), log))
 	mgr := newRollbackTestManager(instanceRepo, logRepo, &mockHelmExecutor{})
 
-	mgr.finalizeRollback(inst.ID, log, "output", nil, map[string]string{"web": "a: 2"})
+	mgr.finalizeRollback(inst.ID, log, "output", nil, map[string]string{"web": "a: 2"}, "")
 
 	final, err := instanceRepo.FindByID(inst.ID)
 	require.NoError(t, err)

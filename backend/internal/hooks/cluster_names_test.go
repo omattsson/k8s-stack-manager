@@ -322,3 +322,39 @@ func TestActionRegistry_ClusterNameInRequest(t *testing.T) {
 	assert.Equal(t, "Production", inst["cluster_name"])
 	assert.Empty(t, ref.ClusterName, "the caller's InstanceRef is not changed")
 }
+
+func TestClusterNameResolver_NameFor(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		nilR     bool
+		id       string
+		err      error
+		want     string
+		wantCall bool
+	}{
+		{name: "known cluster", id: "c-1", want: "prod", wantCall: true},
+		{name: "unknown cluster", id: "c-x", want: "", wantCall: true},
+		{name: "empty id", id: "", want: ""},
+		{name: "all clusters", id: "all", want: ""},
+		{name: "lookup error", id: "c-1", err: errors.New("db down"), want: "", wantCall: true},
+		{name: "nil resolver", nilR: true, id: "c-1", want: ""},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if tt.nilR {
+				var r *ClusterNameResolver
+				assert.Equal(t, tt.want, r.NameFor(context.Background(), tt.id))
+				return
+			}
+			lookup := &countingLookup{names: map[string]string{"c-1": "prod"}, err: tt.err}
+			r := NewClusterNameResolver(lookup.lookup)
+			t.Cleanup(r.Stop)
+			assert.Equal(t, tt.want, r.NameFor(context.Background(), tt.id))
+			assert.Equal(t, tt.wantCall, lookup.callCount() > 0)
+		})
+	}
+}

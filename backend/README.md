@@ -210,6 +210,23 @@ Public GitHub repositories work without a token, at the lower rate limit of GitH
 | `METRICS_ENABLED` | `false` | Serve Prometheus metrics at `/metrics` on a separate address |
 | `METRICS_ADDR` | `:9090` | Address of the metrics server |
 | `APP_TITLE`, `APP_LOGO_URL`, `APP_FAVICON_URL` | see [Branding](../WIKI.md#branding) | Product name, logo, and favicon of the web UI |
+| `APP_PUBLIC_URL` | empty | Public base URL of the web UI, an https URL with a host (for example `https://stacks.example.com`). Notification channel payloads then have `instance_url` (`<APP_PUBLIC_URL>/stack-instances/<id>`), and Teams cards a "Stack Manager" button. http, a path, user info, a query or a fragment stop the start. |
+
+### Notification channel payload
+
+A `generic` channel gets the event JSON. Instance events have these fields (each omitted when empty):
+
+| Field | Description |
+|---|---|
+| `event_type`, `timestamp`, `title`, `message`, `entity_type`, `entity_id`, `metadata` | As before |
+| `trigger` | What started the operation, with the names of the hook envelope: `type` (`user`, `cleanup-policy` or `ttl`), `id`, `name` (username or policy name). Missing when unknown (an operation that a restart interrupted, an expiry warning). |
+| `owner_display_name` | Display name of the instance owner (else the username) |
+| `user_display_name` | Deprecated: the display name of the owner (not the actor). `System` for system events. Use `owner_display_name` and `trigger`. |
+| `namespace`, `branch`, `cluster_id`, `cluster_name` | The instance. An instance on the default cluster has no cluster ID. |
+| `site_url` | Primary Ingress URL of the stack, only for `deployment.success`, `deployment.partial` and `rollback.completed` |
+| `instance_url` | Instance page in the web UI, only with `APP_PUBLIC_URL`, not for `instance.deleted` |
+
+A `teams` channel gets an Adaptive Card: for an instance event the title `<mark> <title> — <stack name>` in the event colour, the message, the facts Namespace, Branch, Cluster, Triggered by and Owner, and the buttons "Open site" (`site_url`) and "Stack Manager" (`instance_url`). System events (`cleanup.policy.executed`, `quota.warning`, `secret.expiring`, the test send) keep the facts Event, By and Time.
 
 See [Sessions](../WIKI.md#sessions) for the way the session limits work together.
 

@@ -10,6 +10,7 @@ import (
 	"backend/internal/database"
 	"backend/internal/hooks"
 	"backend/internal/models"
+	"backend/internal/notifier"
 )
 
 // CleanupExecutor implements scheduler.ActionExecutor by delegating to the
@@ -165,7 +166,11 @@ func (e *CleanupExecutor) afterDelete(ctx context.Context, inst *models.StackIns
 		// The rows are gone: no lookup after the delete.
 		target.FollowerIDs = []string{}
 	}
-	e.manager.notifyInstance(target, "instance.deleted", "Stack deleted", message)
+	var notifyTrigger *hooks.Trigger
+	if ok && trigger.Type != "" {
+		notifyTrigger = &trigger
+	}
+	e.manager.notifyInstance(target, "instance.deleted", "Stack deleted", message, notifier.WithTrigger(notifyTrigger))
 }
 
 func (e *CleanupExecutor) resolveCharts(inst *models.StackInstance) ([]models.ChartConfig, error) {

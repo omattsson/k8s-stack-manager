@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"backend/internal/hooks"
 	"backend/internal/models"
 
 	"github.com/stretchr/testify/assert"
@@ -429,6 +430,8 @@ func TestReaper_NotifiesStackExpired(t *testing.T) {
 			assert.Equal(t, tt.wantMessage, calls[0].message)
 			assert.Equal(t, "owner-1", calls[0].userID)
 			assert.Equal(t, "exp-1", calls[0].entityID)
+			require.NotNil(t, calls[0].trigger, "the card says Triggered by: TTL expiry")
+			assert.Equal(t, hooks.Trigger{Type: hooks.TriggerTTL}, *calls[0].trigger)
 		})
 	}
 }

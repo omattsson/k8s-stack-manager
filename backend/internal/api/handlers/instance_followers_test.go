@@ -12,7 +12,9 @@ import (
 
 	"backend/internal/database"
 	"backend/internal/helm"
+	"backend/internal/hooks"
 	"backend/internal/models"
+	"backend/internal/notifier"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -37,12 +39,15 @@ type recordingLifecycleNotifier struct {
 	mu        sync.Mutex
 	targets   []models.NotificationTarget
 	types     []string
+	triggers  []*hooks.Trigger
 	followers *MockInstanceFollowerRepository
 }
 
-func (n *recordingLifecycleNotifier) NotifyInstance(_ context.Context, target models.NotificationTarget, notifType, _, _ string) error {
+func (n *recordingLifecycleNotifier) NotifyInstance(_ context.Context, target models.NotificationTarget, notifType, _, _ string, opts ...notifier.InstanceOption) error {
+	o := notifier.ResolveInstanceOptions(opts...)
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	n.triggers = append(n.triggers, o.Trigger)
 	n.targets = append(n.targets, target)
 	n.types = append(n.types, notifType)
 	return nil

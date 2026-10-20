@@ -8,7 +8,9 @@ import (
 	"sync"
 	"time"
 
+	"backend/internal/hooks"
 	"backend/internal/models"
+	"backend/internal/notifier"
 	"backend/internal/websocket"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -182,7 +184,8 @@ func (r *Reaper) notifyExpired(inst *models.StackInstance, outcome string) {
 	}
 	msg := fmt.Sprintf("Stack %q %s and %s", inst.Name, cause, outcome)
 	if err := r.notifier.NotifyInstance(context.Background(), models.NewNotificationTarget(inst),
-		"stack.expired", "Stack expired", msg); err != nil {
+		"stack.expired", "Stack expired", msg,
+		notifier.WithTrigger(&hooks.Trigger{Type: hooks.TriggerTTL})); err != nil {
 		slog.Error("Failed to send stack expired notification", "instance_id", inst.ID, "error", err)
 	}
 }

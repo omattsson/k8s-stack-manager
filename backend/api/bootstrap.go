@@ -51,7 +51,7 @@ type domainServices struct {
 	K8sWatcher        *k8s.Watcher
 	DeployManager     *deployer.Manager
 	HookDispatcher    *hooks.Dispatcher
-	ClusterNames      *hooks.ClusterNameResolver // cluster_name for hooks and actions; nil without both
+	ClusterNames      *hooks.ClusterNameResolver // cluster_name for hooks, actions and notification channels; nil without all three
 	ActionRegistry    *hooks.ActionRegistry
 	LifecycleNotifier *notifier.Notifier
 	CleanupExecutor   *deployer.CleanupExecutor
@@ -251,10 +251,11 @@ func buildDomainServices(
 		return nil, fmt.Errorf("load hooks config: %w", hookErr)
 	}
 
-	// cluster_name in hook envelopes and action requests: the batch lookup
-	// that the API uses, cached and with a bounded wait.
+	// cluster_name in hook envelopes, action requests and the notification
+	// channel payload: the batch lookup that the API uses, cached and with a
+	// bounded wait.
 	var clusterNames *hooks.ClusterNameResolver
-	if len(hookCfg.Subscriptions) > 0 || len(actionSpecs) > 0 {
+	if len(hookCfg.Subscriptions) > 0 || len(actionSpecs) > 0 || repos.NotificationChannel != nil {
 		clusterNames = hooks.NewClusterNameResolver(repos.Cluster.NamesByIDs)
 	}
 
@@ -315,8 +316,12 @@ func buildDomainServices(
 
 	// Lifecycle notifier — in-app notifications for stack events.
 	// Followers of an instance get its in-app notifications too.
+	// The channel payload gets cluster_name through the resolver and
+	// instance_url from APP_PUBLIC_URL (validated in config.LoadConfig).
 	lifecycleNotifier := notifier.NewNotifier(repos.Notification, hub, repos.User).
-		WithFollowers(repos.InstanceFollower)
+		WithFollowers(repos.InstanceFollower).
+		WithClusterNames(clusterNames).
+		WithPublicURL(cfg.App.PublicURL)
 
 	// Wire external channel dispatcher for webhook-based notifications.
 	if repos.NotificationChannel != nil {

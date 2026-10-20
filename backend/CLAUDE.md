@@ -79,6 +79,7 @@ All configuration uses environment variables with a `.env` fallback (godotenv). 
 - `GIN_MODE`: wins when set. Otherwise the mode is debug when `APP_DEBUG` is true, and release when it is false. The code default of `APP_DEBUG` is `true`. The Helm chart sets `false`.
 - `ENABLE_SWAGGER` (default false), `PPROF_ENABLED`, `PPROF_ADDR`.
 - `HOOKS_CONFIG_FILE`.
+- `APP_PUBLIC_URL`: public base URL of the web UI (an https URL with a host; http, a same-origin path, user info, a query or a fragment stop the start; `config.ParsePublicURL`, trailing slash removed). `notifier.WithPublicURL` (wired in `api/bootstrap.go`) sets `instance_url` = `<APP_PUBLIC_URL>/stack-instances/<id>` in the notification channel payload (not for `instance.deleted`). Empty (default): no `instance_url` and no "Stack Manager" button on Teams cards.
 - `OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, `OTEL_TRACE_SAMPLE_RATE`, `METRICS_ENABLED`, `METRICS_ADDR`.
 - `LEADER_ELECTION_*` (`ENABLED` default false means this process is always the leader; `LEASE_NAME`, `NAMESPACE`, `LEASE_DURATION`, `RENEW_DEADLINE`, `RETRY_PERIOD`) with `POD_NAME` and `POD_NAMESPACE`.
 - `WS_FANOUT_ENABLED`, `WS_FANOUT_POLL_INTERVAL`, `WS_FANOUT_RETENTION`.

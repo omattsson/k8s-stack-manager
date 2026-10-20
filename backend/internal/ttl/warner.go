@@ -8,12 +8,13 @@ import (
 	"time"
 
 	"backend/internal/models"
+	"backend/internal/notifier"
 )
 
 // ExpiryNotifier sends in-app notifications for TTL warnings to the owner
 // and the followers of the instance.
 type ExpiryNotifier interface {
-	NotifyInstance(ctx context.Context, target models.NotificationTarget, notifType, title, message string) error
+	NotifyInstance(ctx context.Context, target models.NotificationTarget, notifType, title, message string, opts ...notifier.InstanceOption) error
 }
 
 // Warner periodically checks for stack instances approaching TTL expiry and

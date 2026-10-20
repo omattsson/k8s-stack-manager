@@ -146,6 +146,17 @@ func isClusterRef(id string) bool {
 	return id != "" && id != "all"
 }
 
+// NameFor returns the name of the cluster id, with the cache and the wait
+// limit of the resolver. It returns "" for a nil resolver, an empty id, "all",
+// an unknown cluster, a lookup error or a timeout. The notifier uses it for
+// cluster_name in the notification channel payload.
+func (r *ClusterNameResolver) NameFor(ctx context.Context, id string) string {
+	if r == nil || !isClusterRef(id) {
+		return ""
+	}
+	return r.names(ctx, []string{id})[id]
+}
+
 // instanceRef returns ref with cluster_name set. It returns a copy, so the
 // caller's value does not change; it returns ref itself when there is
 // nothing to set. A cluster_name that the caller set is kept.

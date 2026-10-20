@@ -215,7 +215,7 @@ type shutdownDeps struct {
 	leader           *leaderRuntime // nil: no leader workers to stop
 	cleanupScheduler *scheduler.Scheduler
 	deployManager    *deployer.Manager
-	clusterNames     *hooks.ClusterNameResolver // nil: no hooks or actions
+	clusterNames     *hooks.ClusterNameResolver // nil: no hooks, actions or notification channels
 	heartbeat        *replica.Heartbeat         // nil: no heartbeat repository
 	hub              *websocket.Hub
 	wsFanout         *websocket.Fanout // nil: fan-out disabled
