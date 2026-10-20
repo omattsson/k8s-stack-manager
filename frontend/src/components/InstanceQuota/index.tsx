@@ -152,16 +152,23 @@ const InstanceQuotaSection = ({ instanceId }: InstanceQuotaSectionProps) => {
         )}
       </Box>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        These values apply to the stack namespace. An override value replaces the cluster quota value.
+        A deploy applies these values to the stack namespace. A change to a deployed stack applies at once.
+        An override value replaces the cluster quota value.
       </Typography>
       {loadError && <Alert severity="error" sx={{ mb: 2 }}>{loadError}</Alert>}
+      {quota.valid === false && (
+        <Alert severity="warning" sx={{ mb: 2 }}>
+          The merged quota is not valid: {quota.invalid_reason}. A deploy of this stack fails until the quota is fixed.
+        </Alert>
+      )}
       {hasValues ? (
         <>
           <RowGroup title="Namespace" rows={namespaceRows} />
           <RowGroup title="Per container" rows={containerRows} />
           <Typography variant="caption" color="text.secondary" component="p">
-            A container without its own requests or limits gets the container defaults. Without container defaults,
-            it gets small fallback values (CPU 100m and 500m, memory 128Mi and 512Mi, ephemeral storage 128Mi and 1Gi).
+            A container without its own request or limit gets the container default. If a resource has a quota value
+            but no container default, the container gets a small fallback default: CPU 100m and 500m, memory 128Mi and
+            512Mi, ephemeral storage 128Mi and 1Gi. A resource without a quota value gets no default.
           </Typography>
         </>
       ) : (

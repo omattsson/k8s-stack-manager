@@ -818,6 +818,10 @@ export interface EffectiveQuota {
   sources: Record<keyof EffectiveQuotaValues, QuotaValueSource>;
   /** True when the caller may set or remove the override (owner, devops or admin). */
   can_modify: boolean;
+  /** False when the merged quota breaks a quota rule: a deploy then fails. */
+  valid: boolean;
+  /** The rule that the merged quota breaks (only when valid is false). */
+  invalid_reason?: string;
 }
 
 export interface NamespaceResourceUsage {

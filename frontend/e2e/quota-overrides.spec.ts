@@ -413,6 +413,58 @@ test.describe('Per-instance quota overrides', () => {
     await expectNoOverride(s.instanceId);
   });
 
+  for (const role of ['devops', 'admin'] as const) {
+    test(`${role} sets a value above the cluster quota on the instance page and removes it`, async ({ page }) => {
+      const s = await setupScenario();
+      if (role === 'devops') await loginWithToken(page, devops.token);
+      else await loginAsAdmin(page);
+      const section = await openQuotaSection(page, s);
+      await expectQuotaValue(section, 'CPU Limit', '2 cores', 'Cluster');
+
+      await section.getByRole('button', { name: 'Edit override' }).click();
+      const dialog = page.getByRole('dialog', { name: 'Quota override' });
+      const cpuLimit = dialog.getByLabel('CPU Limit', { exact: true });
+      await expect(cpuLimit).toBeEnabled({ timeout: 10_000 });
+      // No upper limit for devops and admin: the help text names the cluster value only.
+      await expect(dialog.getByText('Cluster quota: 2', { exact: true })).toBeVisible();
+      await expect(dialog.getByText('Cluster quota: 10. 0 = no limit.')).toBeVisible();
+      await expect(dialog.getByText(/^At most/)).toHaveCount(0);
+
+      await cpuLimit.fill('4');
+      await dialog.getByRole('button', { name: 'Save' }).click();
+      await expect(dialog).toBeHidden({ timeout: 10_000 });
+      await expectQuotaValue(section, 'CPU Limit', '4 cores', 'Override');
+      await expectStoredOverride(s.instanceId, owner.token, { cpu_limit: '4' });
+
+      await section.getByRole('button', { name: 'Remove override' }).click();
+      await page.getByRole('dialog', { name: 'Remove the quota override' }).getByRole('button', { name: 'Remove' }).click();
+      await expectQuotaValue(section, 'CPU Limit', '2 cores', 'Cluster');
+      await expectNoOverride(s.instanceId);
+    });
+  }
+
+  test('editing one field in the dialog keeps the other override values', async ({ page }) => {
+    const s = await setupScenario();
+    // An admin grant above the cluster quota (cpu_limit 2).
+    const grant = await putOverride(s.instanceId, adminToken, { cpu_limit: '3' });
+    expect(grant.status(), await grant.text()).toBe(200);
+
+    await loginWithToken(page, owner.token);
+    const section = await openQuotaSection(page, s);
+    await expectQuotaValue(section, 'CPU Limit', '3 cores', 'Override');
+    await section.getByRole('button', { name: 'Edit override' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Quota override' });
+    await expect(dialog.getByLabel('CPU Limit', { exact: true })).toHaveValue('3', { timeout: 10_000 });
+
+    await dialog.getByLabel('Memory Limit', { exact: true }).fill('1Gi');
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(dialog).toBeHidden({ timeout: 10_000 });
+    await expectQuotaValue(section, 'Memory Limit', '1 GiB', 'Override');
+    await expectQuotaValue(section, 'CPU Limit', '3 cores', 'Override');
+    // The value equal to the stored grant passes for the owner (no 403).
+    await expectStoredOverride(s.instanceId, owner.token, { cpu_limit: '3', memory_limit: '1Gi' });
+  });
+
   // Scenario 2 -------------------------------------------------------------
 
   test('owner without the admin or devops role cannot set a value above the cluster quota (403)', async () => {

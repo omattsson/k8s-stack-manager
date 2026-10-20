@@ -87,6 +87,7 @@ const mergedQuota = (canModify: boolean, withOverride = true): EffectiveQuota =>
     override: withOverride ? override : null,
     sources,
     can_modify: canModify,
+    valid: true,
   };
 };
 
@@ -97,6 +98,7 @@ const noQuota = (canModify: boolean): EffectiveQuota => ({
   override: null,
   sources: Object.fromEntries(Object.keys(emptyValues).map((f) => [f, 'none'])) as Record<keyof EffectiveQuotaValues, QuotaValueSource>,
   can_modify: canModify,
+  valid: true,
 });
 
 const httpError = (status: number, message: string) => ({ response: { status, data: { error: message } } });
@@ -141,6 +143,24 @@ describe('InstanceQuotaSection', () => {
     expect(screen.queryByRole('group', { name: 'Storage Limit' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Edit override' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Remove override' })).toBeInTheDocument();
+  });
+
+  it('warns when the merged quota is not valid', async () => {
+    const reason = 'cpu_request 3 (instance override) exceeds the effective cpu_limit 2 (cluster quota)';
+    (instanceService.getEffectiveQuota as MockFn).mockResolvedValue({ ...mergedQuota(false), valid: false, invalid_reason: reason });
+    renderSection();
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      `The merged quota is not valid: ${reason}. A deploy of this stack fails until the quota is fixed.`,
+    );
+  });
+
+  it('shows no warning for a valid merged quota', async () => {
+    (instanceService.getEffectiveQuota as MockFn).mockResolvedValue(mergedQuota(false));
+    renderSection();
+
+    expect(await screen.findByText('1.5 cores (1500m)')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   it('shows "No limit" for an override pod_limit of 0', async () => {
@@ -271,6 +291,32 @@ describe('InstanceQuotaSection', () => {
     // The dialog stays open with the input, and the section is not reloaded.
     expect(within(dialog).getByLabelText('CPU Limit')).toHaveValue('3');
     expect(instanceService.getEffectiveQuota).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the dialog open while a save runs, so a save error stays visible', async () => {
+    const user = userEvent.setup();
+    let rejectSave: (reason: unknown) => void = () => {};
+    (instanceService.getEffectiveQuota as MockFn).mockResolvedValue(mergedQuota(true));
+    (instanceService.getQuotaOverride as MockFn).mockResolvedValue(override);
+    (instanceService.setQuotaOverride as MockFn).mockReturnValue(new Promise((_resolve, reject) => {
+      rejectSave = reject;
+    }));
+    renderSection();
+
+    const dialog = await openEditDialog(user);
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(instanceService.setQuotaOverride).toHaveBeenCalled());
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    await user.keyboard('{Escape}');
+    expect(screen.getByRole('dialog', { name: 'Quota override' })).toBeInTheDocument();
+
+    await act(async () => {
+      rejectSave(httpError(403, 'cpu_limit 3 exceeds the cluster quota 2; only admin or devops can set a higher quota'));
+    });
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(
+      'Failed to save the quota override (HTTP 403: cpu_limit 3 exceeds the cluster quota 2; only admin or devops can set a higher quota)',
+    );
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeEnabled();
   });
 
   it('blocks a save after the override failed to load', async () => {

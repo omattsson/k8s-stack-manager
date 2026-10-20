@@ -123,6 +123,25 @@ test.describe('Mobile layout', () => {
     expect(Math.min(...sizes)).toBeGreaterThanOrEqual(16);
   });
 
+  test('the quota override dialog fits a phone', async ({ page }) => {
+    await page.goto(`/stack-instances/${ids.left}`);
+    const section = page.getByRole('region', { name: 'Resource quota' });
+    await section.getByRole('button', { name: 'Edit override' }).tap({ timeout: 15_000 });
+    const dialog = page.getByRole('dialog', { name: 'Quota override' });
+    await expect(dialog.getByLabel('CPU Limit', { exact: true })).toBeVisible({ timeout: 10_000 });
+
+    const overflow = await pageOverflow(page);
+    expect(overflow, `page is ${overflow}px wider than the screen`).toBeLessThanOrEqual(1);
+    const box = await dialog.boundingBox();
+    expect(box, 'dialog').not.toBeNull();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(PHONE_WIDTH);
+    // The actions stay below the scrolling fields.
+    await expect(dialog.getByRole('button', { name: 'Save' })).toBeInViewport();
+    await dialog.getByRole('button', { name: 'Cancel' }).tap();
+    await expect(dialog).toBeHidden();
+  });
+
   test('compare shows a unified diff on a phone', async ({ page }) => {
     await page.goto(`/stack-instances/compare?left=${ids.left}&right=${ids.right}`);
     // react-diff-viewer marks the table of a split view with the class label

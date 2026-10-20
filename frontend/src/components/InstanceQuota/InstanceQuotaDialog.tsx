@@ -144,8 +144,13 @@ const InstanceQuotaDialog = ({ open, instanceId, clusterQuota, limitToCluster, o
     podHelp = limitToCluster ? `At most ${clusterPods} (cluster quota)` : `Cluster quota: ${clusterPods}. 0 = no limit.`;
   }
 
+  // A close during a save would hide the server message of a failed save.
+  const handleClose = () => {
+    if (!saving) onClose();
+  };
+
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
       <DialogTitle>Quota override</DialogTitle>
       <DialogContent>
         {loading ? (
@@ -183,7 +188,7 @@ const InstanceQuotaDialog = ({ open, instanceId, clusterQuota, limitToCluster, o
       </DialogContent>
       {error && <Alert severity="error" sx={{ mx: 3, mb: 1 }}>{error}</Alert>}
       <DialogActions>
-        <Button onClick={onClose}>Cancel</Button>
+        <Button onClick={handleClose} disabled={saving}>Cancel</Button>
         <Button variant="contained" onClick={handleSave} disabled={saving || loading || loadFailed || hasFieldErrors}>
           {saving ? <CircularProgress size={20} /> : 'Save'}
         </Button>
