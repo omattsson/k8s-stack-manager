@@ -193,7 +193,7 @@ test.describe('Notifications', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Who did the action (#652): "by alice", "by you", "by TTL expiry",
+// Who did the action (#652): "by alice", "by you", "by expiry",
 // "by Cleanup policy <name>"; no line without a trigger.
 
 const LONG_POLICY = 'remove-stopped-stacks-after-fourteen-days-without-a-deploy';
@@ -232,7 +232,7 @@ async function expectTriggerLines(list: Locator, policyName = 'nightly') {
   const item = (title: string) => list.getByRole('listitem').filter({ hasText: title });
   await expect(item('Stopped by alice').getByText('by alice', { exact: true })).toBeVisible({ timeout: 10_000 });
   await expect(item('Created by me').getByText('by you', { exact: true })).toBeVisible();
-  await expect(item('Expired stack').getByText('by TTL expiry', { exact: true })).toBeVisible();
+  await expect(item('Expired stack').getByText('by expiry', { exact: true })).toBeVisible();
   await expect(item('Cleaned by policy').getByText(`by Cleanup policy ${policyName}`, { exact: true })).toBeVisible();
   await expect(item('Old notification')).toBeVisible();
   await expect(item('Old notification').getByText(/^by /)).toHaveCount(0);

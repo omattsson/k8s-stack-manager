@@ -296,7 +296,7 @@ describe('NotificationCenter', () => {
       within((await screen.findByText(title)).closest('li') as HTMLElement);
     expect((await item('Stack stopped')).getByText('by alice')).toBeInTheDocument();
     expect((await item('Stack created')).getByText('by you')).toBeInTheDocument();
-    expect((await item('Stack expired')).getByText('by TTL expiry')).toBeInTheDocument();
+    expect((await item('Stack expired')).getByText('by expiry')).toBeInTheDocument();
     expect((await item('Stack cleaned')).getByText('by Cleanup policy nightly')).toBeInTheDocument();
     const old = await item('Old notification');
     expect(old.getByText('5m ago')).toBeInTheDocument();

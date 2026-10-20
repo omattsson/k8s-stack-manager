@@ -31,7 +31,7 @@
   - `quantity.ts`: Kubernetes quantity parsing (cores, binary units).
   - `jwt.ts`: JWT payload decoding. `apiError.ts`: server error messages. `download.ts`: save a Blob as a file.
   - `notificationHelpers.tsx`: toast helpers. `notificationEventTypes.ts`: in-app event types.
-  - `formatTrigger` (in `notificationHelpers.tsx`): the "by" text of a notification ("by alice", "by you", "by TTL expiry", "by Cleanup policy nightly"). It returns null when the notification has no trigger. `NotificationCenter/NotificationMeta.tsx` shows it after the time, in the bell menu and on the Notifications page.
+  - `formatTrigger` (in `notificationHelpers.tsx`): the "by" text of a notification ("by alice", "by you", "by expiry", "by Cleanup policy nightly"). It returns null when the notification has no trigger. `NotificationCenter/NotificationMeta.tsx` shows it after the time, in the bell menu and on the Notifications page.
   - `recentTemplates.ts`: recently used templates in localStorage.
   - `setupWizard.ts`: dismissed flag of the first-run wizard in localStorage.
   - `actionRuns.ts`: action run status chip, parameter text and page merge helpers; `statusColor` of the job status.

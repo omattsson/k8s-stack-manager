@@ -149,8 +149,8 @@ describe('notificationHelpers', () => {
       expect(formatTrigger({ type: 'user', id: 'u2' }, 'u1')).toBe('by a user');
     });
 
-    it('returns "by TTL expiry" for the TTL reaper', () => {
-      expect(formatTrigger({ type: 'ttl' }, 'u1')).toBe('by TTL expiry');
+    it('returns "by expiry" for a TTL or a fixed stop time', () => {
+      expect(formatTrigger({ type: 'ttl' }, 'u1')).toBe('by expiry');
     });
 
     it('names the cleanup policy', () => {

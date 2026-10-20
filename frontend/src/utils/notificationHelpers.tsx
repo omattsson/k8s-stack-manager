@@ -48,7 +48,7 @@ export function notificationIcon(type: string) {
 
 /**
  * Returns the "who did it" text of a notification, for example "by alice",
- * "by you", "by TTL expiry" or "by Cleanup policy nightly".
+ * "by you", "by expiry" or "by Cleanup policy nightly".
  *
  * @param trigger - The trigger of the notification (omitted for older notifications).
  * @param currentUserId - The ID of the signed-in user, who receives the notification.
@@ -64,7 +64,8 @@ export function formatTrigger(
       if (currentUserId && trigger.id === currentUserId) return 'by you';
       return trigger.name ? `by ${trigger.name}` : 'by a user';
     case 'ttl':
-      return 'by TTL expiry';
+      // Also a fixed stop time (expires_at), so the text does not say "TTL" (#652).
+      return 'by expiry';
     case 'cleanup-policy':
       return trigger.name ? `by Cleanup policy ${trigger.name}` : 'by a cleanup policy';
     default:
