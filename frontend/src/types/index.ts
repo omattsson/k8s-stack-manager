@@ -1091,6 +1091,11 @@ export interface ActionParameter {
   default?: string | boolean;
   /** The allowed values of an `enum` parameter. */
   options?: string[];
+  /**
+   * True for a secret `string` parameter. The form uses a password field, and
+   * the action run history stores `[redacted]` instead of the value.
+   */
+  sensitive?: boolean;
 }
 
 /** A custom action that can run on a stack instance (`GET /stack-instances/:id/actions`). */
@@ -1130,6 +1135,8 @@ export interface ActionInvokeResult {
    * 500 characters, URLs replaced by [url]). Older servers omit it.
    */
   message?: string;
+  /** ID of the stored action run. Absent when the server could not store the run. */
+  run_id?: string;
 }
 
 /** Response of `GET /stack-instances/:id/actions/:name/jobs/:job_id/log`. */
@@ -1148,6 +1155,46 @@ export interface ActionJobLog {
   done: boolean;
   /** True when the chunk was cut at the size cap. Poll again at once. */
   truncated: boolean;
+}
+
+/** One stored run of a custom action (`GET /stack-instances/:id/action-runs`). */
+export interface ActionRun {
+  id: string;
+  instance_id: string;
+  /** Action name. */
+  action: string;
+  /** Current label of the action; the name when the action is no longer registered. */
+  action_label: string;
+  user_id: string;
+  /** Username of the caller. Absent when the user does not exist any more. */
+  started_by?: string;
+  started_at: string;
+  /** Time of the answer, or of the final job status. Absent while a job has no stored final status. */
+  finished_at?: string;
+  /** Declared parameters of the run. A sensitive parameter has the value `[redacted]`. */
+  parameters: Record<string, string | boolean>;
+  /** HTTP status of the subscriber. 0 when the subscriber did not answer. */
+  status_code: number;
+  /** Reason of a failed run (one line, no URLs). */
+  message?: string;
+  /** Job ID of an asynchronous action. */
+  job_id?: string;
+  /** Final job status (for example `succeeded`). Absent until a job log poll reads the job to its end. */
+  job_status?: string;
+  /** True when the backend can still proxy the job log of the run. */
+  has_job_log: boolean;
+  /** Hook request ID, to find the call in the subscriber logs. */
+  request_id?: string;
+}
+
+/** Response of `GET /stack-instances/:id/action-runs`, newest first. */
+export interface ActionRunPage {
+  instance_id: string;
+  /** True when the current user may read the job logs (owner, devops or admin). */
+  can_view_logs: boolean;
+  data: ActionRun[];
+  /** Cursor of the next page. Absent on the last page. */
+  next_cursor?: string;
 }
 
 /**

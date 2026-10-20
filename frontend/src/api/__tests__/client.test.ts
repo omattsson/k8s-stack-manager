@@ -837,6 +837,39 @@ describe('instanceService', () => {
     expect(result).toEqual({ data: logs, total: 1, next_cursor: undefined, highlights: undefined });
   });
 
+  it('listActionRuns sends GET with the limit, the cursor and the signal', async () => {
+    const api = mockApi;
+    const page = {
+      instance_id: 'i1',
+      can_view_logs: true,
+      data: [{ id: 'r1', action: 'seed', action_label: 'Seed', parameters: {}, status_code: 200, has_job_log: false }],
+      next_cursor: 'c2',
+    };
+    api.get.mockResolvedValueOnce(mockResponse(page));
+    const controller = new AbortController();
+
+    const result = await instanceService.listActionRuns('i1', { limit: 10, cursor: 'c1', signal: controller.signal });
+
+    expect(api.get).toHaveBeenCalledWith('/api/v1/stack-instances/i1/action-runs', {
+      params: { limit: 10, cursor: 'c1' },
+      signal: controller.signal,
+    });
+    expect(result).toEqual(page);
+  });
+
+  it('listActionRuns leaves out empty options and fills a sparse body', async () => {
+    const api = mockApi;
+    api.get.mockResolvedValueOnce(mockResponse({ next_cursor: '' }));
+
+    const result = await instanceService.listActionRuns('i1');
+
+    expect(api.get).toHaveBeenCalledWith('/api/v1/stack-instances/i1/action-runs', {
+      params: { limit: undefined, cursor: undefined },
+      signal: undefined,
+    });
+    expect(result).toEqual({ instance_id: 'i1', can_view_logs: false, data: [], next_cursor: undefined });
+  });
+
   it('getDeployLogEntry sends GET to the log endpoint', async () => {
     const api = mockApi;
     const log = { id: 'dl/1', action: 'deploy', status: 'success', output: 'done' };
@@ -2509,6 +2542,11 @@ describe('definitionService — error paths', () => {
 });
 
 describe('instanceService — error paths', () => {
+  it('listActionRuns throws on error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Bad cursor'));
+    await expect(instanceService.listActionRuns('i1', { cursor: 'x' })).rejects.toThrow('Bad cursor');
+  });
+
   it('get throws on error', async () => {
     mockApi.get.mockRejectedValueOnce(new Error('Not Found'));
     await expect(instanceService.get('i1')).rejects.toThrow('Not Found');

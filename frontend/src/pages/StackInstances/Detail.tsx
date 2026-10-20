@@ -40,6 +40,7 @@ import AccessUrls from '../../components/AccessUrls';
 import FavoriteButton from '../../components/FavoriteButton';
 import FollowButton from '../../components/FollowButton';
 import InstanceQuotaSection from '../../components/InstanceQuota';
+import ActionRunHistory from '../../components/ActionRunHistory';
 import { instanceService, definitionService, branchOverrideService } from '../../api/client';
 import type { RollbackResponse, StackInstance, ChartConfig, ValueOverride, ChartBranchOverride, DeploymentLog, NamespaceStatus } from '../../types';
 import YamlEditor from '../../components/YamlEditor';
@@ -97,7 +98,8 @@ const Detail = () => {
   const [exportMenuAnchor, setExportMenuAnchor] = useState<HTMLElement | null>(null);
   /** Anchor of the header "Actions" menu (custom actions, export, clone, clean, delete). */
   const [actionsMenuAnchor, setActionsMenuAnchor] = useState<HTMLElement | null>(null);
-  const instanceActions = useInstanceActions(id);
+  const [actionRunsVersion, setActionRunsVersion] = useState(0);
+  const instanceActions = useInstanceActions(id, { onRunChanged: () => setActionRunsVersion((v) => v + 1) });
   const [deployPreviewOpen, setDeployPreviewOpen] = useState(false);
   const [unsavedDeployOpen, setUnsavedDeployOpen] = useState(false);
   const [deploying, setDeploying] = useState(false);
@@ -1145,6 +1147,14 @@ const Detail = () => {
         streamingLines={streamingLines}
         currentDeployLogId={currentLogId}
         onRollbackTo={canModify && canRollback ? (log) => openRollback(log) : undefined}
+      />
+
+      <ActionRunHistory
+        key={`action-runs-${id ?? instance.id}`}
+        instanceId={id ?? instance.id}
+        refreshKey={actionRunsVersion}
+        hideWhenEmpty={instanceActions.actions.length === 0}
+        actions={instanceActions.actions}
       />
 
       <Box sx={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>

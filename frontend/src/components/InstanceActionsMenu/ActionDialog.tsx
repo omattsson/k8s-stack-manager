@@ -85,6 +85,10 @@ interface ActionDialogProps {
   action: InstanceAction;
   /** Called when the user closes the dialog. Stops the job log polling. */
   onClose: () => void;
+  /** Called after each invoke attempt, also after an error. */
+  onInvoked?: () => void;
+  /** Called when the job log of the run reaches its end. */
+  onJobDone?: () => void;
 }
 
 /**
@@ -93,7 +97,7 @@ interface ActionDialogProps {
  * asynchronous action with a job log it polls the job log until the job ends
  * or the user closes the dialog.
  */
-const ActionDialog = ({ instanceId, action, onClose }: ActionDialogProps) => {
+const ActionDialog = ({ instanceId, action, onClose, onInvoked, onJobDone }: ActionDialogProps) => {
   const [values, setValues] = useState<FormValues>(() => initialValues(action.parameters));
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -107,6 +111,7 @@ const ActionDialog = ({ instanceId, action, onClose }: ActionDialogProps) => {
     actionName: action.name,
     jobId,
     initialDelayMs: JOB_LOG_POLL_INTERVAL_MS,
+    onDone: onJobDone,
   });
 
   const handleRun = async () => {
@@ -119,6 +124,7 @@ const ActionDialog = ({ instanceId, action, onClose }: ActionDialogProps) => {
       setError(await describeApiError(err, `Failed to run ${action.label}`));
     } finally {
       setRunning(false);
+      onInvoked?.();
     }
   };
 
@@ -138,12 +144,15 @@ const ActionDialog = ({ instanceId, action, onClose }: ActionDialogProps) => {
       );
     }
     const showMissing = isMissing(p, values);
+    const sensitive = p.type === 'string' && p.sensitive === true;
     return (
       <TextField
         key={p.name}
         select={p.type === 'enum'}
         label={p.label}
         required={p.required}
+        type={sensitive ? 'password' : undefined}
+        autoComplete={sensitive ? 'off' : undefined}
         value={values[p.name] ?? ''}
         onChange={(e) => setValues((v) => ({ ...v, [p.name]: e.target.value }))}
         helperText={showMissing ? 'Required' : p.description}

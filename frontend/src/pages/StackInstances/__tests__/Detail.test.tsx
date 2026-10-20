@@ -88,6 +88,7 @@ vi.mock('../../../api/client', () => ({
     follow: vi.fn(),
     unfollow: vi.fn(),
     listActions: vi.fn().mockResolvedValue({ instance_id: '123', can_invoke: true, actions: [] }),
+    listActionRuns: vi.fn(),
     invokeAction: vi.fn(),
     getActionJobLog: vi.fn(),
   },
@@ -147,6 +148,19 @@ vi.mock('../../../components/DeploymentHistory', () => ({
         ))}
     </div>
   ) : null),
+}));
+
+vi.mock('../../../components/ActionRunHistory', () => ({
+  default: ({ instanceId, refreshKey, hideWhenEmpty, actions }: {
+    instanceId: string; refreshKey: number; hideWhenEmpty: boolean; actions?: { name: string }[];
+  }) => (
+    <section data-testid="action-runs" data-hide-when-empty={String(hideWhenEmpty)}>
+      <h2>Action runs</h2>
+      <span data-testid="action-runs-instance">{instanceId}</span>
+      <span data-testid="action-runs-refresh-key">{refreshKey}</span>
+      <span data-testid="action-runs-actions">{(actions ?? []).map((a) => a.name).join(',')}</span>
+    </section>
+  ),
 }));
 
 vi.mock('../../../components/InstanceQuota', () => ({
@@ -2885,6 +2899,58 @@ describe('StackInstances Detail Actions menu', () => {
       'Export values…',
       'Clone',
     ]);
+  });
+
+  it('renders the Action runs section below the deployment history with the actions', async () => {
+    mockActions([seedAction]);
+    setupMocks({ status: 'running' }, { logs: [{ id: 'l1', action: 'deploy', status: 'success', started_at: '2026-10-20T10:00:00Z' }] });
+    renderDetail();
+
+    const section = await screen.findByTestId('action-runs');
+    await waitFor(() => expect(section).toHaveAttribute('data-hide-when-empty', 'false'));
+    expect(within(section).getByRole('heading', { name: 'Action runs' })).toBeInTheDocument();
+    expect(within(section).getByTestId('action-runs-instance')).toHaveTextContent('123');
+    expect(within(section).getByTestId('action-runs-actions')).toHaveTextContent('seed-data');
+    expect(within(section).getByTestId('action-runs-refresh-key')).toHaveTextContent('0');
+    const history = screen.getByTestId('deployment-history');
+    expect(history.compareDocumentPosition(section) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('asks the section to hide when empty while the server lists no actions', async () => {
+    setupMocks({ status: 'running' });
+    renderDetail();
+
+    const section = await screen.findByTestId('action-runs');
+    await waitFor(() => expect(instanceService.listActions).toHaveBeenCalledWith('123'));
+    expect(section).toHaveAttribute('data-hide-when-empty', 'true');
+  });
+
+  it('refreshes the Action runs section after a run, also after a failed run', async () => {
+    const user = userEvent.setup();
+    mockActions([seedAction]);
+    (instanceService.invokeAction as MockFn)
+      .mockResolvedValueOnce({ action: 'seed-data', instance_id: '123', status_code: 200, result: { ok: true } })
+      .mockRejectedValueOnce(Object.assign(new Error('boom'), { response: { status: 502, data: { error: 'subscriber unreachable' } } }));
+    setupMocks({ status: 'running' });
+    renderDetail();
+
+    const runOnce = async () => {
+      const menu = await openActionsMenu(user);
+      await user.click(await within(menu).findByRole('menuitem', { name: /Seed data/ }));
+      const dialog = await screen.findByRole('dialog', { name: 'Seed data' });
+      await user.click(within(dialog).getByRole('button', { name: 'Run' }));
+      return dialog;
+    };
+
+    const dialog = await runOnce();
+    await within(dialog).findByText('Seed data returned status 200.');
+    expect(screen.getByTestId('action-runs-refresh-key')).toHaveTextContent('1');
+    await user.click(within(dialog).getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(dialog).not.toBeInTheDocument());
+
+    const second = await runOnce();
+    await within(second).findByText(/Failed to run Seed data/);
+    expect(screen.getByTestId('action-runs-refresh-key')).toHaveTextContent('2');
   });
 
   it('opens the export menu with all charts and one item per chart', async () => {
