@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Box,
@@ -14,7 +14,8 @@ import { instanceService } from '../../api/client';
 import type { ActionRun, InstanceAction } from '../../types';
 import { describeApiError } from '../../utils/apiError';
 import { timeAgo } from '../../utils/timeAgo';
-import { actionRunStatus, appendPage, mergeFirstPage, runParameterEntries } from '../../utils/actionRuns';
+import { actionRunStatus, applyFirstPage, applyNextPage, runParameterEntries } from '../../utils/actionRuns';
+import type { RunListState } from '../../utils/actionRuns';
 import JobLogDialog from '../InstanceActionsMenu/JobLogDialog';
 
 /** Rows per page of the action run list. */
@@ -28,15 +29,6 @@ interface ActionRunHistoryProps {
   hideWhenEmpty: boolean;
   /** Actions of the instance, for the declared parameter order. */
   actions?: InstanceAction[];
-}
-
-interface RunListState {
-  rows: ActionRun[];
-  /** Cursor of the page after the last loaded page. */
-  cursor?: string;
-  /** Number of loaded pages. */
-  pages: number;
-  canViewLogs: boolean;
 }
 
 interface LoadError {
@@ -82,6 +74,7 @@ const RunRow = ({ run, action, canViewLogs, onShowLog }: RunRowProps) => {
             variant="outlined"
             sx={{ ml: 'auto' }}
             onClick={() => onShowLog(run)}
+            aria-label={`Show log of ${label}, ${ago}`}
             data-testid={`action-run-show-log-${run.id}`}
           >
             Show log
@@ -141,6 +134,7 @@ const ActionRunHistory = ({ instanceId, refreshKey, hideWhenEmpty, actions }: Ac
   const [error, setError] = useState<LoadError | null>(null);
   const [reloadCount, setReloadCount] = useState(0);
   const [logRun, setLogRun] = useState<ActionRun | null>(null);
+  const moreRef = useRef<AbortController | null>(null);
 
   // A new refreshKey keeps the loaded pages and the cursor of the last one.
   useEffect(() => {
@@ -149,12 +143,7 @@ const ActionRunHistory = ({ instanceId, refreshKey, hideWhenEmpty, actions }: Ac
       .listActionRuns(instanceId, { limit: ACTION_RUNS_PAGE_SIZE, signal: controller.signal })
       .then((page) => {
         if (controller.signal.aborted) return;
-        setList((prev) => ({
-          rows: mergeFirstPage(page.data, prev.rows),
-          cursor: prev.pages > 1 ? prev.cursor : page.next_cursor,
-          pages: Math.max(prev.pages, 1),
-          canViewLogs: page.can_view_logs,
-        }));
+        setList((prev) => applyFirstPage(prev, page));
         setError(null);
       })
       .catch(async (err: unknown) => {
@@ -165,25 +154,41 @@ const ActionRunHistory = ({ instanceId, refreshKey, hideWhenEmpty, actions }: Ac
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
       });
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      // A "Show more" page from before the reload would follow an old cursor.
+      if (moreRef.current) {
+        moreRef.current.abort();
+        moreRef.current = null;
+        setLoadingMore(false);
+      }
+    };
   }, [instanceId, refreshKey, reloadCount]);
 
   const loadMore = async () => {
     if (!list.cursor) return;
+    moreRef.current?.abort();
+    const controller = new AbortController();
+    moreRef.current = controller;
     setLoadingMore(true);
     setError(null);
     try {
-      const page = await instanceService.listActionRuns(instanceId, { limit: ACTION_RUNS_PAGE_SIZE, cursor: list.cursor });
-      setList((prev) => ({
-        rows: appendPage(prev.rows, page.data),
-        cursor: page.next_cursor,
-        pages: prev.pages + 1,
-        canViewLogs: page.can_view_logs,
-      }));
+      const page = await instanceService.listActionRuns(instanceId, {
+        limit: ACTION_RUNS_PAGE_SIZE,
+        cursor: list.cursor,
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted) return;
+      setList((prev) => applyNextPage(prev, page));
     } catch (err) {
-      setError({ kind: 'more', message: await describeApiError(err, 'Failed to load more action runs') });
+      if (controller.signal.aborted) return;
+      const message = await describeApiError(err, 'Failed to load more action runs');
+      if (!controller.signal.aborted) setError({ kind: 'more', message });
     } finally {
-      setLoadingMore(false);
+      if (moreRef.current === controller) {
+        moreRef.current = null;
+        setLoadingMore(false);
+      }
     }
   };
 

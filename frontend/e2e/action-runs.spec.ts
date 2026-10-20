@@ -342,6 +342,7 @@ test.describe('Action run history', () => {
     await expect(section.getByText('No action runs yet.')).toHaveCount(0);
     await expect(section.getByTestId(`action-run-status-${id}`)).toHaveText('succeeded');
     await expect(section.getByTestId(`action-run-show-log-${id}`)).toHaveText('Show log');
+    await expect(section.getByTestId(`action-run-show-log-${id}`)).toHaveAccessibleName(/^Show log of E2E job, /);
     await expectNoReload(page);
 
     const stored = async () => (await listRuns(instanceId)).runs.data.find((r) => r.id === id);
@@ -412,7 +413,7 @@ test.describe('Action run history', () => {
     }
     await expect(section.getByTestId(`action-run-status-${job.run_id}`)).toHaveText('Job started');
     await expect(section.getByTestId(`action-run-show-log-${job.run_id}`)).toHaveCount(0);
-    await expect(section.getByRole('button', { name: 'Show log' })).toHaveCount(0);
+    await expect(section.getByRole('button', { name: /^Show log/ })).toHaveCount(0);
   });
 
   test('Show more loads the older runs', async ({ page }) => {

@@ -152,7 +152,7 @@ const ActionDialog = ({ instanceId, action, onClose, onInvoked, onJobDone }: Act
         label={p.label}
         required={p.required}
         type={sensitive ? 'password' : undefined}
-        autoComplete={sensitive ? 'off' : undefined}
+        autoComplete={sensitive ? 'new-password' : undefined}
         value={values[p.name] ?? ''}
         onChange={(e) => setValues((v) => ({ ...v, [p.name]: e.target.value }))}
         helperText={showMissing ? 'Required' : p.description}

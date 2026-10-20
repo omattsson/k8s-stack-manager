@@ -66,6 +66,13 @@ const renderHistory = (props: Partial<{ refreshKey: number; hideWhenEmpty: boole
     />,
   );
 
+/** A promise that the test resolves later. */
+const deferred = <T,>() => {
+  let resolve: (v: T) => void = () => {};
+  const promise = new Promise<T>((r) => { resolve = r; });
+  return { promise, resolve };
+};
+
 const rowOf = (id: string) => screen.getByTestId(`action-run-row-${id}`);
 const shownRowIds = () =>
   within(screen.getByTestId('action-runs-list'))
@@ -131,6 +138,7 @@ describe('ActionRunHistory', () => {
     ['a 409', { status_code: 409 }, 'Failed (409)', 'Error'],
     ['a redirect', { status_code: 302 }, 'Failed (302)', 'Error'],
     ['a 2xx without a job', { status_code: 200 }, 'OK (200)', 'Success'],
+    ['a 2xx with an unusable body', { status_code: 200, message: 'Subscriber returned a non-JSON body' }, 'Unusable answer (200)', 'Error'],
     ['a job without a final status', { status_code: 202, job_id: 'job-1' }, 'Job started', 'Info'],
     ['a succeeded job', { status_code: 202, job_id: 'job-1', job_status: 'succeeded' }, 'succeeded', 'Success'],
     ['a running job', { status_code: 202, job_id: 'job-1', job_status: 'running' }, 'running', 'Info'],
@@ -199,7 +207,9 @@ describe('ActionRunHistory', () => {
 
     await screen.findByTestId('action-run-row-r1');
     if (shown) {
-      expect(screen.getByTestId('action-run-show-log-r1')).toHaveTextContent('Show log');
+      const button = screen.getByTestId('action-run-show-log-r1');
+      expect(button).toHaveTextContent('Show log');
+      expect(button).toHaveAccessibleName('Show log of E2E echo, 5m ago');
     } else {
       expect(screen.queryByTestId('action-run-show-log-r1')).not.toBeInTheDocument();
     }
@@ -219,7 +229,7 @@ describe('ActionRunHistory', () => {
 
     await waitFor(() => expect(shownRowIds()).toHaveLength(11));
     expect(shownRowIds()[10]).toBe('r10');
-    expect(listActionRuns).toHaveBeenLastCalledWith('i1', { limit: 10, cursor: 'c2' });
+    expect(listActionRuns).toHaveBeenLastCalledWith('i1', { limit: 10, cursor: 'c2', signal: expect.any(AbortSignal) });
     expect(screen.queryByTestId('action-runs-show-more')).not.toBeInTheDocument();
   });
 
@@ -264,7 +274,7 @@ describe('ActionRunHistory', () => {
 
     await user.click(within(alert).getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(shownRowIds()).toEqual(['r2', 'r1']));
-    expect(listActionRuns).toHaveBeenLastCalledWith('i1', { limit: 10, cursor: 'c2' });
+    expect(listActionRuns).toHaveBeenLastCalledWith('i1', { limit: 10, cursor: 'c2', signal: expect.any(AbortSignal) });
   });
 
   it('loads the first page again on a new refreshKey and merges it into the loaded pages', async () => {
@@ -292,7 +302,7 @@ describe('ActionRunHistory', () => {
     // The cursor of the last loaded page stays.
     await user.click(screen.getByTestId('action-runs-show-more'));
     await waitFor(() => expect(shownRowIds()).toEqual(['r4', 'r3', 'r2', 'r1', 'r0']));
-    expect(listActionRuns).toHaveBeenLastCalledWith('i1', { limit: 10, cursor: 'c3' });
+    expect(listActionRuns).toHaveBeenLastCalledWith('i1', { limit: 10, cursor: 'c3', signal: expect.any(AbortSignal) });
   });
 
   it('takes the new cursor of the first page when only the first page was loaded', async () => {
@@ -308,7 +318,78 @@ describe('ActionRunHistory', () => {
     rerender(<ActionRunHistory instanceId="i1" refreshKey={1} hideWhenEmpty={false} />);
 
     await user.click(await screen.findByTestId('action-runs-show-more'));
-    expect(listActionRuns).toHaveBeenLastCalledWith('i1', { limit: 10, cursor: 'c2' });
+    expect(listActionRuns).toHaveBeenLastCalledWith('i1', { limit: 10, cursor: 'c2', signal: expect.any(AbortSignal) });
+  });
+
+  it('replaces the list with the first page when it shares no run with the shown rows', async () => {
+    const user = userEvent.setup();
+    const fresh = Array.from({ length: 10 }, (_, i) => run(`n${20 - i}`));
+    listActionRuns
+      .mockResolvedValueOnce(page([run('r2'), run('r1')], { next_cursor: 'c2' }))
+      .mockResolvedValueOnce(page([run('r0')]))
+      .mockResolvedValueOnce(page(fresh, { next_cursor: 'c-new' }))
+      .mockResolvedValueOnce(page([run('n10')]));
+    const { rerender } = renderHistory();
+
+    await user.click(await screen.findByTestId('action-runs-show-more'));
+    await waitFor(() => expect(shownRowIds()).toEqual(['r2', 'r1', 'r0']));
+    expect(screen.queryByTestId('action-runs-show-more')).not.toBeInTheDocument();
+
+    rerender(<ActionRunHistory instanceId="i1" refreshKey={1} hideWhenEmpty={false} />);
+    await waitFor(() => expect(shownRowIds()).toEqual(fresh.map((r) => r.id)));
+    await user.click(screen.getByTestId('action-runs-show-more'));
+    expect(listActionRuns).toHaveBeenLastCalledWith('i1', { limit: 10, cursor: 'c-new', signal: expect.any(AbortSignal) });
+    await waitFor(() => expect(shownRowIds()).toHaveLength(11));
+  });
+
+  it.each(['the old "Show more" page', 'the new first page'])(
+    'drops a "Show more" page that a reload overtook (%s answers first)',
+    async (first) => {
+      const user = userEvent.setup();
+      const more = deferred<ActionRunPage>();
+      const reload = deferred<ActionRunPage>();
+      const signals: AbortSignal[] = [];
+      listActionRuns
+        .mockResolvedValueOnce(page([run('r3'), run('r2')], { next_cursor: 'c2' }))
+        .mockImplementationOnce((_id: string, opts: { signal: AbortSignal }) => { signals.push(opts.signal); return more.promise; })
+        .mockImplementationOnce(() => reload.promise)
+        .mockResolvedValueOnce(page([]));
+      const { rerender } = renderHistory();
+
+      await user.click(await screen.findByTestId('action-runs-show-more'));
+      expect(screen.getByTestId('action-runs-show-more')).toHaveTextContent('Loading...');
+      rerender(<ActionRunHistory instanceId="i1" refreshKey={1} hideWhenEmpty={false} />);
+      expect(signals[0].aborted).toBe(true);
+
+      const answerMore = () => more.resolve(page([run('r1')], { next_cursor: 'c-old' }));
+      const answerReload = () => reload.resolve(page([run('r4'), run('r3'), run('r2')], { next_cursor: 'c-new' }));
+      if (first === 'the old "Show more" page') { answerMore(); answerReload(); } else { answerReload(); answerMore(); }
+
+      await waitFor(() => expect(shownRowIds()).toEqual(['r4', 'r3', 'r2']));
+      const button = screen.getByTestId('action-runs-show-more');
+      expect(button).toHaveTextContent('Show more');
+      expect(button).toBeEnabled();
+      await user.click(button);
+      expect(listActionRuns).toHaveBeenLastCalledWith('i1', { limit: 10, cursor: 'c-new', signal: expect.any(AbortSignal) });
+      expect(screen.queryByTestId('action-run-row-r1')).not.toBeInTheDocument();
+    },
+  );
+
+  it('aborts a "Show more" request on unmount', async () => {
+    const user = userEvent.setup();
+    const signals: AbortSignal[] = [];
+    listActionRuns
+      .mockResolvedValueOnce(page([run('r2')], { next_cursor: 'c2' }))
+      .mockImplementationOnce((_id: string, opts: { signal: AbortSignal }) => {
+        signals.push(opts.signal);
+        return new Promise(() => {});
+      });
+    const { unmount } = renderHistory();
+
+    await user.click(await screen.findByTestId('action-runs-show-more'));
+    expect(signals[0].aborted).toBe(false);
+    unmount();
+    expect(signals[0].aborted).toBe(true);
   });
 
   it('hides the section with hideWhenEmpty while it has no rows', async () => {

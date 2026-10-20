@@ -71,7 +71,7 @@ describe('ActionDialog', () => {
 
     const token = screen.getByLabelText('Token');
     expect(token).toHaveAttribute('type', 'password');
-    expect(token).toHaveAttribute('autocomplete', 'off');
+    expect(token).toHaveAttribute('autocomplete', 'new-password');
     expect(screen.getByLabelText('Target')).not.toHaveAttribute('type', 'password');
 
     await user.type(token, 's3cret');

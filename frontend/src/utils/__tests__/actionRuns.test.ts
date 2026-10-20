@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { actionRunStatus, appendPage, mergeFirstPage, runParameterEntries, statusColor } from '../actionRuns';
-import type { ActionRun, InstanceAction } from '../../types';
+import {
+  actionRunStatus, appendPage, applyFirstPage, applyNextPage, mergeFirstPage, runParameterEntries, statusColor,
+} from '../actionRuns';
+import type { RunListState } from '../actionRuns';
+import type { ActionRun, ActionRunPage, InstanceAction } from '../../types';
 
 const run = (id: string, over: Partial<ActionRun> = {}): ActionRun => ({
   id,
@@ -35,6 +38,8 @@ describe('actionRunStatus', () => {
     [{ status_code: 199 }, 'Failed (199)', 'error'],
     [{ status_code: 500 }, 'Failed (500)', 'error'],
     [{ status_code: 204 }, 'OK (204)', 'success'],
+    [{ status_code: 200, message: 'Subscriber returned a too large body' }, 'Unusable answer (200)', 'error'],
+    [{ status_code: 409, message: 'busy' }, 'Failed (409)', 'error'],
     [{ status_code: 202, job_id: 'j' }, 'Job started', 'info'],
     [{ status_code: 202, job_id: 'j', job_status: 'queued' }, 'queued', 'info'],
     [{ status_code: 409, job_id: 'j', job_status: 'succeeded' }, 'Failed (409)', 'error'],
@@ -83,5 +88,44 @@ describe('mergeFirstPage', () => {
 describe('appendPage', () => {
   it('skips rows that are already shown', () => {
     expect(appendPage([run('r2'), run('r1')], [run('r1'), run('r0')]).map((r) => r.id)).toEqual(['r2', 'r1', 'r0']);
+  });
+});
+
+describe('applyFirstPage', () => {
+  const page = (ids: string[], next_cursor?: string): ActionRunPage => ({
+    instance_id: 'i1', can_view_logs: true, data: ids.map((id) => run(id)), next_cursor,
+  });
+  const state = (ids: string[], pages: number, cursor?: string): RunListState => ({
+    rows: ids.map((id) => run(id)), pages, cursor, canViewLogs: false,
+  });
+
+  it('takes the first page as is on the first load', () => {
+    expect(applyFirstPage(state([], 0), page(['r1'], 'c'))).toEqual({
+      rows: [run('r1')], cursor: 'c', pages: 1, canViewLogs: true,
+    });
+  });
+
+  it('merges and keeps the cursor of the last loaded page', () => {
+    const next = applyFirstPage(state(['r2', 'r1', 'r0'], 2, 'c-last'), page(['r3', 'r2'], 'c-new'));
+    expect(next.rows.map((r) => r.id)).toEqual(['r3', 'r2', 'r1', 'r0']);
+    expect(next).toMatchObject({ cursor: 'c-last', pages: 2 });
+  });
+
+  it('takes the new cursor while only the first page is loaded', () => {
+    expect(applyFirstPage(state(['r1'], 1), page(['r2', 'r1'], 'c-new'))).toMatchObject({ cursor: 'c-new', pages: 1 });
+  });
+
+  it('replaces the list when the page shares no run with it', () => {
+    expect(applyFirstPage(state(['r2', 'r1'], 2), page(['n2', 'n1'], 'c-new'))).toEqual({
+      rows: [run('n2'), run('n1')], cursor: 'c-new', pages: 1, canViewLogs: true,
+    });
+  });
+});
+
+describe('applyNextPage', () => {
+  it('appends the page and takes its cursor', () => {
+    const prev: RunListState = { rows: [run('r2')], pages: 1, cursor: 'c2', canViewLogs: false };
+    const next = applyNextPage(prev, { instance_id: 'i1', can_view_logs: true, data: [run('r2'), run('r1')] });
+    expect(next).toEqual({ rows: [run('r2'), run('r1')], cursor: undefined, pages: 2, canViewLogs: true });
   });
 });

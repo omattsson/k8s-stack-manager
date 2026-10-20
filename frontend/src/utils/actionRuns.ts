@@ -1,4 +1,4 @@
-import type { ActionRun, InstanceAction } from '../types';
+import type { ActionRun, ActionRunPage, InstanceAction } from '../types';
 
 /** Chip color of a job status. */
 export type JobStatusColor = 'info' | 'success' | 'error';
@@ -18,12 +18,14 @@ export const statusColor = (status: string): JobStatusColor => {
 /**
  * Text and color of the status chip of an action run.
  * @param run - The action run
- * @returns "Unreachable", "Failed (<code>)", "OK (<code>)", "Job started" or the job status, with its color
+ * @returns "Unreachable", "Failed (<code>)", "Unusable answer (<code>)", "OK (<code>)", "Job started" or the job status, with its color
  */
 export const actionRunStatus = (run: ActionRun): { label: string; color: JobStatusColor } => {
   const code = run.status_code;
   if (code === 0) return { label: 'Unreachable', color: 'error' };
   if (code < 200 || code >= 300) return { label: `Failed (${code})`, color: 'error' };
+  // The server stores a message with a 2xx code when the body was not JSON or too large.
+  if (run.message) return { label: `Unusable answer (${code})`, color: 'error' };
   if (!run.job_id) return { label: `OK (${code})`, color: 'success' };
   if (!run.job_status) return { label: 'Job started', color: 'info' };
   return { label: run.job_status, color: statusColor(run.job_status) };
@@ -65,6 +67,50 @@ export const mergeFirstPage = (page: ActionRun[], shown: ActionRun[]): ActionRun
   const ids = new Set(page.map((r) => r.id));
   return [...fresh, ...shown.filter((r) => !ids.has(r.id))];
 };
+
+/** Rows of the action run list and the paging state. */
+export interface RunListState {
+  rows: ActionRun[];
+  /** Cursor of the page after the last loaded page. */
+  cursor?: string;
+  /** Number of loaded pages. */
+  pages: number;
+  canViewLogs: boolean;
+}
+
+/**
+ * Apply a newly loaded first page. It merges into the shown rows and keeps
+ * the cursor of the last loaded page. When the page shares no row with the
+ * shown rows (many new runs since the last load), it replaces the list.
+ * @param prev - The shown list
+ * @param page - The first page
+ * @returns The new list
+ */
+export const applyFirstPage = (prev: RunListState, page: ActionRunPage): RunListState => {
+  const shownIds = new Set(prev.rows.map((r) => r.id));
+  if (prev.pages === 0 || !page.data.some((r) => shownIds.has(r.id))) {
+    return { rows: page.data, cursor: page.next_cursor, pages: 1, canViewLogs: page.can_view_logs };
+  }
+  return {
+    rows: mergeFirstPage(page.data, prev.rows),
+    cursor: prev.pages > 1 ? prev.cursor : page.next_cursor,
+    pages: prev.pages,
+    canViewLogs: page.can_view_logs,
+  };
+};
+
+/**
+ * Apply a further page of "Show more".
+ * @param prev - The shown list
+ * @param page - The next page
+ * @returns The list with the page at the end and the cursor of the page
+ */
+export const applyNextPage = (prev: RunListState, page: ActionRunPage): RunListState => ({
+  rows: appendPage(prev.rows, page.data),
+  cursor: page.next_cursor,
+  pages: prev.pages + 1,
+  canViewLogs: page.can_view_logs,
+});
 
 /**
  * Append a further page to the shown rows. Rows that are already shown are skipped.
