@@ -70,6 +70,7 @@ All configuration uses environment variables with a `.env` fallback (godotenv). 
 - `IN_CLUSTER_FALLBACK_KUBECONFIG` (local development only): the kubeconfig of an in-cluster cluster when the backend does not run in a pod. Empty (default): such a cluster is unreachable; the backend never falls back to `~/.kube/config`.
 - `HELM_BINARY`, `DEPLOYMENT_TIMEOUT`, `MAX_CONCURRENT_DEPLOYS` (default 5).
 - `LOG_LEVEL`: `debug`, `info` (default), `warn` or `error`. `main` applies it to the default `slog` logger. An invalid value stops the startup. With `OTEL_ENABLED`, it also applies to the logs that go to the collector.
+- GORM SQL logging does not use `LOG_LEVEL` or slog. `newGormLogger` (`internal/database/gorm_logger.go`) writes plain text (no ANSI colors) to stderr through its own `log.Logger`. `APP_DEBUG=true`: every statement with its values. `APP_DEBUG=false`: SQL errors and slow queries (200 ms or more) only, with `?` placeholders instead of values. `gorm.ErrRecordNotFound` is never logged: the repositories map it to `dberrors.ErrNotFound`.
 - `AZURE_DEVOPS_PAT`, `AZURE_DEVOPS_AUTH` (`pat` or `workload-identity`), `AZURE_DEVOPS_DEFAULT_ORG` (the organization of the provider health check), `GITHUB_TOKEN`, `GITHUB_ALLOWED_REPOSITORIES` (required with `GITHUB_TOKEN`), `GITLAB_TOKEN`, `GITLAB_BASE_URL` (an origin without a path).
 - `NAMESPACE_LABELS`: extra stack namespace labels, `k=v,k=v`.
 - `ALLOWED_CHART_REPOS`: chart repository URL prefixes (`config.ParseAllowedChartRepos`). `models.SetAllowedChartSources` sets them at startup.
