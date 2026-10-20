@@ -136,7 +136,9 @@ test.describe('Deployment History', () => {
     const pinned = page.getByRole('list', { name: 'Pinned operations' });
     const current = pinned.getByTestId(`pinned-log-row-${logs[1].id}`);
     const failure = pinned.getByTestId(`pinned-log-row-${logs[0].id}`);
-    await page.getByRole('heading', { name: 'Deployment History (60)' }).scrollIntoViewIfNeeded();
+    // Put the heading at the top of the screen: the pinned rows must follow it
+    // without a scroll (sections above it can push it to the bottom).
+    await page.getByRole('heading', { name: 'Deployment History (60)' }).evaluate((el) => el.scrollIntoView({ block: 'start' }));
     await expect(current).toBeInViewport();
     await expect(failure).toBeInViewport();
     await expect(pinned.getByText('Current', { exact: true })).toBeVisible();
