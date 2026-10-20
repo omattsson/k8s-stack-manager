@@ -393,7 +393,7 @@ backend/
 - The web UI shows the custom actions as the first group of the instance "Actions" menu (`useInstanceActions` in `components/InstanceActionsMenu`). The menu also holds export values, clone, clean namespace and delete. The instance page lists the runs below the Deployment History (`components/ActionRunHistory`: 10 rows, "Show more", "Show log" for a run with a job when the user may modify the instance).
 - The job log dialogs (`useJobLog`, `JobLogPanel`; `JobLogDialog` for a past run polls at once) poll every 3 s. It backs off on 429, 502, 503, 504 and network errors (`Retry-After`, else a doubling delay up to 30 s). It stops on done, on close, on 401, 403 or 404, and after 60 minutes.
 
-**Telemetry.** `telemetry.Init` configures OTLP traces and metrics (`OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, `OTEL_TRACE_SAMPLE_RATE`). `StartDBMetrics`, `StartBusinessMetrics` and `StartLeaderMetric` register gauges. Middleware records HTTP and auth metrics. Add tracing for new outbound calls in a `tracing.go` next to the package (see `cluster/`, `deployer/`, `gitprovider/`, `hooks/`).
+**Telemetry.** `telemetry.Init` configures OTLP traces and metrics (`OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, `OTEL_TRACE_SAMPLE_RATE`). `StartDBMetrics`, `StartBusinessMetrics` and `StartLeaderMetric` register gauges. Middleware records HTTP and auth metrics. Add tracing for new outbound calls in a `tracing.go` next to the package (see `cluster/`, `deployer/`, `gitprovider/`, `hooks/`). GORM SQL errors and slow queries also go through slog with the query context (`internal/database/gorm_logger.go`, #653).
 
 **WebSocket messages.**
 - Client to server: `subscribe` and `unsubscribe` with `{"instance_id": "..."}`.
@@ -563,7 +563,7 @@ Developers use this application to configure, store and deploy multi-service Hel
 - **Quick deploy:** one-click flow from a template to a new instance and a deploy. It generates the instance name and the namespace.
   - The definition that it creates has `OwnerInstanceID` set.
   - Deleting the instance deletes that definition when no other instance uses it. This also works when the owner instance is already gone.
-  - `database.DeleteInstanceWithOwnedDefinition` does it: instance and overrides in one transaction, then definition cleanup in a second, best-effort transaction that locks the definition row.
+  - `database.DeleteInstanceWithOwnedDefinition` does it: instance and overrides in one transaction, then definition cleanup in a second, best-effort transaction. A short read checks the definition first: the cleanup runs, and locks the definition row, only when `OwnerInstanceID` is set (#654).
 - **Bulk operations:** bulk deploy, stop, clean and delete accept up to 50 instances for each request, and need `RequireDevOps`. They return a success or failure result for each instance.
   - Bulk delete uses the single-delete path (`InstanceHandler.deleteInstance`). It checks the status before `pre-instance-delete`.
   - It cleans first for instances that have cluster resources, through `Manager.CleanForDelete`. One conditional update sets `cleaning` and `stack_instances.delete_after_clean` (migration 57). The loser of two concurrent deletes gets 409.
