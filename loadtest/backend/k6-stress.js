@@ -9,6 +9,7 @@
 // Usage:
 //   k6 run loadtest/backend/k6-stress.js                                    # all scenarios
 //   k6 run --env SCENARIO=spike loadtest/backend/k6-stress.js               # single scenario
+//   k6 run --env SCENARIO=soak --vus 30 --duration 30m loadtest/backend/k6-stress.js  # own VUs and duration
 //   k6 run --env API_URL=http://backend:8081 loadtest/backend/k6-stress.js  # custom URL
 //
 // Environment variables:
@@ -20,6 +21,7 @@
 import http from 'k6/http';
 import { check, group, sleep } from 'k6';
 import { Rate, Trend, Counter, Gauge } from 'k6/metrics';
+import { ensureDefaultCluster } from './lib/cluster.js';
 
 // ── Custom Metrics ──────────────────────────────────────────────────
 const errorRate = new Rate('errors');
@@ -305,15 +307,18 @@ export function setup() {
   // Create an API key for stress testing
   const keyRes = http.post(
     `${BASE_URL}/api/v1/users/${userId}/api-keys`,
-    JSON.stringify({ name: 'k6-stress' }),
+    JSON.stringify({ name: 'k6-stress', expires_in_days: 1 }),
     { headers: authHeaders(token) },
   );
   if (keyRes.status !== 201 && keyRes.status !== 200) {
     throw new Error(`setup: create API key failed (status ${keyRes.status})`);
   }
   const keyBody = JSON.parse(keyRes.body);
-
   console.log(`setup: created API key ${keyBody.id} for user ${userId}`);
+
+  const cluster = ensureDefaultCluster(BASE_URL, authHeaders(token));
+  console.log(`setup: default cluster ${cluster.name} (${cluster.id})`);
+
   return { apiKey: keyBody.raw_key, userId: userId, apiKeyId: keyBody.id };
 }
 
@@ -774,7 +779,7 @@ export function soakTest(data) {
         // Extend TTL
         http.post(
           `${BASE_URL}/api/v1/stack-instances/${inst.id}/extend`,
-          JSON.stringify({ ttl_minutes: 120 }),
+          JSON.stringify({ minutes: 60 }),
           { headers, tags: { name: 'POST /extend (soak)' } },
         );
         apiCalls.add(1);
@@ -864,4 +869,22 @@ export function otelOverheadTest(data) {
   }
 
   sleep(0.1); // minimal think time to maximize throughput
+}
+
+// ── Default Function ───────────────────────────────────────────────
+// k6 runs it with --vus/--duration (the CLI then replaces the scenarios).
+// SCENARIO selects the function; the default is the soak scenario.
+const SCENARIO_FUNCTIONS = {
+  'rate-limit': rateLimitStress,
+  'bulk-ops': bulkOpsStress,
+  'auth-contention': authContentionTest,
+  pagination: paginationStress,
+  'write-contention': writeContentionTest,
+  spike: spikeTest,
+  soak: soakTest,
+  'otel-overhead': otelOverheadTest,
+};
+
+export default function (data) {
+  (SCENARIO_FUNCTIONS[SELECTED] || soakTest)(data);
 }

@@ -85,7 +85,7 @@ export function setup() {
   // Create an API key for cleanup (WS uses JWT, but we manage lifecycle via API key)
   const keyRes = http.post(
     `${BASE_URL}/api/v1/users/${userId}/api-keys`,
-    JSON.stringify({ name: 'k6-websocket' }),
+    JSON.stringify({ name: 'k6-websocket', expires_in_days: 1 }),
     { headers: authHeaders(token) },
   );
   if (keyRes.status !== 201 && keyRes.status !== 200) {
