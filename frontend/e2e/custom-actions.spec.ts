@@ -10,13 +10,16 @@ import { E2E_ACTION_SECRET, expectedSignature, stubHealth, stubRecords } from '.
  * `make test-e2e` gives the backend e2e/fixtures/hooks-e2e.json. Its actions
  * call the test stub (e2e/stub/server.ts, started by global-setup.ts):
  * - e2e-echo: parameters target (string, required), dry_run (bool, default
- *   true), mode (enum fast|full, default fast). Signed with E2E_ACTION_SECRET.
+ *   true), mode (enum fast|full, default fast), token (string, sensitive).
+ *   Signed with E2E_ACTION_SECRET. The target "refuse" gives 409.
  * - e2e-job: answers 202 with a job_id; its log is "running" for two polls,
  *   then "succeeded".
  * - e2e-redirect: answers 302 with an HTML body.
  * Without that config (a backend started another way) the specs skip.
  *
- * An action needs no cluster: a draft instance is enough.
+ * An action needs no cluster: a draft instance is enough. The labels and the
+ * job test IDs also show in the "Action runs" section and its job log dialog
+ * (#640), so the locators use the menu or the dialog as their scope.
  */
 
 const PASSWORD = 'e2e-test-password';
@@ -63,8 +66,8 @@ async function openInstance(page: Page, token: string) {
 /** Open the header "Actions" menu and the dialog of one custom action. */
 async function openAction(page: Page, label: string) {
   await page.locator('#instance-actions-button').click();
-  await page.getByRole('menuitem', { name: new RegExp(`^${label}`) }).click();
-  const dialog = page.getByRole('dialog', { name: label });
+  await page.getByRole('menu', { name: 'Actions' }).getByRole('menuitem', { name: new RegExp(`^${label}`) }).click();
+  const dialog = page.getByRole('dialog', { name: label, exact: true });
   await expect(dialog).toBeVisible();
   return dialog;
 }
@@ -131,6 +134,9 @@ test.describe('Custom instance actions', () => {
         expect(a).not.toHaveProperty('url');
         expect(a).not.toHaveProperty('secret_env');
       }
+      const echoParams = byName.get('e2e-echo')!.parameters as { name: string; sensitive?: boolean }[];
+      expect(echoParams.find((p) => p.name === 'token')?.sensitive, `${who}: token is sensitive`).toBe(true);
+      expect(echoParams.find((p) => p.name === 'target'), `${who}: target`).not.toHaveProperty('sensitive');
       expect(text, `${who}: the list must not show the subscriber`).not.toContain('127.0.0.1');
       expect(text).not.toContain(E2E_ACTION_SECRET);
     }
@@ -146,7 +152,7 @@ test.describe('Custom instance actions', () => {
   test('the viewer sees the actions disabled in the menu', async ({ page }) => {
     await openInstance(page, viewer.token);
     await page.locator('#instance-actions-button').click();
-    const item = page.getByRole('menuitem', { name: /^E2E echo/ });
+    const item = page.getByRole('menu', { name: 'Actions' }).getByRole('menuitem', { name: /^E2E echo/ });
     await expect(item).toBeVisible();
     await expect(item).toHaveAttribute('aria-disabled', 'true');
     await expect(item).toContainText('Only the owner, an admin or a devops user can run this action');
@@ -180,6 +186,12 @@ test.describe('Custom instance actions', () => {
     const dryRun = dialog.getByRole('switch', { name: 'Dry run' });
     await expect(dryRun).toBeChecked();
     await expect(dialog.getByRole('combobox', { name: /Mode/ })).toHaveText('fast');
+
+    // The sensitive parameter is an optional password field; left empty, it is not sent.
+    const token = dialog.getByLabel('Token', { exact: true });
+    await expect(token).toHaveAttribute('type', 'password');
+    await expect(token).toHaveValue('');
+    await expect(dialog.getByText('Not stored in the run history.')).toBeVisible();
 
     const target = uniqueName('e2e-target');
     await dialog.getByLabel(/Target/).fill(target);

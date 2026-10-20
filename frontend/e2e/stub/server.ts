@@ -11,7 +11,9 @@ import { STUB_HTTP_PORT, STUB_HTTP_URL, STUB_HTTPS_PORT, type StubRecord } from 
  *
  * HTTP on 127.0.0.1:18090: the subscriber of the custom
  * actions in e2e/fixtures/hooks-e2e.json (#588).
- *   POST /actions/echo      200 with the parameters of the request
+ *   POST /actions/echo      200 with the parameters of the request; 409
+ *                           {"message": "Refused by the e2e stub"} when the
+ *                           parameter target is "refuse" (#640)
  *   POST /actions/job       202 with a job_id; GET /jobs/{job_id}/log serves
  *                           its log: two polls "running", then "succeeded"
  *   POST /actions/redirect  302 to a URL with a token, HTML body
@@ -119,7 +121,12 @@ async function handleHttp(req: http.IncomingMessage, res: http.ServerResponse) {
 
   if (req.method === 'POST' && url.pathname === '/actions/echo') {
     const envelope = parseJSON(rec.body);
-    send(res, 200, { ok: true, echo: envelope.parameters ?? {}, request_id: envelope.request_id ?? '' });
+    const params = (envelope.parameters ?? {}) as Record<string, unknown>;
+    if (params.target === 'refuse') {
+      send(res, 409, { message: 'Refused by the e2e stub' });
+      return;
+    }
+    send(res, 200, { ok: true, echo: params, request_id: envelope.request_id ?? '' });
     return;
   }
   if (req.method === 'POST' && url.pathname === '/actions/job') {

@@ -11,7 +11,8 @@
       "parameters": [
         { "name": "target", "label": "Target", "type": "string", "required": true, "description": "Any text." },
         { "name": "dry_run", "label": "Dry run", "type": "bool", "default": true },
-        { "name": "mode", "label": "Mode", "type": "enum", "options": ["fast", "full"], "default": "fast", "required": true }
+        { "name": "mode", "label": "Mode", "type": "enum", "options": ["fast", "full"], "default": "fast", "required": true },
+        { "name": "token", "label": "Token", "type": "string", "sensitive": true, "description": "Not stored in the run history." }
       ]
     },
     {

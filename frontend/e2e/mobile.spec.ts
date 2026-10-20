@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { API_BASE, apiAddChart, apiCreateDefinition, apiLogin, loginAsAdmin, uniqueName } from './helpers';
+import { stubHealth } from './stub/client';
 
 // Phone layout (#577, #586). Runs in the Playwright project "mobile"
 // (iPhone 13 viewport, 390 x 844, touch). DB-backed, no cluster required.
@@ -140,6 +141,60 @@ test.describe('Mobile layout', () => {
     await expect(dialog.getByRole('button', { name: 'Save' })).toBeInViewport();
     await dialog.getByRole('button', { name: 'Cancel' }).tap();
     await expect(dialog).toBeHidden();
+  });
+
+  test('instance page with action runs: no horizontal page scroll, Show log can be tapped', async ({ page, request }) => {
+    const token = await apiLogin(request);
+    const headers = { Authorization: `Bearer ${token}` };
+    const res = await request.post(`${API_BASE}/api/v1/stack-instances`, {
+      headers,
+      data: { stack_definition_id: ids.definition, name: uniqueName('mob-runs').slice(0, 40), branch: 'main' },
+    });
+    expect(res.ok(), await res.text()).toBe(true);
+    const instanceId = (await res.json()).id as string;
+    try {
+      const actionsUrl = `${API_BASE}/api/v1/stack-instances/${instanceId}/actions`;
+      const list = await request.get(actionsUrl, { headers });
+      const names = (((await list.json()).actions ?? []) as { name: string }[]).map((a) => a.name);
+      test.skip(!names.includes('e2e-job') || !(await stubHealth(request)),
+        'Needs the e2e actions and the e2e stub (make test-e2e starts both).');
+
+      // A long value without spaces must wrap, not widen the page (#640).
+      const echo = await request.post(`${actionsUrl}/e2e-echo`, {
+        headers,
+        data: { parameters: { target: `mobile-${'x'.repeat(100)}`, mode: 'full' } },
+      });
+      expect(echo.status(), await echo.text()).toBe(200);
+      const job = await request.post(`${actionsUrl}/e2e-job`, { headers, data: {} });
+      expect(job.status(), await job.text()).toBe(200);
+      const runId = (await job.json()).run_id as string;
+      expect(runId, 'run_id').toBeTruthy();
+
+      await page.goto(`/stack-instances/${instanceId}`);
+      const showLog = page.getByTestId('action-runs').getByTestId(`action-run-show-log-${runId}`);
+      await expect(showLog).toBeVisible({ timeout: 15_000 });
+      await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => undefined);
+
+      const overflow = await pageOverflow(page);
+      expect(overflow, `page is ${overflow}px wider than the screen: ${(await overflowingElements(page)).join('; ')}`).toBeLessThanOrEqual(1);
+
+      await showLog.scrollIntoViewIfNeeded();
+      const box = await showLog.boundingBox();
+      expect(box, 'Show log button').not.toBeNull();
+      expect(box!.x).toBeGreaterThanOrEqual(0);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(PHONE_WIDTH);
+      await showLog.tap();
+      const dialog = page.getByRole('dialog', { name: 'Job log: E2E job' });
+      await expect(dialog.getByTestId('job-log')).toBeVisible();
+      const dialogBox = await dialog.boundingBox();
+      expect(dialogBox, 'dialog').not.toBeNull();
+      expect(dialogBox!.x).toBeGreaterThanOrEqual(0);
+      expect(dialogBox!.x + dialogBox!.width).toBeLessThanOrEqual(PHONE_WIDTH);
+      await dialog.getByRole('button', { name: 'Close' }).tap();
+      await expect(dialog).toBeHidden();
+    } finally {
+      await request.delete(`${API_BASE}/api/v1/stack-instances/${instanceId}`, { headers });
+    }
   });
 
   test('compare shows a unified diff on a phone', async ({ page }) => {
