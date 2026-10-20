@@ -506,26 +506,4 @@ func TestRunPolicyNotFound(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestActionPastTense(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		action string
-		want   string
-	}{
-		{"stop", "stopped"},
-		{"clean", "cleaned"},
-		{"delete", "deleted"},
-		{"restart", "restarted"},
-	}
-
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.action, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tt.want, actionPastTense(tt.action))
-		})
-	}
-}
-
 func (*mockInstanceRepo) CountByStatuses(statuses []string) (int, error) { return 0, nil }

@@ -14,19 +14,33 @@ import (
 
 // TestNotification_TriggerPerOperation checks that each finalize passes the
 // trigger of its operation to the notifier (m.shutdownCtx has none), with
-// the namespace and the branch in the target (issue #642).
+// the namespace and the branch in the target (issue #642). Each operation
+// sends one notification; a cleanup policy stop or clean has its own type
+// (issue #651).
 func TestNotification_TriggerPerOperation(t *testing.T) {
 	t.Parallel()
 
 	devops := hooks.Trigger{Type: hooks.TriggerUser, ID: "devops-1", Name: "dan"}
 	policy := hooks.Trigger{Type: hooks.TriggerCleanupPolicy, ID: "p-1", Name: "nightly"}
+	unnamedPolicy := hooks.Trigger{Type: hooks.TriggerCleanupPolicy, ID: "p-2"}
+	reaper := hooks.Trigger{Type: hooks.TriggerTTL}
+	stop := func(ctx context.Context, mgr *Manager, inst *models.StackInstance) error {
+		_, err := mgr.StopWithCharts(ctx, inst, nil)
+		return err
+	}
+	clean := func(ctx context.Context, mgr *Manager, inst *models.StackInstance) error {
+		_, err := mgr.Clean(ctx, inst, nil)
+		return err
+	}
 
 	tests := []struct {
-		name     string
-		trigger  *hooks.Trigger // nil: the context has no trigger
-		run      func(ctx context.Context, mgr *Manager, inst *models.StackInstance) error
-		wantType string
-		wantTrig hooks.Trigger
+		name      string
+		trigger   *hooks.Trigger // nil: the context has no trigger
+		run       func(ctx context.Context, mgr *Manager, inst *models.StackInstance) error
+		wantType  string
+		wantTitle string // empty: not checked
+		wantMsg   string // empty: not checked
+		wantTrig  hooks.Trigger
 	}{
 		{
 			name: "deploy by a devops user", trigger: &devops, wantType: "deployment.success", wantTrig: devops,
@@ -44,18 +58,31 @@ func TestNotification_TriggerPerOperation(t *testing.T) {
 			},
 		},
 		{
-			name: "stop by a cleanup policy", trigger: &policy, wantType: "deployment.stopped", wantTrig: policy,
-			run: func(ctx context.Context, mgr *Manager, inst *models.StackInstance) error {
-				_, err := mgr.StopWithCharts(ctx, inst, nil)
-				return err
-			},
+			name: "stop by a devops user", trigger: &devops, run: stop, wantTrig: devops,
+			wantType: "deployment.stopped", wantTitle: "Stack stopped", wantMsg: "Stack web has been stopped",
 		},
 		{
-			name: "clean by a devops user", trigger: &devops, wantType: "clean.completed", wantTrig: devops,
-			run: func(ctx context.Context, mgr *Manager, inst *models.StackInstance) error {
-				_, err := mgr.Clean(ctx, inst, nil)
-				return err
-			},
+			name: "stop by a cleanup policy has the policy type", trigger: &policy, run: stop, wantTrig: policy,
+			wantType: "cleanup.policy.stop", wantTitle: "Stack stopped by a cleanup policy",
+			wantMsg: `Stack web has been stopped by cleanup policy "nightly"`,
+		},
+		{
+			name: "stop by a cleanup policy without a name", trigger: &unnamedPolicy, run: stop, wantTrig: unnamedPolicy,
+			wantType: "cleanup.policy.stop", wantMsg: "Stack web has been stopped by a cleanup policy",
+		},
+		{
+			// The reaper also sends stack.expired; that pair stays (#651).
+			name: "stop by the TTL reaper keeps deployment.stopped", trigger: &reaper, run: stop, wantTrig: reaper,
+			wantType: "deployment.stopped", wantTitle: "Stack stopped", wantMsg: "Stack web has been stopped",
+		},
+		{
+			name: "clean by a devops user", trigger: &devops, run: clean, wantTrig: devops,
+			wantType: "clean.completed", wantTitle: "Cleanup completed", wantMsg: "Stack web has been cleaned and returned to draft",
+		},
+		{
+			name: "clean by a cleanup policy has the policy type", trigger: &policy, run: clean, wantTrig: policy,
+			wantType: "cleanup.policy.clean", wantTitle: "Stack cleaned by a cleanup policy",
+			wantMsg: `Stack web has been cleaned by cleanup policy "nightly" and returned to draft`,
 		},
 		{
 			name: "delete after clean by a cleanup policy", trigger: &policy, wantType: "instance.deleted", wantTrig: policy,
@@ -102,8 +129,18 @@ func TestNotification_TriggerPerOperation(t *testing.T) {
 			require.NoError(t, tt.run(ctx, mgr, inst))
 
 			notif.waitForCalls(t, 1)
-			call := notif.getCalls()[0]
+			// Shutdown waits for the operation goroutine: no later notification.
+			mgr.Shutdown()
+			calls := notif.getCalls()
+			require.Len(t, calls, 1, "one notification per operation")
+			call := calls[0]
 			assert.Equal(t, tt.wantType, call.Type)
+			if tt.wantTitle != "" {
+				assert.Equal(t, tt.wantTitle, call.Title)
+			}
+			if tt.wantMsg != "" {
+				assert.Equal(t, tt.wantMsg, call.Message)
+			}
 			require.NotNil(t, call.Trigger, "the finalize passes the trigger of the operation")
 			assert.Equal(t, tt.wantTrig, *call.Trigger)
 			assert.Equal(t, "owner-1", call.Target.OwnerID)

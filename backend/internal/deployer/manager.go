@@ -314,6 +314,26 @@ func (m *Manager) triggerOpt(logID string) notifier.InstanceOption {
 	return notifier.WithTrigger(m.triggerFor(logID))
 }
 
+// cleanupPolicyTrigger returns the trigger of the operation of logID when a
+// cleanup policy started it, else nil.
+func (m *Manager) cleanupPolicyTrigger(logID string) *hooks.Trigger {
+	t := m.triggerFor(logID)
+	if t == nil || t.Type != hooks.TriggerCleanupPolicy {
+		return nil
+	}
+	return t
+}
+
+// policyActionMessage is the notification text of a stop or clean that a
+// cleanup policy started: "Stack <name> has been <done> by cleanup policy
+// "<policy>"".
+func policyActionMessage(instanceName, done string, policy *hooks.Trigger) string {
+	if policy.Name == "" {
+		return fmt.Sprintf("Stack %s has been %s by a cleanup policy", instanceName, done)
+	}
+	return fmt.Sprintf("Stack %s has been %s by cleanup policy %q", instanceName, done, policy.Name)
+}
+
 // fireDeployHook dispatches event to configured hook subscribers using a
 // snapshot of instance state. Returns nil immediately when no dispatcher is
 // configured. The instance pointer must not be nil.
@@ -1431,10 +1451,19 @@ func (m *Manager) finalizeStop(instanceID string, deployLog *models.DeploymentLo
 	if stopErr != nil {
 		m.notifyInstance(models.NewNotificationTarget(instance), "stop.error", "Stop failed", fmt.Sprintf("Stopping %s failed: %s", instance.Name, instance.ErrorMessage),
 			m.triggerOpt(deployLog.ID))
-	} else {
-		m.notifyInstance(models.NewNotificationTarget(instance), "deployment.stopped", "Stack stopped", fmt.Sprintf("Stack %s has been stopped", instance.Name),
-			m.triggerOpt(deployLog.ID))
+		return
 	}
+	notifType := "deployment.stopped"
+	title := "Stack stopped"
+	message := fmt.Sprintf("Stack %s has been stopped", instance.Name)
+	// The only notification of a policy stop (the scheduler sends none); its own
+	// type keeps the cleanup.policy.stop preferences and subscriptions (#651).
+	if policy := m.cleanupPolicyTrigger(deployLog.ID); policy != nil {
+		notifType = "cleanup.policy.stop"
+		title = "Stack stopped by a cleanup policy"
+		message = policyActionMessage(instance.Name, "stopped", policy)
+	}
+	m.notifyInstance(models.NewNotificationTarget(instance), notifType, title, message, m.triggerOpt(deployLog.ID))
 }
 
 // sanitizeDeployError extracts the relevant error message from Helm/K8s
@@ -1884,8 +1913,16 @@ func (m *Manager) finalizeClean(instanceID string, deployLog *models.DeploymentL
 		_ = m.fireDeployHook(m.shutdownCtx, hooks.EventPostInstanceDelete, instance, deployLog.ID, deployLog.StartedAt, hookOpts{})
 		_ = m.fireDeployHook(m.shutdownCtx, hooks.EventDeleteCompleted, instance, deployLog.ID, deployLog.StartedAt, hookOpts{})
 	} else {
-		m.notifyInstance(models.NewNotificationTarget(instance), "clean.completed", "Cleanup completed", fmt.Sprintf("Stack %s has been cleaned and returned to draft", instance.Name),
-			m.triggerOpt(deployLog.ID))
+		notifType := "clean.completed"
+		title := "Cleanup completed"
+		message := fmt.Sprintf("Stack %s has been cleaned and returned to draft", instance.Name)
+		// As for a policy stop (#651).
+		if policy := m.cleanupPolicyTrigger(deployLog.ID); policy != nil {
+			notifType = "cleanup.policy.clean"
+			title = "Stack cleaned by a cleanup policy"
+			message = policyActionMessage(instance.Name, "cleaned", policy) + " and returned to draft"
+		}
+		m.notifyInstance(models.NewNotificationTarget(instance), notifType, title, message, m.triggerOpt(deployLog.ID))
 	}
 }
 
