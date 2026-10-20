@@ -11,6 +11,7 @@ type Notification struct {
 	ID         string    `json:"id" gorm:"primaryKey;size:36"`
 	UserID     string    `json:"user_id" gorm:"size:36;index;not null"`
 	Type       string    `json:"type" gorm:"size:50;not null"`
+	Trigger    Trigger   `json:"trigger,omitzero" gorm:"embedded"`
 	Title      string    `json:"title" gorm:"size:255;not null"`
 	Message    string    `json:"message" gorm:"type:text"`
 	EntityType string    `json:"entity_type,omitempty" gorm:"size:50"`
@@ -26,6 +27,14 @@ type NotificationPreference struct {
 	EventType string `json:"event_type" gorm:"size:50;uniqueIndex:idx_user_event;not null"`
 	Enabled   bool   `json:"enabled" gorm:"default:true"`
 	Channel   string `json:"channel" gorm:"size:20;default:in_app;not null"`
+}
+
+// Trigger is what started the action of a notification (#652); empty fields are NULL (default:null).
+// The Go names differ from Notification.ID and Type: GORM also maps embedded fields by Go name.
+type Trigger struct {
+	TriggerType string `json:"type" gorm:"size:20;default:null" enums:"user,cleanup-policy,ttl"`
+	TriggerID   string `json:"id,omitempty" gorm:"size:36;default:null"`
+	TriggerName string `json:"name,omitempty" gorm:"size:255;default:null"`
 }
 
 // PaginatedNotifications wraps a page of notification results with metadata.
