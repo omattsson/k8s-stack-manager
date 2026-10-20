@@ -1,0 +1,6 @@
+apiVersion: v2
+name: e2e-rollback
+description: Test chart of rollback.spec.ts (scenario 5, only with E2E_KUBECONFIG). It holds one ConfigMap and no workload.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

@@ -1,0 +1,2 @@
+# The rollback spec deploys "one", then "two", and rolls back to "one".
+value: base

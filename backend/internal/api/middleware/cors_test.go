@@ -190,7 +190,7 @@ func TestCORSMiddleware_ExposeHeaders(t *testing.T) {
 			req.Header.Set("Origin", tt.origin)
 			r.ServeHTTP(w, req)
 
-			assert.Equal(t, "Content-Disposition, X-Request-ID", w.Header().Get("Access-Control-Expose-Headers"))
+			assert.Equal(t, "Content-Disposition, X-Request-ID, Retry-After", w.Header().Get("Access-Control-Expose-Headers"))
 			assert.Equal(t, "Content-Type, Content-Length, Accept-Encoding, Authorization, X-Request-ID, X-API-Key", w.Header().Get("Access-Control-Allow-Headers"))
 		})
 	}

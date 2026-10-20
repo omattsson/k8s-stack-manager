@@ -1,5 +1,6 @@
 import { request } from '@playwright/test';
 import { apiLogin, ensureAdminEnabled, ensureDefaultCluster } from './helpers';
+import { startStub } from './stub/server';
 
 /**
  * Runs once before all specs. Many specs create stack instances, and an
@@ -12,15 +13,24 @@ import { apiLogin, ensureAdminEnabled, ensureDefaultCluster } from './helpers';
  * stays disabled, and every spec would fail with 403 "Account disabled" and
  * hide the cause. ensureAdminEnabled enables it again (database fallback, when
  * E2E_DB_* are set) and prints a warning.
+ *
+ * It also starts the test stub (e2e/stub/server.ts): the subscriber of the
+ * custom actions and an HTTPS webhook receiver. The returned function stops it
+ * after the run (global teardown).
  */
 export default async function globalSetup() {
+  const stopStub = await startStub();
   const ctx = await request.newContext();
   try {
     const repaired = await ensureAdminEnabled(ctx);
     if (repaired) console.warn(`\n${repaired}\n`);
     const token = await apiLogin(ctx);
     await ensureDefaultCluster(ctx, token);
+  } catch (err) {
+    await stopStub();
+    throw err;
   } finally {
     await ctx.dispose();
   }
+  return stopStub;
 }

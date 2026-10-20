@@ -1,0 +1,34 @@
+{
+  "actions": [
+    {
+      "name": "e2e-echo",
+      "label": "E2E echo",
+      "description": "Sends the parameters to the e2e stub, which returns them.",
+      "confirm": "This runs the e2e echo action.",
+      "url": "http://127.0.0.1:18090/actions/echo",
+      "secret_env": "E2E_ACTION_SECRET",
+      "timeout_seconds": 10,
+      "parameters": [
+        { "name": "target", "label": "Target", "type": "string", "required": true, "description": "Any text." },
+        { "name": "dry_run", "label": "Dry run", "type": "bool", "default": true },
+        { "name": "mode", "label": "Mode", "type": "enum", "options": ["fast", "full"], "default": "fast", "required": true }
+      ]
+    },
+    {
+      "name": "e2e-job",
+      "label": "E2E job",
+      "description": "Starts a job with a log on the e2e stub.",
+      "url": "http://127.0.0.1:18090/actions/job",
+      "log_path": "/jobs/{job_id}/log",
+      "secret_env": "E2E_ACTION_SECRET",
+      "timeout_seconds": 10
+    },
+    {
+      "name": "e2e-redirect",
+      "label": "E2E redirect",
+      "description": "The e2e stub answers 302.",
+      "url": "http://127.0.0.1:18090/actions/redirect",
+      "timeout_seconds": 10
+    }
+  ]
+}
