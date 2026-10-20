@@ -69,7 +69,7 @@ startHTTPServer              # main server, optional pprof and metrics servers
 | Helm render checks (default values, secrets, External Secrets, Traefik priority, Grafana dashboard ConfigMap) | `make helm-test` |
 | Helm install, upgrade, uninstall | `make helm-install`, `make helm-upgrade`, `make helm-uninstall` |
 | Helm package for release | `make helm-release` |
-| Load tests | `make loadtest` (see the `loadtest-*` targets) |
+| Load tests | `make loadtest` (see the `loadtest-*` targets; `LOADTEST_PORT`, `LOADTEST_MYSQL=external`; memory and CPU: `make loadtest-capture` or `LOADTEST_CAPTURE=1`, see `loadtest/README.md`) |
 
 ## Helm Chart (Kubernetes Deployment)
 
