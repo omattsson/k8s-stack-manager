@@ -160,7 +160,7 @@ A template function needs a code change. The default build registers none. Regis
 
 | Event | Fires when | Semantics |
 |---|---|---|
-| `pre-deploy` | Just before a deployment starts, after the cluster is resolved | Synchronous. `failure_policy: fail` aborts. |
+| `pre-deploy` | Just before a deployment starts, after the cluster is resolved | Synchronous. `failure_policy: fail` aborts. A stop, clean or new deploy during the call closes the request and cancels the deploy. |
 | `post-deploy` | After a deployment completes **successfully** | Fire-and-forget. With `blocking: true`, the deploy waits for the subscriber (see [Blocking post-deploy hooks](#blocking-post-deploy-hooks)). |
 | `deploy-finalized` | After a deployment ends, successfully **or not** (after the blocking post-deploy hooks) | Fire-and-forget. |
 | `deploy-timeout` | After a deployment failed on a Helm or deploy budget timeout | Fire-and-forget. |
@@ -168,7 +168,7 @@ A template function needs a code change. The default build registers none. Regis
 | `clean-completed` | After a clean ends (`draft` or `error`). For the clean of a delete, `metadata.operation` is `delete` and `delete-completed` follows | Fire-and-forget. |
 | `delete-completed` | After any delete: API (draft, or after the clean) or cleanup policy | Fire-and-forget. |
 | `cleanup-policy-executed` | Once for each cleanup policy run with at least one match (also a dry run) | Fire-and-forget. The run summary is in `cleanup_policy` (see [backend/docs/hooks.md](backend/docs/hooks.md#cleanup-policy-runs)). |
-| `pre-rollback` | Before a rollback runs (in the background, after the API answered 202) | Synchronous for the rollback, with progress streaming. `failure_policy: fail` aborts. The instance gets its previous status back. Same `charts` list as `pre-deploy`. |
+| `pre-rollback` | Before a rollback runs (in the background, after the API answered 202) | Synchronous for the rollback, with progress streaming. `failure_policy: fail` aborts. The instance gets its previous status back. Same `charts` list as `pre-deploy`. A stop, clean or new deploy during the call closes the request and cancels the rollback. |
 | `post-rollback` | After a rollback completes **successfully** | Fire-and-forget. |
 | `rollback-completed` | After a rollback ends. `metadata.outcome` is `succeeded`, `failed`, `rejected` (by `pre-rollback`) or `cancelled` (another operation started) | Fire-and-forget. |
 | `pre-instance-create` | After validation, before the database write | Synchronous. `failure_policy: fail` gives HTTP 403. |
@@ -671,7 +671,14 @@ Skip logic keeps the gate fast:
 - It skips semver tags (release images).
 - An in-memory cache avoids a second check of images that it verified recently.
 
-A typical deploy with pre-built images adds less than 1 s. A deploy that triggers builds blocks for 3 to 10 minutes, with periodic status updates in the log viewer. If a stop or clean changes the instance status while the gate runs, the core cancels the deploy and installs nothing. A backend restart during the gate cancels the deploy (the CI build continues). Deploy again afterwards.
+A typical deploy with pre-built images adds less than 1 s. A deploy that triggers builds blocks for 3 to 10 minutes, with periodic status updates in the log viewer.
+
+A stop, clean or new deploy while the gate runs cancels the deploy:
+- The core checks the instance at every stabilize poll interval (`DEPLOY_STABILIZE_POLL_INTERVAL`, default 5 s). When another operation took the instance, the core closes the request to the gate. It does not wait for `timeout_seconds`.
+- The deploy log ends with status `error` and a `WARNING: deploy cancelled ...` line. The core installs nothing and keeps the status of the other operation. `failure_policy` does not apply. The same applies to `pre-rollback`.
+- The gate must stop its wait when the request closes. It can keep or cancel the CI builds that it started.
+
+A backend restart during the gate cancels the deploy (the CI build continues). Deploy again afterwards.
 
 For a reference implementation with Azure DevOps support, see [k8s-stack-manager-extensions/hooks/ci-trigger-gate](https://github.com/omattsson/k8s-stack-manager-extensions).
 

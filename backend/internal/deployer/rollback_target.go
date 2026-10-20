@@ -480,6 +480,13 @@ func outcomeOpts(outcome string) hookOpts {
 	return hookOpts{Metadata: map[string]string{"outcome": outcome}}
 }
 
+// rollbackCancelReason is the reason of a rollback that another operation
+// cancelled during the pre-rollback hook. status is the instance status of
+// the other operation.
+func rollbackCancelReason(status string) string {
+	return fmt.Sprintf("rollback cancelled: another operation changed the instance (status %s) during the pre-rollback hook", status)
+}
+
 // finalizeRollbackCancelled closes a rollback log whose operation no longer
 // owns the instance (another operation started). The instance is not
 // changed. rollback-completed fires with outcome=cancelled.

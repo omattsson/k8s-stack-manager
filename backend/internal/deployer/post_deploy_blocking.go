@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"sync"
 	"time"
 
 	"backend/internal/hooks"
@@ -101,32 +100,10 @@ func (m *Manager) runBlockingPostDeploy(instanceID string, deployLog *models.Dep
 	hookCtx, cancelHooks := context.WithDeadline(m.shutdownCtx, until)
 	defer cancelHooks()
 
-	// Watch the instance; cancel the wait when another operation took it.
-	var (
-		watchMu       sync.Mutex
-		changedStatus string
-		watchWG       sync.WaitGroup
-	)
-	watchWG.Add(1)
-	go func() {
-		defer watchWG.Done()
-		ticker := time.NewTicker(m.stabilizePollInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-hookCtx.Done():
-				return
-			case <-ticker.C:
-				if owned, current := m.blockingPhaseOwned(instanceID, deployLog.ID); !owned {
-					watchMu.Lock()
-					changedStatus = current
-					watchMu.Unlock()
-					cancelHooks()
-					return
-				}
-			}
-		}
-	}()
+	// Watch the instance. Cancel the wait when another operation took it.
+	watch := watchOwnership(hookCtx, cancelHooks, m.stabilizePollInterval, func() (bool, string) {
+		return m.blockingPhaseOwned(instanceID, deployLog.ID)
+	})
 
 	meta := make(map[string]string, len(opts.Metadata)+1)
 	for k, v := range opts.Metadata {
@@ -141,19 +118,14 @@ func (m *Manager) runBlockingPostDeploy(instanceID string, deployLog *models.Dep
 		},
 		OnProgress: logLine,
 	})
-	cancelHooks()
-	watchWG.Wait()
-
-	watchMu.Lock()
-	current := changedStatus
-	watchMu.Unlock()
-	if current == "" {
+	current, lost := watch.stop()
+	if !lost {
 		// The answer can come just after another operation started.
 		if owned, st := m.blockingPhaseOwned(instanceID, deployLog.ID); !owned {
-			current = st
+			current, lost = st, true
 		}
 	}
-	if current != "" {
+	if lost {
 		res.cancelled = fmt.Errorf("deploy cancelled: another operation changed the instance (status %s) during the post-deploy hook", current)
 		logLine("WARNING: " + res.cancelled.Error())
 		slog.Warn("deploy cancelled during blocking post-deploy hooks: instance changed",
@@ -194,17 +166,5 @@ func (m *Manager) runBlockingPostDeploy(instanceID string, deployLog *models.Dep
 // log exists. A read error of the instance counts as owned (logged), so a
 // short database outage does not cancel the wait.
 func (m *Manager) blockingPhaseOwned(instanceID, logID string) (bool, string) {
-	inst, err := m.instanceRepo.FindByID(instanceID)
-	if err != nil {
-		slog.Warn("blocking post-deploy: instance check failed, still waiting",
-			"instance_id", instanceID, "error", err)
-		return true, ""
-	}
-	if inst.Status != models.StackStatusStabilizing && inst.Status != models.StackStatusDeploying {
-		return false, inst.Status
-	}
-	if m.newerOperation(instanceID, logID) {
-		return false, inst.Status
-	}
-	return true, inst.Status
+	return m.hookPhaseOwned(instanceID, logID, models.StackStatusStabilizing, models.StackStatusDeploying)
 }

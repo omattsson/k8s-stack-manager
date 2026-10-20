@@ -525,6 +525,18 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 	return logID, nil
 }
 
+// cancelDeployAfterPreHook ends a deploy whose instance another operation
+// (a stop, clean, delete or new deploy) took during the pre-deploy hook.
+// current is the instance status of the other operation. No chart is
+// installed. finalizeDeploy only closes the log and keeps that status.
+func (m *Manager) cancelDeployAfterPreHook(instanceID string, deployLog *models.DeploymentLog, hookOutput, current, lastDeployedValues string) {
+	cancelErr := fmt.Errorf("deploy cancelled: another operation changed the instance (status %s) during the pre-deploy hook", current)
+	m.broadcastLog(instanceID, deployLog.ID, "WARNING: "+cancelErr.Error())
+	slog.Warn("deploy cancelled during pre-deploy hook: instance changed",
+		"instance_id", instanceID, "log_id", deployLog.ID, "status", current)
+	m.finalizeDeploy(instanceID, deployLog, hookOutput+"WARNING: "+cancelErr.Error()+"\n", cancelErr, false, lastDeployedValues, "")
+}
+
 // executeDeploy runs the helm install for each chart sequentially within
 // a concurrency-limited goroutine. k8sClient may be nil when the cluster has
 // no k8s client configured; callers guard usage accordingly. regCfg is nil
@@ -568,8 +580,17 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 			progress.add(line)
 		}
 	}
-	hookErr := m.fireDeployHook(m.shutdownCtx, hooks.EventPreDeploy, instance, deployLog.ID, deployLog.StartedAt, preDeployOpts)
+	preHook := m.firePreHook(hooks.EventPreDeploy, instance, deployLog, preDeployOpts)
+	hookErr := preHook.err
 	hookOutput := progress.String()
+	if preHook.lost {
+		// A stop, clean or new deploy took the instance during the hook,
+		// and the watcher cancelled the hook call. The hook error is the
+		// result of that cancel, not a denial. Close the log and keep the
+		// status of the other operation.
+		m.cancelDeployAfterPreHook(instanceID, deployLog, hookOutput, preHook.status, lastDeployedValues)
+		return
+	}
 	if hookErr != nil {
 		deployErr := fmt.Errorf("pre-deploy hook: %w", hookErr)
 		// The user-safe reason: the hook name and the subscriber's deny
@@ -589,12 +610,10 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 	// can run for many minutes. If another operation started meanwhile (a
 	// newer deployment log exists) or the status changed, do not install the
 	// charts. finalizeDeploy keeps the new status and only closes the log.
+	// The watcher of firePreHook sees most changes. This check covers a hook
+	// that answers before the next watcher poll.
 	if owned, current := m.ownsInstance(instanceID, deployLog.ID, models.StackStatusDeploying); !owned {
-		cancelErr := fmt.Errorf("deploy cancelled: another operation changed the instance (status %s) during the pre-deploy hook", current)
-		m.broadcastLog(instanceID, deployLog.ID, "WARNING: "+cancelErr.Error())
-		slog.Warn("deploy cancelled after pre-deploy hook: instance changed",
-			"instance_id", instanceID, "log_id", deployLog.ID, "status", current)
-		m.finalizeDeploy(instanceID, deployLog, hookOutput+"WARNING: "+cancelErr.Error()+"\n", cancelErr, false, lastDeployedValues, "")
+		m.cancelDeployAfterPreHook(instanceID, deployLog, hookOutput, current, lastDeployedValues)
 		return
 	}
 
@@ -2002,17 +2021,26 @@ func (m *Manager) executeRollback(job rollbackJob) {
 		m.broadcastLog(instanceID, deployLog.ID, line)
 		progress.add(line)
 	}
-	hookErr := m.fireDeployHook(m.shutdownCtx, hooks.EventPreRollback, &job.instance, deployLog.ID, deployLog.StartedAt, opts)
+	preHook := m.firePreHook(hooks.EventPreRollback, &job.instance, deployLog, opts)
 	allOutput := progress.String()
-	if hookErr != nil {
-		m.finalizeRollbackRejected(job, allOutput, hookErr)
+	if preHook.lost {
+		// The watcher cancelled the hook call: another operation took the
+		// instance. The hook error is the result of that cancel, not a
+		// rejection. Do not restore the previous status.
+		reason := rollbackCancelReason(preHook.status)
+		m.finalizeRollbackCancelled(instanceID, deployLog, allOutput, reason)
+		return
+	}
+	if preHook.err != nil {
+		m.finalizeRollbackRejected(job, allOutput, preHook.err)
 		return
 	}
 
 	// Another operation (a stop, clean or deploy) during a long hook wins:
-	// do not touch the releases or the instance.
+	// do not touch the releases or the instance. This check covers a hook
+	// that answers before the next watcher poll of firePreHook.
 	if owned, current := m.ownsInstance(instanceID, deployLog.ID, models.StackStatusDeploying); !owned {
-		reason := fmt.Sprintf("rollback cancelled: another operation changed the instance (status %s) during the pre-rollback hook", current)
+		reason := rollbackCancelReason(current)
 		m.finalizeRollbackCancelled(instanceID, deployLog, allOutput, reason)
 		return
 	}

@@ -30,7 +30,7 @@ minimal Go starting point.
 
 | Event | Fires when | Semantics |
 |---|---|---|
-| `pre-deploy` | Just before a deployment starts, after the cluster is resolved. | Synchronous, with progress streaming (`LOG:` lines go to the deploy log). A subscriber with `failure_policy=fail` can abort. The deploy log then ends with status `error` and the hook reason. The instance gets status `error` with the reason in `error_message`. |
+| `pre-deploy` | Just before a deployment starts, after the cluster is resolved. | Synchronous, with progress streaming (`LOG:` lines go to the deploy log). A subscriber with `failure_policy=fail` can abort. The deploy log then ends with status `error` and the hook reason. The instance gets status `error` with the reason in `error_message`. A stop, clean or new deploy during the call closes the request (see [Another operation during pre-deploy or pre-rollback](#another-operation-during-pre-deploy-or-pre-rollback)). |
 | `post-deploy` | After a deployment completes **successfully** (also a partial deploy). | Fire-and-forget (default `failure_policy=ignore`). A subscription with `blocking: true` is called earlier, and the deploy waits for it. See [Blocking post-deploy subscribers](#blocking-post-deploy-subscribers). |
 | `deploy-finalized` | After a deployment ends, **successfully or not**, and after the blocking post-deploy subscribers. | Fire-and-forget. `metadata.post_deploy_failed` lists the blocking subscribers with `failure_policy=ignore` that failed. |
 | `deploy-timeout` | After a deployment failed because Helm or the deploy budget timed out. A failed blocking post-deploy subscriber does not fire it. | Fire-and-forget. |
@@ -38,7 +38,7 @@ minimal Go starting point.
 | `clean-completed` | After a clean ends, successfully (`draft`) or not (`error`). It also fires for the clean of an API delete. Then `metadata.operation` is `delete` and `delete-completed` follows. A notifier can skip this event and post only the delete. | Fire-and-forget. |
 | `delete-completed` | After an instance is deleted: by the API (at once for a draft, or after its clean) or by a cleanup policy. | Fire-and-forget. |
 | `cleanup-policy-executed` | Once for each cleanup policy run (scheduled or manual) with at least one matching instance. It also fires for a dry run. It does not fire for a scheduled run that the end of a leadership term interrupted. | Fire-and-forget. See [Cleanup policy runs](#cleanup-policy-runs). |
-| `pre-rollback` | Before a rollback runs (`POST /stack-instances/:id/rollback`). It runs in the background after the API answered 202. | Synchronous for the rollback, with progress streaming (`LOG:` lines go to the rollback log). `failure_policy=fail` aborts. The rollback log then ends with status `error` and the hook reason. The instance gets its previous status back. |
+| `pre-rollback` | Before a rollback runs (`POST /stack-instances/:id/rollback`). It runs in the background after the API answered 202. | Synchronous for the rollback, with progress streaming (`LOG:` lines go to the rollback log). `failure_policy=fail` aborts. The rollback log then ends with status `error` and the hook reason. The instance gets its previous status back. A stop, clean or new deploy during the call closes the request (see [Another operation during pre-deploy or pre-rollback](#another-operation-during-pre-deploy-or-pre-rollback)). |
 | `post-rollback` | After a rollback completes **successfully**. | Fire-and-forget. |
 | `rollback-completed` | After a rollback ends: succeeded, failed, rejected by `pre-rollback`, or cancelled because another operation (stop, clean, deploy) started meanwhile. `metadata.outcome` is `succeeded`, `failed`, `rejected` or `cancelled`. | Fire-and-forget. |
 | `pre-instance-create` | After validation and before the instance is written to the database. | Synchronous. `failure_policy=fail` aborts the create (HTTP 403). |
@@ -217,12 +217,45 @@ to one line and cuts it at 500 characters. It cuts the instance
 The rollback continues after the hook only when no other operation started
 meanwhile (its deployment log is still the newest one of the instance).
 Otherwise the rollback log ends as cancelled and the core does not touch the
-instance. The same check guards `pre-deploy`.
+instance. The same check guards `pre-deploy`. A stop during the hook call
+also closes the request to the subscriber. See
+[Another operation during pre-deploy or pre-rollback](#another-operation-during-pre-deploy-or-pre-rollback).
 
 For `target`:
 - `charts` lists only the charts of the target deploy. Each chart has the version that the deploy recorded and the branch of the target deploy (`metadata.target_branch`). The core does not record per-chart branch overrides of that deploy. `metadata.branch_source` is `target_deploy`.
 - `metadata.target_log_id` is the target deploy log.
 - The rollback restores the stored **values** of that deploy (including the shared and locked values of that time), not the images. An image tag that is a branch name can now point to a newer image. A gate that must guarantee the old image has to check it itself.
+
+### Another operation during pre-deploy or pre-rollback
+
+A `pre-deploy` or `pre-rollback` subscriber (for example a CI gate) can run
+for many minutes. Another operation can take the instance meanwhile: a stop
+(API, bulk, TTL reaper or a cleanup policy), a clean or a new deploy.
+
+1. While the subscriber runs, the deployer checks the instance at every
+   stabilize poll interval (`DEPLOY_STABILIZE_POLL_INTERVAL`, default 5 s).
+2. When the status is no longer `deploying`, or a newer deployment log
+   exists, the deployer closes the request to the subscriber. It does not
+   wait for the `timeout_seconds` of the subscription.
+3. The deploy or rollback log ends with status `error` and a
+   `WARNING: deploy cancelled: another operation changed the instance ...`
+   (or `rollback cancelled ...`) line.
+4. Helm does not run. The core does not change the instance, so the status of
+   the other operation stays.
+5. This is a cancel, not a denial. The `failure_policy` does not apply.
+   `rollback-completed` has `metadata.outcome` = `cancelled`.
+
+A read error of the instance does not close the request. The core checks the
+instance again after the subscriber answered. A change just before the
+answer therefore gives the same result.
+
+A server shutdown also closes the request. This is a hook failure, not a
+cancel. With `failure_policy=fail`, the operation ends with
+`<event> hook "<name>" failed (unreachable or timed out)`.
+
+Closing the HTTP request does not stop the work of the subscriber. A
+subscriber must stop its wait when the request closes (the client
+disconnects). A CI gate can keep or cancel the builds that it started.
 
 ### Blocking post-deploy subscribers
 
