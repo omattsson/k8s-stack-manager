@@ -273,13 +273,14 @@ func TestDispatch_BodyPerChannelFormat(t *testing.T) {
 		EventType: "deployment.stopped", Timestamp: time.Now(), Title: `Stack "a" stopped`,
 		Message: "stopped\nby TTL", UserDisplayName: "System",
 	}
-	NewDispatcher(repo).Dispatch(context.Background(), payload)
+	newTestDispatcher(t, repo).Dispatch(context.Background(), payload)
 
-	require.Len(t, repo.deliveries, 4)
-	for _, d := range repo.deliveries {
+	for _, d := range waitDeliveries(t, repo, 4) {
 		assert.Equal(t, "success", d.Status, d.ChannelName)
 	}
+	mu.Lock()
 	require.Len(t, got, 4)
+	mu.Unlock()
 
 	tests := []struct {
 		path   string

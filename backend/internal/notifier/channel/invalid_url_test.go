@@ -10,7 +10,6 @@ import (
 	"backend/internal/models"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // invalidWebhookURLs are stored webhook URLs that do not give a request.
@@ -39,28 +38,28 @@ func assertNoWebhookURL(t *testing.T, text string) {
 func TestDelivery_InvalidURLHidesURL(t *testing.T) {
 	t.Parallel()
 
-	type sendFunc func(d *Dispatcher, repo *mockChannelRepo, ch models.NotificationChannel) (string, int, string)
+	type sendFunc func(t *testing.T, d *Dispatcher, repo *mockChannelRepo, ch models.NotificationChannel) (string, int, string)
 	sends := []struct {
 		name string
 		send sendFunc
 	}{
 		{
 			name: "dispatch",
-			send: func(d *Dispatcher, repo *mockChannelRepo, _ models.NotificationChannel) (string, int, string) {
+			send: func(t *testing.T, d *Dispatcher, repo *mockChannelRepo, _ models.NotificationChannel) (string, int, string) {
 				d.Dispatch(context.Background(), EventPayload{EventType: "deployment.success"})
-				require.Len(t, repo.deliveries, 1)
-				return repo.deliveries[0].Status, repo.deliveries[0].StatusCode, repo.deliveries[0].ErrorMessage
+				got := waitDeliveries(t, repo, 1)
+				return got[0].Status, got[0].StatusCode, got[0].ErrorMessage
 			},
 		},
 		{
 			name: "dispatch to",
-			send: func(d *Dispatcher, _ *mockChannelRepo, ch models.NotificationChannel) (string, int, string) {
+			send: func(_ *testing.T, d *Dispatcher, _ *mockChannelRepo, ch models.NotificationChannel) (string, int, string) {
 				return d.DispatchTo(context.Background(), ch, EventPayload{EventType: "deployment.success"})
 			},
 		},
 		{
 			name: "deliver once",
-			send: func(d *Dispatcher, _ *mockChannelRepo, ch models.NotificationChannel) (string, int, string) {
+			send: func(_ *testing.T, d *Dispatcher, _ *mockChannelRepo, ch models.NotificationChannel) (string, int, string) {
 				return d.DeliverOnce(context.Background(), ch, EventPayload{EventType: models.NotificationChannelTestEvent})
 			},
 		},
@@ -85,10 +84,10 @@ func TestDelivery_InvalidURLHidesURL(t *testing.T) {
 
 			ch := models.NotificationChannel{ID: "ch-1", Name: "chat", WebhookURL: tt.url, Secret: "signing-secret", Enabled: true}
 			repo := &mockChannelRepo{channels: []models.NotificationChannel{ch}}
-			d := NewDispatcher(repo)
+			d := newTestDispatcher(t, repo)
 
 			start := time.Now()
-			status, code, errMsg := tt.send(d, repo, ch)
+			status, code, errMsg := tt.send(t, d, repo, ch)
 
 			assert.Less(t, time.Since(start), retryDelay, "an invalid URL is not retried")
 			assert.Equal(t, "failed", status)
@@ -111,8 +110,11 @@ func TestDelivery_InvalidURLLogLine(t *testing.T) {
 	for _, u := range invalidWebhookURLs {
 		ch := models.NotificationChannel{ID: "ch-1", Name: "chat", WebhookURL: u.url, Enabled: true}
 		repo := &mockChannelRepo{channels: []models.NotificationChannel{ch}}
-		NewDispatcher(repo).Dispatch(context.Background(), EventPayload{EventType: "deployment.success"})
-		require.Len(t, repo.deliveries, 1, u.name)
+		d := newTestDispatcher(t, repo)
+		d.Dispatch(context.Background(), EventPayload{EventType: "deployment.success"})
+		waitDeliveries(t, repo, 1)
+		// Stop waits for the worker, so its log lines are in buf.
+		d.Stop()
 	}
 
 	out := buf.String()

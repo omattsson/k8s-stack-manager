@@ -16,8 +16,6 @@ import (
 
 	"backend/internal/hooks"
 	"backend/internal/models"
-
-	"github.com/google/uuid"
 )
 
 const (
@@ -32,12 +30,17 @@ const (
 var errInvalidWebhookURL = errors.New("creating request: invalid webhook URL")
 
 // Dispatcher sends notification payloads to subscribed external channels.
+// Each channel has its own worker and queue (workers.go). Call Stop at
+// shutdown when Dispatch was used.
 type Dispatcher struct {
-	repo   models.NotificationChannelRepository
-	client *http.Client
+	repo    models.NotificationChannelRepository
+	client  *http.Client
+	workers workerPool
+	drops   dropLog
 }
 
-// NewDispatcher creates a channel dispatcher.
+// NewDispatcher creates a channel dispatcher. It starts no goroutine: the
+// worker of a channel starts with the first event of the channel.
 func NewDispatcher(repo models.NotificationChannelRepository) *Dispatcher {
 	return &Dispatcher{
 		repo: repo,
@@ -50,66 +53,50 @@ func NewDispatcher(repo models.NotificationChannelRepository) *Dispatcher {
 }
 
 // Dispatch finds all enabled channels subscribed to the payload's event type
-// whose filters match the instances of the payload, and POSTs the payload to
-// each in the format of the channel (generic event JSON or a Teams Adaptive
-// Card envelope). A channel that the filters skip gets no delivery log (only a
-// debug log line). Errors are logged and recorded as delivery logs; they
-// never propagate to the caller.
+// whose filters match the instances of the payload, encodes the body once
+// per format (generic event JSON or a Teams Adaptive Card envelope) and
+// queues one job per channel. It does not wait for the deliveries: the
+// worker of each channel sends its events in order and writes one delivery
+// log per event. A channel that the filters skip gets no delivery log (only
+// a debug log line). A full channel queue drops the event (RecordDrop). ctx
+// limits the channel lookup only; a cancelled lookup counts as a shutdown
+// drop.
 func (d *Dispatcher) Dispatch(ctx context.Context, payload EventPayload) {
 	found, err := d.repo.FindChannelsByEvent(ctx, payload.EventType)
 	if err != nil {
+		if ctx.Err() != nil {
+			d.RecordDrop(payload.EventType, "", DropReasonShutdown)
+			return
+		}
 		slog.Error("notification channel: failed to find channels", "event", payload.EventType, "error", err)
 		return
 	}
-	channels := make([]models.NotificationChannel, 0, len(found))
+
+	bodies := make(map[string][]byte, 2)
+	failed := make(map[string]bool, 2)
 	for _, ch := range found {
 		if !ch.Filters.MatchesAny(payload.Instances) {
 			slog.Debug("notification channel: skipped by filters",
 				"channel", ch.Name, "event", payload.EventType, "entity_id", payload.EntityID)
 			continue
 		}
-		channels = append(channels, ch)
-	}
-	if len(channels) == 0 {
-		return
-	}
-
-	// Each format is encoded once per event, not once per channel.
-	bodies := make(map[string][]byte, 2)
-
-	for i := range channels {
-		ch := &channels[i]
-		format := bodyFormat(ch)
-		var status, errMsg string
-		var statusCode int
+		format := bodyFormat(&ch)
 		body, ok := bodies[format]
-		if !ok {
-			var err error
+		if !ok && !failed[format] {
 			body, err = encodeBody(format, payload)
 			if err != nil {
 				slog.Error("notification channel: failed to marshal payload", "format", format, "error", err)
+				failed[format] = true
 				body = nil
-				status, errMsg = "failed", "failed to encode the payload"
 			} else {
 				bodies[format] = body
 			}
 		}
-		if body != nil {
-			status, statusCode, errMsg = d.deliver(ctx, ch, payload.EventType, body)
+		job := channelJob{channel: ch, eventType: payload.EventType, body: body}
+		if body == nil {
+			job.errMsg = "failed to encode the payload"
 		}
-		if logErr := d.repo.CreateDeliveryLog(ctx, &models.NotificationDeliveryLog{
-			ID:           uuid.New().String(),
-			ChannelID:    ch.ID,
-			ChannelName:  ch.Name,
-			EventType:    payload.EventType,
-			Status:       status,
-			StatusCode:   statusCode,
-			ErrorMessage: errMsg,
-			CreatedAt:    time.Now().UTC(),
-		}); logErr != nil {
-			slog.Error("notification channel: failed to create delivery log",
-				"channel", ch.Name, "event", payload.EventType, "error", logErr)
-		}
+		d.submit(job)
 	}
 }
 

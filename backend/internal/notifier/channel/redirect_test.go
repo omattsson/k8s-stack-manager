@@ -10,7 +10,6 @@ import (
 	"backend/internal/models"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // TestDispatch_RedirectNotFollowed checks that a 3xx answer of a channel is
@@ -50,7 +49,7 @@ func TestDispatch_RedirectNotFollowed(t *testing.T) {
 
 			ch := models.NotificationChannel{ID: "ch-1", Name: "chat", WebhookURL: webhook.URL + "/hook?token=s3cret", Secret: "signing-secret", Enabled: true}
 			repo := &mockChannelRepo{channels: []models.NotificationChannel{ch}}
-			d := NewDispatcher(repo)
+			d := newTestDispatcher(t, repo)
 
 			var status, errMsg string
 			var code int
@@ -58,8 +57,8 @@ func TestDispatch_RedirectNotFollowed(t *testing.T) {
 				status, code, errMsg = d.DispatchTo(context.Background(), ch, EventPayload{EventType: "deployment.success"})
 			} else {
 				d.Dispatch(context.Background(), EventPayload{EventType: "deployment.success"})
-				require.Len(t, repo.deliveries, 1)
-				status, code, errMsg = repo.deliveries[0].Status, repo.deliveries[0].StatusCode, repo.deliveries[0].ErrorMessage
+				deliveries := waitDeliveries(t, repo, 1)
+				status, code, errMsg = deliveries[0].Status, deliveries[0].StatusCode, deliveries[0].ErrorMessage
 			}
 
 			assert.Equal(t, int32(1), atomic.LoadInt32(&channelHits), "a 3xx is not retried")

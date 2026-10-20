@@ -19,7 +19,9 @@ import (
 	"github.com/google/uuid"
 )
 
-const dispatchQueueSize = 100
+// dispatchQueueSize is the intake queue of all channel events. Its worker
+// only finds and queues per channel, so it stays short (#649).
+const dispatchQueueSize = 1000
 
 // Notifier creates notification records and broadcasts them in real time.
 type Notifier struct {
@@ -31,6 +33,8 @@ type Notifier struct {
 	clusterNames      *hooks.ClusterNameResolver
 	dispatchQueue     chan channel.EventPayload
 	done              chan struct{}
+	workerExited      chan struct{}
+	cancelDispatch    context.CancelFunc
 	// publicURL is APP_PUBLIC_URL without a trailing slash; empty: no
 	// instance_url in the channel payload.
 	publicURL string
@@ -74,9 +78,11 @@ func (n *Notifier) WithPublicURL(publicURL string) *Notifier {
 	return n
 }
 
-// WithChannelDispatcher sets the external channel dispatcher for webhook delivery
-// and starts a single background worker for processing dispatches sequentially.
-// Safe to call once; subsequent calls are no-ops.
+// WithChannelDispatcher sets the external channel dispatcher for webhook
+// delivery and starts the intake worker. The intake worker finds the
+// channels of each event and queues it to the worker of each channel, so a
+// slow channel does not delay the others. Safe to call once; subsequent
+// calls are no-ops.
 func (n *Notifier) WithChannelDispatcher(d *channel.Dispatcher) *Notifier {
 	if d == nil {
 		return n
@@ -85,18 +91,29 @@ func (n *Notifier) WithChannelDispatcher(d *channel.Dispatcher) *Notifier {
 		n.channelDispatcher = d
 		n.dispatchQueue = make(chan channel.EventPayload, dispatchQueueSize)
 		n.done = make(chan struct{})
-		go n.dispatchWorker()
+		n.workerExited = make(chan struct{})
+		// Stop cancels ctx, so a channel or cluster name lookup does not
+		// hold up the shutdown.
+		ctx, cancel := context.WithCancel(context.Background())
+		n.cancelDispatch = cancel
+		go n.dispatchWorker(ctx)
 	})
 	return n
 }
 
-func (n *Notifier) dispatchWorker() {
+func (n *Notifier) dispatchWorker(ctx context.Context) {
+	defer close(n.workerExited)
 	for {
+		// A closed done wins over a waiting payload.
+		select {
+		case <-n.done:
+			return
+		default:
+		}
 		select {
 		case <-n.done:
 			return
 		case payload := <-n.dispatchQueue:
-			ctx := context.Background()
 			n.channelDispatcher.Dispatch(ctx, n.withClusterName(ctx, payload))
 		}
 	}
@@ -113,25 +130,54 @@ func (n *Notifier) withClusterName(ctx context.Context, payload channel.EventPay
 	return payload
 }
 
-// Stop shuts down the dispatch worker. Safe to call multiple times and
-// when no dispatcher is configured.
+// Stop shuts down the intake worker and the channel workers: it cancels the
+// lookups and deliveries in progress, counts the queued events as dropped
+// (reason shutdown) and waits until all workers have returned. Safe to call
+// multiple times and when no dispatcher is configured.
 func (n *Notifier) Stop() {
 	n.stopOnce.Do(func() {
-		if n.done != nil {
-			close(n.done)
+		if n.done == nil {
+			return
 		}
+		close(n.done)
+		n.cancelDispatch()
+		<-n.workerExited
+		n.discardQueued()
+		n.channelDispatcher.Stop()
 	})
 }
 
+// discardQueued counts the events left in the intake queue after the intake
+// worker has returned.
+func (n *Notifier) discardQueued() {
+	for {
+		select {
+		case payload := <-n.dispatchQueue:
+			n.channelDispatcher.RecordDrop(payload.EventType, "", channel.DropReasonShutdown)
+		default:
+			return
+		}
+	}
+}
+
+// enqueueDispatch queues payload for the intake worker. It never blocks: a
+// full queue, or a stopped notifier, drops the event. The dispatcher counts
+// the drop and logs at most one warning per minute for each event type and
+// reason (#649).
 func (n *Notifier) enqueueDispatch(payload channel.EventPayload) {
 	if n.dispatchQueue == nil {
 		return
 	}
 	select {
-	case n.dispatchQueue <- payload:
 	case <-n.done:
+		n.channelDispatcher.RecordDrop(payload.EventType, "", channel.DropReasonShutdown)
+		return
 	default:
-		slog.Warn("notification channel dispatch queue full, dropping event", "event", payload.EventType)
+	}
+	select {
+	case n.dispatchQueue <- payload:
+	default:
+		n.channelDispatcher.RecordDrop(payload.EventType, "", channel.DropReasonQueueFull)
 	}
 }
 
