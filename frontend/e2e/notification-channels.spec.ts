@@ -259,10 +259,8 @@ test.describe('Notification channels', () => {
 
     await rowOf(page, name).getByRole('button', { name: 'Expand delivery logs' }).click();
     await expect(page.getByText('Delivery Logs (last 20)')).toBeVisible();
-    const logRows = page.getByRole('row').filter({ hasText: /^(test|instance\.created)/ });
-    await expect(page.getByRole('cell', { name: 'test', exact: true })).toBeVisible();
-    await expect(page.getByRole('cell', { name: 'instance.created', exact: true })).toBeVisible();
-    await expect(logRows.filter({ hasText: 'failed' }).first()).toBeVisible();
+    await expect(page.getByRole('row', { name: /^test failed / })).toBeVisible();
+    await expect(page.getByRole('row', { name: /^instance\.created failed / })).toBeVisible();
   });
 
   test('a test send reaches the webhook with the signature of the secret', async ({ page }) => {
@@ -327,7 +325,8 @@ test.describe('Notification channels', () => {
     await rowOf(page, name).getByRole('button', { name: 'Expand delivery logs' }).click();
     await expect(page.getByRole('cell', { name: 'test', exact: true })).toBeVisible();
     await expect(page.getByRole('cell', { name: 'instance.created', exact: true })).toBeVisible();
-    await expect(page.getByRole('row').filter({ hasText: 'instance.created' }).filter({ hasText: 'success' })).toBeVisible();
+    // The log row only: the outer row of the channel holds the whole log table.
+    await expect(page.getByRole('row', { name: /^instance\.created success 200 / })).toBeVisible();
   });
 
   test('a user without the devops role cannot open the page or the API', async ({ page }) => {
