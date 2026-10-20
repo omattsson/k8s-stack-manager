@@ -391,8 +391,13 @@ LOADTEST_MYSQL_ENV = $(LOADTEST_ENV) \
 define loadtest_check_ports
 	@ports="$(LOADTEST_PORT)"; addr=$${PPROF_ADDR:-127.0.0.1:6060}; \
 	if [ "$${PPROF_ENABLED:-true}" = true ]; then ports="$$ports $${addr##*:}"; fi; \
+	if command -v lsof >/dev/null 2>&1; then tool=lsof; \
+	elif command -v ss >/dev/null 2>&1; then tool=ss; \
+	else echo "WARNING: lsof not found, port check skipped"; ports=; fi; \
 	for p in $$ports; do \
-		if [ -n "$$(lsof -nP -iTCP:$$p -sTCP:LISTEN -t 2>/dev/null)" ]; then \
+		if [ $$tool = lsof ]; then used=$$(lsof -nP -iTCP:$$p -sTCP:LISTEN -t 2>/dev/null); \
+		else used=$$(ss -ltn "sport = :$$p" 2>/dev/null | tail -n +2); fi; \
+		if [ -n "$$used" ]; then \
 			echo "ERROR: port $$p is in use. Stop the other process, or set LOADTEST_PORT or PPROF_ADDR."; exit 1; \
 		fi; \
 	done
@@ -406,7 +411,10 @@ define loadtest_wait_backend
 			rm -f backend/tmp/$(1); exit 1; \
 		fi; \
 		n=$$((n+1)); \
-		if [ $$n -ge 30 ]; then echo "ERROR: Backend failed to start after 30s. See backend/tmp/$(2)"; exit 1; fi; \
+		if [ $$n -ge 30 ]; then \
+			echo "ERROR: Backend failed to start after 30s. See backend/tmp/$(2)"; \
+			kill $$(cat backend/tmp/$(1)) 2>/dev/null; rm -f backend/tmp/$(1); exit 1; \
+		fi; \
 		sleep 1; \
 	done
 	@echo "Backend is ready on $(LOADTEST_URL) (logs: backend/tmp/$(2))"
