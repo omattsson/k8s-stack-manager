@@ -52,6 +52,11 @@ func NewFromAppConfig(cfg *config.Config) (*Database, error) {
 	if err != nil {
 		return nil, NewDatabaseError("connect", fmt.Errorf("failed after %d attempts: %w", retryCount, err))
 	}
+	if !cfg.App.Debug {
+		if err := useParameterizedScanSQL(db); err != nil {
+			return nil, NewDatabaseError("configure", err)
+		}
+	}
 
 	sqlDB, err := db.DB()
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"time"
 
 	"gorm.io/gorm"
@@ -104,6 +105,10 @@ func (l *slogGormLogger) Trace(ctx context.Context, begin time.Time, fc func() (
 	switch {
 	case l.level >= logger.Error && err != nil && !errors.Is(err, logger.ErrRecordNotFound):
 		level, msg, isErr = slog.LevelError, "SQL error", true
+		if isDuplicateKeyError(err) {
+			// The repositories answer it with ErrDuplicateKey (409).
+			level, msg = slog.LevelWarn, "SQL duplicate key"
+		}
 	case l.level >= logger.Warn && l.slowThreshold > 0 && elapsed >= l.slowThreshold:
 		level, msg, isSlow = slog.LevelWarn, "Slow SQL query", true
 	case l.level >= logger.Info:
@@ -129,7 +134,11 @@ func (l *slogGormLogger) Trace(ctx context.Context, begin time.Time, fc func() (
 	}
 	r.AddAttrs(slog.Duration("duration", elapsed))
 	if isErr {
-		r.AddAttrs(slog.String("error", err.Error()))
+		errText := err.Error()
+		if l.parameterized {
+			errText = redactSQLError(errText)
+		}
+		r.AddAttrs(slog.String("error", errText))
 	}
 	if isSlow {
 		r.AddAttrs(slog.Duration("threshold", l.slowThreshold))
@@ -163,4 +172,72 @@ func (l *slogGormLogger) handler() slog.Handler {
 		return l.log.Handler()
 	}
 	return slog.Default().Handler()
+}
+
+var (
+	sqlErrDuplicateValue = regexp.MustCompile(`(?s)(Duplicate entry )'.*'( for key '[^']*')$`)
+	sqlErrColumnValue    = regexp.MustCompile(`(?s)( value: )'.*'( for column '[^']*' at row \d+)$`)
+)
+
+// redactSQLError replaces the quoted values of a SQL error text with '?'.
+// MySQL quotes values without escaping (1062, 1292, 1366), so only the key
+// or column name at the end stays; otherwise all from the first to the last
+// quote goes (#653).
+func redactSQLError(msg string) string {
+	if sqlErrDuplicateValue.MatchString(msg) {
+		return sqlErrDuplicateValue.ReplaceAllString(msg, "$1'?'$2")
+	}
+	if sqlErrColumnValue.MatchString(msg) {
+		return sqlErrColumnValue.ReplaceAllString(msg, "$1'?'$2")
+	}
+	first, last := -1, -1
+	for i := 0; i < len(msg); i++ {
+		if msg[i] == '\'' && !isWordApostrophe(msg, i) {
+			if first < 0 {
+				first = i
+			}
+			last = i
+		}
+	}
+	if first < 0 {
+		return msg
+	}
+	if last == first {
+		return msg[:first] + "'?'"
+	}
+	return msg[:first] + "'?'" + msg[last+1:]
+}
+
+// isWordApostrophe reports a quote between two letters, as in "doesn't".
+func isWordApostrophe(s string, i int) bool {
+	isLetter := func(b byte) bool { return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') }
+	return i > 0 && i < len(s)-1 && isLetter(s[i-1]) && isLetter(s[i+1])
+}
+
+// parameterizedSQLKey marks the statement context of a release-mode DB.
+type parameterizedSQLKey struct{}
+
+func init() {
+	// db.Scan logs through logger.Recorder, which filters the values with this
+	// package function, not with the DB logger (#653).
+	logger.RecorderParamsFilter = recorderParamsFilter
+}
+
+func recorderParamsFilter(ctx context.Context, sql string, params ...any) (string, []any) {
+	if ctx != nil && ctx.Value(parameterizedSQLKey{}) != nil {
+		return sql, nil
+	}
+	return sql, params
+}
+
+// useParameterizedScanSQL makes db.Scan log ? placeholders instead of the
+// values, as the release-mode logger does for the other queries.
+func useParameterizedScanSQL(db *gorm.DB) error {
+	return db.Callback().Row().Before("gorm:row").Register("stackmanager:parameterized_scan_sql", func(tx *gorm.DB) {
+		ctx := tx.Statement.Context
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		tx.Statement.Context = context.WithValue(ctx, parameterizedSQLKey{}, true)
+	})
 }

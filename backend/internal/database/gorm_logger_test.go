@@ -13,6 +13,7 @@ import (
 
 	"backend/internal/telemetry"
 
+	mysqldriver "github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
@@ -76,7 +77,7 @@ func TestSlogGormLogger_Trace(t *testing.T) {
 	t.Parallel()
 
 	const query = "SELECT * FROM `stack_instances` WHERE namespace = ? LIMIT 1"
-	errSQL := errors.New("Error 1146: Table 'app.missing' doesn't exist")
+	errSQL := errors.New("Error 1213 (40001): Deadlock found when trying to get lock; try restarting transaction")
 
 	tests := []struct {
 		name         string
@@ -478,6 +479,167 @@ func TestSlogGormLogger_WithDB(t *testing.T) {
 
 			frame, _ := runtime.CallersFrames([]uintptr{r.PC}).Next()
 			assert.True(t, strings.HasSuffix(frame.File, "gorm_logger_test.go"), "caller is the query code, got %q", frame.File)
+		})
+	}
+}
+
+func TestRedactSQLError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "1062 keeps the number and the key",
+			in:   "Error 1062 (23000): Duplicate entry 'alice' for key 'users.idx_users_username'",
+			want: "Error 1062 (23000): Duplicate entry '?' for key 'users.idx_users_username'",
+		},
+		{
+			name: "1062 value with a quote",
+			in:   "Error 1062 (23000): Duplicate entry 'o'brien' for key 'users.idx_users_username'",
+			want: "Error 1062 (23000): Duplicate entry '?' for key 'users.idx_users_username'",
+		},
+		{
+			name: "1062 value that looks like a key",
+			in:   "Error 1062 (23000): Duplicate entry 'x' for key 'y' for key 'users.idx_users_username'",
+			want: "Error 1062 (23000): Duplicate entry '?' for key 'users.idx_users_username'",
+		},
+		{
+			name: "1366 keeps the column",
+			in:   "Error 1366 (HY000): Incorrect integer value: 'abc' for column 'pod_limit' at row 1",
+			want: "Error 1366 (HY000): Incorrect integer value: '?' for column 'pod_limit' at row 1",
+		},
+		{
+			name: "1292 datetime value",
+			in:   "Error 1292 (22007): Incorrect datetime value: '2026-13-45' for column 'expires_at' at row 1",
+			want: "Error 1292 (22007): Incorrect datetime value: '?' for column 'expires_at' at row 1",
+		},
+		{
+			name: "1292 truncated value without a column",
+			in:   "Error 1292 (22007): Truncated incorrect DOUBLE value: 'secret'",
+			want: "Error 1292 (22007): Truncated incorrect DOUBLE value: '?'",
+		},
+		{
+			name: "other quoted text",
+			in:   "Error 1146 (42S02): Table 'app.missing' doesn't exist",
+			want: "Error 1146 (42S02): Table '?' doesn't exist",
+		},
+		{
+			name: "apostrophe inside a word stays",
+			in:   "Error 1005 (HY000): Can't create table 'app.x' (errno: 150)",
+			want: "Error 1005 (HY000): Can't create table '?' (errno: 150)",
+		},
+		{
+			name: "value with an apostrophe",
+			in:   "Error 1292 (22007): Truncated incorrect DOUBLE value: 'o'brien'",
+			want: "Error 1292 (22007): Truncated incorrect DOUBLE value: '?'",
+		},
+		{name: "one quote", in: "near 'abc", want: "near '?'"},
+		{
+			name: "no quotes",
+			in:   "Error 1213 (40001): Deadlock found when trying to get lock; try restarting transaction",
+			want: "Error 1213 (40001): Deadlock found when trying to get lock; try restarting transaction",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, redactSQLError(tt.in))
+		})
+	}
+}
+
+// TestSlogGormLogger_ErrorValues checks the error attribute: no quoted
+// value in release mode, the full text in debug mode, and a duplicate key at
+// level warn.
+func TestSlogGormLogger_ErrorValues(t *testing.T) {
+	t.Parallel()
+
+	dup := &mysqldriver.MySQLError{Number: 1062, SQLState: [5]byte{'2', '3', '0', '0', '0'}, Message: "Duplicate entry 'secret-user' for key 'users.idx_users_username'"}
+	badValue := &mysqldriver.MySQLError{Number: 1366, SQLState: [5]byte{'H', 'Y', '0', '0', '0'}, Message: "Incorrect integer value: 'secret-value' for column 'pod_limit' at row 1"}
+
+	tests := []struct {
+		name      string
+		err       error
+		debug     bool
+		wantLevel slog.Level
+		wantMsg   string
+		want      []string
+		deny      []string
+	}{
+		{name: "release: duplicate entry", err: dup, wantLevel: slog.LevelWarn, wantMsg: "SQL duplicate key", want: []string{"Error 1062", "users.idx_users_username"}, deny: []string{"secret-user"}},
+		{name: "debug: duplicate entry", err: dup, debug: true, wantLevel: slog.LevelWarn, wantMsg: "SQL duplicate key", want: []string{"Error 1062", "secret-user"}},
+		{name: "release: incorrect value", err: badValue, wantLevel: slog.LevelError, wantMsg: "SQL error", want: []string{"Error 1366", "pod_limit"}, deny: []string{"secret-value"}},
+		{name: "debug: incorrect value", err: badValue, debug: true, wantLevel: slog.LevelError, wantMsg: "SQL error", want: []string{"secret-value"}},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			log, h := newRecordingLogger(slog.LevelInfo)
+			l := newSlogGormLogger(log, tt.debug)
+			l.Trace(context.Background(), time.Now(), func() (string, int64) { return "INSERT INTO users (username) VALUES (?)", 0 }, tt.err)
+
+			records := h.all()
+			require.Len(t, records, 1)
+			assert.Equal(t, tt.wantLevel, records[0].Level)
+			assert.Equal(t, tt.wantMsg, records[0].Message)
+			errText := recordAttrs(records[0])["error"].String()
+			for _, s := range tt.want {
+				assert.Contains(t, errText, s)
+			}
+			for _, s := range tt.deny {
+				assert.NotContains(t, errText, s)
+			}
+		})
+	}
+}
+
+// TestSlogGormLogger_Scan checks db.Scan, which logs through
+// logger.Recorder: placeholders in release mode (useParameterizedScanSQL),
+// values in debug mode.
+func TestSlogGormLogger_Scan(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		debug   bool
+		wantSQL string
+		denySQL string
+	}{
+		{name: "release: placeholders", wantSQL: "name = ?", denySQL: "scan-secret"},
+		{name: "debug: values", debug: true, wantSQL: "scan-secret"},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			log, h := newRecordingLogger(slog.LevelInfo)
+			db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{SkipDefaultTransaction: true, Logger: newSlogGormLogger(log, tt.debug)})
+			require.NoError(t, err)
+			sqlDB, err := db.DB()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = sqlDB.Close() })
+			if !tt.debug {
+				require.NoError(t, useParameterizedScanSQL(db))
+			}
+
+			var out []map[string]any
+			require.Error(t, db.Raw("SELECT id FROM missing_table WHERE name = ?", "scan-secret").Scan(&out).Error)
+
+			records := h.all()
+			require.Len(t, records, 1)
+			sql := recordAttrs(records[0])["sql"].String()
+			assert.Contains(t, sql, tt.wantSQL)
+			if tt.denySQL != "" {
+				assert.NotContains(t, sql, tt.denySQL)
+			}
 		})
 	}
 }
