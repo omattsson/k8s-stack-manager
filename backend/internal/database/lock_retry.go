@@ -4,52 +4,54 @@ import (
 	"errors"
 	"log/slog"
 	"math/rand/v2"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
 )
 
 const (
-	mysqlErrLockWaitTimeout = 1205
-	mysqlErrDeadlock        = 1213
+	mysqlErrDeadlock = 1213
 
-	lockRetryAttempts = 3
-	lockRetryMinWait  = 10 * time.Millisecond
-	lockRetryMaxWait  = 50 * time.Millisecond
+	deadlockRetryAttempts = 3
+	deadlockRetryMinWait  = 10 * time.Millisecond
+	deadlockRetryMaxWait  = 50 * time.Millisecond
 )
 
-// isLockConflictError reports whether InnoDB ended the statement or the
-// transaction with a deadlock (1213) or a lock wait timeout (1205).
-func isLockConflictError(err error) bool {
+// deadlockRetries counts the attempts that ran again after a deadlock (read by tests).
+var deadlockRetries atomic.Int64
+
+// isDeadlockError reports whether InnoDB rolled back the transaction with a
+// deadlock (1213). A lock wait timeout (1205) is not retried: each attempt
+// can wait innodb_lock_wait_timeout.
+func isDeadlockError(err error) bool {
 	var mysqlErr *mysql.MySQLError
-	if !errors.As(err, &mysqlErr) {
-		return false
-	}
-	return mysqlErr.Number == mysqlErrDeadlock || mysqlErr.Number == mysqlErrLockWaitTimeout
+	return errors.As(err, &mysqlErr) && mysqlErr.Number == mysqlErrDeadlock
 }
 
-// retryOnLockConflict runs txFn, a complete transaction without side effects
-// outside it, again after a lock conflict. It returns the last error.
-func retryOnLockConflict(op string, txFn func() error) error {
-	return retryOnLockConflictWait(op, lockRetryWait, txFn)
+// retryOnDeadlock runs txFn, a complete transaction without side effects
+// outside it, again after a deadlock. It returns the last error.
+func retryOnDeadlock(op string, txFn func() error) error {
+	return retryOnDeadlockWait(op, deadlockRetryWait, txFn)
 }
 
-func retryOnLockConflictWait(op string, wait func() time.Duration, txFn func() error) error {
+func retryOnDeadlockWait(op string, wait func() time.Duration, txFn func() error) error {
 	var err error
-	for attempt := 1; attempt <= lockRetryAttempts; attempt++ {
-		if err = txFn(); err == nil || !isLockConflictError(err) {
+	for attempt := 1; attempt <= deadlockRetryAttempts; attempt++ {
+		if err = txFn(); err == nil || !isDeadlockError(err) {
 			return err
 		}
-		if attempt < lockRetryAttempts {
+		if attempt < deadlockRetryAttempts {
+			deadlockRetries.Add(1)
 			time.Sleep(wait())
 		}
 	}
-	slog.Warn("Database transaction failed on a lock conflict after all attempts",
-		"op", op, "attempts", lockRetryAttempts, "error", err)
+	slog.Warn("Database transaction failed on a deadlock after all attempts",
+		"op", op, "attempts", deadlockRetryAttempts, "error", err)
 	return err
 }
 
-func lockRetryWait() time.Duration {
+func deadlockRetryWait() time.Duration {
 	// #nosec G404 -- retry jitter, not a secret.
-	return lockRetryMinWait + rand.N(lockRetryMaxWait-lockRetryMinWait+1)
+	return deadlockRetryMinWait + rand.N(deadlockRetryMaxWait-deadlockRetryMinWait+1)
 }

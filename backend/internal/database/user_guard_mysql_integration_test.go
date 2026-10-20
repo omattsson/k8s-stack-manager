@@ -135,44 +135,62 @@ func TestDatabaseUserIDCaseInsensitive(t *testing.T) {
 	assert.Equal(t, "user-abc", u.ID)
 }
 
-// TestDatabaseUserGuardedChangesNoDeadlock runs concurrent deletes and role
-// changes on different users: no call may fail with a deadlock (#639).
+// TestDatabaseUserGuardedChangesNoDeadlock runs concurrent guarded deletes and
+// role changes, SSO role syncs and admin creates on different users: no call
+// may fail with a deadlock, and the deadlocks that happen are retried (#639).
 func TestDatabaseUserGuardedChangesNoDeadlock(t *testing.T) {
 	const (
 		caller     = "admin-root"
-		goroutines = 20
-		rounds     = 10
+		goroutines = 8 // more goroutines can use up the 3 attempts of one call
+		minRounds  = 10
+		maxRounds  = 50
 	)
+	admin, user := models.RoleAdmin, models.RoleUser
 	ops := []struct {
-		run     func(r *GORMUserRepository, target string) error
-		name    string
-		oldRole string
+		run      func(r *GORMUserRepository, target string) error
+		name     string
+		oldRole  string // "": run creates the user
+		provider string
 	}{
-		{name: "delete", oldRole: models.RoleUser, run: func(r *GORMUserRepository, target string) error {
+		{name: "delete", oldRole: user, provider: "local", run: func(r *GORMUserRepository, target string) error {
 			return r.DeleteGuarded(caller, target)
 		}},
-		{name: "promote", oldRole: models.RoleUser, run: func(r *GORMUserRepository, target string) error {
-			_, err := r.UpdateRole(caller, target, models.RoleAdmin)
+		{name: "promote", oldRole: user, provider: "local", run: func(r *GORMUserRepository, target string) error {
+			_, err := r.UpdateRole(caller, target, admin)
 			return err
 		}},
-		{name: "demote", oldRole: models.RoleAdmin, run: func(r *GORMUserRepository, target string) error {
-			_, err := r.UpdateRole(caller, target, models.RoleUser)
+		{name: "demote", oldRole: admin, provider: "local", run: func(r *GORMUserRepository, target string) error {
+			_, err := r.UpdateRole(caller, target, user)
 			return err
+		}},
+		{name: "sso-promote", oldRole: user, provider: "oidc", run: func(r *GORMUserRepository, target string) error {
+			return r.UpdateProfile(target, models.UserProfileUpdate{Role: &admin})
+		}},
+		{name: "sso-demote", oldRole: admin, provider: "oidc", run: func(r *GORMUserRepository, target string) error {
+			return r.UpdateProfile(target, models.UserProfileUpdate{Role: &user})
+		}},
+		{name: "create-admin", run: func(r *GORMUserRepository, target string) error {
+			return r.Create(&models.User{ID: target, Username: "new-" + target, Role: admin})
 		}},
 	}
 
 	db := setupMySQLTestDB(t)
 	repo := NewGORMUserRepository(db)
+	retriesBefore := deadlockRetries.Load()
 
-	for round := 0; round < rounds; round++ {
+	// Run until at least one deadlock was retried, so the test proves the retry path.
+	for round := 0; round < maxRounds && (round < minRounds || deadlockRetries.Load() == retriesBefore); round++ {
 		require.NoError(t, db.Exec("DELETE FROM users").Error)
-		require.NoError(t, repo.Create(&models.User{ID: caller, Username: caller, Role: models.RoleAdmin}))
+		require.NoError(t, repo.Create(&models.User{ID: caller, Username: caller, Role: admin}))
 		// Random IDs as in production: the deadlock needs a promoted user whose ID sorts before the admin rows.
 		targets := make([]string, goroutines)
 		for i := range targets {
 			op := ops[i%len(ops)]
 			targets[i] = uuid.New().String()
-			require.NoError(t, repo.Create(&models.User{ID: targets[i], Username: fmt.Sprintf("u-%02d-%s", i, op.name), Role: op.oldRole}))
+			if op.oldRole != "" {
+				require.NoError(t, repo.Create(&models.User{ID: targets[i], Username: fmt.Sprintf("u-%02d-%s", i, op.name),
+					Role: op.oldRole, AuthProvider: op.provider}))
+			}
 		}
 
 		var wg sync.WaitGroup
@@ -190,8 +208,10 @@ func TestDatabaseUserGuardedChangesNoDeadlock(t *testing.T) {
 		wg.Wait()
 
 		for i, err := range errs {
-			assert.False(t, isLockConflictError(err), "round %d, %s: lock conflict after the retries: %v", round, targets[i], err)
-			assert.NoError(t, err, "round %d, %s", round, targets[i])
+			assert.False(t, isDeadlockError(err), "round %d, %s: deadlock after the retries: %v", round, ops[i%len(ops)].name, err)
+			assert.NoError(t, err, "round %d, %s", round, ops[i%len(ops)].name)
 		}
 	}
+	t.Logf("deadlock retries: %d", deadlockRetries.Load()-retriesBefore)
+	assert.Positive(t, deadlockRetries.Load()-retriesBefore, "the test must cause deadlocks that the retry hides")
 }

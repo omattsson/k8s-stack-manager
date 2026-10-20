@@ -20,11 +20,11 @@ import (
 
 var (
 	errFakeDeadlock    = &mysql.MySQLError{Number: mysqlErrDeadlock, Message: "Deadlock found when trying to get lock; try restarting transaction"}
-	errFakeLockTimeout = &mysql.MySQLError{Number: mysqlErrLockWaitTimeout, Message: "Lock wait timeout exceeded; try restarting transaction"}
+	errFakeLockTimeout = &mysql.MySQLError{Number: 1205, Message: "Lock wait timeout exceeded; try restarting transaction"}
 	errFakeDuplicate   = &mysql.MySQLError{Number: mysqlErrDuplicateEntry, Message: "Duplicate entry"}
 )
 
-func TestRetryOnLockConflict(t *testing.T) {
+func TestRetryOnDeadlock(t *testing.T) {
 	t.Parallel()
 
 	wrappedDeadlock := dberrors.NewDatabaseError("update_role", errFakeDeadlock)
@@ -39,10 +39,12 @@ func TestRetryOnLockConflict(t *testing.T) {
 		{name: "success at once", results: []error{nil}, wantCalls: 1},
 		{name: "deadlock, then success", results: []error{errFakeDeadlock, nil}, wantCalls: 2, wantWaits: 1},
 		{name: "wrapped deadlock, then success", results: []error{wrappedDeadlock, nil}, wantCalls: 2, wantWaits: 1},
-		{name: "lock wait timeout, then success", results: []error{errFakeLockTimeout, nil}, wantCalls: 2, wantWaits: 1},
-		{name: "two deadlocks, then success", results: []error{errFakeDeadlock, errFakeLockTimeout, nil}, wantCalls: 3, wantWaits: 2},
+		{name: "two deadlocks, then success", results: []error{errFakeDeadlock, wrappedDeadlock, nil}, wantCalls: 3, wantWaits: 2},
 		{name: "deadlock three times", results: []error{errFakeDeadlock, errFakeDeadlock, wrappedDeadlock},
 			wantErr: wrappedDeadlock, wantCalls: 3, wantWaits: 2},
+		{name: "lock wait timeout: no retry", results: []error{errFakeLockTimeout, nil}, wantErr: errFakeLockTimeout, wantCalls: 1},
+		{name: "deadlock, then lock wait timeout", results: []error{errFakeDeadlock, errFakeLockTimeout, nil},
+			wantErr: errFakeLockTimeout, wantCalls: 2, wantWaits: 1},
 		{name: "duplicate key: no retry", results: []error{errFakeDuplicate, nil}, wantErr: errFakeDuplicate, wantCalls: 1},
 		{name: "domain error: no retry", results: []error{models.ErrLastAdmin, nil}, wantErr: models.ErrLastAdmin, wantCalls: 1},
 		{name: "other error: no retry", results: []error{errBadConn, nil}, wantErr: errBadConn, wantCalls: 1},
@@ -54,7 +56,7 @@ func TestRetryOnLockConflict(t *testing.T) {
 			t.Parallel()
 
 			calls, waits := 0, 0
-			err := retryOnLockConflictWait("test", func() time.Duration { waits++; return 0 }, func() error {
+			err := retryOnDeadlockWait("test", func() time.Duration { waits++; return 0 }, func() error {
 				calls++
 				if calls > len(tt.results) {
 					return nil
@@ -73,33 +75,35 @@ func TestRetryOnLockConflict(t *testing.T) {
 	}
 }
 
-// Not parallel: it swaps the default logger.
-func TestRetryOnLockConflict_LogsAttempts(t *testing.T) {
+// Not parallel: it swaps the default logger and reads deadlockRetries.
+func TestRetryOnDeadlock_LogsAttempts(t *testing.T) {
 	var buf bytes.Buffer
 	prev := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
-	err := retryOnLockConflictWait("delete", func() time.Duration { return 0 }, func() error { return errFakeDeadlock })
+	before := deadlockRetries.Load()
+	err := retryOnDeadlockWait("delete", func() time.Duration { return 0 }, func() error { return errFakeDeadlock })
 
 	require.ErrorIs(t, err, errFakeDeadlock)
+	assert.Equal(t, int64(2), deadlockRetries.Load()-before, "two attempts ran again")
 	out := buf.String()
 	assert.Equal(t, 1, strings.Count(out, "level=WARN"), out)
 	assert.Contains(t, out, "op=delete")
 	assert.Contains(t, out, "attempts=3")
 }
 
-func TestLockRetryWait(t *testing.T) {
+func TestDeadlockRetryWait(t *testing.T) {
 	t.Parallel()
 
 	for i := 0; i < 1000; i++ {
-		d := lockRetryWait()
-		require.GreaterOrEqual(t, d, lockRetryMinWait)
-		require.LessOrEqual(t, d, lockRetryMaxWait)
+		d := deadlockRetryWait()
+		require.GreaterOrEqual(t, d, deadlockRetryMinWait)
+		require.LessOrEqual(t, d, deadlockRetryMaxWait)
 	}
 }
 
-// TestGuardedAdminChange_RetriesTransaction checks that a lock conflict runs
+// TestGuardedAdminChange_RetriesTransaction checks that a deadlock runs
 // the whole transaction again and rolls back the writes of the failed attempt.
 func TestGuardedAdminChange_RetriesTransaction(t *testing.T) {
 	t.Parallel()

@@ -184,23 +184,33 @@ func (g guardTarget) wouldRemoveLastAdmin() bool {
 // Inside the lock, the caller must still be an enabled admin
 // (ErrCallerNotAdmin). IDs compare without case, as the MySQL collation does.
 //
-// A lock conflict (next-key locks on idx_users_role, #639) runs the whole
+// A deadlock (next-key locks on idx_users_role, #639) runs the whole
 // transaction again, so fn must only write through tx.
 func (r *GORMUserRepository) guardedAdminChange(op, callerID, id string, fn func(tx *gorm.DB, t guardTarget) error) error {
-	return retryOnLockConflict(op, func() error {
+	return retryOnDeadlock(op, func() error {
 		return r.guardedAdminTx(op, callerID, id, fn)
 	})
 }
 
+// lockAdminRows locks the admin rows, ordered by ID. A transaction that
+// changes a role must call it before it locks any user row.
+func lockAdminRows(tx *gorm.DB, op string) ([]models.User, error) {
+	var admins []models.User
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Select("id", "disabled").
+		Where("role = ?", models.RoleAdmin).
+		Order("id").
+		Find(&admins).Error; err != nil {
+		return nil, dberrors.NewDatabaseError(op, err)
+	}
+	return admins, nil
+}
+
 func (r *GORMUserRepository) guardedAdminTx(op, callerID, id string, fn func(tx *gorm.DB, t guardTarget) error) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		var admins []models.User
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Select("id", "disabled").
-			Where("role = ?", models.RoleAdmin).
-			Order("id").
-			Find(&admins).Error; err != nil {
-			return dberrors.NewDatabaseError(op, err)
+		admins, err := lockAdminRows(tx, op)
+		if err != nil {
+			return err
 		}
 
 		callerOK := false
@@ -311,7 +321,17 @@ func (r *GORMUserRepository) UpdatePassword(id, passwordHash string) error {
 // UpdateProfile sets only the columns listed in upd. See
 // models.UserRepository.
 func (r *GORMUserRepository) UpdateProfile(id string, upd models.UserProfileUpdate) error {
+	return retryOnDeadlock("update_profile", func() error { return r.updateProfileTx(id, upd) })
+}
+
+func (r *GORMUserRepository) updateProfileTx(id string, upd models.UserProfileUpdate) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if upd.Role != nil {
+			// Same lock order as guardedAdminChange: without it, the two deadlock on every overlap (#639).
+			if _, err := lockAdminRows(tx, "update_profile"); err != nil {
+				return err
+			}
+		}
 		cols := map[string]interface{}{"updated_at": time.Now().UTC()}
 		if upd.Email != nil {
 			cols["email"] = *upd.Email
