@@ -136,6 +136,15 @@ func (r *GORMRetentionRepository) DeleteDeliveryLogsOlderThan(ctx context.Contex
 	return r.deleteInBatches(ctx, &models.NotificationDeliveryLog{}, batchSize, older, older)
 }
 
+// DeleteActionRunsOlderThan deletes action runs that started before age.
+func (r *GORMRetentionRepository) DeleteActionRunsOlderThan(ctx context.Context, age time.Duration, batchSize int) (int64, error) {
+	cutoff := dbNowMinus(r.db, age)
+	older := func(tx *gorm.DB) *gorm.DB {
+		return tx.Where("started_at < " + cutoff) // #nosec G202 -- built from a duration
+	}
+	return r.deleteInBatches(ctx, &models.ActionRun{}, batchSize, older, older)
+}
+
 // deleteInBatches deletes the rows of model that match selectScope. Each
 // batch reads up to batchSize IDs with selectScope and deletes them with
 // deleteScope (a row that stopped matching stays). The IDs are UUIDs, so a primary key range

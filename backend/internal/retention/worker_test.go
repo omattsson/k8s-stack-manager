@@ -49,6 +49,10 @@ func (f *fakeRepo) DeleteDeliveryLogsOlderThan(_ context.Context, age time.Durat
 	return f.call(TableDeliveryLogs, age)
 }
 
+func (f *fakeRepo) DeleteActionRunsOlderThan(_ context.Context, age time.Duration, _ int) (int64, error) {
+	return f.call(TableActionRuns, age)
+}
+
 func (f *fakeRepo) callCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -67,12 +71,18 @@ func TestWorker_RunOnce(t *testing.T) {
 	}{
 		{
 			name: "every table with a retention",
-			cfg:  config.RetentionConfig{DeployLogDays: 180, AuditLogDays: 365, NotificationDays: 90, DeliveryLogDays: 30},
+			cfg:  config.RetentionConfig{DeployLogDays: 180, AuditLogDays: 365, NotificationDays: 90, DeliveryLogDays: 30, ActionRunDays: 60},
 			wantCalls: map[string]time.Duration{
 				TableDeploymentLogs: 180 * day, TableAuditLogs: 365 * day,
-				TableNotifications: 90 * day, TableDeliveryLogs: 30 * day,
+				TableNotifications: 90 * day, TableDeliveryLogs: 30 * day, TableActionRuns: 60 * day,
 			},
-			wantDeleted: map[string]int64{TableDeploymentLogs: 4, TableAuditLogs: 3, TableNotifications: 2, TableDeliveryLogs: 1},
+			wantDeleted: map[string]int64{TableDeploymentLogs: 4, TableAuditLogs: 3, TableNotifications: 2, TableDeliveryLogs: 1, TableActionRuns: 5},
+		},
+		{
+			name:        "action runs only",
+			cfg:         config.RetentionConfig{ActionRunDays: 180},
+			wantCalls:   map[string]time.Duration{TableActionRuns: 180 * day},
+			wantDeleted: map[string]int64{TableActionRuns: 5},
 		},
 		{
 			name:        "0 keeps the rows",
@@ -95,7 +105,7 @@ func TestWorker_RunOnce(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			repo := newFakeRepo()
-			repo.result = map[string]int64{TableDeploymentLogs: 4, TableAuditLogs: 3, TableNotifications: 2, TableDeliveryLogs: 1}
+			repo.result = map[string]int64{TableDeploymentLogs: 4, TableAuditLogs: 3, TableNotifications: 2, TableDeliveryLogs: 1, TableActionRuns: 5}
 			for k, v := range tt.errs {
 				repo.errs[k] = v
 			}

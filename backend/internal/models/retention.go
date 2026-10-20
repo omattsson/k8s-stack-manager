@@ -24,4 +24,6 @@ type RetentionRepository interface {
 	// DeleteDeliveryLogsOlderThan deletes notification channel delivery
 	// logs by created_at.
 	DeleteDeliveryLogsOlderThan(ctx context.Context, age time.Duration, batchSize int) (int64, error)
+	// DeleteActionRunsOlderThan deletes action runs by started_at.
+	DeleteActionRunsOlderThan(ctx context.Context, age time.Duration, batchSize int) (int64, error)
 }

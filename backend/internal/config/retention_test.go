@@ -11,7 +11,7 @@ import (
 // retentionEnvKeys are the environment variables of RetentionConfig.
 var retentionEnvKeys = []string{
 	"DEPLOY_LOG_RETENTION_DAYS", "AUDIT_LOG_RETENTION_DAYS", "NOTIFICATION_RETENTION_DAYS",
-	"DELIVERY_LOG_RETENTION_DAYS", "LOG_RETENTION_INTERVAL",
+	"DELIVERY_LOG_RETENTION_DAYS", "ACTION_RUN_RETENTION_DAYS", "LOG_RETENTION_INTERVAL",
 }
 
 // No t.Parallel: the cases set environment variables (t.Setenv).
@@ -24,16 +24,24 @@ func TestLoadRetentionConfig(t *testing.T) {
 	}{
 		{
 			name: "defaults",
-			want: RetentionConfig{DeployLogDays: 180, AuditLogDays: 365, NotificationDays: 90, DeliveryLogDays: 30, Interval: time.Hour},
+			want: RetentionConfig{DeployLogDays: 180, AuditLogDays: 365, NotificationDays: 90, DeliveryLogDays: 30, ActionRunDays: 180, Interval: time.Hour},
 		},
 		{
 			name: "0 keeps the rows and a custom interval",
 			env: map[string]string{
 				"DEPLOY_LOG_RETENTION_DAYS": "0", "AUDIT_LOG_RETENTION_DAYS": " 730 ", "NOTIFICATION_RETENTION_DAYS": "0",
-				"DELIVERY_LOG_RETENTION_DAYS": "7", "LOG_RETENTION_INTERVAL": "15m",
+				"DELIVERY_LOG_RETENTION_DAYS": "7", "ACTION_RUN_RETENTION_DAYS": "0", "LOG_RETENTION_INTERVAL": "15m",
 			},
 			want: RetentionConfig{AuditLogDays: 730, DeliveryLogDays: 7, Interval: 15 * time.Minute},
 		},
+		{
+			name: "action run retention",
+			env:  map[string]string{"ACTION_RUN_RETENTION_DAYS": " 30 "},
+			want: RetentionConfig{DeployLogDays: 180, AuditLogDays: 365, NotificationDays: 90, DeliveryLogDays: 30, ActionRunDays: 30, Interval: time.Hour},
+		},
+		{name: "action run retention not a number", env: map[string]string{"ACTION_RUN_RETENTION_DAYS": "6m"}, wantErr: `ACTION_RUN_RETENTION_DAYS "6m" is not a whole number of days`},
+		{name: "action run retention negative", env: map[string]string{"ACTION_RUN_RETENTION_DAYS": "-1"}, wantErr: "ACTION_RUN_RETENTION_DAYS must be between 0 (keep forever) and 36500"},
+		{name: "action run retention too large", env: map[string]string{"ACTION_RUN_RETENTION_DAYS": "36501"}, wantErr: "ACTION_RUN_RETENTION_DAYS must be between 0 (keep forever) and 36500"},
 		{name: "not a number", env: map[string]string{"AUDIT_LOG_RETENTION_DAYS": "1y"}, wantErr: `AUDIT_LOG_RETENTION_DAYS "1y" is not a whole number of days`},
 		{name: "negative", env: map[string]string{"NOTIFICATION_RETENTION_DAYS": "-1"}, wantErr: "NOTIFICATION_RETENTION_DAYS must be between 0 (keep forever) and 36500"},
 		{name: "too large", env: map[string]string{"DEPLOY_LOG_RETENTION_DAYS": "36501"}, wantErr: "DEPLOY_LOG_RETENTION_DAYS must be between 0 (keep forever) and 36500"},
@@ -69,6 +77,7 @@ func TestRetentionConfig_Enabled(t *testing.T) {
 	t.Parallel()
 	assert.False(t, (&RetentionConfig{}).Enabled())
 	assert.True(t, (&RetentionConfig{DeliveryLogDays: 1}).Enabled())
+	assert.True(t, (&RetentionConfig{ActionRunDays: 1}).Enabled())
 	// A config built in code (Interval 0) is valid.
 	assert.NoError(t, (&RetentionConfig{}).Validate())
 }

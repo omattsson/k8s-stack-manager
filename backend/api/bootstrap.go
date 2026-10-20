@@ -766,6 +766,7 @@ func buildLogRetention(cfg *config.Config, repos *database.RepositorySet) *leade
 		"audit_logs_days", cfg.Retention.AuditLogDays,
 		"notifications_days", cfg.Retention.NotificationDays,
 		"delivery_logs_days", cfg.Retention.DeliveryLogDays,
+		"action_runs_days", cfg.Retention.ActionRunDays,
 	)
 	w := retention.NewWorker(repos.Retention, cfg.Retention)
 	return &leader.Worker{Name: "log-retention", Run: w.Run}

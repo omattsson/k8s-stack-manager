@@ -13,8 +13,9 @@ import (
 // DeleteInstanceWithOwnedDefinition deletes a stack instance in two steps.
 //
 //  1. One transaction deletes the instance record with its branch overrides,
-//     value overrides, quota override and followers (DeleteInstanceRecord). An error
-//     here is returned and nothing is deleted.
+//     value overrides, quota override, followers and action runs
+//     (DeleteInstanceRecord). An error here is returned and nothing is
+//     deleted.
 //  2. After that commit, a second transaction deletes the quick deploy
 //     definition of the instance when nothing uses it any more
 //     (CleanupOwnedDefinition). This step is best effort: an error is logged
@@ -35,9 +36,9 @@ func DeleteInstanceWithOwnedDefinition(runner TxRunner, inst *models.StackInstan
 }
 
 // DeleteInstanceRecord deletes the database record of a stack instance with
-// its branch overrides, value overrides, quota override and followers. Call it inside
-// TxRunner.RunInTx so that all deletes are atomic. Repositories that are not
-// set in repos are skipped.
+// its branch overrides, value overrides, quota override, followers and
+// action runs. Call it inside TxRunner.RunInTx so that all deletes are
+// atomic. Repositories that are not set in repos are skipped.
 func DeleteInstanceRecord(repos TxRepos, inst *models.StackInstance) error {
 	if repos.BranchOverride != nil {
 		if err := repos.BranchOverride.DeleteByInstance(inst.ID); err != nil {
@@ -63,6 +64,11 @@ func DeleteInstanceRecord(repos TxRepos, inst *models.StackInstance) error {
 	// removed here) or finds no instance (see InstanceFollowerRepository.Follow).
 	if repos.InstanceFollower != nil {
 		if err := repos.InstanceFollower.DeleteByInstance(context.Background(), inst.ID); err != nil {
+			return err
+		}
+	}
+	if repos.ActionRun != nil {
+		if err := repos.ActionRun.DeleteByInstance(context.Background(), inst.ID); err != nil {
 			return err
 		}
 	}

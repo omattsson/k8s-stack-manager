@@ -106,6 +106,9 @@ func TestDeleteInstanceWithOwnedDefinition(t *testing.T) {
 			require.NoError(t, quotaRepo.Upsert(ctx, &models.InstanceQuotaOverride{StackInstanceID: "i1", CPULimit: "1"}))
 			followerRepo := NewGORMInstanceFollowerRepository(db)
 			require.NoError(t, followerRepo.Follow(ctx, "u2", "i1"))
+			runRepo := NewGORMActionRunRepository(db)
+			require.NoError(t, runRepo.Create(ctx, &models.ActionRun{InstanceID: "i1", Action: "seed", UserID: "u2", StatusCode: 200}))
+			require.NoError(t, runRepo.Create(ctx, &models.ActionRun{InstanceID: "i-keep", Action: "seed", UserID: "u2", StatusCode: 200}))
 			if tt.otherInst {
 				require.NoError(t, instRepo.Create(&models.StackInstance{ID: "i2", StackDefinitionID: "d1", Name: "qd2", Namespace: "stack-qd2-u1", OwnerID: "u1", Status: models.StackStatusDraft}))
 			}
@@ -128,6 +131,12 @@ func TestDeleteInstanceWithOwnedDefinition(t *testing.T) {
 			followers, err := followerRepo.ListUserIDsByInstance(ctx, "i1")
 			require.NoError(t, err)
 			assert.Empty(t, followers, "followers are deleted")
+			runs, _, err := runRepo.ListByInstance(ctx, "i1", "", 10)
+			require.NoError(t, err)
+			assert.Empty(t, runs, "action runs are deleted")
+			runs, _, err = runRepo.ListByInstance(ctx, "i-keep", "", 10)
+			require.NoError(t, err)
+			assert.Len(t, runs, 1, "action runs of another instance stay")
 
 			_, err = defRepo.FindByID("d1")
 			assert.Equal(t, tt.wantDefKept, err == nil)

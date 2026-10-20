@@ -15,6 +15,7 @@ const (
 	DefaultAuditLogRetentionDays     = 365
 	DefaultNotificationRetentionDays = 90
 	DefaultDeliveryLogRetentionDays  = 30
+	DefaultActionRunRetentionDays    = 180
 	// DefaultLogRetentionInterval is the time between two retention runs.
 	DefaultLogRetentionInterval = time.Hour
 	// maxRetentionDays caps a retention setting (100 years) so that the age
@@ -40,11 +41,15 @@ type RetentionConfig struct {
 	// DeliveryLogDays: notification channel delivery logs
 	// (env: DELIVERY_LOG_RETENTION_DAYS).
 	DeliveryLogDays int
+	// ActionRunDays: action_runs, the custom action history
+	// (env: ACTION_RUN_RETENTION_DAYS).
+	ActionRunDays int
 }
 
 // Enabled reports whether at least one table has a retention.
 func (c *RetentionConfig) Enabled() bool {
-	return c.DeployLogDays > 0 || c.AuditLogDays > 0 || c.NotificationDays > 0 || c.DeliveryLogDays > 0
+	return c.DeployLogDays > 0 || c.AuditLogDays > 0 || c.NotificationDays > 0 || c.DeliveryLogDays > 0 ||
+		c.ActionRunDays > 0
 }
 
 // Validate checks the retention settings.
@@ -60,6 +65,7 @@ func (c *RetentionConfig) Validate() error {
 		{"AUDIT_LOG_RETENTION_DAYS", c.AuditLogDays},
 		{"NOTIFICATION_RETENTION_DAYS", c.NotificationDays},
 		{"DELIVERY_LOG_RETENTION_DAYS", c.DeliveryLogDays},
+		{"ACTION_RUN_RETENTION_DAYS", c.ActionRunDays},
 	} {
 		if s.days < 0 || s.days > maxRetentionDays {
 			return fmt.Errorf("%s must be between 0 (keep forever) and %d", s.name, maxRetentionDays)
@@ -94,6 +100,7 @@ func loadRetentionConfig() RetentionConfig {
 	c.AuditLogDays = days("AUDIT_LOG_RETENTION_DAYS", DefaultAuditLogRetentionDays)
 	c.NotificationDays = days("NOTIFICATION_RETENTION_DAYS", DefaultNotificationRetentionDays)
 	c.DeliveryLogDays = days("DELIVERY_LOG_RETENTION_DAYS", DefaultDeliveryLogRetentionDays)
+	c.ActionRunDays = days("ACTION_RUN_RETENTION_DAYS", DefaultActionRunRetentionDays)
 
 	c.Interval = DefaultLogRetentionInterval
 	if raw := strings.TrimSpace(os.Getenv("LOG_RETENTION_INTERVAL")); raw != "" {

@@ -149,6 +149,13 @@ func TestGORMRetentionRepository_OtherTables(t *testing.T) {
 			},
 			del: (*GORMRetentionRepository).DeleteDeliveryLogsOlderThan,
 		},
+		{
+			name: "action runs", table: "action_runs", column: "started_at",
+			create: func(db *gorm.DB, id string) error {
+				return db.Create(&models.ActionRun{ID: id, InstanceID: "i1", Action: "seed", UserID: "u1", StartedAt: time.Now().UTC(), StatusCode: 200}).Error
+			},
+			del: (*GORMRetentionRepository).DeleteActionRunsOlderThan,
+		},
 	}
 	for _, tt := range tests {
 		tt := tt

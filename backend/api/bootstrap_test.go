@@ -1340,6 +1340,9 @@ func (stubRetentionRepo) DeleteNotificationsOlderThan(context.Context, time.Dura
 func (stubRetentionRepo) DeleteDeliveryLogsOlderThan(context.Context, time.Duration, int) (int64, error) {
 	return 0, nil
 }
+func (stubRetentionRepo) DeleteActionRunsOlderThan(context.Context, time.Duration, int) (int64, error) {
+	return 0, nil
+}
 
 func TestBuildLogRetention(t *testing.T) {
 	t.Parallel()
@@ -1351,6 +1354,7 @@ func TestBuildLogRetention(t *testing.T) {
 		want      bool
 	}{
 		{name: "retention set", retention: config.RetentionConfig{AuditLogDays: 365}, repos: &database.RepositorySet{Retention: stubRetentionRepo{}}, want: true},
+		{name: "action runs only", retention: config.RetentionConfig{ActionRunDays: 180}, repos: &database.RepositorySet{Retention: stubRetentionRepo{}}, want: true},
 		{name: "all 0 keeps everything", retention: config.RetentionConfig{}, repos: &database.RepositorySet{Retention: stubRetentionRepo{}}},
 		{name: "no repository", retention: config.RetentionConfig{AuditLogDays: 365}, repos: &database.RepositorySet{}},
 		{name: "no repository set", retention: config.RetentionConfig{AuditLogDays: 365}},
