@@ -2,6 +2,7 @@ package deployer
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -32,6 +33,15 @@ func TestNotification_TriggerPerOperation(t *testing.T) {
 		_, err := mgr.Clean(ctx, inst, nil)
 		return err
 	}
+	stopChart := func(ctx context.Context, mgr *Manager, inst *models.StackInstance) error {
+		_, err := mgr.StopWithCharts(ctx, inst, []ChartDeployInfo{{ChartConfig: models.ChartConfig{ChartName: "web"}}})
+		return err
+	}
+	failingUninstall := func() HelmExecutor {
+		return &mockHelmExecutor{uninstallFunc: func(context.Context, UninstallRequest) (string, error) {
+			return "", errors.New("uninstall failed")
+		}}
+	}
 
 	tests := []struct {
 		name      string
@@ -41,6 +51,7 @@ func TestNotification_TriggerPerOperation(t *testing.T) {
 		wantTitle string // empty: not checked
 		wantMsg   string // empty: not checked
 		wantTrig  hooks.Trigger
+		helm      func() HelmExecutor // nil: a Helm client without a binary
 	}{
 		{
 			name: "deploy by a devops user", trigger: &devops, wantType: "deployment.success", wantTrig: devops,
@@ -71,6 +82,10 @@ func TestNotification_TriggerPerOperation(t *testing.T) {
 			wantType: "cleanup.policy.stop", wantMsg: "Stack web has been stopped by a cleanup policy",
 		},
 		{
+			name: "failed stop by a cleanup policy sends stop.error", trigger: &policy, run: stopChart, wantTrig: policy,
+			helm: failingUninstall, wantType: "stop.error", wantTitle: "Stop failed",
+		},
+		{
 			// The reaper also sends stack.expired; that pair stays (#651).
 			name: "stop by the TTL reaper keeps deployment.stopped", trigger: &reaper, run: stop, wantTrig: reaper,
 			wantType: "deployment.stopped", wantTitle: "Stack stopped", wantMsg: "Stack web has been stopped",
@@ -85,7 +100,9 @@ func TestNotification_TriggerPerOperation(t *testing.T) {
 			wantMsg: `Stack web has been cleaned by cleanup policy "nightly" and returned to draft`,
 		},
 		{
+			// The delete replaces the clean notification: no cleanup.policy.clean.
 			name: "delete after clean by a cleanup policy", trigger: &policy, wantType: "instance.deleted", wantTrig: policy,
+			wantTitle: "Stack deleted", wantMsg: `Stack web has been deleted by cleanup policy "nightly"`,
 			run: func(ctx context.Context, mgr *Manager, inst *models.StackInstance) error {
 				_, err := mgr.CleanForDelete(ctx, inst, nil)
 				return err
@@ -104,10 +121,14 @@ func TestNotification_TriggerPerOperation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			notif := &mockNotifier{}
+			var helmExec HelmExecutor = NewHelmClient("/nonexistent/helm", "", time.Second)
+			if tt.helm != nil {
+				helmExec = tt.helm()
+			}
 			instanceRepo := newMockInstanceRepo()
 			logRepo := newMockDeployLogRepo()
 			mgr := NewManager(ManagerConfig{
-				Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", time.Second)},
+				Registry:      &mockClusterResolver{helm: helmExec},
 				InstanceRepo:  instanceRepo,
 				DeployLogRepo: logRepo,
 				TxRunner: &txRunnerWithBranchOverride{
