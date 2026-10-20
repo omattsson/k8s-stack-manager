@@ -7541,6 +7541,67 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/stack-instances/{id}/quota": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the quota that applies to the namespace of the instance: the cluster quota of the instance's cluster (the default cluster when the instance has none) merged with the instance quota override, with the same merge as the deployer. A non-empty override quantity replaces the cluster value, and an override pod_limit (also 0) replaces the cluster pod_limit. sources names the origin of each field of effective: override, cluster or none. In effective, an empty quantity means no value and pod_limit 0 means no limit. cluster and override are null when they are not set; cluster_id is empty when the instance has no cluster and no default cluster exists. can_modify is true when the caller may set or delete the override (the owner, admin or devops). Any authenticated user can read it.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "stack-instances"
+                ],
+                "summary": "Get the effective quota of an instance",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Stack Instance ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.EffectiveQuotaResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/stack-instances/{id}/quota-overrides": {
             "get": {
                 "security": [
@@ -11209,6 +11270,98 @@ const docTemplate = `{
                 "warning": {
                     "description": "Warning explains ValuesDrift when it is true.",
                     "type": "string"
+                }
+            }
+        },
+        "handlers.EffectiveQuotaResponse": {
+            "type": "object",
+            "properties": {
+                "can_modify": {
+                    "type": "boolean"
+                },
+                "cluster": {
+                    "$ref": "#/definitions/models.ResourceQuotaConfig"
+                },
+                "cluster_id": {
+                    "type": "string"
+                },
+                "effective": {
+                    "$ref": "#/definitions/handlers.EffectiveQuotaValues"
+                },
+                "override": {
+                    "$ref": "#/definitions/models.InstanceQuotaOverride"
+                },
+                "sources": {
+                    "description": "Sources maps each field of effective to \"override\", \"cluster\" or \"none\".",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "handlers.EffectiveQuotaValues": {
+            "type": "object",
+            "properties": {
+                "container_cpu_limit": {
+                    "type": "string",
+                    "example": "500m"
+                },
+                "container_cpu_max": {
+                    "type": "string",
+                    "example": "1"
+                },
+                "container_cpu_request": {
+                    "type": "string",
+                    "example": "100m"
+                },
+                "container_ephemeral_storage_limit": {
+                    "type": "string",
+                    "example": "1Gi"
+                },
+                "container_ephemeral_storage_request": {
+                    "type": "string",
+                    "example": "128Mi"
+                },
+                "container_memory_limit": {
+                    "type": "string",
+                    "example": "512Mi"
+                },
+                "container_memory_max": {
+                    "type": "string",
+                    "example": "1Gi"
+                },
+                "container_memory_request": {
+                    "type": "string",
+                    "example": "128Mi"
+                },
+                "cpu_limit": {
+                    "type": "string",
+                    "example": "2"
+                },
+                "cpu_request": {
+                    "type": "string",
+                    "example": "500m"
+                },
+                "ephemeral_storage_limit": {
+                    "type": "string",
+                    "example": "4Gi"
+                },
+                "memory_limit": {
+                    "type": "string",
+                    "example": "2Gi"
+                },
+                "memory_request": {
+                    "type": "string",
+                    "example": "1Gi"
+                },
+                "pod_limit": {
+                    "type": "integer",
+                    "example": 10
+                },
+                "storage_limit": {
+                    "type": "string",
+                    "example": "10Gi"
                 }
             }
         },

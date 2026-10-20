@@ -551,6 +551,73 @@ definitions:
         description: Warning explains ValuesDrift when it is true.
         type: string
     type: object
+  handlers.EffectiveQuotaResponse:
+    properties:
+      can_modify:
+        type: boolean
+      cluster:
+        $ref: '#/definitions/models.ResourceQuotaConfig'
+      cluster_id:
+        type: string
+      effective:
+        $ref: '#/definitions/handlers.EffectiveQuotaValues'
+      override:
+        $ref: '#/definitions/models.InstanceQuotaOverride'
+      sources:
+        additionalProperties:
+          type: string
+        description: Sources maps each field of effective to "override", "cluster"
+          or "none".
+        type: object
+    type: object
+  handlers.EffectiveQuotaValues:
+    properties:
+      container_cpu_limit:
+        example: 500m
+        type: string
+      container_cpu_max:
+        example: "1"
+        type: string
+      container_cpu_request:
+        example: 100m
+        type: string
+      container_ephemeral_storage_limit:
+        example: 1Gi
+        type: string
+      container_ephemeral_storage_request:
+        example: 128Mi
+        type: string
+      container_memory_limit:
+        example: 512Mi
+        type: string
+      container_memory_max:
+        example: 1Gi
+        type: string
+      container_memory_request:
+        example: 128Mi
+        type: string
+      cpu_limit:
+        example: "2"
+        type: string
+      cpu_request:
+        example: 500m
+        type: string
+      ephemeral_storage_limit:
+        example: 4Gi
+        type: string
+      memory_limit:
+        example: 2Gi
+        type: string
+      memory_request:
+        example: 1Gi
+        type: string
+      pod_limit:
+        example: 10
+        type: integer
+      storage_limit:
+        example: 10Gi
+        type: string
+    type: object
   handlers.LoginRequest:
     properties:
       password:
@@ -7665,6 +7732,55 @@ paths:
       security:
       - BearerAuth: []
       summary: Get instance pod status
+      tags:
+      - stack-instances
+  /api/v1/stack-instances/{id}/quota:
+    get:
+      description: 'Returns the quota that applies to the namespace of the instance:
+        the cluster quota of the instance''s cluster (the default cluster when the
+        instance has none) merged with the instance quota override, with the same
+        merge as the deployer. A non-empty override quantity replaces the cluster
+        value, and an override pod_limit (also 0) replaces the cluster pod_limit.
+        sources names the origin of each field of effective: override, cluster or
+        none. In effective, an empty quantity means no value and pod_limit 0 means
+        no limit. cluster and override are null when they are not set; cluster_id
+        is empty when the instance has no cluster and no default cluster exists. can_modify
+        is true when the caller may set or delete the override (the owner, admin or
+        devops). Any authenticated user can read it.'
+      parameters:
+      - description: Stack Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.EffectiveQuotaResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get the effective quota of an instance
       tags:
       - stack-instances
   /api/v1/stack-instances/{id}/quota-overrides:

@@ -1411,6 +1411,7 @@ func TestSetupRoutes_AllHandlers_RegistersCompleteAPI(t *testing.T) {
 		{"DELETE", "/api/v1/stack-instances/:id/branches/:chartId"},
 
 		// Instance quota overrides
+		{"GET", "/api/v1/stack-instances/:id/quota"},
 		{"GET", "/api/v1/stack-instances/:id/quota-overrides"},
 		{"PUT", "/api/v1/stack-instances/:id/quota-overrides"},
 		{"DELETE", "/api/v1/stack-instances/:id/quota-overrides"},

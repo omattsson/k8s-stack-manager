@@ -139,27 +139,36 @@ func lookupClusterQuota(ctx context.Context, repo models.ResourceQuotaRepository
 	if repo == nil {
 		return nil, nil
 	}
-	if clusterID == "" {
-		if resolver == nil {
-			return nil, nil
-		}
+	_, quota, err := resolveClusterQuota(ctx, repo, resolver, clusterID)
+	return quota, err
+}
+
+// resolveClusterQuota returns the cluster ID that applies to clusterID (the
+// default cluster when clusterID is empty and resolver is set; empty when no
+// default cluster exists) and the quota of that cluster (nil when repo is nil
+// or no quota is configured). Other errors are returned.
+func resolveClusterQuota(ctx context.Context, repo models.ResourceQuotaRepository, resolver clusterIDResolver, clusterID string) (string, *models.ResourceQuotaConfig, error) {
+	if clusterID == "" && resolver != nil {
 		resolved, err := resolver.ResolveClusterID("")
 		if err != nil {
 			if errors.Is(err, cluster.ErrNoDefaultCluster) || isNotFoundError(err) {
-				return nil, nil
+				return "", nil, nil
 			}
-			return nil, fmt.Errorf("resolve default cluster: %w", err)
+			return "", nil, fmt.Errorf("resolve default cluster: %w", err)
 		}
 		clusterID = resolved
+	}
+	if repo == nil || clusterID == "" {
+		return clusterID, nil, nil
 	}
 	quota, err := repo.GetByClusterID(ctx, clusterID)
 	if err != nil {
 		if isNotFoundError(err) {
-			return nil, nil
+			return clusterID, nil, nil
 		}
-		return nil, fmt.Errorf("get cluster quota: %w", err)
+		return clusterID, nil, fmt.Errorf("get cluster quota: %w", err)
 	}
-	return quota, nil
+	return clusterID, quota, nil
 }
 
 // NewInstanceQuotaOverrideHandler creates a new InstanceQuotaOverrideHandler.
@@ -234,6 +243,109 @@ func (h *InstanceQuotaOverrideHandler) GetQuotaOverride(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, override)
+}
+
+// EffectiveQuotaValues holds the quota values that apply to the namespace of
+// a stack instance. An empty quantity means no value; pod_limit 0 means no
+// limit.
+type EffectiveQuotaValues struct {
+	CPURequest                       string `json:"cpu_request" example:"500m"`
+	CPULimit                         string `json:"cpu_limit" example:"2"`
+	MemoryRequest                    string `json:"memory_request" example:"1Gi"`
+	MemoryLimit                      string `json:"memory_limit" example:"2Gi"`
+	StorageLimit                     string `json:"storage_limit" example:"10Gi"`
+	EphemeralStorageLimit            string `json:"ephemeral_storage_limit" example:"4Gi"`
+	ContainerCPURequest              string `json:"container_cpu_request" example:"100m"`
+	ContainerCPULimit                string `json:"container_cpu_limit" example:"500m"`
+	ContainerCPUMax                  string `json:"container_cpu_max" example:"1"`
+	ContainerMemoryRequest           string `json:"container_memory_request" example:"128Mi"`
+	ContainerMemoryLimit             string `json:"container_memory_limit" example:"512Mi"`
+	ContainerMemoryMax               string `json:"container_memory_max" example:"1Gi"`
+	ContainerEphemeralStorageRequest string `json:"container_ephemeral_storage_request" example:"128Mi"`
+	ContainerEphemeralStorageLimit   string `json:"container_ephemeral_storage_limit" example:"1Gi"`
+	PodLimit                         int    `json:"pod_limit" example:"10"`
+}
+
+// EffectiveQuotaResponse is the response of GET /stack-instances/:id/quota.
+type EffectiveQuotaResponse struct {
+	Effective EffectiveQuotaValues          `json:"effective"`
+	Cluster   *models.ResourceQuotaConfig   `json:"cluster"`
+	Override  *models.InstanceQuotaOverride `json:"override"`
+	// Sources maps each field of effective to "override", "cluster" or "none".
+	Sources   map[string]string `json:"sources"`
+	ClusterID string            `json:"cluster_id"`
+	CanModify bool              `json:"can_modify"`
+}
+
+func effectiveQuotaValues(q *models.ResourceQuotaConfig) EffectiveQuotaValues {
+	return EffectiveQuotaValues{
+		CPURequest:                       q.CPURequest,
+		CPULimit:                         q.CPULimit,
+		MemoryRequest:                    q.MemoryRequest,
+		MemoryLimit:                      q.MemoryLimit,
+		StorageLimit:                     q.StorageLimit,
+		EphemeralStorageLimit:            q.EphemeralStorageLimit,
+		ContainerCPURequest:              q.ContainerCPURequest,
+		ContainerCPULimit:                q.ContainerCPULimit,
+		ContainerCPUMax:                  q.ContainerCPUMax,
+		ContainerMemoryRequest:           q.ContainerMemoryRequest,
+		ContainerMemoryLimit:             q.ContainerMemoryLimit,
+		ContainerMemoryMax:               q.ContainerMemoryMax,
+		ContainerEphemeralStorageRequest: q.ContainerEphemeralStorageRequest,
+		ContainerEphemeralStorageLimit:   q.ContainerEphemeralStorageLimit,
+		PodLimit:                         q.PodLimit,
+	}
+}
+
+// GetEffectiveQuota godoc
+// @Summary     Get the effective quota of an instance
+// @Description Returns the quota that applies to the namespace of the instance: the cluster quota of the instance's cluster (the default cluster when the instance has none) merged with the instance quota override, with the same merge as the deployer. A non-empty override quantity replaces the cluster value, and an override pod_limit (also 0) replaces the cluster pod_limit. sources names the origin of each field of effective: override, cluster or none. In effective, an empty quantity means no value and pod_limit 0 means no limit. cluster and override are null when they are not set; cluster_id is empty when the instance has no cluster and no default cluster exists. can_modify is true when the caller may set or delete the override (the owner, admin or devops). Any authenticated user can read it.
+// @Tags        stack-instances
+// @Produce     json
+// @Param       id  path     string true "Stack Instance ID"
+// @Success     200 {object} EffectiveQuotaResponse
+// @Failure     401 {object} map[string]string
+// @Failure     404 {object} map[string]string
+// @Failure     500 {object} map[string]string
+// @Security    BearerAuth
+// @Router      /api/v1/stack-instances/{id}/quota [get]
+func (h *InstanceQuotaOverrideHandler) GetEffectiveQuota(c *gin.Context) {
+	inst, err := h.instanceRepo.FindByID(c.Param("id"))
+	if err != nil {
+		status, message := mapError(err, entityStackInstance)
+		if status == http.StatusInternalServerError {
+			slog.Error(msgFailedFindStackInstance, logKeyIQOInstanceID, c.Param("id"), "error", err)
+		}
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	ctx := c.Request.Context()
+	clusterID, clusterQuota, err := resolveClusterQuota(ctx, h.clusterQuotaRepo, h.clusterResolver, inst.ClusterID)
+	if err != nil {
+		slog.Error("failed to load cluster quota for the effective quota", logKeyIQOInstanceID, inst.ID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		return
+	}
+
+	override, err := h.overrideRepo.GetByInstanceID(ctx, inst.ID)
+	if err != nil {
+		if !isNotFoundError(err) {
+			slog.Error("failed to get quota override for the effective quota", logKeyIQOInstanceID, inst.ID, "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+			return
+		}
+		override = nil
+	}
+
+	c.JSON(http.StatusOK, EffectiveQuotaResponse{
+		Effective: effectiveQuotaValues(models.MergeQuotaOverride(clusterQuota, override)),
+		Cluster:   clusterQuota,
+		Override:  override,
+		Sources:   models.QuotaSources(clusterQuota, override),
+		ClusterID: clusterID,
+		CanModify: canModifyInstance(c, inst),
+	})
 }
 
 // SetQuotaOverride godoc

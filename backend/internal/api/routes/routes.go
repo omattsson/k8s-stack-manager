@@ -414,6 +414,7 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 
 				// Per-instance quota overrides
 				if deps.InstanceQuotaOverrideHandler != nil {
+					instances.GET("/:id/quota", deps.InstanceQuotaOverrideHandler.GetEffectiveQuota)
 					instances.GET("/:id/quota-overrides", deps.InstanceQuotaOverrideHandler.GetQuotaOverride)
 					instances.PUT("/:id/quota-overrides", deps.InstanceQuotaOverrideHandler.SetQuotaOverride)
 					instances.DELETE("/:id/quota-overrides", deps.InstanceQuotaOverrideHandler.DeleteQuotaOverride)
