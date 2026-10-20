@@ -9,13 +9,15 @@ usage() {
   cat <<'EOF'
 Usage: loadtest/capture-resources.sh [options] [-- command [args...]]
 
-Record the RSS, the CPU use and the goroutine count of the backend every
-INTERVAL seconds. Take heap, goroutine and CPU profiles at the start, at the
-RSS peak and at the end.
+Record the RSS and the CPU use of the backend every INTERVAL seconds, and the
+goroutine count every GOROUTINE_EVERY samples. Take heap, goroutine and CPU
+profiles at the start, each time the RSS grows by the margin (-m), and at the
+end.
 
 Without a command, the script stops when the backend exits, after -d seconds,
 or on Ctrl-C. With a command after "--" (for example a k6 run), the script
-runs the command and stops when the command ends.
+runs the command and stops when the command ends. Ctrl-C then goes to the
+command. -d stops only the capture, not the command.
 
 Options:
   -p PID       Backend PID (default: the running process of
@@ -24,7 +26,10 @@ Options:
   -i SECONDS   Sample interval (default: 5)
   -c SECONDS   Length of each CPU profile, 0 for no CPU profile (default: 30)
   -m PERCENT   Take the peak profiles again when the RSS passes the RSS of
-               the last peak profiles by this margin (default: 10)
+               the last peak profiles by this margin; the newest replace the
+               older ones (default: 10)
+  -g N         Read the goroutine count every N samples, 0 for never
+               (default: 6). The read stops the world for a short time.
   -t SECONDS   Take the middle profiles once at this elapsed time, instead
                of at the RSS peak
   -d SECONDS   Stop after this time (default: no limit)
@@ -41,6 +46,7 @@ addr="${PPROF_ADDR:-127.0.0.1:6060}"
 interval=5
 cpu_seconds=30
 margin=10
+goroutine_every=6
 at_time=""
 duration=""
 out_dir="$script_dir/results"
@@ -49,13 +55,14 @@ warn() { echo "WARNING: $*" >&2; }
 die() { echo "ERROR: $*" >&2; exit 1; }
 is_uint() { case "$1" in '' | *[!0-9]*) return 1 ;; esac; }
 
-while getopts ":p:a:i:c:m:t:d:o:h" opt; do
+while getopts ":p:a:i:c:m:g:t:d:o:h" opt; do
   case "$opt" in
     p) pid=$OPTARG ;;
     a) addr=$OPTARG ;;
     i) interval=$OPTARG ;;
     c) cpu_seconds=$OPTARG ;;
     m) margin=$OPTARG ;;
+    g) goroutine_every=$OPTARG ;;
     t) at_time=$OPTARG ;;
     d) duration=$OPTARG ;;
     o) out_dir=$OPTARG ;;
@@ -66,7 +73,7 @@ while getopts ":p:a:i:c:m:t:d:o:h" opt; do
 done
 shift $((OPTIND - 1))
 
-for v in "$interval" "$cpu_seconds" "$margin" ${at_time:+"$at_time"} ${duration:+"$duration"}; do
+for v in "$interval" "$cpu_seconds" "$margin" "$goroutine_every" ${at_time:+"$at_time"} ${duration:+"$duration"}; do
   is_uint "$v" || die "\"$v\" is not a whole number of seconds or percent"
 done
 [ "$interval" -gt 0 ] || die "the interval must be 1 second or more"
@@ -151,7 +158,7 @@ rss_kib() {
 }
 
 goroutines() {
-  [ "$pprof_ok" = 1 ] || return 0
+  [ "$pprof_ok" = 1 ] && [ "$goroutine_every" -gt 0 ] || return 0
   local body first
   body=$(curl -sf --max-time 3 "$pprof_url/goroutine?debug=1" 2>/dev/null) || return 0
   first=${body%%$'\n'*}
@@ -161,11 +168,17 @@ goroutines() {
 
 # fetch NAME PATH TIMEOUT: download one profile into the profile folder.
 fetch() {
-  if curl -sf --max-time "$3" -o "$prof_dir/$1.tmp" "$pprof_url/$2"; then
+  local code rc
+  code=$(curl -s --max-time "$3" -o "$prof_dir/$1.tmp" -w '%{http_code}' "$pprof_url/$2")
+  rc=$?
+  if [ "$rc" = 0 ] && [ "$code" = 200 ]; then
     mv "$prof_dir/$1.tmp" "$prof_dir/$1"
+  elif [ "$rc" = 0 ]; then
+    warn "could not take $1: HTTP $code: $(head -c 200 "$prof_dir/$1.tmp" 2>/dev/null)"
+    rm -f "$prof_dir/$1.tmp"
   else
     rm -f "$prof_dir/$1.tmp"
-    warn "could not take $1 (the backend can have stopped)"
+    warn "could not take $1: curl exit $rc (the backend can have stopped)"
   fi
 }
 
@@ -218,9 +231,12 @@ print_summary() {
 
 stop=0
 
+# sampler records the samples until stop is set. In the foreground, INT
+# (Ctrl-C) and TERM set it. In command mode the sampler runs in the
+# background, where bash ignores INT; the parent sends TERM.
 sampler() {
   trap 'stop=1' INT TERM
-  local start_ms rss cpu prev_cpu now prev_ms elapsed pct g peak_capture_rss at_done=0 sleep_pid
+  local start_ms rss cpu prev_cpu now prev_ms elapsed pct g peak_capture_rss at_done=0 sleep_pid n=0
   echo "time,elapsed_s,rss_kib,cpu_pct,goroutines" > "$csv"
   echo "Recording PID $pid every ${interval}s to $csv (pprof: $addr)"
   start_ms=$(now_ms)
@@ -254,7 +270,11 @@ sampler() {
     fi
     prev_cpu=$cpu
     prev_ms=$now
-    g=$(goroutines)
+    n=$((n + 1))
+    g=""
+    if [ "$goroutine_every" -gt 0 ] && [ $((n % goroutine_every)) = 0 ]; then
+      g=$(goroutines)
+    fi
     echo "$(date +%Y-%m-%dT%H:%M:%S%z),$elapsed,$rss,$pct,$g" >> "$csv"
 
     if [ "$pprof_ok" = 1 ] && ! capture_running; then
@@ -292,8 +312,8 @@ sampler() {
 }
 
 if [ $# -gt 0 ]; then
-  # The command runs in the foreground, so Ctrl-C reaches it. The sampler
-  # runs in the background and stops on TERM.
+  # Ctrl-C reaches the command (foreground) and this shell, which waits for
+  # the command and then sends TERM to the background sampler.
   sampler &
   sampler_pid=$!
   trap ':' INT

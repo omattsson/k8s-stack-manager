@@ -97,7 +97,7 @@ Notes:
 - `setup()` creates a draft instance of a definition with two charts, a value override and a branch override. `teardown()` deletes them. To use another instance (for example one with a deploy history), set `STACK_PAGE_INSTANCE_ID`.
 - The draft instance has no deploy history, so the two `deploy-log` requests return empty pages.
 - Without cluster access, `/pods` and `/status` answer HTTP 502 at once. The scenario accepts 502 and counts it in `stack_page_cluster_unavailable`. The duration of these requests then does not include a Kubernetes API call. The web UI requests `/pods` only for an active instance.
-- `GET /stack-instances/:id/action-runs` (#640) answers HTTP 404 on a backend without this route. The scenario accepts 404. k6 does not count it in `http_req_failed`.
+- `GET /stack-instances/:id/action-runs` (#640) answers HTTP 404 on a backend without this route. The scenario accepts 404. k6 does not count it in `http_req_failed`. When #640 is on main, the scenario must accept only 200 (TODO in `k6-api.js`).
 - Without cluster access, `/health/ready` of the `smoke` scenario answers HTTP 503, because no registered cluster is reachable. The scenario accepts 503.
 
 **Thresholds**:
@@ -270,10 +270,10 @@ Use a backend without OpenTelemetry for clean values: `make loadtest-backend`, `
 
 ### Run the capture script
 
-`loadtest/capture-resources.sh` records the resident memory (RSS) and the CPU use of the backend process every 5 seconds. It takes heap, goroutine and 30-second CPU profiles through pprof:
+`loadtest/capture-resources.sh` records the resident memory (RSS) and the CPU use of the backend process every 5 seconds. It reads the goroutine count every 6th sample (`-g`), because this read stops the backend for a short time. It takes heap, goroutine and 30-second CPU profiles through pprof:
 
 - At the start.
-- At the RSS peak: when the RSS passes the RSS of the last peak profiles by 10%, the script takes the peak profiles again. The newest peak profiles replace the older ones.
+- When the RSS grows: each time the RSS passes the RSS of the last peak profiles by the margin (`-m`, default 10%), the script takes the peak profiles again. The newest peak profiles replace the older ones. So the peak profiles are from the last growth step, not from the exact RSS maximum. The CSV shows the maximum.
 - At the end, when the backend still runs.
 
 The script does not load the backend. A CPU profile samples the running code only. The script works on macOS and Linux.
@@ -306,7 +306,7 @@ make loadtest-stress-run
 make loadtest-stop-backend
 ```
 
-With a command after `--`, the script stops when the command ends. Without a command, it stops when the backend exits, after `-d` seconds, or on Ctrl-C. Then it takes the end profiles (about 30 seconds for the CPU profile) and prints a summary: the RSS at the start, at the end and the maximum, the average and maximum CPU use, the maximum goroutine count and the file paths.
+With a command after `--`, the script stops when the command ends. Ctrl-C then goes to the command, and `-d` stops only the capture, not the command. Without a command, the script stops when the backend exits, after `-d` seconds, or on Ctrl-C. Then it takes the end profiles (about 30 seconds for the CPU profile) and prints a summary: the RSS at the start, at the end and the maximum, the average and maximum CPU use, the maximum goroutine count and the file paths.
 
 Options (`CAPTURE_ARGS` for the Makefile targets):
 
@@ -316,9 +316,10 @@ Options (`CAPTURE_ARGS` for the Makefile targets):
 | `-a ADDR` | `PPROF_ADDR`, else `127.0.0.1:6060` | pprof address |
 | `-i SECONDS` | `5` | Sample interval |
 | `-c SECONDS` | `30` | Length of each CPU profile. `0`: no CPU profiles. |
-| `-m PERCENT` | `10` | Margin for new peak profiles |
+| `-m PERCENT` | `10` | RSS growth that takes the peak profiles again |
+| `-g N` | `6` | Read the goroutine count every N samples. `0`: never. |
 | `-t SECONDS` | (empty) | Take the middle profiles once at this elapsed time, not at the RSS peak. A running capture finishes first. |
-| `-d SECONDS` | (no limit) | Stop after this time |
+| `-d SECONDS` | (no limit) | Stop the capture after this time. A command after `--` continues. |
 | `-o DIR` | `loadtest/results` | Output folder |
 
 Without pprof (`PPROF_ENABLED=false`), the script records RSS and CPU only.
@@ -335,7 +336,7 @@ Git ignores `loadtest/results/`.
 | `elapsed_s` | Seconds since the start of the capture |
 | `rss_kib` | Resident memory of the process in KiB (`ps -o rss`) |
 | `cpu_pct` | CPU use since the previous sample, from the CPU time of the process. 100 is one full core. Empty in the first row. |
-| `goroutines` | Goroutine count (first line of `/debug/pprof/goroutine?debug=1`). Empty without pprof. |
+| `goroutines` | Goroutine count (first line of `/debug/pprof/goroutine?debug=1`), in the first row and every `-g` samples. Empty in the other rows and without pprof. |
 
 `loadtest/results/profiles/<timestamp>/` has the profiles:
 
@@ -348,7 +349,7 @@ Git ignores `loadtest/results/`.
 P=loadtest/results/profiles/<timestamp>
 
 go tool pprof -top $P/cpu-peak.pb.gz                              # functions with the most CPU time
-go tool pprof -top -sample_index=inuse_space $P/heap-peak.pb.gz   # live heap at the peak
+go tool pprof -top -sample_index=inuse_space $P/heap-peak.pb.gz   # live heap at the last peak capture
 go tool pprof -top -sample_index=alloc_space $P/heap-end.pb.gz    # all allocations since the start of the process
 go tool pprof -top -base $P/heap-start.pb.gz $P/heap-end.pb.gz    # heap growth during the test
 go tool pprof -top -base $P/goroutine-start.pb.gz $P/goroutine-end.pb.gz   # goroutines that stay

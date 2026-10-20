@@ -891,6 +891,7 @@ export function stackPageTest(data) {
         'GET /stack-instances/:id/deploy-log (rollback targets)', [200]],
       ['quota', `${inst}/quota`, 'GET /stack-instances/:id/quota', [200]],
       ['actions', `${inst}/actions`, 'GET /stack-instances/:id/actions', [200]],
+      // TODO(#640): accept only 200 once the route is on main
       ['action runs', `${inst}/action-runs`, 'GET /stack-instances/:id/action-runs', [200, 404]],
       ['favorite', `${BASE_URL}/api/v1/favorites/check?entity_type=instance&entity_id=${id}`,
         'GET /favorites/check', [200]],
