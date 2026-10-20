@@ -184,11 +184,11 @@ var (
 // or column name at the end stays; otherwise all from the first to the last
 // quote goes (#653).
 func redactSQLError(msg string) string {
-	if sqlErrDuplicateValue.MatchString(msg) {
-		return sqlErrDuplicateValue.ReplaceAllString(msg, "$1'?'$2")
-	}
-	if sqlErrColumnValue.MatchString(msg) {
-		return sqlErrColumnValue.ReplaceAllString(msg, "$1'?'$2")
+	for _, re := range []*regexp.Regexp{sqlErrDuplicateValue, sqlErrColumnValue} {
+		if loc := re.FindStringIndex(msg); loc != nil {
+			// GORM joins errors with "; ": an earlier error can also hold values.
+			return redactSQLError(msg[:loc[0]]) + re.ReplaceAllString(msg[loc[0]:], "$1'?'$2")
+		}
 	}
 	first, last := -1, -1
 	for i := 0; i < len(msg); i++ {

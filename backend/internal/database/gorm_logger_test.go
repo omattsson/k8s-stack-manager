@@ -507,6 +507,11 @@ func TestRedactSQLError(t *testing.T) {
 			want: "Error 1062 (23000): Duplicate entry '?' for key 'users.idx_users_username'",
 		},
 		{
+			name: "joined errors: the earlier error loses its values too",
+			in:   "Error 1366 (HY000): Incorrect string value: 'v1-secret' for column 'name' at row 1; Error 1062 (23000): Duplicate entry 'v2-secret' for key 'users.idx_users_username'",
+			want: "Error 1366 (HY000): Incorrect string value: '?' at row 1; Error 1062 (23000): Duplicate entry '?' for key 'users.idx_users_username'",
+		},
+		{
 			name: "1366 keeps the column",
 			in:   "Error 1366 (HY000): Incorrect integer value: 'abc' for column 'pod_limit' at row 1",
 			want: "Error 1366 (HY000): Incorrect integer value: '?' for column 'pod_limit' at row 1",
