@@ -11,7 +11,6 @@ import (
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
 const (
@@ -21,11 +20,7 @@ const (
 
 // NewFromAppConfig creates a new database instance from application config
 func NewFromAppConfig(cfg *config.Config) (*Database, error) {
-	// Set up logging based on environment
-	logLevel := logger.Info
-	if !cfg.App.Debug {
-		logLevel = logger.Error
-	}
+	gormLogger := newGormLogger(cfg.App.Debug)
 
 	// Initialize database with retries
 	var db *gorm.DB
@@ -34,7 +29,7 @@ func NewFromAppConfig(cfg *config.Config) (*Database, error) {
 
 	for retryCount < maxRetries {
 		db, err = gorm.Open(mysql.Open(cfg.Database.DSN()), &gorm.Config{
-			Logger:                 logger.Default.LogMode(logLevel),
+			Logger:                 gormLogger,
 			SkipDefaultTransaction: true,
 		})
 
@@ -91,7 +86,7 @@ func NewFromDBConfig(cfg *Config) (*Database, error) {
 	// For testing, use SQLite in-memory database when cfg is nil
 	if cfg == nil {
 		db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
-			Logger:                 logger.Default.LogMode(logger.Info),
+			Logger:                 newGormLogger(true),
 			SkipDefaultTransaction: true,
 		})
 		if err != nil {
@@ -118,7 +113,7 @@ func NewFromDBConfig(cfg *Config) (*Database, error) {
 
 	for retryCount < maxRetries {
 		db, err = gorm.Open(mysql.Open(cfg.DSN()), &gorm.Config{
-			Logger:                 logger.Default.LogMode(logger.Info),
+			Logger:                 newGormLogger(true),
 			SkipDefaultTransaction: true,
 		})
 
