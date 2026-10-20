@@ -1116,6 +1116,9 @@ func (d *Database) AutoMigrate() error {
 
 	// Migration 61: action_runs (history of custom action calls, #640).
 	migrator.AddMigration(actionRunsMigration())
+
+	// Migration 63: notifications (user_id, created_at DESC) index for the
+	// notification list (#654).
 	migrator.AddMigration(notificationListIndexMigration())
 
 	// Run migrations
