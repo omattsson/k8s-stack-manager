@@ -216,13 +216,13 @@ Both list endpoints are paged (`page` and `pageSize`; default 25, maximum 100). 
 - These writes run in the background. Each write reads the stored quotas again, so two quick changes on the same backend replica do not undo each other. With more than one replica, or during a deploy, the last write wins.
 - The backend skips a namespace when the merged quota is not valid or when it cannot read the quotas. It logs the reason. The next deploy applies the quota.
 - If the merged quota is empty (no cluster quota and no override), the backend writes nothing. The namespace keeps its current ResourceQuota and LimitRange.
+- Warning: A quota that you lower below the current use of the namespace refuses new pods, also the surge pods of a rolling update. The Helm wait for that chart then fails (timeout), and the pod events show the quota message. Raise the quota or reduce the requests before you redeploy.
 
 **Resource quota on the instance page.** The section "Resource quota" shows each value that the namespace gets (the cluster quota merged with the override) and its source: "Override" or "Cluster".
 
 - The owner, a `devops` user and an `admin` can edit the override ("Edit override") and remove it ("Remove override"). Other users see the values only.
 - For the role `user`, each field shows the cluster value as the upper limit. The dialog shows the server message for a value above it (403) and for an order rule (400).
 - API: `GET /stack-instances/:id/quota` returns the effective values, the cluster quota, the override and the source of each field.
-- Warning: A quota that you lower below the current use of the namespace refuses new pods, also the surge pods of a rolling update. The Helm wait for that chart then fails (timeout), and the pod events show the quota message. Raise the quota or reduce the requests before you redeploy.
 
 **Per-container limits.** The cluster quota and the instance quota override have per-container fields for the namespace LimitRange (`stack-manager-limits`):
 
