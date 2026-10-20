@@ -15,7 +15,8 @@ const (
 	// Credential failures (401 "Invalid username or password").
 	loginReasonUserNotFound     = "user_not_found"    // no user with this username
 	loginReasonPasswordMismatch = "password_mismatch" // bcrypt: wrong password
-	loginReasonHashInvalid      = "hash_invalid"      // bcrypt failed on the stored hash (for example an SSO-linked user without a password)
+	loginReasonNoPassword       = "no_password"       // the user has no local password (SSO user)
+	loginReasonHashInvalid      = "hash_invalid"      // the stored hash is malformed (counted as a failure)
 	loginReasonRereadNotFound   = "reread_not_found"  // the user was deleted during the password check
 	loginReasonHashChanged      = "hash_changed"      // the password changed during the password check
 	loginReasonRecheckFailed    = "recheck_failed"    // the user was deleted after the token was signed
@@ -59,8 +60,8 @@ type loginFailure struct {
 // OIDC state); a failed login is a security event, and LOGIN_RATE_LIMIT bounds
 // the volume for each client IP. Error for server-side failures. hash_invalid
 // is counted as a failure but logged at Warn: any client can trigger it with
-// the username of an SSO-linked user, so Error lines would let a client set
-// off error-rate alerts.
+// the username of a user with a malformed hash, so Error lines would let a
+// client set off error-rate alerts.
 func (h *AuthHandler) logLoginFailure(f loginFailure) {
 	logger := h.logger
 	if logger == nil {

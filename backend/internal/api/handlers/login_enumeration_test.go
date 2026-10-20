@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -41,17 +42,18 @@ func (r *recordingCompare) calls() [][]byte {
 }
 
 type enumCase struct {
-	user     *models.User // nil: no such user
-	name     string
-	password string
-	oidcOnly bool // OIDC on, local login only for service accounts
-	useCache bool // LOGIN_CACHE_TTL on, the correct credentials cached
+	lookupErr error        // FindByUsername fails with it
+	user      *models.User // nil: no such user
+	name      string
+	password  string
+	oidcOnly  bool // OIDC on, local login only for service accounts
+	useCache  bool // LOGIN_CACHE_TTL on, the correct credentials cached
 }
 
 // runEnumLogin posts one login and returns the response and the recorded compares.
 func runEnumLogin(t *testing.T, tt enumCase) (*httptest.ResponseRecorder, *recordingCompare) {
 	t.Helper()
-	repo := NewMockUserRepository()
+	repo := &scriptedUserRepo{MockUserRepository: NewMockUserRepository(), byUsernameErr: tt.lookupErr}
 	if tt.user != nil {
 		u := *tt.user
 		require.NoError(t, repo.Create(&u))
@@ -119,6 +121,10 @@ func TestLogin_NoEnumerationWithoutPassword(t *testing.T) {
 			user: enumUser(t, func(u *models.User) { u.AuthProvider = "oidc"; u.PasswordHash = ""; u.Disabled = true })}, wantDummy: true},
 		{enumCase: enumCase{name: "wrong password, cache on", password: "wrong", useCache: true,
 			user: enumUser(t, func(u *models.User) { u.Disabled = true })}},
+		{enumCase: enumCase{name: "malformed hash", password: enumPassword,
+			user: enumUser(t, func(u *models.User) { u.PasswordHash = "not-a-hash" })}, wantDummy: true},
+		{enumCase: enumCase{name: "hash with an invalid cost", password: enumPassword,
+			user: enumUser(t, func(u *models.User) { u.PasswordHash = "$2a$99$" + u.PasswordHash[7:] })}, wantDummy: true},
 	}
 
 	for _, tt := range tests {
@@ -193,4 +199,16 @@ func TestDummyPasswordHash(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, passwordHashCost, cost, "same cost as the stored hashes")
 	assert.Equal(t, dummyPasswordHash(), dummyPasswordHash(), "created once")
+}
+
+// A failed user lookup is a server-side failure: 500 without a compare.
+func TestLogin_LookupErrorNoCompare(t *testing.T) {
+	t.Parallel()
+
+	w, rec := runEnumLogin(t, enumCase{password: enumPassword, user: enumUser(t, nil),
+		lookupErr: errors.New("dial tcp: connection refused")})
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, `{"error":"Internal server error"}`, w.Body.String())
+	assert.Empty(t, rec.calls(), "no bcrypt compare")
 }

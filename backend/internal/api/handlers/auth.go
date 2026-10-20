@@ -200,8 +200,13 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 
 	if !cacheHit {
-		// bcrypt rejects an unusable hash (SSO-linked user: empty) without the
-		// key derivation, so spend the time on the dummy hash.
+		// bcrypt rejects an empty or malformed hash without the key
+		// derivation, so spend the time on the dummy hash.
+		if user.PasswordHash == "" {
+			_ = h.comparePassword(dummyPasswordHash(), req.Password)
+			fail(loginFailure{reason: loginReasonNoPassword, status: "invalid", httpCode: http.StatusUnauthorized, userID: user.ID}, msgInvalidCredentials)
+			return
+		}
 		if _, costErr := bcrypt.Cost([]byte(user.PasswordHash)); costErr != nil {
 			_ = h.comparePassword(dummyPasswordHash(), req.Password)
 			fail(loginFailure{reason: loginReasonHashInvalid, status: "failure", httpCode: http.StatusUnauthorized, userID: user.ID, err: costErr}, msgInvalidCredentials)
