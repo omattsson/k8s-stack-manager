@@ -2110,6 +2110,28 @@ definitions:
       use_in_cluster:
         type: boolean
     type: object
+  models.DeployLogHighlights:
+    properties:
+      current:
+        allOf:
+        - $ref: '#/definitions/models.DeploymentLog'
+        description: |-
+          Current is the deploy whose values run now: the newest successful or
+          partial deploy, or the target of a newer successful rollback. Nil when
+          that rollback has no target or its target is not a log of the
+          instance.
+      latest_failure:
+        allOf:
+        - $ref: '#/definitions/models.DeploymentLog'
+        description: |-
+          LatestFailure is the newest error log that started after the newest
+          successful or partial deploy or rollback (any error log when there is
+          none). A partial log is never a failure here.
+      running:
+        allOf:
+        - $ref: '#/definitions/models.DeploymentLog'
+        description: Running is the newest running log (any action).
+    type: object
   models.DeploymentLog:
     properties:
       action:
@@ -2139,6 +2161,11 @@ definitions:
         type: string
       started_at:
         type: string
+      started_by:
+        description: |-
+          StartedBy is the username of UserID. The deploy log handlers set it
+          with one batch lookup. Empty when the user is not known.
+        type: string
       status:
         description: '"running", "success", "error", "partial" (deploy only)'
         type: string
@@ -2162,6 +2189,10 @@ definitions:
         items:
           $ref: '#/definitions/models.DeploymentLog'
         type: array
+      highlights:
+        allOf:
+        - $ref: '#/definitions/models.DeployLogHighlights'
+        description: Highlights is set only in the summary view without a cursor.
       next_cursor:
         type: string
       total:
@@ -5220,6 +5251,7 @@ paths:
           description: OK
           schema:
             additionalProperties:
+              format: int64
               type: integer
             type: object
         "401":
@@ -6938,15 +6970,18 @@ paths:
       - stack-instances
   /api/v1/stack-instances/{id}/deploy-log:
     get:
-      description: Get deployment log history for a stack instance. Supports cursor-based
-        pagination for efficient large dataset traversal.
+      description: |-
+        Get deployment log history for a stack instance, newest first. Supports cursor-based pagination for efficient large dataset traversal.
+        The default view (full) returns all fields of each log. The summary view returns the row columns only (no output, values_snapshot or chart_versions) and, without a cursor, highlights (running log, current deploy, latest failure; computed over all logs of the instance, the filters do not apply).
+        The offset path returns total and, when more rows follow, next_cursor. The cursor path returns total: -1.
+        When the highlights cannot be read, the response has no highlights (the list is still returned).
       parameters:
       - description: Instance ID
         in: path
         name: id
         required: true
         type: string
-      - description: Page size (default 50)
+      - description: Page size (default 50, maximum 100; a larger value gives 100)
         in: query
         name: limit
         type: integer
@@ -6958,6 +6993,21 @@ paths:
           offset)
         in: query
         name: cursor
+        type: string
+      - description: Response view (default full)
+        enum:
+        - full
+        - summary
+        in: query
+        name: view
+        type: string
+      - description: 'Comma list of actions: deploy, rollback, stop, clean'
+        in: query
+        name: action
+        type: string
+      - description: 'Comma list of statuses: running, success, error, partial'
+        in: query
+        name: status
         type: string
       produces:
       - application/json
@@ -6972,13 +7022,91 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
           schema:
             additionalProperties:
               type: string
             type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
       summary: Get deployment logs
+      tags:
+      - stack-instances
+  /api/v1/stack-instances/{id}/deploy-log/{logId}:
+    get:
+      description: Returns one deployment log of the instance with its output, error
+        message and started_by. The values snapshot and the chart versions are not
+        in the response (see the values endpoint).
+      parameters:
+      - description: Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Deployment Log ID
+        in: path
+        name: logId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.DeploymentLog'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get one deployment log entry
       tags:
       - stack-instances
   /api/v1/stack-instances/{id}/deploy-log/{logId}/values:

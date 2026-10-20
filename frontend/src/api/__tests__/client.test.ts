@@ -795,15 +795,57 @@ describe('instanceService', () => {
     expect(result).toEqual(cleanResult);
   });
 
-  it('getDeployLog sends GET to deploy-log endpoint', async () => {
+  it('getDeployLogPage sends GET with view=summary and the page options', async () => {
+    const api = mockApi;
+    const page = {
+      data: [{ id: 'dl1', action: 'deploy', status: 'success' }],
+      total: 41,
+      next_cursor: 'c2',
+      highlights: { current: { id: 'dl1', action: 'deploy', status: 'success' } },
+    };
+    api.get.mockResolvedValueOnce(mockResponse(page));
+
+    const result = await instanceService.getDeployLogPage('i1', {
+      limit: 10, cursor: 'c1', action: 'deploy', status: ['success', 'partial'],
+    });
+
+    expect(api.get).toHaveBeenCalledWith('/api/v1/stack-instances/i1/deploy-log', {
+      params: { view: 'summary', limit: 10, cursor: 'c1', action: 'deploy', status: 'success,partial' },
+    });
+    expect(result).toEqual(page);
+  });
+
+  it('getDeployLogPage leaves out empty options', async () => {
+    const api = mockApi;
+    api.get.mockResolvedValueOnce(mockResponse({ data: [], total: 0 }));
+
+    const result = await instanceService.getDeployLogPage('i1');
+
+    expect(api.get).toHaveBeenCalledWith('/api/v1/stack-instances/i1/deploy-log', {
+      params: { view: 'summary', limit: undefined, cursor: undefined, action: undefined, status: undefined },
+    });
+    expect(result).toEqual({ data: [], total: 0, next_cursor: undefined, highlights: undefined });
+  });
+
+  it('getDeployLogPage accepts a bare array from an older server', async () => {
     const api = mockApi;
     const logs = [{ id: 'dl1', action: 'deploy', status: 'success' }];
     api.get.mockResolvedValueOnce(mockResponse(logs));
 
-    const result = await instanceService.getDeployLog('i1');
+    const result = await instanceService.getDeployLogPage('i1');
 
-    expect(api.get).toHaveBeenCalledWith('/api/v1/stack-instances/i1/deploy-log');
-    expect(result).toEqual(logs);
+    expect(result).toEqual({ data: logs, total: 1, next_cursor: undefined, highlights: undefined });
+  });
+
+  it('getDeployLogEntry sends GET to the log endpoint', async () => {
+    const api = mockApi;
+    const log = { id: 'dl/1', action: 'deploy', status: 'success', output: 'done' };
+    api.get.mockResolvedValueOnce(mockResponse(log));
+
+    const result = await instanceService.getDeployLogEntry('i1', 'dl/1');
+
+    expect(api.get).toHaveBeenCalledWith('/api/v1/stack-instances/i1/deploy-log/dl%2F1');
+    expect(result).toEqual(log);
   });
 
   it('getStatus sends GET to status endpoint', async () => {
@@ -2522,9 +2564,14 @@ describe('instanceService — error paths', () => {
     await expect(instanceService.clean('i1')).rejects.toThrow('Clean failed');
   });
 
-  it('getDeployLog throws on error', async () => {
+  it('getDeployLogPage throws on error', async () => {
     mockApi.get.mockRejectedValueOnce(new Error('Not Found'));
-    await expect(instanceService.getDeployLog('i1')).rejects.toThrow('Not Found');
+    await expect(instanceService.getDeployLogPage('i1')).rejects.toThrow('Not Found');
+  });
+
+  it('getDeployLogEntry throws on error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Not Found'));
+    await expect(instanceService.getDeployLogEntry('i1', 'l1')).rejects.toThrow('Not Found');
   });
 
   it('getStatus throws on error', async () => {

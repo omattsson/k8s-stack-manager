@@ -245,6 +245,16 @@ Both list endpoints are paged (`page` and `pageSize`; default 25, maximum 100). 
 - Stop, clean, and rollback logs use `running`, `success`, and `error` only.
 - The backend needs `list` on `events` and `get` and `list` on `pods` in the stack namespace. Without these rights, the log has no pod event lines, and the backend logs one warning for each operation.
 
+**Deployment History.** The instance page lists the operations of the stack (deploy, rollback, stop, clean).
+
+- The top of the section shows up to three pinned rows: the running operation ("Running"), the deploy whose values run now ("Current", also a partial deploy), and the newest failure when it is newer than the newest successful or partial deploy or rollback ("Last failure").
+- The list shows the newest 10 operations. **Show more** loads the next 10. The header shows the total, for example "Deployment History (41)".
+- Use the **Action** and **Status** filters to find an operation, for example Status "Failed". The header then shows the number of matches.
+- Three or more successful deploys of the same branch in a row fold into one row, for example "12 deploys of branch main, Oct 12 to Oct 19". Click the row to see each deploy.
+- Click a row to see its log output. A running operation opens by itself and shows the live log.
+- An open successful deploy that is not the current deploy has **Roll back to this deploy**.
+- API: `GET /stack-instances/:id/deploy-log?view=summary` returns the rows without the log output, with `highlights`, `action` and `status` filters, and `next_cursor` paging. `GET /stack-instances/:id/deploy-log/:logId` returns one log with its output. Without `view`, the list keeps all fields (`stackctl stack logs` reads the output).
+
 **Rollback.** `POST /stack-instances/:id/rollback`:
 
 - Without a body, each Helm release goes back one revision.

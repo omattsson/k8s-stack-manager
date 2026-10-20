@@ -32,6 +32,12 @@ type MockDeploymentLogRepository struct {
 	mu    sync.RWMutex
 	items map[string]*models.DeploymentLog
 	err   error
+	// highlights and highlightsErr are the result of HistoryHighlights.
+	highlights     *models.DeployLogHighlights
+	highlightsErr  error
+	highlightCalls int
+	// lastFilters holds the filters of the last ListByInstancePaginated call.
+	lastFilters models.DeploymentLogFilters
 }
 
 func NewMockDeploymentLogRepository() *MockDeploymentLogRepository {
@@ -90,16 +96,24 @@ func (m *MockDeploymentLogRepository) ListByInstance(_ context.Context, instance
 }
 
 func (m *MockDeploymentLogRepository) ListByInstancePaginated(_ context.Context, filters models.DeploymentLogFilters) (*models.DeploymentLogResult, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lastFilters = filters
 	if m.err != nil {
 		return nil, m.err
 	}
 	var out []models.DeploymentLog
 	for _, log := range m.items {
-		if log.StackInstanceID == filters.InstanceID {
-			out = append(out, *log)
+		if log.StackInstanceID != filters.InstanceID {
+			continue
 		}
+		if len(filters.Actions) > 0 && !containsString(filters.Actions, log.Action) {
+			continue
+		}
+		if len(filters.Statuses) > 0 && !containsString(filters.Statuses, log.Status) {
+			continue
+		}
+		out = append(out, *log)
 	}
 	// Sort by StartedAt DESC for consistency.
 	sort.Slice(out, func(i, j int) bool {
@@ -118,10 +132,50 @@ func (m *MockDeploymentLogRepository) ListByInstancePaginated(_ context.Context,
 	if limit < len(out) {
 		out = out[:limit]
 	}
-	return &models.DeploymentLogResult{
+	result := &models.DeploymentLogResult{
 		Data:  out,
 		Total: total,
-	}, nil
+	}
+	if len(out) > 0 && int64(offset+len(out)) < total {
+		result.NextCursor = "cursor-" + out[len(out)-1].ID
+	}
+	return result, nil
+}
+
+// HistoryHighlights returns the configured highlights (a copy, so the
+// handler can change it).
+func (m *MockDeploymentLogRepository) HistoryHighlights(_ context.Context, _ string) (*models.DeployLogHighlights, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.highlightCalls++
+	if m.highlightsErr != nil {
+		return nil, m.highlightsErr
+	}
+	if m.highlights == nil {
+		return &models.DeployLogHighlights{}, nil
+	}
+	cp := *m.highlights
+	for _, f := range []**models.DeploymentLog{&cp.Running, &cp.Current, &cp.LatestFailure} {
+		if *f != nil {
+			row := **f
+			*f = &row
+		}
+	}
+	return &cp, nil
+}
+
+// LastFilters returns the filters of the last list call.
+func (m *MockDeploymentLogRepository) LastFilters() models.DeploymentLogFilters {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.lastFilters
+}
+
+// HighlightCalls returns the number of HistoryHighlights calls.
+func (m *MockDeploymentLogRepository) HighlightCalls() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.highlightCalls
 }
 
 func (m *MockDeploymentLogRepository) GetLatestByInstance(_ context.Context, instanceID string) (*models.DeploymentLog, error) {

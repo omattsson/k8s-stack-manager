@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useWebSocket } from '../../hooks/useWebSocket';
 import type { WsMessage, DeploymentStatusPayload } from '../../hooks/useWebSocket';
+import { useDeployHistory, useRollbackTargets } from '../../hooks/useDeployHistory';
 import {
   Box,
   Typography,
@@ -33,7 +34,7 @@ import StatusBadge from '../../components/StatusBadge';
 import BranchSelector from '../../components/BranchSelector';
 import ConfirmDialog from '../../components/ConfirmDialog';
 import DeployPreviewDialog from '../../components/DeployPreviewDialog';
-import DeploymentLogViewer from '../../components/DeploymentLogViewer';
+import DeploymentHistory from '../../components/DeploymentHistory';
 import PodStatusDisplay from '../../components/PodStatusDisplay';
 import AccessUrls from '../../components/AccessUrls';
 import FavoriteButton from '../../components/FavoriteButton';
@@ -103,7 +104,15 @@ const Detail = () => {
   const [cleaning, setCleaning] = useState(false);
   const [cleanDialogOpen, setCleanDialogOpen] = useState(false);
   const [stopDialogOpen, setStopDialogOpen] = useState(false);
-  const [deployLogs, setDeployLogs] = useState<DeploymentLog[]>([]);
+  const history = useDeployHistory(id);
+  const rollbackTargets = useRollbackTargets(id);
+  const { refresh: refreshHistory, addRunning } = history;
+  const { refresh: refreshRollbackTargets } = rollbackTargets;
+  /** Reload the history list and the rollback targets. Errors stay in the history state. */
+  const refreshDeployLogs = useCallback(() => {
+    refreshHistory();
+    refreshRollbackTargets();
+  }, [refreshHistory, refreshRollbackTargets]);
   const [streamingLines, setStreamingLines] = useState<Record<string, string[]>>({});
   const streamingBufferRef = useRef<Record<string, string[]>>({});
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -112,6 +121,9 @@ const Detail = () => {
   const [cloneOpen, setCloneOpen] = useState(false);
   const [rollbackOpen, setRollbackOpen] = useState(false);
   const [rollbackTargetId, setRollbackTargetId] = useState<string | undefined>(undefined);
+  // The deploy picked in the history. "Show more" can load deploys that are
+  // not in the loaded rollback targets.
+  const [rollbackPick, setRollbackPick] = useState<DeploymentLog | undefined>(undefined);
   const [rollingBack, setRollingBack] = useState(false);
   const [savedPendingRedeploy, setSavedPendingRedeploy] = useState(false);
   // Counts deployment.status WebSocket messages. A fetched instance whose request
@@ -144,8 +156,8 @@ const Detail = () => {
     let stale = false;
     const fetchData = async () => {
       // Reset the state of the previous instance (a route change): its
-      // pod request can be stale and never reset statusLoading.
-      setDeployLogs([]);
+      // pod request can be stale and never reset statusLoading. The
+      // history hooks reset and load on the ID change.
       setK8sStatus(null);
       setStatusLoading(false);
       setError(null);
@@ -185,13 +197,6 @@ const Detail = () => {
         setEditedOverrides(overrideMap);
         initialOverridesRef.current = { ...overrideMap };
         initialBranchRef.current = inst.branch;
-
-        // Fetch deployment logs
-        try {
-          const logs = await instanceService.getDeployLog(id);
-          if (stale) return;
-          setDeployLogs(logs);
-        } catch { /* ignore — no logs yet */ }
 
         // Fetch pod health for active instances (includes container states + events).
         if (inst.status === 'running' || inst.status === 'partial' || inst.status === 'deploying' || inst.status === 'stabilizing' || inst.status === 'error' || inst.status === 'stopping' || inst.status === 'cleaning') {
@@ -278,16 +283,12 @@ const Detail = () => {
           ?? (newStatus === 'deploying' && pendingActionRef.current === 'rollback'
             ? 'rollback'
             : actionMap[newStatus] || 'deploy');
-        setDeployLogs((prev) => {
-          if (prev.some((l) => l.id === logId)) return prev;
-          return [{
-            id: logId,
-            stack_instance_id: id,
-            action,
-            status: 'running' as const,
-            output: '',
-            started_at: new Date().toISOString(),
-          }, ...prev];
+        addRunning({
+          id: logId,
+          stack_instance_id: id,
+          action,
+          status: 'running',
+          started_at: new Date().toISOString(),
         });
       }
 
@@ -296,7 +297,7 @@ const Detail = () => {
         // Refetch the whole instance: fields such as values_drift change when
         // a rollback or a deploy finishes.
         refreshInstance(id).catch(() => {});
-        instanceService.getDeployLog(id).then(setDeployLogs).catch(() => {});
+        refreshDeployLogs();
         pendingActionRef.current = null;
         setStreamingLines({});
         streamingBufferRef.current = {};
@@ -357,7 +358,7 @@ const Detail = () => {
       }
     }
 
-  }, [id, refreshInstance]);
+  }, [id, refreshInstance, addRunning, refreshDeployLogs]);
 
   const { subscribeInstance } = useWebSocket(handleWsMessage);
 
@@ -548,10 +549,7 @@ const Detail = () => {
     try {
       await refreshInstance(id);
     } catch (e) { console.error('Failed to refresh instance after deploy', e); }
-    try {
-      const logs = await instanceService.getDeployLog(id);
-      setDeployLogs(logs);
-    } catch (e) { console.error('Failed to refresh deploy logs after deploy', e); }
+    refreshDeployLogs();
   };
 
   const handleStop = async () => {
@@ -571,10 +569,7 @@ const Detail = () => {
     try {
       await refreshInstance(id);
     } catch (e) { console.error('Failed to refresh instance after stop', e); }
-    try {
-      const logs = await instanceService.getDeployLog(id);
-      setDeployLogs(logs);
-    } catch (e) { console.error('Failed to refresh deploy logs after stop', e); }
+    refreshDeployLogs();
   };
 
   const handleClean = async () => {
@@ -594,10 +589,7 @@ const Detail = () => {
     try {
       await refreshInstance(id);
     } catch (e) { console.error('Failed to refresh instance after clean', e); }
-    try {
-      const logs = await instanceService.getDeployLog(id);
-      setDeployLogs(logs);
-    } catch (e) { console.error('Failed to refresh deploy logs after clean', e); }
+    refreshDeployLogs();
   };
 
   const countdown = useCountdown(instance?.expires_at);
@@ -607,8 +599,10 @@ const Detail = () => {
     instance?.error_message?.includes('Expired (TTL)')
   );
 
-  const openRollback = (targetId?: string) => {
-    setRollbackTargetId(targetId);
+  /** Open the rollback dialog, optionally with a deploy from the history selected. */
+  const openRollback = (target?: DeploymentLog) => {
+    setRollbackTargetId(target?.id);
+    setRollbackPick(target);
     setRollbackOpen(true);
   };
 
@@ -647,11 +641,7 @@ const Detail = () => {
           : inst
       ));
     } catch (e) { console.error('Failed to refresh instance after rollback', e); }
-    // Best-effort log refresh — don't surface errors to the user
-    try {
-      const logs = await instanceService.getDeployLog(id);
-      setDeployLogs(logs);
-    } catch (e) { console.error('Failed to refresh deploy logs after rollback', e); }
+    refreshDeployLogs();
   };
 
   // Show the saved fixed stop time in the TTL field after a load or a save.
@@ -714,9 +704,24 @@ const Detail = () => {
 
   const canDeploy = instance?.status === 'draft' || instance?.status === 'stopped';
   const canRedeploy = DEPLOYED_STATUSES.has(instance?.status ?? '');
-  const deploys = useMemo(() => successfulDeploys(deployLogs), [deployLogs]);
-  const currentLogId = useMemo(() => currentDeployLogId(deployLogs), [deployLogs]);
-  const canRollback = canRedeploy && deploys.length >= 2;
+  const deploys = rollbackTargets.deploys;
+  // An older server sends no highlights: then find the current deploy in the loaded rows.
+  const currentLogId = useMemo(
+    () => (history.highlights ? history.highlights.current?.id : currentDeployLogId(history.rows)),
+    [history.highlights, history.rows],
+  );
+  // The dialog also lists a deploy picked in the history that the targets do not have.
+  const dialogDeploys = useMemo(
+    () => (rollbackPick && !deploys.some((d) => d.id === rollbackPick.id)
+      ? successfulDeploys([...deploys, rollbackPick])
+      : deploys),
+    [deploys, rollbackPick],
+  );
+  // A rollback needs a successful deploy other than the current one. A
+  // partial current deploy is not a target, so one other deploy is enough.
+  const canRollback = canRedeploy && (currentLogId
+    ? deploys.some((d) => d.id !== currentLogId)
+    : deploys.length >= 2);
   const canStop = instance?.status === 'running' || instance?.status === 'partial' || instance?.status === 'deploying' || instance?.status === 'stabilizing';
   const canClean = instance?.status === 'running' || instance?.status === 'partial' || instance?.status === 'stopped' || instance?.status === 'error';
 
@@ -1130,19 +1135,14 @@ const Detail = () => {
         </Paper>
       )}
 
-      {deployLogs.length > 0 && (
-        <Box sx={{ mb: 3 }}>
-          <Typography variant="h6" sx={{ mb: 1 }}>
-            Deployment History ({deployLogs.length})
-          </Typography>
-          <DeploymentLogViewer
-            logs={deployLogs}
-            streamingLines={streamingLines}
-            currentDeployLogId={currentLogId}
-            onRollbackTo={canModify && canRollback ? (log) => openRollback(log.id) : undefined}
-          />
-        </Box>
-      )}
+      <DeploymentHistory
+        key={id ?? instance.id}
+        instanceId={id ?? instance.id}
+        history={history}
+        streamingLines={streamingLines}
+        currentDeployLogId={currentLogId}
+        onRollbackTo={canModify && canRollback ? (log) => openRollback(log) : undefined}
+      />
 
       <Box sx={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
         <Button variant="outlined" onClick={() => navigate('/')}>
@@ -1227,9 +1227,9 @@ const Detail = () => {
         <RollbackDialog
           open={rollbackOpen}
           instanceName={instance.name}
-          deploys={deploys}
+          deploys={dialogDeploys}
           currentLogId={currentLogId}
-          initialTargetId={rollbackTargetId ?? defaultRollbackTarget(deploys, currentLogId)?.id}
+          initialTargetId={rollbackTargetId ?? defaultRollbackTarget(dialogDeploys, currentLogId)?.id}
           onConfirm={handleRollback}
           onClose={() => setRollbackOpen(false)}
         />

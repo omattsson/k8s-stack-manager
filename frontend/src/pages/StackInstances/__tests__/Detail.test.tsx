@@ -79,7 +79,8 @@ vi.mock('../../../api/client', () => ({
     deploy: vi.fn(),
     stop: vi.fn(),
     clean: vi.fn(),
-    getDeployLog: vi.fn(),
+    getDeployLogPage: vi.fn(),
+    getDeployLogEntry: vi.fn(),
     getStatus: vi.fn(),
     getPods: vi.fn(),
     extend: vi.fn(),
@@ -128,22 +129,24 @@ vi.mock('../../../utils/download', () => ({
   downloadBlob: vi.fn(),
 }));
 
-vi.mock('../../../components/DeploymentLogViewer', () => ({
-  default: ({ logs, currentDeployLogId, onRollbackTo }: {
-    logs: { id: string; action: string; status: string }[];
+vi.mock('../../../components/DeploymentHistory', () => ({
+  default: ({ history, currentDeployLogId, onRollbackTo }: {
+    history: { rows: { id: string; action: string; status: string }[]; total: number; hasHistory: boolean };
     currentDeployLogId?: string;
     onRollbackTo?: (log: { id: string }) => void;
-  }) => (
-    <div data-testid="deployment-log-viewer">
-      {logs.length} log entries
-      <span data-testid="log-actions">{logs.map((l) => l.action).join(',')}</span>
-      {onRollbackTo && logs
+  }) => (history.hasHistory ? (
+    <div data-testid="deployment-history">
+      <h2>Deployment History ({history.total})</h2>
+      {history.rows.length} log entries
+      <span data-testid="log-actions">{history.rows.map((l) => l.action).join(',')}</span>
+      <span data-testid="current-log-id">{currentDeployLogId ?? ''}</span>
+      {onRollbackTo && history.rows
         .filter((l) => l.action === 'deploy' && l.status === 'success' && l.id !== currentDeployLogId)
         .map((l) => (
           <button key={l.id} onClick={() => onRollbackTo(l)}>Roll back to {l.id}</button>
         ))}
     </div>
-  ),
+  ) : null),
 }));
 
 vi.mock('../../../components/PodStatusDisplay', () => ({
@@ -214,16 +217,26 @@ import { useUnsavedChanges } from '../../../hooks/useUnsavedChanges';
 
 type MockFn = ReturnType<typeof vi.fn>;
 
-const setupMocks = (instanceOverrides: Partial<typeof mockInstance> = {}, opts: { logs?: unknown[]; k8sStatus?: unknown; podsStatus?: unknown; deployLogReject?: boolean; k8sReject?: boolean; branchOverrides?: unknown[] } = {}) => {
+/** Calls of the history list (not of the rollback targets, which filter by action). */
+const historyCalls = () => (instanceService.getDeployLogPage as MockFn).mock.calls
+  .filter(([, options]) => !(options as { action?: string } | undefined)?.action);
+
+const setupMocks = (instanceOverrides: Partial<typeof mockInstance> = {}, opts: { logs?: unknown[]; highlights?: unknown; k8sStatus?: unknown; podsStatus?: unknown; deployLogReject?: boolean; k8sReject?: boolean; branchOverrides?: unknown[] } = {}) => {
   const inst = { ...mockInstance, ...instanceOverrides };
   (instanceService.get as MockFn).mockResolvedValue(inst);
   (definitionService.get as MockFn).mockResolvedValue(mockDefinition);
   (instanceService.getOverrides as MockFn).mockResolvedValue([]);
   (branchOverrideService.list as MockFn).mockResolvedValue(opts.branchOverrides ?? []);
   if (opts.deployLogReject) {
-    (instanceService.getDeployLog as MockFn).mockRejectedValue(new Error('no logs'));
+    (instanceService.getDeployLogPage as MockFn).mockRejectedValue(new Error('no logs'));
   } else {
-    (instanceService.getDeployLog as MockFn).mockResolvedValue(opts.logs ?? []);
+    // Like a server that ignores the filters: the page needs to filter the rollback targets.
+    const logs = opts.logs ?? [];
+    (instanceService.getDeployLogPage as MockFn).mockResolvedValue({
+      data: logs,
+      total: logs.length,
+      ...(opts.highlights !== undefined && { highlights: opts.highlights }),
+    });
   }
   if (opts.k8sReject) {
     (instanceService.getStatus as MockFn).mockRejectedValue(new Error('no status'));
@@ -566,9 +579,6 @@ describe('StackInstances Detail', () => {
     (instanceService.get as MockFn)
       .mockResolvedValueOnce(inst)
       .mockResolvedValueOnce({ ...inst, status: 'deploying' });
-    (instanceService.getDeployLog as MockFn)
-      .mockRejectedValueOnce(new Error('no logs'))
-      .mockResolvedValueOnce([]);
 
     renderDetail();
 
@@ -595,9 +605,6 @@ describe('StackInstances Detail', () => {
     (instanceService.get as MockFn)
       .mockResolvedValueOnce(inst)
       .mockResolvedValueOnce({ ...inst, status: 'stopped' });
-    (instanceService.getDeployLog as MockFn)
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([]);
 
     renderDetail();
 
@@ -696,7 +703,7 @@ describe('StackInstances Detail', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/Deployment History/)).toBeInTheDocument();
-      expect(screen.getByTestId('deployment-log-viewer')).toBeInTheDocument();
+      expect(screen.getByTestId('deployment-history')).toBeInTheDocument();
     });
   });
 
@@ -892,9 +899,6 @@ describe('StackInstances Detail', () => {
     (instanceService.get as MockFn)
       .mockResolvedValueOnce(inst)
       .mockResolvedValueOnce({ ...inst, status: 'cleaning' });
-    (instanceService.getDeployLog as MockFn)
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([]);
 
     renderDetail();
 
@@ -1527,9 +1531,6 @@ describe('StackInstances Detail', () => {
     (instanceService.get as MockFn)
       .mockResolvedValueOnce(inst)
       .mockResolvedValueOnce({ ...inst, status: 'cleaning' });
-    (instanceService.getDeployLog as MockFn)
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([]);
     renderDetail();
 
     await waitFor(() => {
@@ -1555,19 +1556,19 @@ describe('StackInstances Detail', () => {
     setupMocks({ status: 'draft' }, { deployLogReject: true });
     (instanceService.deploy as MockFn).mockResolvedValue(undefined);
     const updatedInst = { ...mockInstance, status: 'deploying' };
-    const deployLog = [{ id: 'log1', action: 'deploy', status: 'running', output: 'deploying...', started_at: '2025-01-01' }];
+    const deployLog = [{ id: 'log1', action: 'deploy', status: 'running', started_at: '2025-01-01' }];
     // After deploy, the component refetches instance and logs
     (instanceService.get as MockFn)
       .mockResolvedValueOnce({ ...mockInstance, status: 'draft' }) // initial load
       .mockResolvedValueOnce(updatedInst); // refresh after deploy
-    (instanceService.getDeployLog as MockFn)
-      .mockRejectedValueOnce(new Error('no logs')) // initial load
-      .mockResolvedValueOnce(deployLog); // refresh after deploy
     renderDetail();
 
     await waitFor(() => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
+    await waitFor(() => expect(historyCalls()).toHaveLength(1));
+    expect(screen.queryByTestId('deployment-history')).not.toBeInTheDocument();
+    (instanceService.getDeployLogPage as MockFn).mockResolvedValue({ data: deployLog, total: 1 });
 
     // Click Deploy to open preview dialog
     await user.click(screen.getByRole('button', { name: /deploy/i }));
@@ -1579,6 +1580,8 @@ describe('StackInstances Detail', () => {
     await waitFor(() => {
       expect(instanceService.deploy).toHaveBeenCalledWith('123');
     });
+    expect(await screen.findByText('1 log entries')).toBeInTheDocument();
+    expect(historyCalls()).toHaveLength(2);
   });
 
   it('refreshes instance and logs after successful stop', async () => {
@@ -1589,9 +1592,6 @@ describe('StackInstances Detail', () => {
     (instanceService.get as MockFn)
       .mockResolvedValueOnce({ ...mockInstance, status: 'running' }) // initial
       .mockResolvedValueOnce(stoppedInst); // refresh after stop
-    (instanceService.getDeployLog as MockFn)
-      .mockResolvedValueOnce([]) // initial
-      .mockResolvedValueOnce([]); // refresh after stop
     renderDetail();
 
     await waitFor(() => {
@@ -2122,7 +2122,7 @@ describe('StackInstances Detail', () => {
     renderDetail();
 
     await waitFor(() => {
-      expect(screen.getByTestId('deployment-log-viewer')).toBeInTheDocument();
+      expect(screen.getByTestId('deployment-history')).toBeInTheDocument();
     });
     expect(screen.getByText('2 log entries')).toBeInTheDocument();
   });
@@ -2255,7 +2255,7 @@ describe('StackInstances Detail permissions', () => {
     });
     expect(instanceService.getOverrides).not.toHaveBeenCalled();
     expect(branchOverrideService.list).not.toHaveBeenCalled();
-    expect(instanceService.getDeployLog).toHaveBeenCalledWith('123');
+    expect(instanceService.getDeployLogPage).toHaveBeenCalledWith('123', { limit: 10, action: undefined, status: undefined });
     expect(instanceService.getPods).toHaveBeenCalledWith('123');
     expect(screen.queryByText('Failed to load instance details')).not.toBeInTheDocument();
   });
@@ -2280,7 +2280,7 @@ describe('StackInstances Detail permissions', () => {
     });
     expect(screen.getByText('https://my-stack.example.com')).toBeInTheDocument();
     expect(screen.getByTestId('pod-status-display')).toBeInTheDocument();
-    expect(screen.getByTestId('deployment-log-viewer')).toBeInTheDocument();
+    expect(screen.getByTestId('deployment-history')).toBeInTheDocument();
   });
 });
 
@@ -2396,7 +2396,7 @@ describe('StackInstances Detail redeploy, rollback and drift', () => {
     setupMocks({ status: 'running' }, { logs: [deployLog('d1', 8), deployLog('x', 9, { status: 'error' })] });
     renderDetail();
     await waitForPage();
-    await waitFor(() => expect(screen.getByTestId('deployment-log-viewer')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId('deployment-history')).toBeInTheDocument());
     expect(screen.queryByRole('button', { name: 'Rollback' })).not.toBeInTheDocument();
   });
 
@@ -2404,7 +2404,7 @@ describe('StackInstances Detail redeploy, rollback and drift', () => {
     setupMocks({ status: 'stopped' }, { logs: threeDeploys });
     renderDetail();
     await waitForPage();
-    await waitFor(() => expect(screen.getByTestId('deployment-log-viewer')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId('deployment-history')).toBeInTheDocument());
     expect(screen.queryByRole('button', { name: 'Rollback' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Roll back to/ })).not.toBeInTheDocument();
   });
@@ -2462,7 +2462,7 @@ describe('StackInstances Detail redeploy, rollback and drift', () => {
     )).toBeInTheDocument();
     // One refetch after the rollback. It returns no drift yet (the log still
     // runs), so the flag from the rollback response stays.
-    await waitFor(() => expect(instanceService.getDeployLog).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(historyCalls()).toHaveLength(2));
     expect((instanceService.get as MockFn).mock.calls.length).toBe(getCalls + 1);
     expect(screen.getByText(/The running values differ from the stored overrides/)).toBeInTheDocument();
   });
@@ -2685,7 +2685,7 @@ describe('StackInstances Detail redeploy, rollback and drift', () => {
     setupMocks({ status: 'running', expires_at: '2030-01-01T12:00:00Z' }, { logs: threeDeploys });
     renderDetail();
     await waitForPage();
-    await waitFor(() => expect(screen.getByTestId('deployment-log-viewer')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId('deployment-history')).toBeInTheDocument());
 
     for (const name of ['Redeploy', 'Deploy', 'Rollback', 'Extend']) {
       expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
@@ -2933,5 +2933,161 @@ describe('StackInstances Detail stale responses (#596)', () => {
     expect(screen.getByText('Override: feature/new-branch')).toBeInTheDocument();
     await resolveStale();
     expect(screen.getByText('Override: feature/new-branch')).toBeInTheDocument();
+  });
+});
+
+describe('StackInstances Detail deployment history (#626)', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+    authState.user = { id: 'user1', username: 'alice', role: 'user', display_name: 'Alice' };
+  });
+
+  const deployLog = (id: string, hour: number, overrides: Record<string, unknown> = {}) => ({
+    id,
+    stack_instance_id: '123',
+    action: 'deploy',
+    status: 'success',
+    started_at: new Date(Date.UTC(2030, 0, 1, hour, 0)).toISOString(),
+    ...overrides,
+  });
+  const logs = [
+    deployLog('d3', 12),
+    deployLog('d2', 10),
+    deployLog('failed', 9, { status: 'error' }),
+    deployLog('d1', 8),
+  ];
+  const timeOf = (hour: number) => new Date(Date.UTC(2030, 0, 1, hour, 0)).toLocaleString();
+
+  const waitForPage = async () => {
+    await waitFor(() => expect(screen.getByText('Test Instance')).toBeInTheDocument());
+  };
+
+  it('loads the first history page and the rollback targets', async () => {
+    setupMocks({ status: 'running' }, { logs });
+    renderDetail();
+    await waitForPage();
+    await waitFor(() => expect(screen.getByText('4 log entries')).toBeInTheDocument());
+    expect(screen.getByText('Deployment History (4)')).toBeInTheDocument();
+    expect(instanceService.getDeployLogPage).toHaveBeenCalledWith('123', { limit: 10, action: undefined, status: undefined });
+    expect(instanceService.getDeployLogPage).toHaveBeenCalledWith('123', { action: 'deploy', status: 'success', limit: 50 });
+  });
+
+  it('lists only successful deploys in the rollback dialog when the server ignores the filters', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'running' }, { logs });
+    renderDetail();
+    await waitForPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Rollback' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Roll Back Instance' });
+    expect(within(dialog).getAllByRole('radio')).toHaveLength(3);
+  });
+
+  it('takes the current deploy from the highlights of the server', async () => {
+    const user = userEvent.setup();
+    // A rollback to d2 made it current again; the newest deploy d3 is not current.
+    setupMocks({ status: 'running' }, { logs, highlights: { current: logs[1] } });
+    renderDetail();
+    await waitForPage();
+    await waitFor(() => expect(screen.getByTestId('current-log-id')).toHaveTextContent('d2'));
+
+    await user.click(await screen.findByRole('button', { name: 'Rollback' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Roll Back Instance' });
+    expect(within(dialog).getByRole('radio', { name: new RegExp(timeOf(10).replace(/[()]/g, '.')) })).toBeDisabled();
+    expect(within(dialog).getByRole('radio', { name: timeOf(8) })).toBeChecked();
+  });
+
+  it('leaves the current deploy unknown when the highlights have none', async () => {
+    setupMocks({ status: 'running' }, { logs, highlights: {} });
+    renderDetail();
+    await waitForPage();
+    await waitFor(() => expect(screen.getByText('4 log entries')).toBeInTheDocument());
+    expect(screen.getByTestId('current-log-id')).toBeEmptyDOMElement();
+  });
+
+  it('falls back to the rows for the current deploy when the server sends no highlights', async () => {
+    setupMocks({ status: 'running' }, { logs });
+    renderDetail();
+    await waitForPage();
+    await waitFor(() => expect(screen.getByTestId('current-log-id')).toHaveTextContent('d3'));
+  });
+
+  it('treats a newer partial deploy as current and offers the older successful deploy', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'partial' }, { logs: [deployLog('d2', 10, { status: 'partial' }), deployLog('d1', 8)] });
+    (instanceService.rollback as MockFn).mockResolvedValue({ log_id: 'rb1', message: 'ok' });
+    renderDetail();
+    await waitForPage();
+    await waitFor(() => expect(screen.getByTestId('current-log-id')).toHaveTextContent('d2'));
+    expect(await screen.findByRole('button', { name: 'Roll back to d1' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Rollback' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Roll Back Instance' });
+    expect(within(dialog).getAllByRole('radio')).toHaveLength(1);
+    expect(within(dialog).getByRole('radio', { name: timeOf(8) })).toBeChecked();
+    await user.click(within(dialog).getByRole('button', { name: 'Roll Back' }));
+    await waitFor(() => expect(instanceService.rollback).toHaveBeenCalledWith('123', 'd1'));
+  });
+
+  it('selects a deploy from the history that the loaded rollback targets do not have', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'running' });
+    const targets = [deployLog('d3', 12), deployLog('d2', 10)];
+    const rows = [...targets, deployLog('d0', 6, { branch: 'old' })];
+    (instanceService.getDeployLogPage as MockFn).mockImplementation((_id: string, options?: { action?: string }) =>
+      Promise.resolve(options?.action ? { data: targets, total: 2 } : { data: rows, total: 3 }));
+    (instanceService.rollback as MockFn).mockResolvedValue({ log_id: 'rb1', message: 'ok' });
+    renderDetail();
+    await waitForPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Roll back to d0' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Roll Back Instance' });
+    const radios = within(dialog).getAllByRole('radio');
+    expect(radios).toHaveLength(3);
+    // Newest first; the picked deploy is last and selected.
+    expect(radios[2]).toHaveAccessibleName(`${timeOf(6)} (branch old)`);
+    expect(radios[2]).toBeChecked();
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Roll Back Instance' })).not.toBeInTheDocument());
+
+    // The header button lists the loaded targets only.
+    await user.click(screen.getByRole('button', { name: 'Rollback' }));
+    const again = await screen.findByRole('dialog', { name: 'Roll Back Instance' });
+    expect(within(again).getAllByRole('radio')).toHaveLength(2);
+    await user.click(within(again).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Roll Back Instance' })).not.toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: 'Roll back to d0' }));
+    const third = await screen.findByRole('dialog', { name: 'Roll Back Instance' });
+    await user.click(within(third).getByRole('button', { name: 'Roll Back' }));
+    await waitFor(() => expect(instanceService.rollback).toHaveBeenCalledWith('123', 'd0'));
+  });
+
+  it('reloads the history and the rollback targets on a terminal WebSocket status', async () => {
+    setupMocks({ status: 'deploying' }, { logs });
+    renderDetail();
+    await waitForPage();
+    await waitFor(() => expect(historyCalls()).toHaveLength(1));
+    const before = (instanceService.getDeployLogPage as MockFn).mock.calls.length;
+
+    act(() => {
+      wsState.handler?.({ type: 'deployment.status', payload: { instance_id: '123', status: 'running' } });
+    });
+    await waitFor(() => expect(historyCalls()).toHaveLength(2));
+    // One history page and one rollback target page.
+    expect((instanceService.getDeployLogPage as MockFn).mock.calls.length).toBe(before + 2);
+  });
+
+  it('adds the running log of a WebSocket status to the history', async () => {
+    setupMocks({ status: 'running' }, { logs });
+    renderDetail();
+    await waitForPage();
+    await waitFor(() => expect(screen.getByText('Deployment History (4)')).toBeInTheDocument());
+
+    act(() => {
+      wsState.handler?.({ type: 'deployment.status', payload: { instance_id: '123', status: 'stopping', log_id: 's1' } });
+    });
+    expect(await screen.findByText('Deployment History (5)')).toBeInTheDocument();
+    expect(screen.getByTestId('log-actions').textContent).toBe('stop,deploy,deploy,deploy,deploy');
   });
 });

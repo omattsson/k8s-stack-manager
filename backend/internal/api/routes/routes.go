@@ -388,6 +388,7 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 				instances.POST("/:id/follow", deps.InstanceHandler.FollowInstance)
 				instances.DELETE("/:id/follow", deps.InstanceHandler.UnfollowInstance)
 				instances.GET("/:id/deploy-log", deps.InstanceHandler.GetDeployLog)
+				instances.GET("/:id/deploy-log/:logId", deps.InstanceHandler.GetDeployLogEntry)
 				instances.GET("/:id/deploy-log/:logId/values", deps.InstanceHandler.GetDeployLogValues)
 				instances.POST("/:id/rollback", deps.InstanceHandler.RollbackInstance)
 				instances.GET("/:id/status", deps.InstanceHandler.GetInstanceStatus)
