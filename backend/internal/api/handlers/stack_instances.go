@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -79,41 +81,73 @@ var rfc1123ConsecutiveDashes = regexp.MustCompile(`-{2,}`)
 // lowercase, only [a-z0-9-], collapse consecutive dashes, trim leading/trailing
 // dashes, max 63 chars. Returns "default" if the result would be empty.
 func sanitizeRFC1123Label(s string) string {
+	return cutLabel(normalizeRFC1123(s), maxNamespaceLen)
+}
+
+// normalizeRFC1123 does the same as sanitizeRFC1123Label, but it does not cut
+// the length.
+func normalizeRFC1123(s string) string {
 	s = strings.ToLower(s)
 	s = rfc1123InvalidChars.ReplaceAllString(s, "-")
 	s = rfc1123ConsecutiveDashes.ReplaceAllString(s, "-")
 	s = strings.Trim(s, "-")
-	if len(s) > 63 {
-		s = s[:63]
-		s = strings.TrimRight(s, "-")
-	}
 	if s == "" {
 		return "default"
 	}
 	return s
 }
 
-// buildNamespace constructs a namespace in the form stack-{instance}-{owner},
-// sanitizing both parts and truncating to fit within 63 characters.
+// cutLabel cuts s to at most n bytes and removes the trailing dashes. s must
+// be a normalized label (ASCII only, starts with a letter or digit).
+func cutLabel(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return strings.TrimRight(s[:n], "-")
+}
+
+// Namespace name limits.
+const (
+	namespacePrefix = "stack-"
+	// maxNamespaceLen is the maximum length of an RFC 1123 label.
+	maxNamespaceLen = 63
+	// namespaceHashLen is the number of hex characters of the name hash in a
+	// cut namespace.
+	namespaceHashLen = 6
+	// minNamespaceInstanceLen is the minimum length of the instance part in a
+	// cut namespace. When the owner part leaves less room, the owner part is cut.
+	minNamespaceInstanceLen = 10
+)
+
+// buildNamespace returns the namespace stack-<instance>-<owner>. It sanitizes
+// both parts. A name that fits in 63 characters is not changed, so existing
+// namespaces stay the same.
+//
+// A longer name becomes stack-<instance>-<hash>-<owner>. The instance part is
+// cut to fit. The owner part stays whole when the instance part keeps at least
+// minNamespaceInstanceLen characters. Otherwise the owner part is cut too. The
+// hash is the first 6 hex characters of the SHA-256 of the full sanitized
+// instance and owner parts. Thus two names that differ only after the cut get
+// different namespaces (issue #631).
 func buildNamespace(instancePart, ownerPart string) string {
-	prefix := "stack-"
-	sanitizedOwner := sanitizeRFC1123Label(ownerPart)
-	// Reserve room for "stack-" + "-" + owner
-	maxInstanceLen := 63 - len(prefix) - 1 - len(sanitizedOwner)
-	sanitizedInstance := sanitizeRFC1123Label(instancePart)
-	if maxInstanceLen < 1 {
-		maxInstanceLen = 1
+	instance := normalizeRFC1123(instancePart)
+	owner := normalizeRFC1123(ownerPart)
+	if ns := namespacePrefix + instance + "-" + owner; len(ns) <= maxNamespaceLen {
+		return ns
 	}
-	if len(sanitizedInstance) > maxInstanceLen {
-		sanitizedInstance = sanitizedInstance[:maxInstanceLen]
-		sanitizedInstance = strings.TrimRight(sanitizedInstance, "-")
+
+	sum := sha256.Sum256([]byte(instance + "/" + owner))
+	hash := hex.EncodeToString(sum[:])[:namespaceHashLen]
+
+	// room is the space for the instance part and the owner part. The prefix,
+	// the hash and two "-" separators use the rest.
+	room := maxNamespaceLen - len(namespacePrefix) - namespaceHashLen - 2
+	instanceLen := room - len(owner)
+	if instanceLen < minNamespaceInstanceLen {
+		instanceLen = min(minNamespaceInstanceLen, len(instance))
 	}
-	namespace := fmt.Sprintf("%s%s-%s", prefix, sanitizedInstance, sanitizedOwner)
-	if len(namespace) > 63 {
-		namespace = namespace[:63]
-		namespace = strings.TrimRight(namespace, "-")
-	}
-	return namespace
+	ownerLen := room - instanceLen
+	return namespacePrefix + cutLabel(instance, instanceLen) + "-" + hash + "-" + cutLabel(owner, ownerLen)
 }
 
 // InstanceHandler handles stack instance, value override, and values export endpoints.

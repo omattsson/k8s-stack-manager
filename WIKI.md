@@ -120,7 +120,7 @@ An instance is a developer's working copy of a definition. Each instance has:
 - An **owner** (the developer).
 - A **branch** (the Git branch for the deployment).
 - **Value overrides** for each chart. The application merges them on top of the chart defaults.
-- An automatic **namespace** (`stack-{instance-name}-{owner}`).
+- An automatic **namespace** (`stack-{instance-name}-{owner}`). A namespace name has at most 63 characters. When the name is longer, the namespace becomes `stack-{cut instance-name}-{hash}-{owner}`. The hash has 6 hex characters and comes from the full instance name and owner, so two names that differ only after the cut get different namespaces. A rename does not change the namespace.
 
 The instance **status** is one of `draft`, `queued`, `deploying`, `stabilizing`, `running`, `stopping`, `stopped`, `cleaning`, `partial`, or `error`.
 

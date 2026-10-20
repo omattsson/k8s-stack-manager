@@ -19,6 +19,16 @@ interface NotificationContextType {
 
 const MAX_VISIBLE = 4;
 
+/**
+ * Top offset of the toasts in px below the md breakpoint. The Layout shows a
+ * fixed app bar there. Its height is 56 px to 64 px (theme.mixins.toolbar),
+ * and the main content starts at 64 px. The toasts start 8 px below that.
+ */
+const TOAST_TOP_BELOW_APP_BAR = 72;
+
+/** Top offset of the toasts in px from the md breakpoint. The Layout shows no app bar there. */
+const TOAST_TOP_NO_APP_BAR = 16;
+
 const NotificationContext = createContext<NotificationContextType | undefined>(undefined);
 
 export const NotificationProvider = ({ children }: { children: ReactNode }) => {
@@ -62,15 +72,28 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
   return (
     <NotificationContext.Provider value={value}>
       {children}
+      {/*
+        The toasts show at the top center of the screen, so they do not cover
+        the action buttons of a dialog (#630). The snackbar layer of the theme
+        is above the modal layer, so the toasts stay visible over a dialog.
+        Only the toasts take clicks: the full-width container ignores them.
+      */}
       <Stack
+        data-testid="toast-stack"
         spacing={1}
-        sx={{
+        sx={(theme) => ({
           position: 'fixed',
-          bottom: 16,
-          left: 16,
-          zIndex: 2000,
+          top: `calc(${TOAST_TOP_BELOW_APP_BAR}px + env(safe-area-inset-top, 0px))`,
+          [theme.breakpoints.up('md')]: {
+            top: `calc(${TOAST_TOP_NO_APP_BAR}px + env(safe-area-inset-top, 0px))`,
+          },
+          left: 0,
+          right: 0,
+          px: 2,
+          alignItems: 'center',
+          zIndex: theme.zIndex.snackbar,
           pointerEvents: 'none',
-        }}
+        })}
       >
         {toasts.map((toast) => (
           <Snackbar
@@ -80,13 +103,15 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
             onClose={(_event, reason) => {
               if (reason !== 'clickaway') removeToast(toast.id);
             }}
+            // Keep the default anchorOrigin. The Stack sets the position. A
+            // center anchor adds a translateX(-50%) that moves a static toast.
             sx={{ position: 'static', pointerEvents: 'auto' }}
           >
             <Alert
               onClose={() => removeToast(toast.id)}
               severity={toast.severity}
               variant="filled"
-              sx={{ width: '100%', minWidth: 300 }}
+              sx={{ width: '100%', minWidth: 'min(300px, calc(100vw - 32px))' }}
             >
               {toast.message}
             </Alert>

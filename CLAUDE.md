@@ -366,6 +366,10 @@ backend/
 - A `pre-*` subscriber with `failure_policy: fail` can abort the operation.
   - `hooks.UserMessage` builds the safe reason (hook name and subscriber message, never the URL).
   - The reason goes into the `error_message` of the instance and of the deploy log, and into an `ERROR:` line of the log output.
+- A stop cancels a running `pre-deploy` or `pre-rollback` call. A clean or a new deploy answers 409 while the instance is deploying.
+  - The deployer checks the instance at each stabilize poll interval (`DEPLOY_STABILIZE_POLL_INTERVAL`, default 5s), as for blocking `post-deploy` (`deployer/hook_watch.go`). It closes the request when the status is no longer `deploying` or a newer deploy log exists.
+  - The log ends with `WARNING: deploy cancelled ...` (or `rollback cancelled ...`). Helm does not run, and the other operation keeps its status. `failure_policy` does not apply. A shutdown stays a hook failure.
+  - The status watcher of the leader never sets a `deploying` instance to `error`. The deploy sets the final status.
 - Event hooks never follow redirects (`noRedirectClient`, as actions). A 3xx answer is a subscriber failure (`hooks.RedirectError`, the user message has no URL). `failure_policy` applies.
 - Subscriptions come from `HOOKS_CONFIG_FILE` (Helm: `hooks.subscriptions`). The contract is in `backend/docs/hooks.md`.
 
@@ -512,6 +516,8 @@ Developers use this application to configure, store and deploy multi-service Hel
 **Instances**
 - **Branch default:** `master` (`DEFAULT_BRANCH`), unless the stack definition sets `DefaultBranch`.
 - **Namespace naming:** the handler generates `stack-{instance-name}-{owner}` (`buildNamespace`).
+  - When that name has more than 63 characters, the namespace is `stack-{cut instance-name}-{hash6}-{owner}`. `hash6` is the first 6 hex characters of the SHA-256 of the full sanitized instance name and owner, so names that differ after the cut give different namespaces.
+  - The owner is cut only when the instance part keeps fewer than 10 characters. A name that fits does not change. A rename keeps the namespace.
 - **Instance names:** a new or changed name must be an RFC 1123 label (lowercase `a-z`, `0-9`, `-`; start and end alphanumeric; at most 50 characters). `models.ValidateInstanceName` checks it on create, rename, clone and quick deploy. `StackInstance.Validate` does not check it, so older instances keep working.
 - **Unique names for each cluster:** with `UNIQUE_INSTANCE_NAMES=true`, a name must be unique on its cluster. Turn it on when Ingress hosts use `{{.InstanceName}}`: two stacks with the same name claim the same host.
   - Create, rename, clone and quick deploy refuse a name that another instance uses on the same cluster: 409 `instance name already exists`, message `A stack named "x" already exists on this cluster (owner: y)`, and free name suggestions.
@@ -663,6 +669,7 @@ Developers use this application to configure, store and deploy multi-service Hel
   - Optional `filters`: `instance_name_patterns` (globs through `path.Match`), `owner_ids`, `definition_ids`, `cluster_ids`. Filters combine with AND, values inside a filter with OR. An empty filter means all.
   - `channel.Dispatcher` matches the filters against `EventPayload.Instances`. An event without an instance goes only to channels without filters. `cleanup.policy.executed` goes to a channel when one affected instance matches.
   - A bad glob gives 400. An unknown ID adds a `warnings` entry.
+  - `webhook_url` must be a valid https URL with a host (400 "Webhook URL must start with https://" or "Webhook URL is not a valid URL"). Error texts, delivery logs and log lines never contain the URL, because it can hold a token.
   - `format`: `generic` (default, the event JSON) or `teams` (a Microsoft Teams Adaptive Card envelope for a Teams workflow made from the template "Post to a channel when a webhook request is received"). An unknown format gives 400. The signature covers the sent body. The test send uses the format. Migration 60 adds the column.
 - **Notifications:**
   - In-app notifications for deploy, stop and clean events. Each user has notification preferences and an unread count for the badge.

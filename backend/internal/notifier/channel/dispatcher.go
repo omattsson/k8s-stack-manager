@@ -27,6 +27,10 @@ const (
 	signaturePrefix = "sha256="
 )
 
+// errInvalidWebhookURL is the error for a webhook URL that does not give a
+// request. The text has no URL, because the URL can hold a token.
+var errInvalidWebhookURL = errors.New("creating request: invalid webhook URL")
+
 // Dispatcher sends notification payloads to subscribed external channels.
 type Dispatcher struct {
 	repo   models.NotificationChannelRepository
@@ -142,7 +146,8 @@ func (d *Dispatcher) deliver(ctx context.Context, ch *models.NotificationChannel
 		return "success", statusCode, ""
 	}
 
-	if isRetryable(statusCode) {
+	// An invalid URL gives the same error again, so it gets no retry.
+	if isRetryable(statusCode) && !errors.Is(err, errInvalidWebhookURL) {
 		select {
 		case <-ctx.Done():
 			return "failed", 0, "context cancelled"
@@ -163,7 +168,9 @@ func (d *Dispatcher) deliver(ctx context.Context, ch *models.NotificationChannel
 func (d *Dispatcher) post(ctx context.Context, ch *models.NotificationChannel, eventType string, body []byte) (int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ch.WebhookURL, bytes.NewReader(body))
 	if err != nil {
-		return 0, fmt.Errorf("creating request: %w", err)
+		// The parse error contains the webhook URL (it can hold a token).
+		// The delivery log and the log line get a fixed text only.
+		return 0, errInvalidWebhookURL
 	}
 
 	req.Header.Set("Content-Type", "application/json")

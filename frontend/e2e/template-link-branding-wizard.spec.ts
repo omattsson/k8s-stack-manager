@@ -728,16 +728,19 @@ test.describe('Setup wizard', () => {
     await expect(page.getByRole('heading', { level: 1, name: WIZARD_HEADING })).toHaveCount(0);
   });
 
-  test('a cluster and a template without an instance: no wizard (Dashboard rule)', async ({ page }) => {
-    // Dashboard.tsx shows the wizard only while a cluster or a template is
-    // missing (and no instance exists); the "Deploy an Instance" step is never
-    // the active step. This test pins that rule.
+  test('a cluster and a template without an instance: steps 1 and 2 are complete, step 3 is active and opens the templates page', async ({ page }) => {
+    // Issue #628: the wizard shows until the first instance exists.
     await mockWizardLists(page, { clusters: [MOCK_CLUSTER], templates: [MOCK_TEMPLATE], instances: [] });
     await loginPageAs(page, users.devops);
 
     await page.goto('/');
-    await expect(page.getByRole('heading', { level: 1, name: 'Stack Instances' })).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByRole('heading', { level: 1, name: WIZARD_HEADING })).toHaveCount(0);
+    await expect(page.getByRole('heading', { level: 1, name: WIZARD_HEADING })).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('.MuiStepLabel-label.Mui-completed')).toHaveText(['Register a Cluster', 'Create a Template']);
+    await expect(page.getByText('Step 3 of 3')).toBeVisible();
+    await expect(page.getByRole('heading', { level: 1, name: 'Stack Instances' })).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Deploy an Instance' }).click();
+    await page.waitForURL(/\/templates$/, { timeout: 10_000 });
   });
 
   test('Skip setup hides the wizard and stores the flag; it stays hidden after a reload', async ({ page }) => {

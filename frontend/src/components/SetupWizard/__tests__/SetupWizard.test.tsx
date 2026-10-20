@@ -1,7 +1,7 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import SetupWizard from '../index';
 import { StaticBrandingProvider } from '../../../context/BrandingContext';
 
@@ -21,6 +21,10 @@ const renderWizard = (props: Partial<React.ComponentProps<typeof SetupWizard>> =
   );
 
 describe('SetupWizard', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
   it('renders welcome heading', () => {
     renderWizard();
     expect(screen.getByText('Welcome to K8s Stack Manager')).toBeInTheDocument();
@@ -64,6 +68,40 @@ describe('SetupWizard', () => {
   it('shows instance step as active when clusters and templates exist', () => {
     renderWizard({ hasClusters: true, hasTemplates: true, hasInstances: false });
     expect(screen.getByRole('button', { name: 'Deploy an Instance' })).toBeInTheDocument();
+  });
+
+  it('shows step 3 of 3 with steps 1 and 2 complete when clusters and templates exist', () => {
+    const { container } = renderWizard({ hasClusters: true, hasTemplates: true, hasInstances: false });
+    expect(screen.getByText('Step 3 of 3')).toBeInTheDocument();
+    const completed = Array.from(container.querySelectorAll('.MuiStepLabel-label.Mui-completed')).map((el) => el.textContent);
+    expect(completed).toEqual(['Register a Cluster', 'Create a Template']);
+  });
+
+  it('opens the templates page from the deploy step, also for the role user', async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route
+            path="/"
+            element={(
+              <SetupWizard
+                hasClusters={true}
+                hasTemplates={true}
+                hasInstances={false}
+                isAdmin={false}
+                isDevOps={false}
+                onDismiss={vi.fn()}
+              />
+            )}
+          />
+          <Route path="/templates" element={<div>Templates page</div>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(screen.queryByText(/Only administrators|Only DevOps users/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Deploy an Instance' }));
+    expect(screen.getByText('Templates page')).toBeInTheDocument();
   });
 
   it('shows info alert for non-admin users on cluster step', () => {

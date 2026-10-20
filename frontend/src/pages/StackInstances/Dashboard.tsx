@@ -581,12 +581,17 @@ const Dashboard = () => {
     return <Alert severity="error">{error}</Alert>;
   }
 
-  if (!wizardDismissed && instances.length === 0 && (clusters.length === 0 || templates.length === 0)) {
+  // The setup wizard shows until the first instance exists, or until the user
+  // dismisses it. `instances` is the full list (listAll, no server filter).
+  // The search and the status filter change only `filtered`, so a filter
+  // without a match does not show the wizard.
+  const hasInstances = instances.length > 0;
+  if (!wizardDismissed && !hasInstances) {
     return (
       <SetupWizard
         hasClusters={clusters.length > 0}
         hasTemplates={templates.length > 0}
-        hasInstances={false}
+        hasInstances={hasInstances}
         isAdmin={user?.role === 'admin'}
         isDevOps={user?.role === 'admin' || user?.role === 'devops'}
         onDismiss={handleDismissWizard}

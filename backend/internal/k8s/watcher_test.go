@@ -696,12 +696,13 @@ func TestWatcherHandleStatusTransition_ErrorAlreadyInErrorState(t *testing.T) {
 	}))
 
 	// Note: The instance is in error status, so the watcher skips it
-	// (only monitors "running" and "deploying"). We need deploying to test this.
-	// Let's use deploying status instead to make it get polled.
+	// (it monitors running, partial, deploying and stabilizing instances).
+	// Use running to make it get polled. A deploying instance keeps its
+	// status (TestWatcherHandleStatusTransition_DeployingKeepsStatus).
 	require.NoError(t, repo.Update(&models.StackInstance{
 		ID:           "inst-already-error",
 		Namespace:    ns,
-		Status:       models.StackStatusDeploying,
+		Status:       models.StackStatusRunning,
 		ErrorMessage: "",
 	}))
 
@@ -885,6 +886,91 @@ func TestWatcherHandleStatusTransition_BlockingPostDeploy(t *testing.T) {
 			w.handleStatusTransition(inst, &NamespaceStatus{Status: StatusError})
 
 			assert.Equal(t, tt.expect, repo.getStatus("inst-blocking"))
+		})
+	}
+}
+
+func TestWatcherHandleStatusTransition_DeployingKeepsStatus(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		status     string
+		expect     string
+		wantStored bool
+	}{
+		{name: "deploying keeps its status (the deploy sets the final status)", status: models.StackStatusDeploying, expect: models.StackStatusDeploying, wantStored: false},
+		{name: "running gives error", status: models.StackStatusRunning, expect: models.StackStatusError, wantStored: true},
+		{name: "partial gives error", status: models.StackStatusPartial, expect: models.StackStatusError, wantStored: true},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			repo := newMockInstanceRepo()
+			inst := &models.StackInstance{ID: "inst-deploying", Namespace: "ns", Status: tt.status}
+			require.NoError(t, repo.Create(inst))
+			w := NewWatcher(&mockClientProvider{}, repo, &mockBroadcaster{}, time.Second)
+
+			stored := w.handleStatusTransition(inst, &NamespaceStatus{Status: StatusError})
+
+			assert.Equal(t, tt.wantStored, stored)
+			assert.Equal(t, tt.expect, repo.getStatus("inst-deploying"))
+		})
+	}
+}
+
+// markerInstanceRepo adds models.InstanceErrorMarker to mockInstanceRepo. It
+// applies the rule of the database: it checks the stored status, not the
+// status of the instance that the watcher read.
+type markerInstanceRepo struct {
+	*mockInstanceRepo
+}
+
+func (m *markerInstanceRepo) MarkNamespaceError(id, message string, now time.Time) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inst, ok := m.instances[id]
+	if !ok {
+		return false, nil
+	}
+	allowed := inst.Status == models.StackStatusRunning || inst.Status == models.StackStatusPartial ||
+		(inst.Status == models.StackStatusStabilizing && (inst.PostDeployHookUntil == nil || inst.PostDeployHookUntil.Before(now)))
+	if !allowed {
+		return false, nil
+	}
+	inst.Status = models.StackStatusError
+	inst.ErrorMessage = message
+	return true, nil
+}
+
+func TestWatcherHandleStatusTransition_ConditionalWrite(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		readStatus  string // the status of the watcher's (possibly old) read
+		storeStatus string // the status in the repository now
+		wantStored  bool
+		expect      string
+	}{
+		{name: "a deploy that started after the read keeps its status", readStatus: models.StackStatusRunning, storeStatus: models.StackStatusDeploying, wantStored: false, expect: models.StackStatusDeploying},
+		{name: "a stop that started after the read keeps its status", readStatus: models.StackStatusRunning, storeStatus: models.StackStatusStopping, wantStored: false, expect: models.StackStatusStopping},
+		{name: "running gets error", readStatus: models.StackStatusRunning, storeStatus: models.StackStatusRunning, wantStored: true, expect: models.StackStatusError},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			repo := &markerInstanceRepo{newMockInstanceRepo()}
+			require.NoError(t, repo.Create(&models.StackInstance{ID: "inst-cas", Namespace: "ns", Status: tt.storeStatus}))
+			w := NewWatcher(&mockClientProvider{}, repo, &mockBroadcaster{}, time.Second)
+
+			read := &models.StackInstance{ID: "inst-cas", Namespace: "ns", Status: tt.readStatus}
+			stored := w.handleStatusTransition(read, &NamespaceStatus{Status: StatusError})
+
+			assert.Equal(t, tt.wantStored, stored)
+			assert.Equal(t, tt.expect, repo.getStatus("inst-cas"))
 		})
 	}
 }

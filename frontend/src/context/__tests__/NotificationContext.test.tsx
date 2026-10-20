@@ -3,6 +3,7 @@ import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderHook } from '@testing-library/react';
 import type { ReactNode } from 'react';
+import { createTheme } from '@mui/material/styles';
 import { NotificationProvider, useNotification } from '../NotificationContext';
 
 const wrapper = ({ children }: { children: ReactNode }) => (
@@ -192,6 +193,39 @@ describe('NotificationContext', () => {
 
       // First should still be visible (second is queued)
       expect(screen.getByText('First')).toBeInTheDocument();
+    });
+  });
+
+  describe('position', () => {
+    it('shows the toasts at the top center, above dialogs (snackbar layer)', async () => {
+      const TestComponent = () => {
+        const { showError } = useNotification();
+        return <button onClick={() => showError('Save failed')}>Trigger</button>;
+      };
+
+      render(
+        <NotificationProvider>
+          <TestComponent />
+        </NotificationProvider>
+      );
+
+      await userEvent.click(screen.getByText('Trigger'));
+      expect(await screen.findByText('Save failed')).toBeInTheDocument();
+
+      const stack = screen.getByTestId('toast-stack');
+      expect(stack).toContainElement(screen.getByRole('alert'));
+      const style = window.getComputedStyle(stack);
+      expect(style.position).toBe('fixed');
+      expect(style.top).toBe('calc(72px + env(safe-area-inset-top, 0px))');
+      expect(style.bottom).toBe('auto');
+      expect(style.left).toBe('0px');
+      expect(style.right).toBe('0px');
+      expect(style.alignItems).toBe('center');
+      // The default theme layers: modal 1300 (dialogs), snackbar 1400.
+      expect(style.zIndex).toBe(String(createTheme().zIndex.snackbar));
+      expect(Number(style.zIndex)).toBeGreaterThan(createTheme().zIndex.modal);
+      // Only the toasts take clicks.
+      expect(style.pointerEvents).toBe('none');
     });
   });
 
