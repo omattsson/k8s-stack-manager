@@ -15,7 +15,9 @@ type Notification struct {
 	Message    string    `json:"message" gorm:"type:text"`
 	EntityType string    `json:"entity_type,omitempty" gorm:"size:50"`
 	EntityID   string    `json:"entity_id,omitempty" gorm:"size:36"`
-	IsRead     bool      `json:"is_read" gorm:"default:false;index"`
+	// IsRead has no single-column index: idx_notifications_user_read_created
+	// (user_id, is_read, created_at) serves every query (migration 62, #648).
+	IsRead bool `json:"is_read" gorm:"default:false"`
 }
 
 // NotificationPreference controls whether a user receives a specific event type

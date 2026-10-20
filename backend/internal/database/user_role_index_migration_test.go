@@ -27,3 +27,24 @@ func TestMigration_UserRoleIndex(t *testing.T) {
 	require.NoError(t, mig.Up(db.DB))
 	assert.True(t, m.HasIndex(&models.User{}, userRoleIndexName))
 }
+
+// TestMigration_DropNotificationIsReadIndex checks migration 62: the
+// notifications.is_read index does not exist after the migrations, and Up
+// and Down can run again.
+func TestMigration_DropNotificationIsReadIndex(t *testing.T) {
+	t.Parallel()
+	db := setupMigrationTestDB(t)
+	require.NoError(t, db.AutoMigrate())
+
+	m := db.DB.Migrator()
+	assert.False(t, m.HasIndex(&models.Notification{}, notificationIsReadIndexName))
+
+	mig := dropNotificationIsReadIndexMigration()
+	require.NoError(t, mig.Up(db.DB), "Up without the index")
+	require.NoError(t, mig.Down(db.DB))
+	assert.True(t, m.HasIndex(&models.Notification{}, notificationIsReadIndexName))
+	require.NoError(t, mig.Down(db.DB), "Down on an existing index")
+	require.NoError(t, mig.Up(db.DB))
+	assert.False(t, m.HasIndex(&models.Notification{}, notificationIsReadIndexName))
+	require.NoError(t, mig.Up(db.DB), "Up again")
+}
