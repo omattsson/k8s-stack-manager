@@ -56,7 +56,8 @@ const actionListSchema = `{
 "type": {"enum": ["string", "bool", "enum"]},
 "required": {"type": "boolean"},
 "default": {},
-"options": {"type": "array", "items": {"type": "string"}}
+"options": {"type": "array", "items": {"type": "string"}},
+"sensitive": {"const": true}
 }
 }
 }

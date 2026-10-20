@@ -142,6 +142,65 @@ func TestActionRegistry_Invoke_NonOKReturnedToCaller(t *testing.T) {
 	assert.JSONEq(t, `{"error":"upstream"}`, string(res.Body))
 }
 
+func TestActionRegistry_Invoke_UnusableAnswerKeepsStatus(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		handler    http.HandlerFunc
+		closed     bool
+		wantErr    error
+		wantStatus int
+	}{
+		{
+			name: "redirect with an HTML body",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "text/html")
+				w.Header().Set("Location", "https://elsewhere.example/")
+				w.WriteHeader(http.StatusFound)
+				_, _ = io.WriteString(w, "<html>moved</html>")
+			},
+			wantErr: ErrActionNonJSONBody, wantStatus: http.StatusFound,
+		},
+		{
+			name: "body above the limit",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write(make([]byte, maxHookResponseBytes+1))
+			},
+			wantErr: ErrActionBodyTooLarge, wantStatus: http.StatusOK,
+		},
+		{
+			name:    "transport error",
+			handler: func(http.ResponseWriter, *http.Request) {},
+			closed:  true, wantStatus: 0,
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(tt.handler)
+			defer srv.Close()
+			r, err := NewActionRegistry([]ActionSubscription{{Name: "x", URL: srv.URL, TimeoutSeconds: 5}}, srv.Client())
+			require.NoError(t, err)
+			if tt.closed {
+				srv.Close()
+			}
+
+			res, err := r.Invoke(context.Background(), "x", nil, nil)
+			require.Error(t, err)
+			if tt.wantErr != nil {
+				assert.ErrorIs(t, err, tt.wantErr)
+			} else {
+				assert.False(t, errors.Is(err, ErrActionNonJSONBody) || errors.Is(err, ErrActionBodyTooLarge))
+			}
+			assert.Equal(t, tt.wantStatus, res.StatusCode)
+			assert.NotEmpty(t, res.RequestID)
+			assert.Nil(t, res.Body)
+		})
+	}
+}
+
 func TestActionRegistry_Invoke_HMACSignatureSet(t *testing.T) {
 	t.Parallel()
 

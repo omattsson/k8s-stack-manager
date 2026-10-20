@@ -176,6 +176,7 @@ type InstanceHandler struct {
 	sharedValuesRepo   models.SharedValuesRepository
 	clusterQuotaRepo   models.ResourceQuotaRepository
 	followerRepo       models.InstanceFollowerRepository
+	actionRuns         models.ActionRunRepository
 	uniqueNames        bool
 }
 
@@ -247,6 +248,15 @@ func (h *InstanceHandler) WithHooks(d *hooks.Dispatcher) *InstanceHandler {
 // POST /api/v1/stack-instances/:id/actions/:name route. Pass nil to disable.
 func (h *InstanceHandler) WithActions(r *hooks.ActionRegistry) *InstanceHandler {
 	h.actions = r
+	return h
+}
+
+// WithActionRuns attaches the action run repository: invoke stores a run,
+// the job log proxy stores the final job status, and
+// GET /stack-instances/{id}/action-runs lists the runs (#640). Without it no
+// run is stored and the list is empty. Returns h for chaining.
+func (h *InstanceHandler) WithActionRuns(repo models.ActionRunRepository) *InstanceHandler {
+	h.actionRuns = repo
 	return h
 }
 
@@ -997,7 +1007,7 @@ type invokeActionRequest struct {
 
 // InvokeAction godoc
 // @Summary     Invoke a registered action against a stack instance
-// @Description Dispatches to the action subscriber webhook and wraps its response in an envelope containing action, instance_id, status_code, and result fields. The subscriber's JSON body is nested under the result key. Returns 200 even for non-2xx subscriber responses — check status_code to distinguish. For an answer with status 400 or higher the envelope also has message: the subscriber's reason from a JSON string body or from the message, error, detail or reason field (one line, at most 500 characters, URLs replaced by [url]). A text/plain body of such an answer becomes a JSON string result; another non-JSON body gives a null result. A non-JSON body with a status below 400 gives 502. When the action declares parameters, they are checked (type, required, enum options) before the call; undeclared parameters pass through. When the action has a log_path, the subscriber answered 2xx and the result has a valid job_id, the envelope also has job_id: poll GET /stack-instances/{id}/actions/{name}/jobs/{job_id}/log for the job log.
+// @Description Dispatches to the action subscriber webhook and wraps its response in an envelope containing action, instance_id, status_code, and result fields. The subscriber's JSON body is nested under the result key. Returns 200 even for non-2xx subscriber responses — check status_code to distinguish. For an answer with status 400 or higher the envelope also has message: the subscriber's reason from a JSON string body or from the message, error, detail or reason field (one line, at most 500 characters, URLs replaced by [url]). A text/plain body of such an answer becomes a JSON string result; another non-JSON body gives a null result. A non-JSON body with a status below 400 gives 502. When the action declares parameters, they are checked (type, required, enum options) before the call; undeclared parameters pass through. When the action has a log_path, the subscriber answered 2xx and the result has a valid job_id, the envelope also has job_id: poll GET /stack-instances/{id}/actions/{name}/jobs/{job_id}/log for the job log. Each call that reaches the subscriber (also an unreachable subscriber or a non-JSON body) stores one action run (GET /stack-instances/{id}/action-runs) with the caller, the declared parameters only (a sensitive parameter as [redacted]), the status code, the message and the job_id. The envelope has run_id when the run was stored; a failed write never fails the call.
 // @Tags        stack-instances
 // @Accept      json
 // @Produce     json
@@ -1006,8 +1016,10 @@ type invokeActionRequest struct {
 // @Param       request body     invokeActionRequest   false "Optional parameters passed through to the subscriber"
 // @Success     200 {object} map[string]any
 // @Failure     400 {object} map[string]string
+// @Failure     401 {object} map[string]string
 // @Failure     403 {object} map[string]string "Caller is not the owner, an admin or a devops user"
 // @Failure     404 {object} map[string]string "Instance not found or action not registered"
+// @Failure     500 {object} map[string]string
 // @Failure     502 {object} map[string]string "Subscriber unreachable"
 // @Failure     503 {object} map[string]string "Action registry not configured"
 // @Router      /api/v1/stack-instances/{id}/actions/{name} [post]
@@ -1060,7 +1072,11 @@ func (h *InstanceHandler) InvokeAction(c *gin.Context) {
 		}
 	}
 
+	startedAt := time.Now().UTC()
 	res, invokeErr := h.actions.Invoke(c.Request.Context(), name, instanceRefFor(inst), req.Parameters)
+	answeredAt := time.Now().UTC()
+	run := newActionRun(c, inst.ID, name, sub, req.Parameters, startedAt)
+	run.RequestID = res.RequestID
 	if invokeErr != nil {
 		var unk hooks.ErrUnknownAction
 		if errors.As(invokeErr, &unk) {
@@ -1076,6 +1092,12 @@ func (h *InstanceHandler) InvokeAction(c *gin.Context) {
 			"hook_request_id", res.RequestID,
 			"error", invokeErr,
 		)
+		// An answer that cannot be forwarded (for example a 302 with an HTML
+		// body) keeps its status code on the run; a transport error has 0.
+		run.StatusCode = res.StatusCode
+		run.Message = actionRunFailureMessage(invokeErr)
+		run.FinishedAt = &answeredAt
+		h.recordActionRun(c, run)
 		c.JSON(http.StatusBadGateway, gin.H{
 			"error":      "action subscriber unreachable or returned transport error",
 			"action":     name,
@@ -1095,6 +1117,10 @@ func (h *InstanceHandler) InvokeAction(c *gin.Context) {
 			"action", name,
 			"status_code", res.StatusCode,
 		)
+		run.StatusCode = res.StatusCode
+		run.Message = actionRunMsgNonJSON
+		run.FinishedAt = &answeredAt
+		h.recordActionRun(c, run)
 		c.JSON(http.StatusBadGateway, gin.H{
 			"error":       "action subscriber returned a non-JSON body",
 			"action":      name,
@@ -1111,13 +1137,26 @@ func (h *InstanceHandler) InvokeAction(c *gin.Context) {
 	}
 	// For an asynchronous action with a job log, lift a valid result.job_id
 	// of a 2xx answer to the envelope so clients can poll the job log route.
-	if jobID := asyncJobID(sub, res.StatusCode, result); jobID != "" {
+	jobID := asyncJobID(sub, res.StatusCode, result)
+	if jobID != "" {
 		envelope["job_id"] = jobID
 	}
 	// For a refusal (status >= 400, for example 409 "already in flight"), lift the
 	// subscriber's message to the envelope so clients can show it.
-	if msg := hooks.ActionResultMessage(res.StatusCode, result); msg != "" {
+	msg := hooks.ActionResultMessage(res.StatusCode, result)
+	if msg != "" {
 		envelope["message"] = msg
+	}
+
+	run.StatusCode = res.StatusCode
+	run.Message = msg
+	run.JobID = jobID
+	if jobID == "" {
+		// A job gets its finished_at from the job log proxy.
+		run.FinishedAt = &answeredAt
+	}
+	if runID := h.recordActionRun(c, run); runID != "" {
+		envelope["run_id"] = runID
 	}
 	c.JSON(http.StatusOK, envelope)
 }

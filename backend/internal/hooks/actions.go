@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -43,6 +44,14 @@ type ActionRequest struct {
 	Instance   *InstanceRef   `json:"instance"`
 	Parameters map[string]any `json:"parameters,omitempty"`
 }
+
+// Invoke errors for an answer that the backend cannot forward. With these
+// errors ActionResult.StatusCode holds the HTTP status of the answer (for
+// example 302 with an HTML body); a transport error leaves it 0.
+var (
+	ErrActionNonJSONBody  = errors.New("action subscriber returned a non-JSON body")
+	ErrActionBodyTooLarge = errors.New("action subscriber returned a too large body")
+)
 
 // ActionResult captures the subscriber's response so callers can return it
 // verbatim to API clients.
@@ -146,14 +155,14 @@ func (r *ActionRegistry) Invoke(ctx context.Context, name string, instance *Inst
 	}
 
 	ctx, _, finish := startActionSpan(ctx, name, req.RequestID)
-	fail := func(err error) (ActionResult, error) {
-		return ActionResult{RequestID: req.RequestID}, err
+	fail := func(err error, statusCode int) (ActionResult, error) {
+		return ActionResult{RequestID: req.RequestID, StatusCode: statusCode}, err
 	}
 
 	body, err := json.Marshal(req)
 	if err != nil {
 		finish(outcomeMarshalError, err, 0)
-		return fail(fmt.Errorf("marshal action request: %w", err))
+		return fail(fmt.Errorf("marshal action request: %w", err), 0)
 	}
 
 	timeout := time.Duration(sub.TimeoutSeconds) * time.Second
@@ -163,7 +172,7 @@ func (r *ActionRegistry) Invoke(ctx context.Context, name string, instance *Inst
 	httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, sub.URL, bytes.NewReader(body))
 	if err != nil {
 		finish(outcomeTransportError, err, 0)
-		return fail(fmt.Errorf("build request: %w", err))
+		return fail(fmt.Errorf("build request: %w", err), 0)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json")
@@ -177,19 +186,19 @@ func (r *ActionRegistry) Invoke(ctx context.Context, name string, instance *Inst
 	resp, err := r.client.Do(httpReq)
 	if err != nil {
 		finish(classifyErr(err), err, 0)
-		return fail(fmt.Errorf("post action: %w", err))
+		return fail(fmt.Errorf("post action: %w", err), 0)
 	}
 	defer resp.Body.Close()
 
 	respBody, truncated, err := readLimitedBody(resp.Body, maxHookResponseBytes)
 	if err != nil {
 		finish(outcomeTransportError, err, resp.StatusCode)
-		return fail(fmt.Errorf("read action response: %w", err))
+		return fail(fmt.Errorf("read action response: %w", err), 0)
 	}
 	if truncated {
-		tooLarge := fmt.Errorf("action response exceeded %d-byte limit", maxHookResponseBytes)
+		tooLarge := fmt.Errorf("%w: exceeded %d-byte limit", ErrActionBodyTooLarge, maxHookResponseBytes)
 		finish(outcomeTransportError, tooLarge, resp.StatusCode)
-		return fail(tooLarge)
+		return fail(tooLarge, resp.StatusCode)
 	}
 
 	// Empty bodies are returned as "null" so the JSON envelope stays valid.
@@ -205,9 +214,9 @@ func (r *ActionRegistry) Invoke(ctx context.Context, name string, instance *Inst
 	}
 
 	if !json.Valid(respBody) {
-		badJSON := fmt.Errorf("action %q subscriber returned non-JSON body (%d bytes)", name, len(respBody))
+		badJSON := fmt.Errorf("action %q: %w (%d bytes)", name, ErrActionNonJSONBody, len(respBody))
 		finish(outcomeTransportError, badJSON, resp.StatusCode)
-		return fail(badJSON)
+		return fail(badJSON, resp.StatusCode)
 	}
 
 	// Actions are RPC-style and forward arbitrary JSON; a 2xx is a successful

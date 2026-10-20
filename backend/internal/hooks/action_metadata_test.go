@@ -33,6 +33,8 @@ func TestNewActionRegistry_UIMetadataValidation(t *testing.T) {
 				{Name: "dry_run", Type: "bool", Default: false},
 				{Name: "market", Type: "enum", Options: []string{"a", "b"}, Default: "a", Required: true},
 				{Name: "reason"},
+				{Name: "token", Sensitive: true},
+				{Name: "password", Type: "string", Sensitive: true, Required: true},
 			}
 		}), ""},
 		{"label too long", base(func(a *ActionSubscription) { a.Label = string(make([]byte, 101)) }), "label must be at most"},
@@ -64,6 +66,15 @@ func TestNewActionRegistry_UIMetadataValidation(t *testing.T) {
 		{"string default number", base(func(a *ActionSubscription) {
 			a.Parameters = []ActionParameter{{Name: "a", Default: float64(3)}}
 		}), "invalid default"},
+		{"sensitive bool", base(func(a *ActionSubscription) {
+			a.Parameters = []ActionParameter{{Name: "a", Type: "bool", Sensitive: true}}
+		}), `parameter "a": sensitive is only allowed for type string`},
+		{"sensitive enum", base(func(a *ActionSubscription) {
+			a.Parameters = []ActionParameter{{Name: "a", Type: "enum", Options: []string{"x"}, Sensitive: true}}
+		}), `parameter "a": sensitive is only allowed for type string`},
+		{"sensitive with default", base(func(a *ActionSubscription) {
+			a.Parameters = []ActionParameter{{Name: "a", Default: "hunter2", Sensitive: true}}
+		}), `parameter "a": a sensitive parameter cannot have a default`},
 	}
 	for _, tt := range tests {
 		tt := tt
@@ -142,6 +153,54 @@ func TestActionSubscription_ValidateParameters(t *testing.T) {
 	}
 }
 
+func TestActionSubscription_RecordedParameters(t *testing.T) {
+	t.Parallel()
+
+	r, err := NewActionRegistry([]ActionSubscription{{
+		Name: "x", URL: "https://e/h",
+		Parameters: []ActionParameter{
+			{Name: "image"},
+			{Name: "dry_run", Type: "bool"},
+			{Name: "market", Type: "enum", Options: []string{"a", "b"}},
+			{Name: "token", Sensitive: true},
+		},
+	}, {Name: "plain", URL: "https://e/h"}}, nil)
+	require.NoError(t, err)
+	sub, _ := r.Lookup("x")
+	plain, _ := r.Lookup("plain")
+
+	tests := []struct {
+		name   string
+		sub    ActionSubscription
+		params map[string]any
+		want   map[string]any
+	}{
+		{"declared kept", sub, map[string]any{"image": "golden", "dry_run": false, "market": "b"},
+			map[string]any{"image": "golden", "dry_run": false, "market": "b"}},
+		{"undeclared dropped", sub, map[string]any{"image": "g", "extra": "undeclared-value", "nested": map[string]any{"k": "v"}},
+			map[string]any{"image": "g"}},
+		{"nil dropped", sub, map[string]any{"image": nil, "dry_run": true}, map[string]any{"dry_run": true}},
+		{"invalid value dropped", sub, map[string]any{"image": 3, "market": "z"}, map[string]any{}},
+		{"sensitive redacted", sub, map[string]any{"image": "g", "token": "hunter2"},
+			map[string]any{"image": "g", "token": RedactedParameterValue}},
+		{"sensitive absent not stored", sub, map[string]any{"token": nil}, map[string]any{}},
+		{"nil params", sub, nil, map[string]any{}},
+		{"no schema gives empty map", plain, map[string]any{"k": "v"}, map[string]any{}},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := tt.sub.RecordedParameters(tt.params)
+			require.NotNil(t, got)
+			assert.Equal(t, tt.want, got)
+			for _, v := range got {
+				assert.NotEqual(t, "hunter2", v, "a sensitive value is never stored")
+			}
+		})
+	}
+}
+
 func TestActionRegistry_ListSortedByName(t *testing.T) {
 	t.Parallel()
 	r, err := NewActionRegistry([]ActionSubscription{
@@ -172,7 +231,8 @@ func TestLoadConfigFile_ParsesActionUIMetadata(t *testing.T) {
       "parameters": [
         {"name": "image", "label": "Image", "type": "string", "default": "golden"},
         {"name": "dry_run", "type": "bool", "default": true},
-        {"name": "market", "type": "enum", "options": ["a", "b"], "required": true}
+        {"name": "market", "type": "enum", "options": ["a", "b"], "required": true},
+        {"name": "token", "type": "string", "sensitive": true}
       ]
     },
     {"name": "old-style", "url": "http://old.example/"}
@@ -186,8 +246,10 @@ func TestLoadConfigFile_ParsesActionUIMetadata(t *testing.T) {
 	assert.Equal(t, "Refresh database", act.Label)
 	assert.Equal(t, "This replaces the database of the stack.", act.Confirm)
 	assert.Equal(t, "/jobs/{job_id}/log", act.LogPath)
-	require.Len(t, act.Parameters, 3)
+	require.Len(t, act.Parameters, 4)
 	assert.Equal(t, "golden", act.Parameters[0].Default)
+	assert.False(t, act.Parameters[0].Sensitive)
+	assert.True(t, act.Parameters[3].Sensitive)
 	assert.Equal(t, true, act.Parameters[1].Default)
 	assert.Equal(t, []string{"a", "b"}, act.Parameters[2].Options)
 	assert.True(t, act.Parameters[2].Required)

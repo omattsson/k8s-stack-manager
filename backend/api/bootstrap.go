@@ -494,7 +494,7 @@ func buildHandlers(
 	instanceHandler.WithHooks(svc.HookDispatcher).WithActions(svc.ActionRegistry).WithNotifier(svc.LifecycleNotifier).WithSharedValues(repos.SharedValues).
 		WithTemplateVersions(repos.TemplateVersion).WithClusterQuotas(repos.ResourceQuota).
 		WithFollowers(repos.InstanceFollower).WithUniqueInstanceNames(cfg.App.UniqueInstanceNames).
-		WithMaxTTLDays(cfg.App.MaxInstanceTTLDays)
+		WithMaxTTLDays(cfg.App.MaxInstanceTTLDays).WithActionRuns(repos.ActionRun)
 
 	// Git handler.
 	gitHandler := handlers.NewGitHandler(svc.GitRegistry)

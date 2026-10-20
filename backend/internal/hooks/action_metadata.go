@@ -24,6 +24,10 @@ const (
 	maxParamTextLen     = 200
 )
 
+// RedactedParameterValue replaces the value of a sensitive parameter in the
+// action run history.
+const RedactedParameterValue = "[redacted]"
+
 // paramNamePattern restricts parameter names to identifiers that are safe as
 // JSON keys, HTML form field names and CLI flags.
 var paramNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]{0,63}$`)
@@ -40,6 +44,10 @@ type ActionParameter struct {
 	Type        string   `json:"type,omitempty"`
 	Options     []string `json:"options,omitempty"`
 	Required    bool     `json:"required,omitempty"`
+	// Sensitive (type string only, no default): the value goes to the
+	// subscriber, but the action run history stores RedactedParameterValue
+	// and the web UI uses a password field.
+	Sensitive bool `json:"sensitive,omitempty"`
 }
 
 // ErrInvalidParameters is returned by ValidateParameters when the caller's
@@ -82,6 +90,15 @@ func validateParameters(params []ActionParameter) error {
 			}
 		default:
 			return fmt.Errorf("parameter %q: type must be string, bool or enum", p.Name)
+		}
+		if p.Sensitive {
+			if p.Type != ParamTypeString {
+				return fmt.Errorf("parameter %q: sensitive is only allowed for type string", p.Name)
+			}
+			// Defaults are public metadata (GET .../actions).
+			if p.Default != nil {
+				return fmt.Errorf("parameter %q: a sensitive parameter cannot have a default", p.Name)
+			}
 		}
 		if p.Default != nil {
 			if err := checkParamValue(*p, p.Default); err != nil {
@@ -165,6 +182,27 @@ func (a ActionSubscription) ValidateParameters(params map[string]any) error {
 		}
 	}
 	return nil
+}
+
+// RecordedParameters returns the parameters of params that the action run
+// history may store: only declared parameters with a valid value. It drops
+// undeclared parameters and nil values, and replaces the value of a
+// sensitive parameter with RedactedParameterValue. An action without
+// declared parameters gives an empty map.
+func (a ActionSubscription) RecordedParameters(params map[string]any) map[string]any {
+	out := make(map[string]any, len(a.Parameters))
+	for _, p := range a.Parameters {
+		v, ok := params[p.Name]
+		if !ok || v == nil || checkParamValue(p, v) != nil {
+			continue
+		}
+		if p.Sensitive {
+			out[p.Name] = RedactedParameterValue
+			continue
+		}
+		out[p.Name] = v
+	}
+	return out
 }
 
 // HasJobLog reports whether the backend can proxy the job log of the action.

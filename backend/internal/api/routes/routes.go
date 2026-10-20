@@ -384,6 +384,7 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 				instances.GET("/:id/actions", deps.InstanceHandler.ListActions)
 				instances.POST("/:id/actions/:name", deps.InstanceHandler.InvokeAction)
 				instances.GET("/:id/actions/:name/jobs/:job_id/log", deps.InstanceHandler.GetActionJobLog)
+				instances.GET("/:id/action-runs", deps.InstanceHandler.ListActionRuns)
 				instances.POST("/:id/extend", deps.InstanceHandler.ExtendTTL)
 				instances.POST("/:id/follow", deps.InstanceHandler.FollowInstance)
 				instances.DELETE("/:id/follow", deps.InstanceHandler.UnfollowInstance)
