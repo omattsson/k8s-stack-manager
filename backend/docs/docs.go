@@ -5689,7 +5689,7 @@ const docTemplate = `{
         },
         "/api/v1/stack-instances/{id}/action-runs": {
             "get": {
-                "description": "Returns the stored custom action runs of the instance, newest first, with cursor paging (no total). Any authenticated user who can view the instance gets the list (the rule of the action list). parameters holds the declared parameters only; a sensitive parameter shows [redacted]. status_code 0 means that the subscriber did not answer. started_by is omitted when the user no longer exists. action_label is the current label of the action, else its name. has_job_log is true when the run has a job_id and the action still has a log_path. can_view_logs is true for the owner, an admin and a devops user: only they may read a job log. Without a repository the list is empty.",
+                "description": "Returns the stored custom action runs of the instance, newest first, with cursor paging (no total). Any authenticated user who can view the instance gets the list (the rule of the action list). parameters holds the declared parameters only; a sensitive parameter shows [redacted]. status_code 0 means that no answer came (the subscriber was unreachable, or the client closed the request). message is the refusal reason of the subscriber (a sensitive value sent with the call shows [redacted]) or a fixed text. started_by is omitted when the user no longer exists. action_label is the current label of the action, else its name. has_job_log is true when the run has a job_id and the action still has a log_path. can_view_logs is true for the owner, an admin and a devops user: only they may read a job log. Without a repository the list is empty.",
                 "consumes": [
                     "application/json"
                 ],
@@ -5739,15 +5739,6 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {

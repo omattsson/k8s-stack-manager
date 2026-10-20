@@ -50,7 +50,7 @@ type ActionRequest struct {
 // example 302 with an HTML body); a transport error leaves it 0.
 var (
 	ErrActionNonJSONBody  = errors.New("action subscriber returned a non-JSON body")
-	ErrActionBodyTooLarge = errors.New("action subscriber returned a too large body")
+	ErrActionBodyTooLarge = errors.New("action subscriber returned a body that is too large")
 )
 
 // ActionResult captures the subscriber's response so callers can return it

@@ -2368,16 +2368,19 @@ type MockActionRunRepository struct {
 	listErr    error
 	finalErr   error
 	finalCalls []finalStatusCall
-	lastLimit  int
+	// createCtxErrs holds ctx.Err() of each Create call.
+	createCtxErrs []error
+	lastLimit     int
 }
 
 func NewMockActionRunRepository() *MockActionRunRepository {
 	return &MockActionRunRepository{}
 }
 
-func (m *MockActionRunRepository) Create(_ context.Context, run *models.ActionRun) error {
+func (m *MockActionRunRepository) Create(ctx context.Context, run *models.ActionRun) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.createCtxErrs = append(m.createCtxErrs, ctx.Err())
 	if m.createErr != nil {
 		return m.createErr
 	}
@@ -2480,6 +2483,13 @@ func (m *MockActionRunRepository) FinalCalls() []finalStatusCall {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return append([]finalStatusCall(nil), m.finalCalls...)
+}
+
+// CreateCtxErrs returns ctx.Err() of each Create call.
+func (m *MockActionRunRepository) CreateCtxErrs() []error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]error(nil), m.createCtxErrs...)
 }
 
 // LastLimit returns the limit of the last ListByInstance call.

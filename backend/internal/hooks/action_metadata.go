@@ -205,6 +205,49 @@ func (a ActionSubscription) RecordedParameters(params map[string]any) map[string
 	return out
 }
 
+// minRedactedTail is the shortest start of a sensitive value that
+// RedactSensitive removes from the end of a cut message.
+const minRedactedTail = 4
+
+// RedactSensitive replaces each non-empty value of a sensitive parameter in
+// params (as sent) with RedactedParameterValue in text. It also replaces the
+// one-line form of the value (whitespace runs as one space), and the start of
+// a value at the end of a message that ActionResultMessage cut. It is a
+// safety net for text that every viewer of the run history reads.
+func (a ActionSubscription) RedactSensitive(text string, params map[string]any) string {
+	for _, p := range a.Parameters {
+		if !p.Sensitive {
+			continue
+		}
+		v, ok := params[p.Name].(string)
+		if !ok || strings.TrimSpace(v) == "" {
+			continue
+		}
+		text = redactValue(text, v)
+		if oneLine := strings.Join(strings.Fields(v), " "); oneLine != v {
+			text = redactValue(text, oneLine)
+		}
+	}
+	return text
+}
+
+// redactValue replaces v in text, and a start of v (at least
+// minRedactedTail bytes) at the end of a cut text ("…" suffix of
+// sanitizeDenyMessage).
+func redactValue(text, v string) string {
+	text = strings.ReplaceAll(text, v, RedactedParameterValue)
+	body, cut := strings.CutSuffix(text, "…")
+	if !cut {
+		return text
+	}
+	for k := len(v) - 1; k >= minRedactedTail; k-- {
+		if strings.HasSuffix(body, v[:k]) {
+			return body[:len(body)-k] + RedactedParameterValue + "…"
+		}
+	}
+	return text
+}
+
 // HasJobLog reports whether the backend can proxy the job log of the action.
 func (a ActionSubscription) HasJobLog() bool { return a.LogPath != "" }
 

@@ -33,8 +33,6 @@ type ActionRun struct {
 	JobID      string `json:"job_id,omitempty" gorm:"size:128;not null;default:'';index:idx_action_runs_instance_job,priority:2"`
 	JobStatus  string `json:"job_status,omitempty" gorm:"size:32;not null;default:''"`
 	RequestID  string `json:"request_id,omitempty" gorm:"size:64;not null;default:''"`
-	// StartedBy is the username of UserID (response only).
-	StartedBy string `json:"started_by,omitempty" gorm:"-"`
 	// StatusCode is the HTTP status of the subscriber; 0 means no answer.
 	StatusCode int `json:"status_code" gorm:"size:32;not null;default:0"`
 }

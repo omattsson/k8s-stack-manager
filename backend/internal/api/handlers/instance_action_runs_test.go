@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -166,6 +168,12 @@ func TestInvokeAction_RecordsRun(t *testing.T) {
 			wantFinished: true, wantParams: declared,
 		},
 		{
+			name: "refusal message with a sensitive value is redacted", action: "refresh-db", body: runsFullBody,
+			reply:    replyWith(http.StatusUnauthorized, "application/json", `{"error":"token `+runsSensitiveValue+` refused for golden"}`),
+			wantHTTP: http.StatusOK, wantStatus: http.StatusUnauthorized, wantMessage: "token [redacted] refused for golden",
+			wantFinished: true, wantParams: declared,
+		},
+		{
 			name: "redirect with an HTML body stores 302", action: "seed-data", body: `{}`,
 			reply: func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Location", "https://elsewhere.example/stub-redirect-secret")
@@ -230,6 +238,7 @@ func TestInvokeAction_RecordsRun(t *testing.T) {
 			assert.NotContains(t, run.Parameters, runsUndeclaredValue, "an undeclared parameter is never stored")
 			assert.NotContains(t, run.Parameters, runsSensitiveValue, "a sensitive value is never stored")
 			assert.NotContains(t, run.Message, "elsewhere.example")
+			assert.NotContains(t, run.Message, runsSensitiveValue, "a sensitive value is never stored in the message")
 
 			if tt.wantHTTP == http.StatusOK {
 				assert.Equal(t, run.ID, resp["run_id"])
@@ -241,6 +250,41 @@ func TestInvokeAction_RecordsRun(t *testing.T) {
 			assert.NotContains(t, w.Body.String(), "stub-redirect-secret")
 		})
 	}
+}
+
+// TestInvokeAction_ClientClosedRequest checks a caller that goes away while
+// the subscriber works: the run says so (not "unreachable"), and the write
+// ignores the cancelled request context.
+func TestInvokeAction_ClientClosedRequest(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	srv := runSubscriber(t, func(_ http.ResponseWriter, r *http.Request) {
+		// The server sees the closed connection only after the body is read.
+		_, _ = io.Copy(io.Discard, r.Body)
+		cancel()
+		select {
+		case <-r.Context().Done():
+		case <-time.After(5 * time.Second):
+		}
+	}, replyWith(http.StatusOK, "", ""))
+	runs := NewMockActionRunRepository()
+	r := setupActionRunsRouter(t, runsRegistry(t, srv.URL), runs, nil, actionsOwnerID, "user")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/stack-instances/"+actionsInstanceID+"/actions/refresh-db",
+		strings.NewReader(runsFullBody)).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadGateway, w.Code, w.Body.String())
+	assert.Equal(t, []string{"action", "error", "request_id"}, sortedKeys(decodeObject(t, w.Body.Bytes())))
+	stored := runs.Runs()
+	require.Len(t, stored, 1)
+	assert.Equal(t, 0, stored[0].StatusCode)
+	assert.Equal(t, actionRunMsgClientClosed, stored[0].Message)
+	require.NotNil(t, stored[0].FinishedAt)
+	assert.Equal(t, []error{nil}, runs.CreateCtxErrs(), "the write does not use the cancelled request context")
 }
 
 func TestInvokeAction_NoRunWithoutSubscriberCall(t *testing.T) {

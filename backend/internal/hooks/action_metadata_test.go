@@ -201,6 +201,51 @@ func TestActionSubscription_RecordedParameters(t *testing.T) {
 	}
 }
 
+func TestActionSubscription_RedactSensitive(t *testing.T) {
+	t.Parallel()
+
+	r, err := NewActionRegistry([]ActionSubscription{{
+		Name: "x", URL: "https://e/h",
+		Parameters: []ActionParameter{
+			{Name: "image"},
+			{Name: "token", Sensitive: true},
+			{Name: "password", Sensitive: true},
+		},
+	}, {Name: "plain", URL: "https://e/h"}}, nil)
+	require.NoError(t, err)
+	sub, _ := r.Lookup("x")
+	plain, _ := r.Lookup("plain")
+
+	tests := []struct {
+		name   string
+		sub    ActionSubscription
+		text   string
+		params map[string]any
+		want   string
+	}{
+		{"value replaced", sub, "token hunter2 refused", map[string]any{"token": "hunter2"}, "token [redacted] refused"},
+		{"every occurrence", sub, "hunter2 and hunter2", map[string]any{"token": "hunter2"}, "[redacted] and [redacted]"},
+		{"two sensitive parameters", sub, "u=s3cr3t p=hunter2", map[string]any{"token": "hunter2", "password": "s3cr3t"}, "u=[redacted] p=[redacted]"},
+		{"not sensitive kept", sub, "image golden missing", map[string]any{"image": "golden"}, "image golden missing"},
+		{"empty value ignored", sub, "nothing to hide", map[string]any{"token": ""}, "nothing to hide"},
+		{"blank value ignored", sub, "nothing to hide", map[string]any{"token": "  "}, "nothing to hide"},
+		{"non-string ignored", sub, "code 42", map[string]any{"token": 42}, "code 42"},
+		{"absent", sub, "nothing to hide", nil, "nothing to hide"},
+		{"one-line form", sub, "bad a b c here", map[string]any{"token": "a  b\tc"}, "bad [redacted] here"},
+		{"start of a value at a cut end", sub, "secret is supers…", map[string]any{"token": "supersecretvalue"}, "secret is [redacted]…"},
+		{"short tail at a cut end kept", sub, "abc sup…", map[string]any{"token": "supersecret"}, "abc sup…"},
+		{"tail of a text that is not cut kept", sub, "abc super", map[string]any{"token": "supersecret"}, "abc super"},
+		{"no schema", plain, "token hunter2", map[string]any{"token": "hunter2"}, "token hunter2"},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, tt.sub.RedactSensitive(tt.text, tt.params))
+		})
+	}
+}
+
 func TestActionRegistry_ListSortedByName(t *testing.T) {
 	t.Parallel()
 	r, err := NewActionRegistry([]ActionSubscription{

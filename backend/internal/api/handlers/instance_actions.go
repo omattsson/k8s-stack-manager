@@ -25,9 +25,10 @@ var offsetPattern = regexp.MustCompile(`^[0-9]{1,18}$`)
 // Fixed messages of a stored action run without a subscriber message. They
 // never hold a URL or the error detail.
 const (
-	actionRunMsgUnreachable = "Subscriber unreachable"
-	actionRunMsgNonJSON     = "Subscriber returned a non-JSON body"
-	actionRunMsgTooLarge    = "Subscriber returned a too large body"
+	actionRunMsgUnreachable  = "Subscriber unreachable"
+	actionRunMsgNonJSON      = "Subscriber returned a non-JSON body"
+	actionRunMsgTooLarge     = "Subscriber returned a body that is too large"
+	actionRunMsgClientClosed = "The client closed the request before the answer"
 )
 
 const (
@@ -432,7 +433,7 @@ func decodeRecordedParameters(raw string) map[string]any {
 
 // ListActionRuns godoc
 // @Summary     List the action runs of a stack instance
-// @Description Returns the stored custom action runs of the instance, newest first, with cursor paging (no total). Any authenticated user who can view the instance gets the list (the rule of the action list). parameters holds the declared parameters only; a sensitive parameter shows [redacted]. status_code 0 means that the subscriber did not answer. started_by is omitted when the user no longer exists. action_label is the current label of the action, else its name. has_job_log is true when the run has a job_id and the action still has a log_path. can_view_logs is true for the owner, an admin and a devops user: only they may read a job log. Without a repository the list is empty.
+// @Description Returns the stored custom action runs of the instance, newest first, with cursor paging (no total). Any authenticated user who can view the instance gets the list (the rule of the action list). parameters holds the declared parameters only; a sensitive parameter shows [redacted]. status_code 0 means that no answer came (the subscriber was unreachable, or the client closed the request). message is the refusal reason of the subscriber (a sensitive value sent with the call shows [redacted]) or a fixed text. started_by is omitted when the user no longer exists. action_label is the current label of the action, else its name. has_job_log is true when the run has a job_id and the action still has a log_path. can_view_logs is true for the owner, an admin and a devops user: only they may read a job log. Without a repository the list is empty.
 // @Tags        stack-instances
 // @Accept      json
 // @Produce     json
@@ -442,7 +443,6 @@ func decodeRecordedParameters(raw string) map[string]any {
 // @Success     200 {object} actionRunListResponse
 // @Failure     400 {object} map[string]string "Invalid limit or cursor parameter"
 // @Failure     401 {object} map[string]string
-// @Failure     403 {object} map[string]string
 // @Failure     404 {object} map[string]string "Instance not found"
 // @Failure     500 {object} map[string]string
 // @Router      /api/v1/stack-instances/{id}/action-runs [get]

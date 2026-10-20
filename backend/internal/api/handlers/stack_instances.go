@@ -1096,6 +1096,10 @@ func (h *InstanceHandler) InvokeAction(c *gin.Context) {
 		// body) keeps its status code on the run; a transport error has 0.
 		run.StatusCode = res.StatusCode
 		run.Message = actionRunFailureMessage(invokeErr)
+		if res.StatusCode == 0 && c.Request.Context().Err() != nil {
+			// The caller went away: the subscriber was not unreachable.
+			run.Message = actionRunMsgClientClosed
+		}
 		run.FinishedAt = &answeredAt
 		h.recordActionRun(c, run)
 		c.JSON(http.StatusBadGateway, gin.H{
@@ -1149,7 +1153,8 @@ func (h *InstanceHandler) InvokeAction(c *gin.Context) {
 	}
 
 	run.StatusCode = res.StatusCode
-	run.Message = msg
+	// Every viewer of the instance reads the stored message.
+	run.Message = sub.RedactSensitive(msg, req.Parameters)
 	run.JobID = jobID
 	if jobID == "" {
 		// A job gets its finished_at from the job log proxy.
