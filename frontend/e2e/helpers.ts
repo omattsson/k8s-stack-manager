@@ -220,6 +220,19 @@ export async function expectLoginOk(res: APIResponse, username: string): Promise
 }
 
 /**
+ * Hide the setup wizard of the Dashboard for this page. The specs share one
+ * database, and the Dashboard shows the wizard instead of the stack list
+ * until the first instance exists (#628). A spec that checks the stack list
+ * must not depend on the order of the specs. The login helpers call this.
+ * The wizard spec logs in with its own helper and tests the wizard.
+ */
+export async function skipSetupWizard(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    localStorage.setItem('setupWizardDismissed', 'true');
+  });
+}
+
+/**
  * Log in as admin by obtaining a JWT token via API and injecting it into localStorage.
  * This avoids the UI login flow to reduce API calls and rate-limiter pressure.
  * Does NOT navigate to any page — each test should navigate to its target page.
@@ -240,6 +253,7 @@ export async function loginAsAdmin(page: Page) {
   await page.addInitScript((t) => {
     localStorage.setItem('token', t);
   }, token);
+  await skipSetupWizard(page);
 }
 
 /**
@@ -303,6 +317,7 @@ export async function loginAsUser(page: Page): Promise<string> {
   await page.addInitScript((t) => {
     localStorage.setItem('token', t);
   }, token);
+  await skipSetupWizard(page);
   return E2E_USER_USERNAME;
 }
 
@@ -319,6 +334,7 @@ export async function loginAsDevops(page: Page): Promise<string> {
   await page.addInitScript((t) => {
     localStorage.setItem('token', t);
   }, token);
+  await skipSetupWizard(page);
   return E2E_DEVOPS_USERNAME;
 }
 

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { loginAsAdmin, ADMIN_PASSWORD } from './helpers';
+import { loginAsAdmin, ADMIN_PASSWORD, skipSetupWizard } from './helpers';
 
 test.describe('Authentication', () => {
   test('unauthenticated users are redirected to login', async ({ page }) => {
@@ -16,6 +16,8 @@ test.describe('Authentication', () => {
   });
 
   test('successful login redirects to dashboard', async ({ page }) => {
+    // The stack list, not the setup wizard of an empty database (#628).
+    await skipSetupWizard(page);
     await page.goto('/login?local=true');
     await page.getByLabel('Username').fill('admin');
     await page.getByLabel('Password').fill(ADMIN_PASSWORD);
