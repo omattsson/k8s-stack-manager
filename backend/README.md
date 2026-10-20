@@ -56,7 +56,7 @@ All routes are under `/api/v1` except `/health/*` and `/ws`. Swagger documents t
 | Templates | `/api/v1/templates` | Signed in. `devops` for writes (and owner or `admin` for changes) | Template CRUD, publish, unpublish, chart management, instantiate, clone, versions, bulk operations |
 | Quick Deploy | `/api/v1/templates/:id/quick-deploy` | Signed in | One-click template deployment |
 | Definitions | `/api/v1/stack-definitions` | Signed in. `devops` to create, import, export, and add or remove charts | Definition CRUD, chart configs, import, export, upgrade |
-| Instances | `/api/v1/stack-instances` | Signed in. Owner, `devops`, or `admin` to change. `devops` for bulk | Instance CRUD, clone, deploy, deploy preview, stop, clean, rollback, status, logs, compare, extend, follow, custom actions |
+| Instances | `/api/v1/stack-instances` | Signed in. Owner, `devops`, or `admin` to change. `devops` for bulk | Instance CRUD, clone, deploy, deploy preview, stop, clean, rollback, status, logs, compare, extend, follow, custom actions and their run history |
 | Value Overrides | `/api/v1/stack-instances/:id/overrides` | Owner, `devops`, or `admin` | Per-chart value overrides |
 | Branch Overrides | `/api/v1/stack-instances/:id/branches` | Owner, `devops`, or `admin` | Per-chart branch overrides |
 | Quota Overrides | `/api/v1/stack-instances/:id/quota-overrides` | Owner, `devops`, or `admin` | Per-instance resource quota override |
@@ -197,6 +197,7 @@ Public GitHub repositories work without a token, at the lower rate limit of GitH
 | `AUDIT_LOG_RETENTION_DAYS` | `365` | The same for `audit_logs` |
 | `NOTIFICATION_RETENTION_DAYS` | `90` | The same for `notifications` (read and unread) |
 | `DELIVERY_LOG_RETENTION_DAYS` | `30` | The same for the notification channel delivery logs |
+| `ACTION_RUN_RETENTION_DAYS` | `180` | The same for `action_runs` (the custom action history of the instance page), by `started_at` |
 | `LOG_RETENTION_INTERVAL` | `1h` | Time between two retention runs (at least 1m) |
 
 ### Observability and branding

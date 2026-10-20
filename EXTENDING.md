@@ -395,9 +395,12 @@ An action can return **any JSON**. The core wraps it in a response envelope:
   "action": "refresh-db",
   "instance_id": "6c9f1e14-...",
   "status_code": 200,
-  "result": { ... the JSON body of your subscriber, unchanged ... }
+  "result": { ... the JSON body of your subscriber, unchanged ... },
+  "run_id": "1b2c3d4e-..."
 }
 ```
+
+`run_id` is the ID of the stored action run (see [Action runs](#action-runs-history-on-the-instance-page)). It is missing when the backend could not store the run. The action never fails because of the history.
 
 To refuse a call, answer with a status of 400 or higher and a short reason. Example: `409 {"error": "refresh-db already in flight"}`. The envelope then also has `"message": "refresh-db already in flight"`. The web UI can show it.
 - The core takes the message from a JSON string body, or from the field `message`, `error`, `detail` or `reason`.
@@ -438,7 +441,8 @@ Add optional UI fields to the action config:
       "parameters": [
         {"name": "image", "label": "Snapshot", "type": "string", "default": "golden"},
         {"name": "dry_run", "label": "Dry run", "type": "bool"},
-        {"name": "scope", "type": "enum", "options": ["full", "schema-only"], "required": true}
+        {"name": "scope", "type": "enum", "options": ["full", "schema-only"], "required": true},
+        {"name": "db_password", "label": "Database password", "type": "string", "sensitive": true}
       ],
       "log_path": "/jobs/{job_id}/log"
     }
@@ -449,9 +453,20 @@ Add optional UI fields to the action config:
 - `label`: menu text (default: `name`).
 - `confirm`: warning text in the run dialog. Use it for destructive actions.
 - `parameters`: the UI renders a form. `string` is a text field, `bool` is a switch, and `enum` is a select with `options`. `required` and `default` are optional. The backend checks the declared parameters (type, required, options) and returns 400 on a mismatch. Undeclared parameters pass through. The values reach the subscriber in `parameters`.
+- `sensitive: true` (only for `type: string`, never with a `default`): the value reaches the subscriber unchanged, but the action run history stores `[redacted]`, and the form uses a password field. Another type or a `default` stops the startup.
 - `log_path`: see below.
 
 The list endpoint never returns `url` or `secret_env`. The dialog shows the result: `status_code` and `result`. A non-2xx `status_code` shows as an error.
+
+### Action runs: history on the instance page
+
+The backend stores one action run for each invoke that reached your subscriber, also a refusal or an unreachable subscriber. The instance page lists the runs under **Action runs** (`GET /api/v1/stack-instances/:id/action-runs`, newest first, cursor paging).
+- Every user who can view the instance sees the list: who ran which action, when, the parameters and the result.
+- A run stores only the declared parameters. Undeclared parameters are never stored. A `sensitive` parameter is stored as `[redacted]`. Do not put secrets in a parameter without `sensitive: true`.
+- A run stores the status code of your answer (`0` when there was no answer), the `message` of a refusal, and the `job_id` of an asynchronous action. It never stores your result body.
+- The leader deletes runs older than `ACTION_RUN_RETENTION_DAYS` (default 180). An instance delete deletes its runs.
+
+The full contract is in [backend/docs/hooks.md](backend/docs/hooks.md#action-run-history).
 
 ### Asynchronous actions: job ID and job log
 
@@ -473,12 +488,14 @@ It answers JSON `{status, log, offset, next_offset, done, truncated}`.
 - It stops on 401, 403 and 404, and after 60 minutes.
 - A CLI can use the same route for `--follow`.
 - Only users who can run the action can read the job log, because a job log can hold sensitive output.
+- The first poll that returns `done: true` stores the final job status (`succeeded`, `failed`, ...) on the action run. A user with the modify rule can open the log of a past run with "Show log".
 
 Your subscriber serves the log on `GET <log_path>?instance_id=<id>&offset=<n>&ts=<unix seconds>`:
 
 - Job IDs MUST be random (for example `"job-" + uuid4().hex`). Never use sequential numbers or timestamps.
 - Store the instance ID with each job. You MUST answer 404 when `instance_id` does not match the instance of the job.
 - Return the log bytes from `offset` to the end as text (200), or 404 for an unknown job.
+- Keep the job logs readable for some time after the job ends, so users can open the log of a past run. When a job is gone, answer 404. The web UI then shows "The job log is no longer available."
 - Send `X-Job-Status` (`running`, `succeeded`, `failed`, ...). Optional: `X-Log-Offset` (the next offset; default: `offset` plus the body length; the backend ignores it when it is smaller than `offset`).
 - An end marker line such as `===JOB-END=== status=succeeded` is only a fallback for when you cannot send `X-Job-Status`. Job output can print a fake marker.
 - Verify `X-StackManager-Signature`. For this GET, it is the HMAC-SHA256 of the request URI (path and query, exactly as you received it). Refuse a request whose `ts` is more than 5 minutes from your clock.
@@ -837,6 +854,10 @@ kubectl -n k8s-stack-manager logs deployment/... | grep "hooks configured"
 - The action items are disabled for users who are not the owner, an admin or a devops user.
 - The job log needs `log_path` in the action config and a `job_id` in the subscriber response. When the subscriber answers 400, 404 or 410 for the job, the route gives 404, and the web UI stops with a message. Make sure that the log is available as soon as you return the `job_id`.
 - A 502 on the job log route means that the subscriber failed (timeout, 5xx, or 401 for a bad signature). The backend log has the details with the `request_id` of the response.
+
+### The action run stays at "Job started"
+
+The run has a `job_id`, but no final job status. The backend stores the final status only when a user with the modify rule (owner, admin, devops) polls the job log to the end (`done: true`). Nobody did that for this run, for example after an API or CLI invoke without `--follow`. Open "Show log" on the run: the poll reads the log to the end and stores the status. When your subscriber no longer knows the job, the log gives 404, and the run stays at "Job started".
 
 ### A post-deploy subscriber never fires
 
