@@ -1008,7 +1008,9 @@ func notifyInstanceCreated(ctx context.Context, n deployer.LifecycleNotifier, in
 	// A new instance has no followers yet.
 	target := models.NewNotificationTarget(inst)
 	target.FollowerIDs = []string{}
-	_ = n.NotifyInstance(ctx, target, "instance.created", "Stack created",
+	// The instance is committed: a client that disconnects must not cancel
+	// the notification insert. WithoutCancel keeps the trigger value.
+	_ = n.NotifyInstance(context.WithoutCancel(ctx), target, "instance.created", "Stack created",
 		fmt.Sprintf("Stack %s has been created", inst.Name), notifyTriggerOpt(ctx))
 }
 

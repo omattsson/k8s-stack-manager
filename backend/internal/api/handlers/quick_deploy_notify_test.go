@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	"backend/internal/helm"
 	"backend/internal/hooks"
 	"backend/internal/models"
+	"backend/internal/notifier"
 	"backend/pkg/dberrors"
 
 	"github.com/gin-gonic/gin"
@@ -121,6 +123,56 @@ func TestQuickDeploy_NotifiesInstanceCreated(t *testing.T) {
 			assert.Empty(t, target.FollowerIDs)
 			require.NotNil(t, notif.triggers[0])
 			assert.Equal(t, hooks.Trigger{Type: hooks.TriggerUser, ID: "uid-1", Name: "alice"}, *notif.triggers[0])
+		})
+	}
+}
+
+// ctxRecordingNotifier records the context error and the trigger of each
+// NotifyInstance call.
+type ctxRecordingNotifier struct {
+	ctxErrs  []error
+	triggers []*hooks.Trigger
+}
+
+func (n *ctxRecordingNotifier) NotifyInstance(ctx context.Context, _ models.NotificationTarget, _, _, _ string, opts ...notifier.InstanceOption) error {
+	n.ctxErrs = append(n.ctxErrs, ctx.Err())
+	n.triggers = append(n.triggers, notifier.ResolveInstanceOptions(opts...).Trigger)
+	return nil
+}
+
+func (n *ctxRecordingNotifier) FollowerIDs(context.Context, string) []string { return nil }
+
+// TestNotifyInstanceCreated_ClientGone checks that a client that disconnects
+// after the commit does not cancel the notification, and that the trigger
+// stays (#650).
+func TestNotifyInstanceCreated_ClientGone(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		cancel bool
+	}{
+		{name: "live request"},
+		{name: "cancelled request", cancel: true},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			trigger := hooks.Trigger{Type: hooks.TriggerUser, ID: "uid-1", Name: "alice"}
+			ctx, cancel := context.WithCancel(hooks.WithTrigger(context.Background(), trigger))
+			defer cancel()
+			if tt.cancel {
+				cancel()
+			}
+			n := &ctxRecordingNotifier{}
+
+			notifyInstanceCreated(ctx, n, &models.StackInstance{ID: "i1", Name: "web", OwnerID: "uid-1"})
+
+			require.Len(t, n.ctxErrs, 1)
+			assert.NoError(t, n.ctxErrs[0], "the notifier gets a context without the cancel")
+			require.NotNil(t, n.triggers[0])
+			assert.Equal(t, trigger, *n.triggers[0])
 		})
 	}
 }

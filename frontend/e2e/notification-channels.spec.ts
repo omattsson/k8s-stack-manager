@@ -185,11 +185,24 @@ async function createPublishedTemplate(): Promise<string> {
  */
 async function waitDeployEnded(instanceId: string): Promise<void> {
   const busy = ['queued', 'deploying', 'stabilizing'];
-  for (let i = 0; i < 20; i++) {
+  await expect.poll(async () => {
     const res = await api.get(`${API_BASE}/api/v1/stack-instances/${instanceId}`, { headers: auth(devops.token) });
-    if (!res.ok() || !busy.includes((await res.json()).status)) return;
-    await new Promise((r) => setTimeout(r, 1000));
-  }
+    return res.ok() && busy.includes((await res.json()).status);
+  }, { timeout: 20_000, message: `deploy of ${instanceId} ended` }).toBe(false)
+    .catch(() => console.warn(`waitDeployEnded: instance ${instanceId} still deploys after 20 s; afterAll may not delete it.`));
+}
+
+/**
+ * Wait (at most 30 s) until the instance is gone. A delete of an instance in
+ * error cleans first (202): the row and its quick deploy definition go when
+ * the clean ends. Returns false on a timeout.
+ */
+async function waitInstanceGone(instanceId: string): Promise<boolean> {
+  return expect.poll(async () => {
+    const res = await api.get(`${API_BASE}/api/v1/stack-instances/${instanceId}`, { headers: auth(adminToken) });
+    return res.status();
+  }, { timeout: 30_000, message: `instance ${instanceId} deleted` }).toBe(404)
+    .then(() => true, () => false);
 }
 
 interface TeamsFact { title: string; value: string }
@@ -233,8 +246,19 @@ test.describe('Notification channels', () => {
   test.afterAll(async () => {
     if (!api) return;
     for (const id of channelIds) await api.delete(`${CHANNELS}/${id}`, { headers: auth(adminToken) });
-    for (const id of instanceIds) await api.delete(`${API_BASE}/api/v1/stack-instances/${id}`, { headers: auth(adminToken) });
-    for (const id of templateIds) await api.delete(`${API_BASE}/api/v1/templates/${id}`, { headers: auth(adminToken) });
+    const cleaning: string[] = [];
+    for (const id of instanceIds) {
+      const res = await api.delete(`${API_BASE}/api/v1/stack-instances/${id}`, { headers: auth(adminToken) });
+      if (res.status() === 202) cleaning.push(id);
+    }
+    // The quick deploy definition references the template until its instance is gone.
+    for (const id of cleaning) {
+      if (!(await waitInstanceGone(id))) console.warn(`afterAll: instance ${id} still exists after 30 s.`);
+    }
+    for (const id of templateIds) {
+      const res = await api.delete(`${API_BASE}/api/v1/templates/${id}`, { headers: auth(adminToken) });
+      if (res.status() === 409) console.warn(`afterAll: template ${id} is still referenced (409) and stays: ${await res.text()}`);
+    }
     if (definitionId) await api.delete(`${API_BASE}/api/v1/stack-definitions/${definitionId}`, { headers: auth(adminToken) });
     if (devops) await api.delete(`${API_BASE}/api/v1/users/${devops.id}`, { headers: auth(adminToken) });
     await api.dispose();
