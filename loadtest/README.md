@@ -138,6 +138,7 @@ k6 run loadtest/backend/k6-stress.js
 k6 run --env SCENARIO=spike loadtest/backend/k6-stress.js
 k6 run --env SCENARIO=soak loadtest/backend/k6-stress.js
 k6 run --env SCENARIO=rate-limit loadtest/backend/k6-stress.js
+k6 run --env SCENARIO=cleanup-notify loadtest/backend/k6-stress.js
 
 # One scenario with your own VU count and duration (default function: soak)
 k6 run --env SCENARIO=soak --vus 30 --duration 30m loadtest/backend/k6-stress.js
@@ -150,7 +151,7 @@ make loadtest-stress          # start MySQL and the backend, run the stress test
 make loadtest-stress-run      # run only (the backend must be running)
 ```
 
-When you run all scenarios, they run one after the other in this order: `rate-limit`, `bulk-ops`, `auth-contention`, `pagination`, `write-contention`, `spike`, `soak`. The `otel-overhead` scenario starts at 0s and runs at the same time as the others. Select it alone with `SCENARIO=otel-overhead`.
+When you run all scenarios, they run one after the other in this order: `rate-limit`, `bulk-ops`, `auth-contention`, `pagination`, `write-contention`, `spike`, `soak`. The `otel-overhead` scenario starts at 0s and runs at the same time as the others. Select it alone with `SCENARIO=otel-overhead`. The `cleanup-notify` scenario runs only when you select it, because its cleanup policy runs every minute.
 
 **Scenarios**:
 
@@ -164,6 +165,16 @@ When you run all scenarios, they run one after the other in this order: `rate-li
 | `spike` | 0 to 100 | 1 min | Connection pool starvation. Goroutine growth. Slower responses under sudden load. |
 | `soak` | 30 | 10 min | Memory leaks. Connection pool exhaustion. GC pauses. Goroutine leaks. Drift of p95 over time. |
 | `otel-overhead` | 20 | 1 min | Latency cost of OpenTelemetry. Compare p50, p95, and p99 with `OTEL_ENABLED=true` and `false`. |
+| `cleanup-notify` | 20 | 5 min | Background work: a scheduled cleanup policy, in-app notifications, notification reads and, optionally, notification channel delivery. Only when selected. |
+
+**The `cleanup-notify` scenario**:
+
+- `setup()` creates `SEED_INSTANCES` draft instances (default 100) and a cleanup policy: action `delete`, condition `status:draft`, all clusters, every minute, dry run. Each scheduled run reads all instances, matches every draft and sends `cleanup.policy.executed` to the admin and devops users. The match also includes the drafts of the VUs and any other drafts in the database. The dry run deletes nothing.
+- Each iteration creates an instance (notification `instance.created`), reads the notifications and the unread count, marks all read (every fifth iteration) and deletes the instance (notification `instance.deleted`). VU 1 runs the policy by hand (`?dry_run=true`) every tenth iteration.
+- With `NOTIFY_WEBHOOK_URL`, `setup()` also creates a notification channel for these three events. The URL must use `https://`, and the backend must trust its certificate.
+- On macOS, the backend refuses the self-signed certificate of the e2e stub (`https://127.0.0.1:18443/webhook/k6`). Each delivery then fails and waits 2 seconds for its one retry. The channel queue (100 events) fills, and the backend drops events. So the run measures a channel that is down, not a working channel.
+- The backend has no cluster in the load tests. So deploy, stop and clean fail before they write a log or send a notification, and the policy cannot use the `stop` or `clean` action.
+- `teardown()` deletes the policy, the channel, the seed instances, the definition and the API key.
 
 The Makefile starts the backend with `RATE_LIMIT=1000000`. So the `rate-limit` scenario sees few or no 429 responses. To test the limiter, start the backend with a low limit, for example `RATE_LIMIT=100 make loadtest-start-backend`.
 
@@ -192,6 +203,8 @@ The Makefile starts the backend with `RATE_LIMIT=1000000`. So the `rate-limit` s
 | `ADMIN_USERNAME` | `admin` | Login username |
 | `ADMIN_PASSWORD` | `admin` | Login password |
 | `SCENARIO` | (all) | API and stress tests: run one scenario (for example `stack-page`, `spike`, `soak`) |
+| `SEED_INSTANCES` | `100` | Stress test, `cleanup-notify`: draft instances that `setup()` creates |
+| `NOTIFY_WEBHOOK_URL` | (empty) | Stress test, `cleanup-notify`: https URL of a notification channel. Empty: no channel. |
 | `STACK_PAGE_INSTANCE_ID` | (empty) | API test: the instance of the `stack-page` scenario. Empty: `setup()` creates one. |
 
 The `make` targets start the backend with `ADMIN_USERNAME=admin` and `ADMIN_PASSWORD=admin` (unless your shell sets them).

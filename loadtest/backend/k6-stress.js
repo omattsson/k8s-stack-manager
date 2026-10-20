@@ -16,7 +16,9 @@
 //   API_URL           - Backend URL (default: http://localhost:8081)
 //   ADMIN_USERNAME    - Admin user (default: admin)
 //   ADMIN_PASSWORD    - Admin password (default: admin)
-//   SCENARIO          - Run only this scenario (default: all)
+//   SCENARIO          - Run only this scenario (default: all; cleanup-notify runs only when selected)
+//   SEED_INSTANCES    - cleanup-notify: draft instances that setup() creates (default: 100)
+//   NOTIFY_WEBHOOK_URL - cleanup-notify: https URL of a notification channel (default: no channel)
 
 import http from 'k6/http';
 import { check, group, sleep } from 'k6';
@@ -41,6 +43,10 @@ const SELECTED = __ENV.SCENARIO || '';
 function isEnabled(name) {
   return SELECTED === '' || SELECTED === name;
 }
+
+// cleanup-notify runs only when selected: its cleanup policy runs every
+// minute and would change the other scenarios.
+const CLEANUP_NOTIFY = SELECTED === 'cleanup-notify';
 
 // ── Options ─────────────────────────────────────────────────────────
 export const options = {
@@ -154,6 +160,18 @@ export const options = {
         tags: { scenario: 'otel-overhead' },
       },
     }),
+
+    // 9. Cleanup and notifications: scheduled dry-run cleanup policy, instance
+    //    notifications, optional channel dispatch (only with SCENARIO=cleanup-notify)
+    ...(CLEANUP_NOTIFY && {
+      'cleanup-notify': {
+        executor: 'constant-vus',
+        vus: 20,
+        duration: '5m',
+        exec: 'cleanupNotifyTest',
+        tags: { scenario: 'cleanup-notify' },
+      },
+    }),
   },
 
   thresholds: {
@@ -171,6 +189,8 @@ export const options = {
 const BASE_URL = __ENV.API_URL || 'http://localhost:8081';
 const ADMIN_USER = __ENV.ADMIN_USERNAME || 'admin';
 const ADMIN_PASS = __ENV.ADMIN_PASSWORD || 'admin';
+const SEED_INSTANCES = parseInt(__ENV.SEED_INSTANCES || '100', 10);
+const NOTIFY_WEBHOOK_URL = __ENV.NOTIFY_WEBHOOK_URL || '';
 
 // ── W3C Trace Context ──────────────────────────────────────────────
 // Generate a W3C traceparent header for trace correlation.
@@ -316,23 +336,95 @@ export function setup() {
   const keyBody = JSON.parse(keyRes.body);
   console.log(`setup: created API key ${keyBody.id} for user ${userId}`);
 
-  const cluster = ensureDefaultCluster(BASE_URL, authHeaders(token));
-  console.log(`setup: default cluster ${cluster.name} (${cluster.id})`);
+  const headers = authHeaders(token);
+  const data = {
+    apiKey: keyBody.raw_key,
+    userId,
+    apiKeyId: keyBody.id,
+    definitionId: null,
+    policyId: null,
+    channelId: null,
+    seededIds: [],
+  };
+  try {
+    const cluster = ensureDefaultCluster(BASE_URL, headers);
+    console.log(`setup: default cluster ${cluster.name} (${cluster.id})`);
 
-  // The soak instance lifecycle uses this definition. Other soak iterations
-  // delete their own definitions, so a listed one can be gone before the create.
-  let soakDefinitionId = null;
-  if (isEnabled('soak')) {
-    const def = createDefinition(authHeaders(token), `soak-base-${Date.now()}`);
-    if (!def) {
-      // k6 skips teardown() when setup() throws.
-      http.del(`${BASE_URL}/api/v1/users/${userId}/api-keys/${keyBody.id}`, null, { headers: authHeaders(token) });
-      throw new Error('setup: create soak definition failed');
+    // The soak and cleanup-notify instances use this definition. Soak
+    // iterations delete their own definitions, so a listed one can be gone
+    // before the create.
+    if (isEnabled('soak') || CLEANUP_NOTIFY) {
+      const def = createDefinition(headers, `base-${Date.now()}`);
+      if (!def) throw new Error('setup: create definition failed');
+      data.definitionId = def.id;
     }
-    soakDefinitionId = def.id;
+    if (CLEANUP_NOTIFY) setupCleanupNotify(headers, data);
+  } catch (e) {
+    // k6 skips teardown() when setup() throws. Keep the first error.
+    try { removeTestData(headers, data); } catch (cleanupErr) { console.warn(`cleanup failed: ${cleanupErr}`); }
+    throw e;
   }
+  return data;
+}
 
-  return { apiKey: keyBody.raw_key, userId: userId, apiKeyId: keyBody.id, soakDefinitionId };
+// Seed instances, a dry-run cleanup policy that runs every minute and,
+// with NOTIFY_WEBHOOK_URL, a notification channel. Adds the IDs to data.
+function setupCleanupNotify(headers, data) {
+  const stamp = Date.now();
+  for (let i = 0; i < SEED_INSTANCES; i++) {
+    const inst = createInstance(headers, data.definitionId, `seed-${stamp}-${i}`);
+    if (!inst) throw new Error(`setup: create seed instance ${i} failed`);
+    data.seededIds.push(inst.id);
+  }
+  console.log(`setup: ${data.seededIds.length} seed instances`);
+
+  // Dry run: the scheduled run matches every draft and notifies, but deletes nothing.
+  const policyRes = http.post(
+    `${BASE_URL}/api/v1/admin/cleanup-policies`,
+    JSON.stringify({
+      name: `k6-cleanup-notify-${stamp}`,
+      cluster_id: 'all',
+      action: 'delete',
+      condition: 'status:draft',
+      schedule: '* * * * *',
+      enabled: true,
+      dry_run: true,
+    }),
+    { headers },
+  );
+  if (policyRes.status !== 201) throw new Error(`setup: create cleanup policy failed (status ${policyRes.status})`);
+  data.policyId = policyRes.json().id;
+  console.log(`setup: cleanup policy ${data.policyId} (dry run, every minute)`);
+
+  if (!NOTIFY_WEBHOOK_URL) return;
+  const channelRes = http.post(
+    `${BASE_URL}/api/v1/admin/notification-channels`,
+    JSON.stringify({ name: `k6-cleanup-notify-${stamp}`, webhook_url: NOTIFY_WEBHOOK_URL, enabled: true }),
+    { headers },
+  );
+  if (channelRes.status !== 201) throw new Error(`setup: create notification channel failed (status ${channelRes.status})`);
+  data.channelId = channelRes.json().id;
+  const subRes = http.put(
+    `${BASE_URL}/api/v1/admin/notification-channels/${data.channelId}/subscriptions`,
+    JSON.stringify({ event_types: ['instance.created', 'instance.deleted', 'cleanup.policy.executed'] }),
+    { headers },
+  );
+  if (subRes.status !== 200) throw new Error(`setup: subscribe notification channel failed (status ${subRes.status})`);
+  console.log(`setup: notification channel ${data.channelId}`);
+}
+
+// Delete what setup() created: policy first, so no scheduled run starts during the cleanup.
+function removeTestData(headers, data) {
+  const del = (path, what) => {
+    const res = http.del(`${BASE_URL}${path}`, null, { headers });
+    if (res.status !== 204 && res.status !== 200) console.warn(`cleanup: delete ${what} failed (status ${res.status})`);
+  };
+  if (data.policyId) del(`/api/v1/admin/cleanup-policies/${data.policyId}`, `cleanup policy ${data.policyId}`);
+  if (data.channelId) del(`/api/v1/admin/notification-channels/${data.channelId}`, `notification channel ${data.channelId}`);
+  for (const id of data.seededIds) del(`/api/v1/stack-instances/${id}`, `seed instance ${id}`);
+  if (data.definitionId) del(`/api/v1/stack-definitions/${data.definitionId}`, `definition ${data.definitionId}`);
+  del(`/api/v1/users/${data.userId}/api-keys/${data.apiKeyId}`, `API key ${data.apiKeyId}`);
+  console.log('cleanup: test data deleted');
 }
 
 export function teardown(data) {
@@ -344,27 +436,10 @@ export function teardown(data) {
     { headers: jsonHeaders },
   );
   if (loginRes.status !== 200) {
-    console.warn('teardown: admin login failed, skipping API key cleanup');
+    console.warn('teardown: admin login failed, skipping the cleanup');
     return;
   }
-  const token = JSON.parse(loginRes.body).token;
-
-  const delRes = http.del(
-    `${BASE_URL}/api/v1/users/${data.userId}/api-keys/${data.apiKeyId}`,
-    null,
-    { headers: authHeaders(token) },
-  );
-  console.log(`teardown: deleted API key ${data.apiKeyId} (status ${delRes.status})`);
-
-  if (data.soakDefinitionId) {
-    const defRes = http.del(
-      `${BASE_URL}/api/v1/stack-definitions/${data.soakDefinitionId}`,
-      null,
-      { headers: authHeaders(token) },
-    );
-    const log = defRes.status === 204 ? console.log : console.warn;
-    log(`teardown: deleted soak definition ${data.soakDefinitionId} (status ${defRes.status})`);
-  }
+  removeTestData(authHeaders(JSON.parse(loginRes.body).token), data);
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -783,7 +858,7 @@ export function soakTest(data) {
         apiCalls.add(1);
         if (listRes.status !== 200) return;
 
-        const inst = createInstance(headers, data.soakDefinitionId, `soak-${suffix}`);
+        const inst = createInstance(headers, data.definitionId, `soak-${suffix}`);
         if (!inst) return;
 
         // Extend TTL
@@ -881,6 +956,65 @@ export function otelOverheadTest(data) {
   sleep(0.1); // minimal think time to maximize throughput
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// 9. CLEANUP AND NOTIFICATIONS
+// ═══════════════════════════════════════════════════════════════════
+// Background work that the other scenarios do not start: the scheduled
+// cleanup policy (dry run, every minute, matches every draft), in-app
+// notifications of instance create and delete, notification reads and, with
+// NOTIFY_WEBHOOK_URL, the channel dispatch. VU 1 also runs the policy by hand.
+
+export function cleanupNotifyTest(data) {
+  const headers = apiKeyHeaders(data.apiKey);
+  const suffix = `cn-${__VU}-${__ITER}-${Date.now()}`;
+
+  group('Cleanup-notify: instance events', () => {
+    const inst = createInstance(headers, data.definitionId, suffix);
+    errorRate.add(!check(inst, { 'cleanup-notify create 201': (i) => i !== null }));
+
+    const listRes = http.get(`${BASE_URL}/api/v1/notifications?limit=20`, {
+      headers,
+      tags: { name: 'GET /notifications (cleanup-notify)' },
+    });
+    apiCalls.add(1);
+    checkOk(listRes, 'cleanup-notify notifications 200');
+
+    const countRes = http.get(`${BASE_URL}/api/v1/notifications/count`, {
+      headers,
+      tags: { name: 'GET /notifications/count (cleanup-notify)' },
+    });
+    apiCalls.add(1);
+    checkOk(countRes, 'cleanup-notify count 200');
+
+    if (__ITER % 5 === 0) {
+      const readRes = http.post(`${BASE_URL}/api/v1/notifications/read-all`, null, {
+        headers,
+        tags: { name: 'POST /notifications/read-all (cleanup-notify)' },
+      });
+      apiCalls.add(1);
+      checkOk(readRes, 'cleanup-notify read-all 200');
+    }
+
+    if (inst) {
+      const delRes = deleteResource(headers, `/api/v1/stack-instances/${inst.id}`);
+      errorRate.add(!check(delRes, { 'cleanup-notify delete 204': (r) => r.status === 204 }));
+    }
+  });
+
+  if (__VU === 1 && __ITER % 10 === 0) {
+    group('Cleanup-notify: manual dry run', () => {
+      const res = http.post(`${BASE_URL}/api/v1/admin/cleanup-policies/${data.policyId}/run?dry_run=true`, null, {
+        headers,
+        tags: { name: 'POST /cleanup-policies/:id/run (dry run)' },
+      });
+      apiCalls.add(1);
+      checkOk(res, 'cleanup-notify dry run 200');
+    });
+  }
+
+  sleep(1);
+}
+
 // ── Default Function ───────────────────────────────────────────────
 // k6 runs it with --vus/--duration (the CLI then replaces the scenarios).
 // SCENARIO selects the function; the default is the soak scenario.
@@ -893,6 +1027,7 @@ const SCENARIO_FUNCTIONS = {
   spike: spikeTest,
   soak: soakTest,
   'otel-overhead': otelOverheadTest,
+  'cleanup-notify': cleanupNotifyTest,
 };
 
 if (SELECTED && !SCENARIO_FUNCTIONS[SELECTED]) {
