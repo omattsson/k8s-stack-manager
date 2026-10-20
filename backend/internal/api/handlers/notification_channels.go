@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -20,7 +21,25 @@ import (
 const (
 	entityNotificationChannel = "Notification channel"
 	msgChannelIDRequired      = "Channel ID is required"
+	msgWebhookURLNotHTTPS     = "Webhook URL must start with https://"
+	msgWebhookURLInvalid      = "Webhook URL is not a valid URL"
 )
+
+// webhookURLError checks the webhook URL of a notification channel.
+// It returns an empty string for a valid URL. Otherwise it returns the error
+// message for the response. The message never contains the URL, because the
+// URL can hold a token. The dispatcher parses the URL with the same parser,
+// so a URL that passes this check always gives a request.
+func webhookURLError(raw string) string {
+	if !strings.HasPrefix(raw, "https://") {
+		return msgWebhookURLNotHTTPS
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" {
+		return msgWebhookURLInvalid
+	}
+	return ""
+}
 
 // NotificationChannelHandler handles CRUD operations for notification channels.
 type NotificationChannelHandler struct {
@@ -190,8 +209,8 @@ func (h *NotificationChannelHandler) CreateChannel(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Channel name is required"})
 		return
 	}
-	if !strings.HasPrefix(req.WebhookURL, "https://") {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Webhook URL must start with https://"})
+	if msg := webhookURLError(req.WebhookURL); msg != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": msg})
 		return
 	}
 	var filters models.NotificationChannelFilters
@@ -308,8 +327,8 @@ func (h *NotificationChannelHandler) UpdateChannel(c *gin.Context) {
 		existing.Name = req.Name
 	}
 	if req.WebhookURL != "" {
-		if !strings.HasPrefix(req.WebhookURL, "https://") {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Webhook URL must start with https://"})
+		if msg := webhookURLError(req.WebhookURL); msg != "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": msg})
 			return
 		}
 		existing.WebhookURL = req.WebhookURL
