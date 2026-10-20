@@ -411,6 +411,7 @@ The table shows the key environment variables. The full list is in `backend/inte
 | `SESSION_MAX_LIFETIME` | No | Maximum session time from login. A refresh does not extend it (default: `12h`) |
 | `REFRESH_REUSE_GRACE` | No | A just-rotated refresh token still gets an access token for this time. This supports refreshes from several browser tabs. `0` disables it (default: `30s`). |
 | `SECURE_COOKIES` | No | Set the `Secure` flag on the refresh-token cookie. Use `true` behind HTTPS (default: `false`). The Helm chart sets `true` when the ingress has TLS. |
+| `APP_PUBLIC_URL` | No | Public https base URL of the web UI, for example `https://stacks.example.com`. Notification channels then get `instance_url` and Teams cards a "Stack Manager" button. An http URL, a same-origin path, a query or a fragment stops the start (default: empty). The Helm chart sets `https://<ingress.host>` when the ingress has TLS. |
 | `LEADER_ELECTION_ENABLED` | No | Elect one replica (Kubernetes Lease) to run the background workers. Needs the in-cluster service account. Default: `false`, which means this process always runs the workers. The Helm chart sets `true`. |
 | `LEADER_ELECTION_LEASE_NAME` | No | Name of the Lease (default: `k8s-stack-manager-workers`) |
 | `LEADER_ELECTION_NAMESPACE` | No | Namespace of the Lease (default: `POD_NAMESPACE`, else the namespace of the service account) |

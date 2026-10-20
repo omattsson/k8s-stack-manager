@@ -83,7 +83,7 @@ The frontend pod serves only the web application. The ingress sends the paths `/
   ```
 
 - To use a host name, set `ingress.host` (for example `stacks.example.com`) and point the DNS name at the ingress.
-- To use TLS, set `ingress.traefik.tls.secretName`. For `ingress.type=ingress`, set `ingress.tls`. The chart then sets `SECURE_COOKIES=true`.
+- To use TLS, set `ingress.traefik.tls.secretName`. For `ingress.type=ingress`, set `ingress.tls`. The chart then sets `SECURE_COOKIES=true`, and `APP_PUBLIC_URL=https://<ingress.host>` when `ingress.host` is set (the links in notification channel cards).
 
 Warning: A `kubectl port-forward` to the frontend Service alone does not give a working UI. The frontend pod has no proxy for the API, so the login request fails. If you have no external address, use `kubectl port-forward` to the Service of your ingress controller.
 
