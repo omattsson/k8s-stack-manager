@@ -1,9 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import {
   Alert,
-  Box,
   Button,
-  Chip,
   CircularProgress,
   Dialog,
   DialogActions,
@@ -19,71 +17,20 @@ import {
 } from '@mui/material';
 import { instanceService } from '../../api/client';
 import JsonResultView from '../JsonResultView';
-import { describeApiError, getApiErrorInfo } from '../../utils/apiError';
+import { describeApiError } from '../../utils/apiError';
 import type { ActionInvokeResult, ActionParameter, InstanceAction } from '../../types';
+import JobLogPanel from './JobLogPanel';
+import { JOB_LOG_POLL_INTERVAL_MS, useJobLog } from './useJobLog';
 
-/**
- * Time between two job log polls, in milliseconds. The first poll also waits
- * this long, so the subscriber has time to create the log.
- */
-export const JOB_LOG_POLL_INTERVAL_MS = 3000;
-
-/** Longest time the dialog follows a job log, in milliseconds (60 minutes). */
-export const JOB_LOG_MAX_POLL_MS = 60 * 60 * 1000;
-
-/** Most log characters the dialog keeps (about 1 MiB). Older output is cut. */
-export const JOB_LOG_MAX_CHARS = 1024 * 1024;
-
-/** Marker at the top of the log when older output was cut. */
-export const JOB_LOG_CUT_MARKER = '[earlier output cut]\n';
-
-/**
- * Keep the last max characters of text. When a newline follows the cut
- * (and is not the last character), start after it, so the kept text has no
- * partial first line. Else drop a lone low surrogate at the start, so a
- * surrogate pair is never split.
- */
-export const cutLogTail = (text: string, max: number): string => {
-  if (text.length <= max) return text;
-  let tail = text.slice(text.length - max);
-  const nl = tail.indexOf('\n');
-  if (nl >= 0 && nl < tail.length - 1) {
-    tail = tail.slice(nl + 1);
-  } else {
-    const first = tail.charCodeAt(0);
-    if (first >= 0xdc00 && first <= 0xdfff) tail = tail.slice(1);
-  }
-  return tail;
-};
-
-/** Longest back-off delay without a Retry-After header, in milliseconds. */
-export const JOB_LOG_MAX_BACKOFF_MS = 30000;
-
-/** Longest delay accepted from a Retry-After header, in milliseconds. */
-const MAX_RETRY_AFTER_MS = 5 * 60 * 1000;
-
-/** HTTP statuses after which polling continues with a back-off. */
-const BACKOFF_STATUSES = new Set([429, 502, 503, 504]);
-
-/**
- * Read the Retry-After header (seconds or an HTTP date) of an error response.
- * @returns The delay in milliseconds, or undefined when the header is absent or invalid
- */
-export const retryAfterMs = (error: unknown, now = Date.now()): number | undefined => {
-  const headers = (error as { response?: { headers?: Record<string, unknown> | { get?: (k: string) => unknown } } })
-    ?.response?.headers;
-  if (!headers) return undefined;
-  const getter = (headers as { get?: (k: string) => unknown }).get;
-  const raw = typeof getter === 'function'
-    ? getter.call(headers, 'retry-after')
-    : (headers as Record<string, unknown>)['retry-after'] ?? (headers as Record<string, unknown>)['Retry-After'];
-  if (typeof raw !== 'string' && typeof raw !== 'number') return undefined;
-  const text = String(raw).trim();
-  if (/^\d+$/.test(text)) return Math.min(Number(text) * 1000, MAX_RETRY_AFTER_MS);
-  const date = Date.parse(text);
-  if (Number.isNaN(date)) return undefined;
-  return Math.min(Math.max(date - now, 0), MAX_RETRY_AFTER_MS);
-};
+export {
+  JOB_LOG_CUT_MARKER,
+  JOB_LOG_MAX_BACKOFF_MS,
+  JOB_LOG_MAX_CHARS,
+  JOB_LOG_MAX_POLL_MS,
+  JOB_LOG_POLL_INTERVAL_MS,
+  cutLogTail,
+  retryAfterMs,
+} from './useJobLog';
 
 type FormValues = Record<string, string | boolean>;
 
@@ -110,12 +57,6 @@ const toParameters = (params: ActionParameter[], values: FormValues): FormValues
     else if (typeof v === 'string' && v !== '') out[p.name] = v;
   }
   return out;
-};
-
-const statusColor = (status: string): 'info' | 'success' | 'error' => {
-  if (status === 'succeeded') return 'success';
-  if (['running', 'pending', 'queued', 'started'].includes(status)) return 'info';
-  return 'error';
 };
 
 const isSuccessCode = (code: number): boolean => code >= 200 && code < 300;
@@ -157,121 +98,16 @@ const ActionDialog = ({ instanceId, action, onClose }: ActionDialogProps) => {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ActionInvokeResult | null>(null);
-  const [jobLog, setJobLog] = useState('');
-  const [jobStatus, setJobStatus] = useState('running');
-  const [jobDone, setJobDone] = useState(false);
-  const [jobError, setJobError] = useState<string | null>(null);
-  const [jobWaiting, setJobWaiting] = useState(false);
-  const [jobNotice, setJobNotice] = useState<string | null>(null);
-  const logRef = useRef<HTMLElement | null>(null);
-  const stopPollingRef = useRef<(() => void) | null>(null);
 
   const jobId = action.has_job_log && result?.job_id && isSuccessCode(result.status_code) ? result.job_id : undefined;
   const missing = action.parameters.some((p) => isMissing(p, values));
-
-  // Poll the job log. The cleanup stops the polling when the dialog closes.
-  // On 429, 502, 503, 504 or a network error the polling backs off (the
-  // Retry-After delay, else a doubled delay up to 30 s) and continues. Other
-  // errors (for example 401, 403, 404) stop the polling with a message.
-  // The polling also stops on Stop and after JOB_LOG_MAX_POLL_MS.
-  useEffect(() => {
-    if (!jobId) return undefined;
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let offset = 0;
-    let backoff = JOB_LOG_POLL_INTERVAL_MS;
-    let text = '';
-    let controller: AbortController | null = null;
-    const startedAt = Date.now();
-    const maxTimeNotice = 'Stopped following the job log after 60 minutes. The job can still run on the server.';
-
-    // Cancel the timers and abort the request in flight.
-    const halt = () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-      clearTimeout(deadline);
-      controller?.abort();
-    };
-
-    const stop = () => {
-      halt();
-      setJobWaiting(false);
-    };
-    stopPollingRef.current = stop;
-
-    const stopAtLimit = () => {
-      stop();
-      setJobNotice(maxTimeNotice);
-    };
-    // Hard limit: also ends a request that is still in flight.
-    const deadline = setTimeout(stopAtLimit, JOB_LOG_MAX_POLL_MS);
-
-    const schedule = (delay: number) => {
-      if (Date.now() - startedAt + delay > JOB_LOG_MAX_POLL_MS) {
-        stopAtLimit();
-        return;
-      }
-      timer = setTimeout(() => { void poll(); }, delay);
-    };
-
-    const appendLog = (chunkText: string) => {
-      text += chunkText;
-      if (text.length > JOB_LOG_MAX_CHARS) {
-        text = JOB_LOG_CUT_MARKER + cutLogTail(text, JOB_LOG_MAX_CHARS);
-      }
-      setJobLog(text);
-    };
-
-    const poll = async () => {
-      try {
-        controller = new AbortController();
-        const chunk = await instanceService.getActionJobLog(instanceId, action.name, jobId, offset, controller.signal);
-        controller = null;
-        if (cancelled) return;
-        backoff = JOB_LOG_POLL_INTERVAL_MS;
-        setJobWaiting(false);
-        offset = chunk.next_offset;
-        if (chunk.log) appendLog(chunk.log);
-        setJobStatus(chunk.status);
-        if (chunk.done) {
-          halt();
-          setJobDone(true);
-          return;
-        }
-        schedule(chunk.truncated ? 0 : JOB_LOG_POLL_INTERVAL_MS);
-      } catch (err) {
-        controller = null;
-        if (cancelled) return;
-        const { status } = getApiErrorInfo(err);
-        if (status === undefined || BACKOFF_STATUSES.has(status)) {
-          backoff = Math.min(backoff * 2, JOB_LOG_MAX_BACKOFF_MS);
-          setJobWaiting(true);
-          schedule(retryAfterMs(err) ?? backoff);
-          return;
-        }
-        setJobWaiting(false);
-        setJobError(await describeApiError(err, 'Failed to read the job log'));
-      }
-    };
-    schedule(JOB_LOG_POLL_INTERVAL_MS);
-
-    return () => {
-      halt();
-      stopPollingRef.current = null;
-    };
-  }, [instanceId, action.name, jobId]);
-
-  const handleStopFollowing = () => {
-    stopPollingRef.current?.();
-    setJobNotice('Stopped following the job log. The job can still run on the server.');
-  };
-
-  const following = !!jobId && !jobDone && !jobError && !jobNotice;
-
-  // Keep the newest log lines in view.
-  useEffect(() => {
-    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
-  }, [jobLog]);
+  // The first poll waits one interval, so the subscriber has time to create the log.
+  const job = useJobLog({
+    instanceId,
+    actionName: action.name,
+    jobId,
+    initialDelayMs: JOB_LOG_POLL_INTERVAL_MS,
+  });
 
   const handleRun = async () => {
     setRunning(true);
@@ -342,30 +178,7 @@ const ActionDialog = ({ instanceId, action, onClose }: ActionDialogProps) => {
         {res.result !== null && res.result !== undefined && (
           <JsonResultView value={res.result} data-testid="action-result" />
         )}
-        {jobId && (
-          <Box>
-            <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 1 }}>
-              <Typography variant="subtitle2">Job {jobId}</Typography>
-              <Chip size="small" label={jobStatus} color={statusColor(jobStatus)} data-testid="job-status" />
-              {following && <CircularProgress size={14} aria-label="Job running" />}
-              {following && jobWaiting && (
-                <Typography variant="body2" color="text.secondary" data-testid="job-waiting">
-                  Waiting…
-                </Typography>
-              )}
-            </Stack>
-            <Box
-              component="pre"
-              ref={logRef}
-              data-testid="job-log"
-              sx={{ m: 0, p: 1, bgcolor: 'grey.900', color: 'grey.100', borderRadius: 1, overflow: 'auto', height: 300, fontSize: 12 }}
-            >
-              {jobLog || 'Waiting for log output...'}
-            </Box>
-            {jobError && <Alert severity="error" sx={{ mt: 1 }}>{jobError}</Alert>}
-            {jobNotice && <Alert severity="info" sx={{ mt: 1 }}>{jobNotice}</Alert>}
-          </Box>
-        )}
+        {jobId && <JobLogPanel jobId={jobId} job={job} />}
       </Stack>
     );
   };
@@ -386,8 +199,8 @@ const ActionDialog = ({ instanceId, action, onClose }: ActionDialogProps) => {
       <DialogActions>
         {result ? (
           <>
-            {following && (
-              <Button color="warning" onClick={handleStopFollowing}>Stop following</Button>
+            {job.following && (
+              <Button color="warning" onClick={job.stopFollowing}>Stop following</Button>
             )}
             <Button onClick={onClose}>Close</Button>
           </>
