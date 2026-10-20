@@ -494,7 +494,7 @@ func buildHandlers(
 	instanceHandler.WithHooks(svc.HookDispatcher).WithActions(svc.ActionRegistry).WithNotifier(svc.LifecycleNotifier).WithSharedValues(repos.SharedValues).
 		WithTemplateVersions(repos.TemplateVersion).WithClusterQuotas(repos.ResourceQuota).
 		WithFollowers(repos.InstanceFollower).WithUniqueInstanceNames(cfg.App.UniqueInstanceNames).
-		WithMaxTTLDays(cfg.App.MaxInstanceTTLDays)
+		WithMaxTTLDays(cfg.App.MaxInstanceTTLDays).WithActionRuns(repos.ActionRun)
 
 	// Git handler.
 	gitHandler := handlers.NewGitHandler(svc.GitRegistry)
@@ -766,6 +766,7 @@ func buildLogRetention(cfg *config.Config, repos *database.RepositorySet) *leade
 		"audit_logs_days", cfg.Retention.AuditLogDays,
 		"notifications_days", cfg.Retention.NotificationDays,
 		"delivery_logs_days", cfg.Retention.DeliveryLogDays,
+		"action_runs_days", cfg.Retention.ActionRunDays,
 	)
 	w := retention.NewWorker(repos.Retention, cfg.Retention)
 	return &leader.Worker{Name: "log-retention", Run: w.Run}

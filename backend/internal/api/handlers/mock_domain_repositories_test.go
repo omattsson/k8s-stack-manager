@@ -2353,3 +2353,148 @@ func (m *MockInstanceFollowerRepository) DeleteByUser(_ context.Context, userID 
 	}
 	return nil
 }
+
+// ---- ActionRunRepository mock ----
+
+// finalStatusCall is one SetJobFinalStatus call of MockActionRunRepository.
+type finalStatusCall struct {
+	InstanceID, Action, JobID, Status string
+}
+
+type MockActionRunRepository struct {
+	mu         sync.Mutex
+	runs       []models.ActionRun
+	createErr  error
+	listErr    error
+	finalErr   error
+	finalCalls []finalStatusCall
+	// createCtxErrs holds ctx.Err() of each Create call.
+	createCtxErrs []error
+	lastLimit     int
+}
+
+func NewMockActionRunRepository() *MockActionRunRepository {
+	return &MockActionRunRepository{}
+}
+
+func (m *MockActionRunRepository) Create(ctx context.Context, run *models.ActionRun) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.createCtxErrs = append(m.createCtxErrs, ctx.Err())
+	if m.createErr != nil {
+		return m.createErr
+	}
+	if run.ID == "" {
+		run.ID = fmt.Sprintf("run-%03d", len(m.runs)+1)
+	}
+	if run.StartedAt.IsZero() {
+		run.StartedAt = time.Now().UTC()
+	}
+	m.runs = append(m.runs, *run)
+	return nil
+}
+
+// ListByInstance sorts newest first. The cursor is "after:<id>"; another
+// value gives ErrValidation, as the GORM repository does for a bad cursor.
+func (m *MockActionRunRepository) ListByInstance(_ context.Context, instanceID, cursor string, limit int) ([]models.ActionRun, string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lastLimit = limit
+	if m.listErr != nil {
+		return nil, "", m.listErr
+	}
+	var rows []models.ActionRun
+	for _, r := range m.runs {
+		if r.InstanceID == instanceID {
+			rows = append(rows, r)
+		}
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if !rows[i].StartedAt.Equal(rows[j].StartedAt) {
+			return rows[i].StartedAt.After(rows[j].StartedAt)
+		}
+		return rows[i].ID > rows[j].ID
+	})
+	if cursor != "" {
+		after, ok := strings.CutPrefix(cursor, "after:")
+		if !ok {
+			return nil, "", dberrors.NewDatabaseError("list_action_runs", fmt.Errorf("%w: invalid cursor", dberrors.ErrValidation))
+		}
+		for i, r := range rows {
+			if r.ID == after {
+				rows = rows[i+1:]
+				break
+			}
+		}
+	}
+	if limit <= 0 {
+		limit = models.DefaultActionRunPageSize
+	}
+	limit = min(limit, models.MaxActionRunPageSize)
+	next := ""
+	if len(rows) > limit {
+		rows = rows[:limit]
+		next = "after:" + rows[limit-1].ID
+	}
+	return rows, next, nil
+}
+
+func (m *MockActionRunRepository) SetJobFinalStatus(_ context.Context, instanceID, action, jobID, status string, finishedAt time.Time) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.finalCalls = append(m.finalCalls, finalStatusCall{InstanceID: instanceID, Action: action, JobID: jobID, Status: status})
+	if m.finalErr != nil {
+		return false, m.finalErr
+	}
+	for i := range m.runs {
+		r := &m.runs[i]
+		if r.InstanceID == instanceID && r.Action == action && r.JobID == jobID && r.JobStatus == "" && r.FinishedAt == nil {
+			r.JobStatus = status
+			at := finishedAt
+			r.FinishedAt = &at
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (m *MockActionRunRepository) DeleteByInstance(_ context.Context, instanceID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	kept := m.runs[:0]
+	for _, r := range m.runs {
+		if r.InstanceID != instanceID {
+			kept = append(kept, r)
+		}
+	}
+	m.runs = kept
+	return nil
+}
+
+// Runs returns a copy of the stored runs in insert order.
+func (m *MockActionRunRepository) Runs() []models.ActionRun {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]models.ActionRun(nil), m.runs...)
+}
+
+// FinalCalls returns the SetJobFinalStatus calls.
+func (m *MockActionRunRepository) FinalCalls() []finalStatusCall {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]finalStatusCall(nil), m.finalCalls...)
+}
+
+// CreateCtxErrs returns ctx.Err() of each Create call.
+func (m *MockActionRunRepository) CreateCtxErrs() []error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]error(nil), m.createCtxErrs...)
+}
+
+// LastLimit returns the limit of the last ListByInstance call.
+func (m *MockActionRunRepository) LastLimit() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.lastLimit
+}

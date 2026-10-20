@@ -1,6 +1,6 @@
 // Package retention deletes old rows of the log tables (deployment_logs,
-// audit_logs, notifications, notification_delivery_logs). The leader runs it
-// as the worker log-retention.
+// audit_logs, notifications, notification_delivery_logs, action_runs). The
+// leader runs it as the worker log-retention.
 package retention
 
 import (
@@ -18,6 +18,7 @@ const (
 	TableAuditLogs      = "audit_logs"
 	TableNotifications  = "notifications"
 	TableDeliveryLogs   = "notification_delivery_logs"
+	TableActionRuns     = "action_runs"
 )
 
 // day is the length of one retention day.
@@ -80,6 +81,7 @@ func (w *Worker) RunOnce(ctx context.Context) map[string]int64 {
 		{name: TableAuditLogs, days: w.cfg.AuditLogDays, del: w.repo.DeleteAuditLogsOlderThan},
 		{name: TableNotifications, days: w.cfg.NotificationDays, del: w.repo.DeleteNotificationsOlderThan},
 		{name: TableDeliveryLogs, days: w.cfg.DeliveryLogDays, del: w.repo.DeleteDeliveryLogsOlderThan},
+		{name: TableActionRuns, days: w.cfg.ActionRunDays, del: w.repo.DeleteActionRunsOlderThan},
 	}
 	deleted := make(map[string]int64, len(tables))
 	for _, t := range tables {

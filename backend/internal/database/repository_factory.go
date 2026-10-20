@@ -36,6 +36,7 @@ type RepositorySet struct {
 	NotificationChannel   models.NotificationChannelRepository
 	WSEvent               models.WSEventRepository
 	InstanceFollower      models.InstanceFollowerRepository
+	ActionRun             models.ActionRunRepository
 	ReplicaHeartbeat      models.ReplicaHeartbeatRepository
 	Retention             models.RetentionRepository
 	InterruptedOperation  models.InterruptedOperationRepository
@@ -101,6 +102,7 @@ func newGORMRepositorySet(cfg *config.Config, db *gorm.DB) (*RepositorySet, erro
 		NotificationChannel:   notificationChannelRepo,
 		WSEvent:               NewGORMWSEventRepository(db),
 		InstanceFollower:      NewGORMInstanceFollowerRepository(db),
+		ActionRun:             NewGORMActionRunRepository(db),
 		ReplicaHeartbeat:      NewGORMReplicaHeartbeatRepository(db),
 		Retention:             NewGORMRetentionRepository(db),
 		InterruptedOperation:  NewGORMInterruptedOperationRepository(db),

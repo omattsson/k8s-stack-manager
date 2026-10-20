@@ -145,7 +145,7 @@ helm/k8s-stack-manager/
   - `backend.rbac.scope: cluster` keeps the old rules (namespaced objects in all namespaces).
 - **Leader election.** `backend.leaderElection.enabled` (default true) and `backend.leaderElection.leaseName` (Lease `<fullname>-workers`) set `LEADER_ELECTION_ENABLED` and `POD_NAME` / `POD_NAMESPACE` (downward API, Deployment and Rollout). It also creates the Lease Role. Only the leader replica runs the background workers. Every replica serves HTTP and WebSocket.
 - **WebSocket fan-out.** `backend.wsFanout.enabled` (default true) sets `WS_FANOUT_ENABLED`. `backend.wsFanout.pollInterval` (500ms) and `retention` (5m) set `WS_FANOUT_POLL_INTERVAL` and `WS_FANOUT_RETENTION`. The replicas share WebSocket messages through the `ws_events` table. Clients on every replica get deploy logs and leader events.
-- **Log retention.** `backend.logRetention` (`deployLogDays` 180, `auditLogDays` 365, `notificationDays` 90, `deliveryLogDays` 30, `interval` 1h) sets `DEPLOY_LOG_RETENTION_DAYS`, `AUDIT_LOG_RETENTION_DAYS`, `NOTIFICATION_RETENTION_DAYS`, `DELIVERY_LOG_RETENTION_DAYS` and `LOG_RETENTION_INTERVAL`. The leader worker `log-retention` deletes older rows. `0` keeps the rows forever.
+- **Log retention.** `backend.logRetention` (`deployLogDays` 180, `auditLogDays` 365, `notificationDays` 90, `deliveryLogDays` 30, `actionRunDays` 180, `interval` 1h) sets `DEPLOY_LOG_RETENTION_DAYS`, `AUDIT_LOG_RETENTION_DAYS`, `NOTIFICATION_RETENTION_DAYS`, `DELIVERY_LOG_RETENTION_DAYS`, `ACTION_RUN_RETENTION_DAYS` and `LOG_RETENTION_INTERVAL`. The leader worker `log-retention` deletes older rows. `0` keeps the rows forever.
 
 ### Configuration
 Key values in `values.yaml`:
@@ -215,7 +215,7 @@ backend/
       stack_instances.go         # InstanceHandler: CRUD, clone, deploy, stop, clean, deploy-preview, compare, extend TTL
       instance_rollback.go       # Rollback response type and values-drift message
       deploy_log_history.go      # Deploy log list parameters (view, action, status), summary rows, started_by lookup
-      instance_actions.go        # InstanceHandler: custom action list (UI metadata, can_invoke) and async job log proxy
+      instance_actions.go        # InstanceHandler: custom action list (UI metadata, can_invoke), async job log proxy (stores the final job status), action run recording and list (GET action-runs)
       instance_followers.go      # InstanceHandler: follow and unfollow
       stack_templates.go         # TemplateHandler: CRUD, publish, instantiate, clone
       template_releases.go       # Template draft and release rules (latest published snapshot)
@@ -250,7 +250,7 @@ backend/
     database/factory.go          # MySQL connection with retry (5 attempts, 2s delay)
     database/repository.go       # NewRepository() factory; repository_factory.go wires all domain repositories
     database/*_repository.go     # One GORM repository per domain model
-    database/instance_delete.go  # DeleteInstanceRecord, DeleteInstanceWithOwnedDefinition
+    database/instance_delete.go  # DeleteInstanceRecord (overrides, quota override, followers, action runs), DeleteInstanceWithOwnedDefinition
     database/lock_retry.go       # retryOnDeadlock: runs a transaction again on MySQL 1213 (deadlock), 3 attempts
     database/migrations.go       # Versioned migrations through schema.Migrator, run on startup
     database/errors.go           # Re-exports from pkg/dberrors (single source of truth)
@@ -378,7 +378,10 @@ backend/
 
 **Actions.**
 - `hooks.ActionRegistry` holds the custom actions of `HOOKS_CONFIG_FILE` (Helm: `hooks.actions`).
-- `GET /stack-instances/:id/actions` lists them for any user who can view the instance. The list has UI metadata (`label`, `confirm`, `parameters`) and `can_invoke` (the instance modify rule). A parameter has: name, label, type (`string`, `bool` or `enum`), required, default, options. The list never returns `url` or `secret_env`.
+- `GET /stack-instances/:id/actions` lists them for any user who can view the instance. The list has UI metadata (`label`, `confirm`, `parameters`) and `can_invoke` (the instance modify rule). A parameter has: name, label, type (`string`, `bool` or `enum`), required, default, options, sensitive. The list never returns `url` or `secret_env`.
+- Each invoke that reaches the subscriber writes one `action_runs` row (migration 61): user, declared parameters only (a `sensitive` parameter as `[redacted]`), `status_code` (0 = no answer; a 3xx or non-JSON answer keeps its code, the client still gets 502), `message`, `job_id`. The envelope gets `run_id`. A write failure is logged and never fails the action (#640).
+- A parameter with `sensitive: true` (type `string` only, no `default`) goes to the subscriber unchanged. The run history stores `[redacted]`, and the dialog shows a password field.
+- `GET /stack-instances/:id/action-runs` (`limit` default 20, max 100; `cursor`; newest first) lists the runs for any user who can view the instance, with `started_by`, `action_label`, `has_job_log` and `can_view_logs` (the modify rule). An instance delete removes the runs (`DeleteInstanceRecord`). A user delete keeps them ("Unknown user").
 - `POST /stack-instances/:id/actions/:name` checks the declared parameters. Undeclared parameters pass through. When the action has `log_path`, a valid `result.job_id` of a 2xx answer goes into the envelope.
 - `GET /stack-instances/:id/actions/:name/jobs/:job_id/log?offset=N` proxies the job log. It needs the modify rule, because a job log can hold sensitive output.
   - `log_path` resolves on the host of the action URL only.
@@ -389,8 +392,9 @@ backend/
   - The response is JSON `{status, log, offset, next_offset, done, truncated}`.
   - `status` comes from `X-Job-Status` (preferred) or, as a fallback, from a line `===<NAME>-END=== status=<s>`.
   - `X-Log-Offset` counts only when it is not smaller than the offset.
-- The web UI shows the custom actions as the first group of the instance "Actions" menu (`useInstanceActions` in `components/InstanceActionsMenu`). The menu also holds export values, clone, clean namespace and delete.
-- The job log dialog polls every 3 s. It backs off on 429, 502, 503, 504 and network errors (`Retry-After`, else a doubling delay up to 30 s). It stops on done, on close, on 401, 403 or 404, and after 60 minutes.
+  - A poll that returns `done` stores the final status on the run (`job_status`, `finished_at`) with one conditional update, so the first poll on any replica wins.
+- The web UI shows the custom actions as the first group of the instance "Actions" menu (`useInstanceActions` in `components/InstanceActionsMenu`). The menu also holds export values, clone, clean namespace and delete. The instance page lists the runs below the Deployment History (`components/ActionRunHistory`: 10 rows, "Show more", "Show log" for a run with a job when the user may modify the instance).
+- The job log dialogs (`useJobLog`, `JobLogPanel`; `JobLogDialog` for a past run polls at once) poll every 3 s. It backs off on 429, 502, 503, 504 and network errors (`Retry-After`, else a doubling delay up to 30 s). It stops on done, on close, on 401, 403 or 404, and after 60 minutes.
 
 **Telemetry.** `telemetry.Init` configures OTLP traces, metrics and logs (`OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, `OTEL_TRACE_SAMPLE_RATE`). `StartDBMetrics`, `StartBusinessMetrics` and `StartLeaderMetric` register gauges. Middleware records HTTP and auth metrics. Add tracing for new outbound calls in a `tracing.go` next to the package (see `cluster/`, `deployer/`, `gitprovider/`, `hooks/`). With `OTEL_ENABLED`, the backend also sends its logs to the collector: `setupOTelLogging` (`api/bootstrap.go`) bridges `slog` to the OTel log pipeline (`telemetry.LogHandler`, `otelslog`) and to a slog text handler on stderr, both at `LOG_LEVEL`. Log records with a context carry its trace and span ID. Never wrap the package default slog handler in a new default: it writes through the `log` package, which then writes back through the new default and deadlocks.
 
@@ -410,6 +414,7 @@ frontend/src/
   main.tsx                     # Entry point
   components/
     Layout/                    # AppBar, navigation, footer shell
+    ActionRunHistory/          # Action runs of the instance page: who, when, parameters, result chip, "Show more", "Show log" (JobLogDialog)
     AccessUrls/                # Access URL display for stack instances (kubectl port-forward hints only for devops and admin)
     BrandLogo/                 # Logo from the branding config (falls back to the built-in /logo.svg)
     BranchSelector/            # Git branch picker with autocomplete
@@ -423,7 +428,7 @@ frontend/src/
     ExtendTtlMenu/             # Menu that adds time to the expiry of an instance (+1 h, +4 h, +24 h, Custom... with until)
     FavoriteButton/            # Bookmark toggle for templates and instances
     FollowButton/              # Follow toggle for an instance
-    InstanceActionsMenu/       # Custom actions (`useInstanceActions`: first group of the instance "Actions" menu), parameter form, result, job log polling
+    InstanceActionsMenu/       # Custom actions (`useInstanceActions`: first group of the instance "Actions" menu), parameter form, result, job log polling; `useJobLog`, `JobLogPanel`, `JobLogDialog`
     JsonResultView/            # Readable view of a JSON action result
     LoadingState/              # Centered CircularProgress wrapper
     InstanceQuota/             # Resource quota section of the instance page: effective values and their source, override edit and remove (InstanceQuotaDialog)
@@ -469,10 +474,10 @@ frontend/src/
     typography.ts              # Typography variant overrides
     components.ts              # MUI component default prop and style overrides
   types/                       # Shared TypeScript type definitions
-  utils/                       # roles, timeAgo, expiry, instanceName, instanceState, jwt, quantity, apiError, download, deployHistory, templateVersion, notificationEventTypes, notificationHelpers, recentTemplates, setupWizard, stopTime
+  utils/                       # roles, timeAgo, expiry, instanceName, instanceState, jwt, quantity, apiError, download, deployHistory, actionRuns, templateVersion, notificationEventTypes, notificationHelpers, recentTemplates, setupWizard, stopTime
 ```
 
-**Stack:** React 19, MUI v9, react-router-dom v7, Vite 8, TypeScript 6, Vitest 5, Playwright (40 specs in `frontend/e2e/`; the project `isolated` runs `session-lifecycle.spec.ts`, then its teardown project `isolated-last-admin` runs `last-admin.spec.ts` (it disables `admin` for a moment, so it runs last; `global-setup.ts` re-enables a left-over disabled `admin` in the database), only with `E2E_ISOLATED=1`, serially, against a restarted short-limit backend; the project `mobile` runs `mobile.spec.ts` with the iPhone 13 viewport, the project `chromium` runs the rest).
+**Stack:** React 19, MUI v9, react-router-dom v7, Vite 8, TypeScript 6, Vitest 5, Playwright (41 specs in `frontend/e2e/`; the project `isolated` runs `session-lifecycle.spec.ts`, then its teardown project `isolated-last-admin` runs `last-admin.spec.ts` (it disables `admin` for a moment, so it runs last; `global-setup.ts` re-enables a left-over disabled `admin` in the database), only with `E2E_ISOLATED=1`, serially, against a restarted short-limit backend; the project `mobile` runs `mobile.spec.ts` with the iPhone 13 viewport, the project `chromium` runs the rest).
 
 **Patterns.**
 - Use MUI components (no raw HTML) and the `sx` prop for styling.
@@ -557,7 +562,7 @@ Developers use this application to configure, store and deploy multi-service Hel
   - Any user who can view an instance can follow it: `POST` and `DELETE /stack-instances/:id/follow` (idempotent, audited as `follow` and `unfollow`).
   - `GET /stack-instances/:id` adds `following` and `follower_count`.
   - Table `instance_followers` (primary key `user_id, instance_id`, index on `instance_id`).
-  - Every instance delete path removes the followers (`DeleteInstanceRecord`). A user delete removes the follows of the user.
+  - Every instance delete path removes the followers and the action runs (`DeleteInstanceRecord`). A user delete removes the follows of the user.
   - Followers get in-app notifications only.
 - **Quick deploy:** one-click flow from a template to a new instance and a deploy. It generates the instance name and the namespace.
   - The definition that it creates has `OwnerInstanceID` set.
@@ -717,7 +722,7 @@ Developers use this application to configure, store and deploy multi-service Hel
 | Quick Deploy | `/api/v1/templates/:id/quick-deploy` | One-click template deployment |
 | Bulk Template Ops | `/api/v1/templates/bulk` | Bulk delete, publish, unpublish templates (up to 50, devops) |
 | Stack Definitions | `/api/v1/stack-definitions` | CRUD, nested chart management, import and export, template link, upgrade check and upgrade |
-| Stack Instances | `/api/v1/stack-instances` | CRUD, clone, values export, deploy, deploy-preview, stop, clean, rollback, status, pods, deploy-log (list, one entry, values), recent, compare, extend TTL, follow and unfollow, custom actions (list, invoke, job log) |
+| Stack Instances | `/api/v1/stack-instances` | CRUD, clone, values export, deploy, deploy-preview, stop, clean, rollback, status, pods, deploy-log (list, one entry, values), recent, compare, extend TTL, follow and unfollow, custom actions (list, invoke, job log, action runs) |
 | Bulk Operations | `/api/v1/stack-instances/bulk` | Bulk deploy, stop, clean, delete (up to 50 instances, devops) |
 | Value Overrides | `/api/v1/stack-instances/:id/overrides` | Per-chart value overrides |
 | Branch Overrides | `/api/v1/stack-instances/:id/branches` | Per-chart branch overrides (list, get, set, delete for each chart) |
@@ -774,7 +779,7 @@ Developers use this application to configure, store and deploy multi-service Hel
   - Every final deploy log write is conditional on `status = 'running'` (`models.ErrDeployLogNotRunning`). A late goroutine writes nothing after a recovery.
   - During an operation, the deploy manager writes the streamed lines to `deployment_logs.output` every 5s (`DeploymentLogOutputWriter.UpdateRunningOutput`, also conditional on `running`, up to `maxOutputLen`). A page reload then shows the output so far. `writeFinal` drops the live output.
   - Gap: `stack_instances` has no version column. A stale writer (status watcher, TTL reaper) can overwrite the recovered error.
-- Log retention: the leader worker `log-retention` (`internal/retention`, `RetentionRepository`) deletes old rows of `deployment_logs`, `audit_logs`, `notifications` and `notification_delivery_logs` (`*_RETENTION_DAYS`, `0` keeps them). It deletes in batches of 1000 IDs (100 for `deployment_logs`) by database time. For each existing instance it keeps the running deploy logs, the newest `deploy` or `rollback` log (any status), the newest successful `deploy` log and the two newest successful `deploy` or `rollback` logs (values drift, rollback branch). A rollback to a deleted target log gives 404. The Analytics deploy counts cover only the kept deploy logs (`deploy_log_retention_days` in the overview). A new log table that grows needs a retention there.
+- Log retention: the leader worker `log-retention` (`internal/retention`, `RetentionRepository`) deletes old rows of `deployment_logs`, `audit_logs`, `notifications`, `notification_delivery_logs` and `action_runs` (`*_RETENTION_DAYS`, `0` keeps them). It deletes in batches of 1000 IDs (100 for `deployment_logs`) by database time. For each existing instance it keeps the running deploy logs, the newest `deploy` or `rollback` log (any status), the newest successful `deploy` log and the two newest successful `deploy` or `rollback` logs (values drift, rollback branch). A rollback to a deleted target log gives 404. The Analytics deploy counts cover only the kept deploy logs (`deploy_log_retention_days` in the overview). A new log table that grows needs a retention there.
 - Always paginate new list endpoints.
   - Use the query parameters `page` and `pageSize` (default 25, maximum 100) with `ListPaged(..., limit, offset)`, as stack instances, definitions and templates do.
   - Stack instances and definitions also accept a `limit` and `offset` fallback. Templates take `page` and `pageSize` only.

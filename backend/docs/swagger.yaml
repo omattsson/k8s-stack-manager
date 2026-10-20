@@ -1061,11 +1061,80 @@ definitions:
         type: array
       required:
         type: boolean
+      sensitive:
+        description: |-
+          Sensitive is true when the run history stores "[redacted]" instead of
+          the value; the web UI uses a password field.
+        type: boolean
       type:
         enum:
         - string
         - bool
         - enum
+        type: string
+    type: object
+  handlers.actionRunInfo:
+    properties:
+      action:
+        type: string
+      action_label:
+        description: ActionLabel is the current label of the action, else its name.
+        type: string
+      finished_at:
+        description: |-
+          FinishedAt is the answer time of a run without a job, or the time the
+          job log proxy saw the final job status.
+        type: string
+      has_job_log:
+        description: |-
+          HasJobLog is true when the run has a job and the action still has a
+          log_path.
+        type: boolean
+      id:
+        type: string
+      instance_id:
+        type: string
+      job_id:
+        type: string
+      job_status:
+        type: string
+      message:
+        type: string
+      parameters:
+        additionalProperties: {}
+        description: |-
+          Parameters holds the declared parameters only; a sensitive value is
+          "[redacted]".
+        type: object
+      request_id:
+        type: string
+      started_at:
+        type: string
+      started_by:
+        description: StartedBy is the username of user_id; omitted when the user is
+          gone.
+        type: string
+      status_code:
+        description: StatusCode is the HTTP status of the subscriber; 0 means no answer.
+        type: integer
+      user_id:
+        type: string
+    type: object
+  handlers.actionRunListResponse:
+    properties:
+      can_view_logs:
+        description: |-
+          CanViewLogs is true when the caller may read job logs (owner, admin,
+          devops).
+        type: boolean
+      data:
+        items:
+          $ref: '#/definitions/handlers.actionRunInfo'
+        type: array
+      instance_id:
+        type: string
+      next_cursor:
+        description: NextCursor loads the next page; omitted on the last page.
         type: string
     type: object
   handlers.addFavoriteRequest:
@@ -6448,6 +6517,70 @@ paths:
       summary: Update a stack instance
       tags:
       - stack-instances
+  /api/v1/stack-instances/{id}/action-runs:
+    get:
+      consumes:
+      - application/json
+      description: 'Returns the stored custom action runs of the instance, newest
+        first, with cursor paging (no total). Any authenticated user who can view
+        the instance gets the list (the rule of the action list). parameters holds
+        the declared parameters only; a sensitive parameter shows [redacted]. status_code
+        0 means that no answer came (the subscriber was unreachable, or the client
+        closed the request). message is the refusal reason of the subscriber (a sensitive
+        value sent with the call shows [redacted]) or a fixed text. started_by is
+        omitted when the user no longer exists. action_label is the current label
+        of the action, else its name. has_job_log is true when the run has a job_id
+        and the action still has a log_path. can_view_logs is true for the owner,
+        an admin and a devops user: only they may read a job log. Without a repository
+        the list is empty.'
+      parameters:
+      - description: Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Rows per page (default 20; a value above 100 counts as 100)
+        in: query
+        name: limit
+        type: integer
+      - description: Opaque cursor from next_cursor of the previous page
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.actionRunListResponse'
+        "400":
+          description: Invalid limit or cursor parameter
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Instance not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: List the action runs of a stack instance
+      tags:
+      - stack-instances
   /api/v1/stack-instances/{id}/actions:
     get:
       consumes:
@@ -6520,7 +6653,11 @@ paths:
         before the call; undeclared parameters pass through. When the action has a
         log_path, the subscriber answered 2xx and the result has a valid job_id, the
         envelope also has job_id: poll GET /stack-instances/{id}/actions/{name}/jobs/{job_id}/log
-        for the job log.'
+        for the job log. Each call that reaches the subscriber (also an unreachable
+        subscriber or a non-JSON body) stores one action run (GET /stack-instances/{id}/action-runs)
+        with the caller, the declared parameters only (a sensitive parameter as [redacted]),
+        the status code, the message and the job_id. The envelope has run_id when
+        the run was stored; a failed write never fails the call.'
       parameters:
       - description: Instance ID
         in: path
@@ -6551,6 +6688,12 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "403":
           description: Caller is not the owner, an admin or a devops user
           schema:
@@ -6559,6 +6702,12 @@ paths:
             type: object
         "404":
           description: Instance not found or action not registered
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
           schema:
             additionalProperties:
               type: string
@@ -6584,10 +6733,12 @@ paths:
       - application/json
       description: Fetches the job log of an asynchronous action from the action subscriber,
         from the byte offset to the end (at most 256 KiB per call). The action config
-        must have a log_path. Poll with next_offset until done is true. Only the instance
-        owner, an admin or a devops user may read the job log (the same rule as invoke).
-        The backend signs the subscriber request like an invoke call and never returns
-        the subscriber URL.
+        must have a log_path. Poll with next_offset until done is true. The first
+        poll that returns done stores the final job status and the finish time on
+        the action run of the job (GET /stack-instances/{id}/action-runs); later polls
+        change nothing. Only the instance owner, an admin or a devops user may read
+        the job log (the same rule as invoke). The backend signs the subscriber request
+        like an invoke call and never returns the subscriber URL.
       parameters:
       - description: Instance ID
         in: path

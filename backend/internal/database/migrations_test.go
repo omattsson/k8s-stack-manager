@@ -65,6 +65,7 @@ func setupTestDBWithAllTables(t *testing.T) *gorm.DB {
 		&models.CleanupPolicy{},
 		&models.UserFavorite{},
 		&models.InstanceFollower{},
+		&models.ActionRun{},
 	))
 	return db
 }

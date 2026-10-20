@@ -74,6 +74,7 @@ import type {
   InstanceActionList,
   ActionInvokeResult,
   ActionJobLog,
+  ActionRunPage,
   UIConfig,
   UserRole,
   ChangeRoleResponse,
@@ -175,6 +176,16 @@ export interface DeployLogPageOptions {
   action?: DeploymentLog['action'] | DeploymentLog['action'][];
   /** Only these statuses (one value or a list). */
   status?: DeploymentLog['status'] | DeploymentLog['status'][];
+}
+
+/** Options of `instanceService.listActionRuns`. */
+export interface ActionRunPageOptions {
+  /** Page size (server default 20, at most 100). */
+  limit?: number;
+  /** `next_cursor` of the previous page. */
+  cursor?: string;
+  /** Optional AbortSignal; aborting it cancels the request. */
+  signal?: AbortSignal;
 }
 
 /** A downloaded file: the raw body and the file name to save it under. */
@@ -1346,6 +1357,31 @@ export const instanceService = {
       return response.data;
     } catch (error) {
       if (!axios.isCancel(error)) console.error('Failed to read action job log:', error);
+      throw error;
+    }
+  },
+  /**
+   * Fetch one page of the stored custom action runs of an instance, newest first.
+   * @param id - Instance ID
+   * @param options - Page size, cursor of the next page and an optional AbortSignal
+   * @returns The page: rows, the can_view_logs flag of the current user and the next cursor
+   * @see GET /api/v1/stack-instances/:id/action-runs
+   */
+  listActionRuns: async (id: string, options: ActionRunPageOptions = {}): Promise<ActionRunPage> => {
+    try {
+      const response = await api.get(`/api/v1/stack-instances/${id}/action-runs`, {
+        params: { limit: options.limit, cursor: options.cursor || undefined },
+        signal: options.signal,
+      });
+      const payload = response.data;
+      return {
+        instance_id: payload?.instance_id ?? id,
+        can_view_logs: payload?.can_view_logs === true,
+        data: Array.isArray(payload?.data) ? payload.data : [],
+        next_cursor: payload?.next_cursor || undefined,
+      };
+    } catch (error) {
+      if (!options.signal?.aborted) console.error('Failed to list action runs:', error);
       throw error;
     }
   },

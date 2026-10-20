@@ -427,7 +427,8 @@ Content-Type: application/json
       "parameters": [
         {"name": "image", "label": "Snapshot", "type": "string", "default": "golden"},
         {"name": "dry_run", "label": "Dry run", "type": "bool", "default": false},
-        {"name": "scope", "type": "enum", "options": ["full", "schema-only"], "required": true}
+        {"name": "scope", "type": "enum", "options": ["full", "schema-only"], "required": true},
+        {"name": "db_password", "label": "Database password", "type": "string", "sensitive": true}
       ],
       "log_path": "/jobs/{job_id}/log"
     }
@@ -461,6 +462,7 @@ checks them at startup. An invalid field stops the startup.
 | `required` | A required `string` or `enum` must not be empty. |
 | `default` | A string for `string` and `enum` (for `enum`, it must be one of `options`), a boolean for `bool`. The UI fills the form with it. The backend does not add defaults to the request. |
 | `options` | The allowed values of an `enum` (1 to 50, unique). Only for `enum`. |
+| `sensitive` | Optional, default `false`. The value goes to the subscriber unchanged, but the [action run history](#action-run-history) stores `[redacted]`, and the web UI uses a password field. Only for `type: string`. A sensitive parameter cannot have a `default`, because the defaults are public metadata. Another type or a `default` stops the startup. |
 
 The invoke endpoint checks the declared parameters before it calls the
 subscriber: type, `required` and the enum `options`. A mismatch gives 400.
@@ -501,7 +503,8 @@ never contains `url`, `secret_env` or the secret:
 
 `can_invoke` is true for the instance owner, an admin and a devops user (the
 same rule as deploy). The list is sorted by action name. Without an action
-registry, the list is empty (200).
+registry, the list is empty (200). A parameter with `sensitive: true` in the
+config has `"sensitive": true` in the list (omitted when false).
 
 ### Request envelope
 
@@ -539,9 +542,14 @@ the API client, wrapped in this envelope:
   "action": "refresh-db",
   "instance_id": "6c9f1e14-...",
   "status_code": 200,
-  "result": { "wiped_pvcs": ["mysql-data"], "flushed_keys": 128 }
+  "result": { "wiped_pvcs": ["mysql-data"], "flushed_keys": 128 },
+  "run_id": "1b2c3d4e-..."
 }
 ```
+
+`run_id` is the ID of the stored [action run](#action-run-history). It is
+missing when the backend did not store the run (no history, or a database
+error). A failed write never fails the action.
 
 The backend does not follow a redirect from the subscriber, so a signed
 request never reaches another host. A 3xx answer with an empty or JSON body is
@@ -658,9 +666,71 @@ Traceparent: ...
 - Prefer `X-Job-Status`. Only without it, the backend reads the status from the last end marker line in the chunk. The line looks like `===<NAME>-END=== status=<status>`, for example `===JOB-END=== status=succeeded`. The marker is a fallback. A job that prints untrusted output can print a fake marker and end the polling early. Without both, the status is `running`, and clients poll until they give up.
 - Offsets are byte offsets. While the job runs and `X-Log-Offset` is not set, the backend drops an incomplete UTF-8 sequence at the end of a chunk. The next poll reads the whole character. When you set `X-Log-Offset`, end each chunk on a character boundary.
 - Answer 404 for an unknown job.
+- Keep the job logs readable for some time after the job ends (for example as long as `ACTION_RUN_RETENTION_DAYS`). Users open the log of a past run from the action run history. When a job is gone, answer 404: the web UI then shows "The job log is no longer available."
 - The backend reads at most 256 KiB for each call. It cuts a larger chunk at its last line end. The client gets the rest with the next offset.
 - The call times out after 10 seconds (or after the action timeout, when that is lower).
 - The backend does not follow a redirect (a 3xx answer gives 502), so the signed request stays on the host.
+
+### Action run history
+
+The backend stores one action run for each invoke that reached the subscriber
+call. That includes a refusal, an unreachable subscriber and an answer that it
+cannot forward. A request that fails before the call (400, 403, 404, 503)
+stores no run. The audit log keeps `invoke_action` for every call.
+
+```
+GET /api/v1/stack-instances/:id/action-runs?limit=<n>&cursor=<next_cursor>
+```
+
+- **Permission:** any authenticated user who can view the instance (the rule of the action list).
+- The list is newest first. `limit` is 20 by default. A larger value than 100 counts as 100. A `limit` that is not a whole number above 0 gives 400 `Invalid limit parameter`. A bad `cursor` gives 400 `Invalid cursor parameter`.
+- There is no total. `next_cursor` is missing on the last page.
+
+```json
+{
+  "instance_id": "6c9f1e14-...",
+  "can_view_logs": true,
+  "data": [
+    {
+      "id": "1b2c3d4e-...",
+      "instance_id": "6c9f1e14-...",
+      "action": "refresh-db",
+      "action_label": "Refresh database",
+      "user_id": "u-123",
+      "started_by": "alice",
+      "started_at": "2026-10-20T10:00:00.123Z",
+      "finished_at": "2026-10-20T10:01:02.456Z",
+      "parameters": { "image": "golden", "dry_run": false, "db_password": "[redacted]" },
+      "status_code": 202,
+      "job_id": "job-0123456789ab",
+      "job_status": "succeeded",
+      "has_job_log": true,
+      "request_id": "req-..."
+    }
+  ],
+  "next_cursor": "MjAyNi0x..."
+}
+```
+
+What a run holds:
+- `user_id`: the caller (the user of the JWT or of the API key). `started_by` is the username. It is missing when the user no longer exists. A user delete keeps the runs of that user.
+- `parameters`: only the declared parameters. The backend never stores an undeclared parameter. It stores a `sensitive` parameter as `[redacted]`. `parameters` is always an object (`{}` when there are none).
+- `status_code`: the HTTP status of the subscriber. `0` means no answer (unreachable, timeout, or the client closed the request). An answer that the backend cannot forward keeps its status, for example `302` for a redirect with an HTML body.
+- `message`: the reason of a refusal (status 400 or higher, the text of `message` in the invoke envelope), or a fixed text: `Subscriber unreachable`, `Subscriber returned a non-JSON body`, `Subscriber returned a body that is too large` or `The client closed the request before the answer`. It never holds a URL or the error detail.
+- Every viewer reads `message`. Never put a parameter value or a secret in it. As a safety net, the backend replaces the value of each `sensitive` parameter of the call with `[redacted]` in the stored message. The invoke envelope keeps the message unchanged for the caller.
+- `job_id`: the `job_id` of the invoke envelope (asynchronous actions with `log_path`).
+- `request_id`: the `X-StackManager-Request-Id` of the invoke call, for the subscriber logs.
+- A run never holds the result body, the subscriber URL, headers or the secret.
+
+Finish time and final job status:
+- A run without a job gets `finished_at` when the subscriber answers.
+- A run with a job gets `job_status` and `finished_at` from the first job log poll that returns `done: true`, on any replica (one conditional update). Later polls change nothing.
+- Only users with the modify rule read the job log. When nobody reads the log to the end, the run keeps no final status, and the web UI shows "Job started".
+- `action_label` is the current `label` of the action, else its name. `has_job_log` is true when the run has a `job_id` and the action still has a `log_path`. `can_view_logs` is true for the owner, an admin and a devops user. Only they can open the job log of a run.
+
+Retention: the leader worker `log-retention` deletes runs older than
+`ACTION_RUN_RETENTION_DAYS` (default 180 days, by `started_at`). `0` keeps the
+runs forever. An instance delete deletes the runs of the instance.
 
 ---
 

@@ -29,15 +29,25 @@ export interface InstanceActionsState {
   dialog: ReactElement | null;
 }
 
+/** Options of {@link useInstanceActions}. */
+export interface InstanceActionsOptions {
+  /** Called after each invoke attempt and when the job log of a run reaches its end. */
+  onRunChanged?: () => void;
+}
+
 /**
  * Load the custom actions of an instance and hold the state of the action
  * dialog. A menu shows the actions and calls `openAction`; the caller
  * renders `dialog`.
  *
  * @param instanceId - ID of the instance that the actions run on. Without an ID the hook loads nothing.
+ * @param options - Optional callback for a new or changed action run.
  * @returns The actions, a function that opens an action, and the dialog element.
  */
-export const useInstanceActions = (instanceId: string | undefined): InstanceActionsState => {
+export const useInstanceActions = (
+  instanceId: string | undefined,
+  options: InstanceActionsOptions = {},
+): InstanceActionsState => {
   const [actions, setActions] = useState<InstanceAction[]>([]);
   const [selected, setSelected] = useState<InstanceAction | null>(null);
 
@@ -66,6 +76,8 @@ export const useInstanceActions = (instanceId: string | undefined): InstanceActi
       instanceId={instanceId}
       action={selected}
       onClose={() => setSelected(null)}
+      onInvoked={options.onRunChanged}
+      onJobDone={options.onRunChanged}
     />
   ) : null;
 

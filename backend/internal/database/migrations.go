@@ -1114,6 +1114,9 @@ func (d *Database) AutoMigrate() error {
 	// Migration 60: notification_channels.format (generic or teams).
 	migrator.AddMigration(notificationChannelFormatMigration())
 
+	// Migration 61: action_runs (history of custom action calls, #640).
+	migrator.AddMigration(actionRunsMigration())
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err
@@ -1992,6 +1995,27 @@ func notificationChannelFormatMigration() schema.Migration {
 			m := tx.Migrator()
 			if m.HasTable(&models.NotificationChannel{}) && m.HasColumn(&models.NotificationChannel{}, "Format") {
 				return m.DropColumn(&models.NotificationChannel{}, "Format")
+			}
+			return nil
+		},
+	}
+}
+
+// actionRunsMigration is migration 61. It creates action_runs: one row for
+// each custom action call on a stack instance (#640), with the indexes of
+// the list (instance_id, started_at, id), the retention (started_at) and the
+// final job status update (instance_id, job_id). Up and Down are idempotent.
+func actionRunsMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261020000061",
+		Name:        "create_action_runs",
+		Description: "Create action_runs (history of custom action calls on stack instances)",
+		Up: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&models.ActionRun{})
+		},
+		Down: func(tx *gorm.DB) error {
+			if tx.Migrator().HasTable(&models.ActionRun{}) {
+				return tx.Migrator().DropTable(&models.ActionRun{})
 			}
 			return nil
 		},

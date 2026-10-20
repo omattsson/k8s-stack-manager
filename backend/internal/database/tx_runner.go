@@ -33,6 +33,9 @@ type TxRepos struct {
 	// InstanceFollower is used by the instance delete to delete the
 	// followers of the instance.
 	InstanceFollower models.InstanceFollowerRepository
+	// ActionRun is used by the instance delete to delete the action runs of
+	// the instance.
+	ActionRun models.ActionRunRepository
 }
 
 // GORMTxRunner implements TxRunner using GORM database transactions.
@@ -65,6 +68,7 @@ func (r *GORMTxRunner) RunInTx(fn func(repos TxRepos) error) error {
 
 			InstanceQuotaOverride: NewGORMInstanceQuotaOverrideRepository(tx),
 			InstanceFollower:      NewGORMInstanceFollowerRepository(tx),
+			ActionRun:             NewGORMActionRunRepository(tx),
 		}
 		return fn(repos)
 	})

@@ -2,7 +2,7 @@
 
 ## Project Setup
 - The frontend uses Vite 8, React 19 and TypeScript 6 (strict mode). It uses `@vitejs/plugin-react` (Vite 8 transforms JSX with Oxc).
-- Unit tests run on Vitest 5 with Testing Library. End-to-end tests run on Playwright (`e2e/`, 40 specs). `e2e/global-setup.ts` starts the test stub (`e2e/stub/`).
+- Unit tests run on Vitest 5 with Testing Library. End-to-end tests run on Playwright (`e2e/`, 41 specs). `e2e/global-setup.ts` starts the test stub (`e2e/stub/`).
 - Node 22 or later is required. The Dockerfile uses `node:26-alpine`.
 
 ## Architecture
@@ -33,6 +33,7 @@
   - `notificationHelpers.tsx`: toast helpers. `notificationEventTypes.ts`: in-app event types.
   - `recentTemplates.ts`: recently used templates in localStorage.
   - `setupWizard.ts`: dismissed flag of the first-run wizard in localStorage.
+  - `actionRuns.ts`: action run status chip, parameter text and page merge helpers; `statusColor` of the job status.
   - `stopTime.ts`: fixed stop time helpers (bounds from `max_instance_ttl_days`, `datetime-local` values, "Stops at" text).
 
 ## Component Patterns
@@ -54,7 +55,8 @@
   - DeploymentHistory (pinned rows, filters, compact rows, folded deploy runs, "Show more", output loaded on open), PodStatusDisplay, QuickDeployDialog, QuotaConfigDialog (`quotaFields.ts`: field list and validation).
   - InstanceQuota (Resource quota section of the instance page: effective values, source chips, override dialog).
   - ExtendTtlMenu, FavoriteButton, FollowButton, NotificationCenter.
-  - InstanceActionsMenu (custom actions of the instance "Actions" menu), JsonResultView.
+  - InstanceActionsMenu (custom actions of the instance "Actions" menu; `useJobLog`, `JobLogPanel`, `JobLogDialog`), JsonResultView.
+  - ActionRunHistory (Action runs of the instance page: result chips, parameters, "Show more", "Show log").
   - SetupWizard (first-run checklist: cluster, template, instance).
 
 ## UX Patterns
