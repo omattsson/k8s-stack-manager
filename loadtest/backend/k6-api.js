@@ -2,8 +2,10 @@
 // Install: brew install k6  (or https://k6.io/docs/get-started/installation/)
 //
 // Usage:
-//   k6 run loadtest/backend/k6-api.js                          # default scenarios (smoke + load)
-//   k6 run --vus 50 --duration 5m loadtest/backend/k6-api.js   # 50 VUs for 5 min
+//   k6 run loadtest/backend/k6-api.js                          # all scenarios
+//   k6 run --env SCENARIO=stack-page loadtest/backend/k6-api.js  # one scenario
+//   k6 run --vus 50 --duration 5m loadtest/backend/k6-api.js   # 50 VUs for 5 min (load scenario function)
+//   k6 run --env SCENARIO=stack-page --vus 2 --duration 30s loadtest/backend/k6-api.js
 //   k6 run --env API_URL=http://backend:8081 loadtest/backend/k6-api.js  # custom URL
 //
 // Auth strategy: setup() logs in once as admin, creates an API key, and
@@ -14,10 +16,13 @@
 //   API_URL           - Backend URL (default: http://localhost:8081)
 //   ADMIN_USERNAME    - Admin user (default: admin)
 //   ADMIN_PASSWORD    - Admin password (default: admin)
+//   SCENARIO          - Run only this scenario (default: all)
+//   STACK_PAGE_INSTANCE_ID - Instance of the stack-page scenario (default: setup() creates one)
 
 import http from 'k6/http';
 import { check, group, sleep } from 'k6';
 import { Rate, Trend, Counter } from 'k6/metrics';
+import { ensureDefaultCluster } from './lib/cluster.js';
 
 // ── Custom Metrics ──────────────────────────────────────────────────
 const errorRate = new Rate('errors');
@@ -26,56 +31,92 @@ const listDuration = new Trend('list_duration', true);
 const crudDuration = new Trend('crud_duration', true);
 const deployDuration = new Trend('deploy_duration', true);
 const analyticsDuration = new Trend('analytics_duration', true);
+const stackPageDuration = new Trend('stack_page_duration', true);
+const stackPageLoad = new Trend('stack_page_load', true);
+const clusterUnavailable = new Counter('stack_page_cluster_unavailable');
 const apiCalls = new Counter('api_calls');
+
+// ── Scenario Selection ─────────────────────────────────────────────
+const SCENARIOS = ['smoke', 'load', 'analytics', 'nested-crud', 'stack-page'];
+const SELECTED = __ENV.SCENARIO || '';
+if (SELECTED !== '' && !SCENARIOS.includes(SELECTED)) {
+  throw new Error(`Unknown SCENARIO "${SELECTED}". Use one of: ${SCENARIOS.join(', ')}`);
+}
+
+function isEnabled(name) {
+  return SELECTED === '' || SELECTED === name;
+}
+
+// The scenarios after smoke start at 35s; a selected scenario starts at once.
+const AFTER_SMOKE = SELECTED === '' ? '35s' : '0s';
 
 // ── Options ─────────────────────────────────────────────────────────
 export const options = {
   scenarios: {
     // Smoke test: quick validation
-    smoke: {
-      executor: 'constant-vus',
-      vus: 5,
-      duration: '30s',
-      tags: { scenario: 'smoke' },
-      exec: 'smokeTest',
-    },
+    ...(isEnabled('smoke') && {
+      smoke: {
+        executor: 'constant-vus',
+        vus: 5,
+        duration: '30s',
+        tags: { scenario: 'smoke' },
+        exec: 'smokeTest',
+      },
+    }),
     // Load test: sustained concurrent users
-    load: {
-      executor: 'ramping-vus',
-      startVUs: 0,
-      stages: [
-        { duration: '30s', target: 20 },  // ramp up
-        { duration: '2m', target: 20 },   // hold
-        { duration: '30s', target: 50 },  // spike
-        { duration: '1m', target: 50 },   // hold spike
-        { duration: '30s', target: 0 },   // ramp down
-      ],
-      startTime: '35s', // start after smoke
-      tags: { scenario: 'load' },
-      exec: 'loadTest',
-    },
+    ...(isEnabled('load') && {
+      load: {
+        executor: 'ramping-vus',
+        startVUs: 0,
+        stages: [
+          { duration: '30s', target: 20 },  // ramp up
+          { duration: '2m', target: 20 },   // hold
+          { duration: '30s', target: 50 },  // spike
+          { duration: '1m', target: 50 },   // hold spike
+          { duration: '30s', target: 0 },   // ramp down
+        ],
+        startTime: AFTER_SMOKE,
+        tags: { scenario: 'load' },
+        exec: 'loadTest',
+      },
+    }),
     // Analytics: aggregation-heavy reads + notifications
-    analytics: {
-      executor: 'constant-vus',
-      vus: 10,
-      duration: '2m',
-      startTime: '35s', // starts after smoke, runs in parallel with load
-      exec: 'analyticsTest',
-      tags: { scenario: 'analytics' },
-    },
+    ...(isEnabled('analytics') && {
+      analytics: {
+        executor: 'constant-vus',
+        vus: 10,
+        duration: '2m',
+        startTime: AFTER_SMOKE, // runs in parallel with load
+        exec: 'analyticsTest',
+        tags: { scenario: 'analytics' },
+      },
+    }),
     // Nested CRUD: sub-resources, clone, compare, export
-    'nested-crud': {
-      executor: 'ramping-vus',
-      startVUs: 0,
-      stages: [
-        { duration: '30s', target: 10 },
-        { duration: '2m', target: 20 },
-        { duration: '30s', target: 0 },
-      ],
-      startTime: '35s', // starts after smoke
-      exec: 'nestedCrudTest',
-      tags: { scenario: 'nested-crud' },
-    },
+    ...(isEnabled('nested-crud') && {
+      'nested-crud': {
+        executor: 'ramping-vus',
+        startVUs: 0,
+        stages: [
+          { duration: '30s', target: 10 },
+          { duration: '2m', target: 20 },
+          { duration: '30s', target: 0 },
+        ],
+        startTime: AFTER_SMOKE,
+        exec: 'nestedCrudTest',
+        tags: { scenario: 'nested-crud' },
+      },
+    }),
+    // Stack page: the requests of the browser when a user opens an instance
+    ...(isEnabled('stack-page') && {
+      'stack-page': {
+        executor: 'constant-vus',
+        vus: 10,
+        duration: '2m',
+        startTime: AFTER_SMOKE,
+        exec: 'stackPageTest',
+        tags: { scenario: 'stack-page' },
+      },
+    }),
   },
   thresholds: {
     http_req_duration: ['p(95)<500', 'p(99)<1000'],  // 95th < 500ms, 99th < 1s
@@ -84,6 +125,8 @@ export const options = {
     list_duration: ['p(95)<450'],
     crud_duration: ['p(95)<500'],
     analytics_duration: ['p(95)<600'],
+    stack_page_duration: ['p(95)<400'],
+    stack_page_load: ['p(95)<1000'],
   },
 };
 
@@ -170,16 +213,93 @@ export function setup() {
   // Create an API key for load testing
   const keyRes = http.post(
     `${BASE_URL}/api/v1/users/${userId}/api-keys`,
-    JSON.stringify({ name: 'k6-loadtest' }),
+    JSON.stringify({ name: 'k6-loadtest', expires_in_days: 1 }),
     { headers: authHeaders(token) },
   );
   if (keyRes.status !== 201 && keyRes.status !== 200) {
     throw new Error(`setup: create API key failed (status ${keyRes.status})`);
   }
   const keyBody = JSON.parse(keyRes.body);
-
   console.log(`setup: created API key ${keyBody.id} for user ${userId}`);
-  return { apiKey: keyBody.raw_key, userId: userId, apiKeyId: keyBody.id };
+
+  const cluster = ensureDefaultCluster(BASE_URL, authHeaders(token));
+  console.log(`setup: default cluster ${cluster.name} (${cluster.id})`);
+
+  const stackPage = isEnabled('stack-page') ? stackPageInstance(authHeaders(token)) : null;
+
+  return { apiKey: keyBody.raw_key, userId: userId, apiKeyId: keyBody.id, stackPage };
+}
+
+// stackPageInstance returns the instance of the stack-page scenario:
+// STACK_PAGE_INSTANCE_ID, or a new draft instance of a definition with two
+// charts, a value override and a branch override.
+function stackPageInstance(headers) {
+  if (__ENV.STACK_PAGE_INSTANCE_ID) {
+    const res = http.get(`${BASE_URL}/api/v1/stack-instances/${__ENV.STACK_PAGE_INSTANCE_ID}`, { headers });
+    if (res.status !== 200) {
+      throw new Error(`setup: STACK_PAGE_INSTANCE_ID not found (status ${res.status})`);
+    }
+    return { instanceId: __ENV.STACK_PAGE_INSTANCE_ID, created: false };
+  }
+
+  const suffix = Date.now();
+  const defRes = http.post(
+    `${BASE_URL}/api/v1/stack-definitions`,
+    JSON.stringify({ name: `k6-stack-page-${suffix}`, description: 'Stack page load test', default_branch: 'main' }),
+    { headers },
+  );
+  if (defRes.status !== 201) {
+    throw new Error(`setup: create stack page definition failed (status ${defRes.status})`);
+  }
+  const defId = defRes.json().id;
+
+  const chartIds = [];
+  for (const [name, values] of [
+    ['frontend-app', 'replicaCount: 2\nimage:\n  tag: latest'],
+    ['backend-api', 'replicaCount: 3\nresources:\n  limits:\n    memory: 512Mi'],
+  ]) {
+    const chartRes = http.post(
+      `${BASE_URL}/api/v1/stack-definitions/${defId}/charts`,
+      JSON.stringify({
+        chart_name: name,
+        repository_url: `https://charts.example.com/${name}`,
+        chart_version: '1.0.0',
+        default_values: values,
+      }),
+      { headers },
+    );
+    if (chartRes.status !== 201) {
+      throw new Error(`setup: add stack page chart ${name} failed (status ${chartRes.status})`);
+    }
+    chartIds.push(chartRes.json().id);
+  }
+
+  const instRes = http.post(
+    `${BASE_URL}/api/v1/stack-instances`,
+    JSON.stringify({ stack_definition_id: defId, name: `k6-stack-page-${suffix}`, branch: 'main', ttl_minutes: 480 }),
+    { headers },
+  );
+  if (instRes.status !== 201) {
+    throw new Error(`setup: create stack page instance failed (status ${instRes.status}): ${instRes.body}`);
+  }
+  const instanceId = instRes.json().id;
+
+  const overrideRes = http.put(
+    `${BASE_URL}/api/v1/stack-instances/${instanceId}/overrides/${chartIds[0]}`,
+    JSON.stringify({ values: 'replicaCount: 1\nimage:\n  tag: v2.0.0' }),
+    { headers },
+  );
+  const branchRes = http.put(
+    `${BASE_URL}/api/v1/stack-instances/${instanceId}/branches/${chartIds[1]}`,
+    JSON.stringify({ branch: 'feature/k6' }),
+    { headers },
+  );
+  if (overrideRes.status !== 200 || branchRes.status !== 200) {
+    console.warn(`setup: stack page overrides: value ${overrideRes.status}, branch ${branchRes.status}`);
+  }
+
+  console.log(`setup: stack page instance ${instanceId}`);
+  return { instanceId, definitionId: defId, created: true };
 }
 
 export function teardown(data) {
@@ -203,17 +323,32 @@ export function teardown(data) {
     { headers: authHeaders(token) },
   );
   console.log(`teardown: deleted API key ${data.apiKeyId} (status ${delRes.status})`);
+
+  if (data.stackPage && data.stackPage.created) {
+    const instDel = http.del(`${BASE_URL}/api/v1/stack-instances/${data.stackPage.instanceId}`, null, {
+      headers: authHeaders(token),
+    });
+    const defDel = http.del(`${BASE_URL}/api/v1/stack-definitions/${data.stackPage.definitionId}`, null, {
+      headers: authHeaders(token),
+    });
+    console.log(`teardown: deleted stack page instance (status ${instDel.status}) and definition (status ${defDel.status})`);
+  }
 }
 
 // ── Smoke Test ──────────────────────────────────────────────────────
 export function smokeTest(data) {
   group('Health Checks', () => {
-    const endpoints = ['/health', '/health/live', '/health/ready'];
-    for (const ep of endpoints) {
-      const res = http.get(`${BASE_URL}${ep}`, { tags: { name: `GET ${ep}` } });
+    // Readiness is DOWN (503) when no registered cluster is reachable, for
+    // example the in-cluster default cluster outside a pod.
+    const endpoints = [['/health', [200]], ['/health/live', [200]], ['/health/ready', [200, 503]]];
+    for (const [ep, expected] of endpoints) {
+      const res = http.get(`${BASE_URL}${ep}`, {
+        tags: { name: `GET ${ep}` },
+        responseCallback: http.expectedStatuses(...expected),
+      });
       apiCalls.add(1);
       const ok = check(res, {
-        [`${ep} status 200`]: (r) => r.status === 200,
+        [`${ep} status ${expected.join(' or ')}`]: (r) => expected.includes(r.status),
       });
       errorRate.add(!ok);
     }
@@ -399,7 +534,7 @@ export function loadTest(data) {
     // Update instance TTL
     const extendRes = http.post(
       `${BASE_URL}/api/v1/stack-instances/${inst.id}/extend`,
-      JSON.stringify({ ttl_minutes: 480 }),
+      JSON.stringify({ minutes: 60 }),
       { headers, tags: { name: 'POST /stack-instances/:id/extend' } },
     );
     crudDuration.add(extendRes.timings.duration);
@@ -555,7 +690,7 @@ export function nestedCrudTest(data) {
         chart_name: 'frontend-app',
         repository_url: 'https://charts.example.com/frontend',
         chart_version: '1.0.0',
-        values_yaml: 'replicaCount: 2\nimage:\n  tag: latest',
+        default_values: 'replicaCount: 2\nimage:\n  tag: latest',
       }),
       { headers, tags: { name: 'POST /stack-definitions/:id/charts' } },
     );
@@ -576,7 +711,7 @@ export function nestedCrudTest(data) {
         chart_name: 'backend-api',
         repository_url: 'https://charts.example.com/backend',
         chart_version: '2.1.0',
-        values_yaml: 'replicaCount: 3\nresources:\n  limits:\n    memory: 512Mi',
+        default_values: 'replicaCount: 3\nresources:\n  limits:\n    memory: 512Mi',
       }),
       { headers, tags: { name: 'POST /stack-definitions/:id/charts' } },
     );
@@ -618,7 +753,7 @@ export function nestedCrudTest(data) {
     if (chartId1) {
       const overrideRes = http.put(
         `${BASE_URL}/api/v1/stack-instances/${instId}/overrides/${chartId1}`,
-        JSON.stringify({ values_yaml: 'replicaCount: 5\nimage:\n  tag: v2.0.0' }),
+        JSON.stringify({ values: 'replicaCount: 5\nimage:\n  tag: v2.0.0' }),
         { headers, tags: { name: 'PUT /stack-instances/:id/overrides/:chartId' } },
       );
       crudDuration.add(overrideRes.timings.duration);
@@ -706,4 +841,92 @@ export function nestedCrudTest(data) {
   });
 
   sleep(0.5);
+}
+
+// ── Stack Page Test ────────────────────────────────────────────────
+// The requests of the web UI when a user opens an instance page
+// (pages/StackInstances/Detail.tsx and its hooks and components). Without
+// cluster access, /pods and /status answer 502 at once. /action-runs (#640)
+// answers 404 on a backend without the route.
+
+const NO_CLUSTER = [200, 502];
+
+// stackPageBatch sends the requests at the same time and checks each status.
+// Each request is [label, URL, request name, accepted statuses].
+function stackPageBatch(headers, requests) {
+  const responses = http.batch(requests.map(([, url, name, accepted]) => [
+    'GET',
+    url,
+    null,
+    { headers, tags: { name }, responseCallback: http.expectedStatuses(...accepted) },
+  ]));
+  requests.forEach(([label, , , accepted], i) => {
+    const res = responses[i];
+    stackPageDuration.add(res.timings.duration);
+    apiCalls.add(1);
+    const ok = check(res, { [`stack page ${label} ${accepted.join(' or ')}`]: (r) => accepted.includes(r.status) });
+    errorRate.add(!ok);
+    if (res.status === 502) clusterUnavailable.add(1);
+  });
+  return responses;
+}
+
+export function stackPageTest(data) {
+  if (!data.stackPage) {
+    sleep(1);
+    return;
+  }
+  const headers = apiKeyHeaders(data.apiKey);
+  const id = data.stackPage.instanceId;
+  const inst = `${BASE_URL}/api/v1/stack-instances/${id}`;
+  const start = Date.now();
+
+  group('Stack Page', () => {
+    // The page and its hooks start these requests at the same time.
+    const first = stackPageBatch(headers, [
+      ['instance', inst, 'GET /stack-instances/:id', [200]],
+      ['deploy history', `${inst}/deploy-log?view=summary&limit=10`,
+        'GET /stack-instances/:id/deploy-log (summary)', [200]],
+      ['rollback targets', `${inst}/deploy-log?view=summary&action=deploy&status=success&limit=50`,
+        'GET /stack-instances/:id/deploy-log (rollback targets)', [200]],
+      ['quota', `${inst}/quota`, 'GET /stack-instances/:id/quota', [200]],
+      ['actions', `${inst}/actions`, 'GET /stack-instances/:id/actions', [200]],
+      // TODO(#640): accept only 200 once the route is on main
+      ['action runs', `${inst}/action-runs`, 'GET /stack-instances/:id/action-runs', [200, 404]],
+      ['favorite', `${BASE_URL}/api/v1/favorites/check?entity_type=instance&entity_id=${id}`,
+        'GET /favorites/check', [200]],
+      ['notification count', `${BASE_URL}/api/v1/notifications/count`, 'GET /notifications/count', [200]],
+    ]);
+    if (first[0].status !== 200) return;
+
+    // After the instance: its definition and overrides, then the pod state.
+    const defId = first[0].json('stack_definition_id');
+    stackPageBatch(headers, [
+      ['definition', `${BASE_URL}/api/v1/stack-definitions/${defId}`, 'GET /stack-definitions/:id', [200]],
+      ['overrides', `${inst}/overrides`, 'GET /stack-instances/:id/overrides', [200]],
+      ['branches', `${inst}/branches`, 'GET /stack-instances/:id/branches', [200]],
+    ]);
+    stackPageBatch(headers, [
+      ['pods', `${inst}/pods`, 'GET /stack-instances/:id/pods', NO_CLUSTER],
+      ['status', `${inst}/status`, 'GET /stack-instances/:id/status', NO_CLUSTER],
+    ]);
+  });
+
+  stackPageLoad.add(Date.now() - start);
+  sleep(1);
+}
+
+// ── Default Function ───────────────────────────────────────────────
+// k6 runs it with --vus/--duration (the CLI then replaces the scenarios).
+// SCENARIO selects the function; the default is the load scenario.
+const SCENARIO_FUNCTIONS = {
+  smoke: smokeTest,
+  load: loadTest,
+  analytics: analyticsTest,
+  'nested-crud': nestedCrudTest,
+  'stack-page': stackPageTest,
+};
+
+export default function (data) {
+  (SCENARIO_FUNCTIONS[SELECTED] || loadTest)(data);
 }

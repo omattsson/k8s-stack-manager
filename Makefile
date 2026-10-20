@@ -1,4 +1,4 @@
-.PHONY: gosec e2e-prepare test-e2e-isolated dev dev-otel dev-api-only compose-api-only seed dev-backend dev-frontend dev-local dev-local-backend dev-local-frontend prod prod-backend prod-frontend build clean prune test test-backend test-backend-integration test-backend-all test-frontend test-e2e integration-infra-start integration-infra-stop install docs fmt lint loadtest loadtest-start loadtest-start-backend loadtest-start-frontend loadtest-stop loadtest-stop-backend loadtest-stop-frontend loadtest-backend loadtest-backend-run loadtest-stress loadtest-stress-run loadtest-frontend loadtest-frontend-run
+.PHONY: gosec e2e-prepare test-e2e-isolated dev dev-otel dev-api-only compose-api-only seed dev-backend dev-frontend dev-local dev-local-backend dev-local-frontend prod prod-backend prod-frontend build clean prune test test-backend test-backend-integration test-backend-all test-frontend test-e2e integration-infra-start integration-infra-stop install docs fmt lint loadtest loadtest-start loadtest-start-backend loadtest-start-frontend loadtest-stop loadtest-stop-backend loadtest-stop-frontend loadtest-backend loadtest-backend-run loadtest-stress loadtest-stress-run loadtest-frontend loadtest-frontend-run loadtest-capture
 
 # Development mode for both services
 dev:
@@ -350,51 +350,96 @@ dev-local: mysql-start
 	wait
 
 # ── Load Testing ─────────────────────────────────────────────────────
-# Starts backend in release mode with high rate limit, runs tests, then cleans up.
-# Requires: k6 (brew install k6) for backend tests.
+# Starts the backend as a local process in release mode, runs the tests, then
+# stops it. Requires: k6 (brew install k6) for the backend tests.
+# See loadtest/README.md.
 
-# Env vars for load test backend (release mode, high rate limit, no debug logging)
+# Port of the load test backend. The health checks and the k6 API_URL use it.
+LOADTEST_PORT ?= 8081
+LOADTEST_URL = http://localhost:$(LOADTEST_PORT)
+# docker: start the MySQL container (mysql-start) and stop the Docker backend.
+# external: use the MySQL server of the DB_* variables; run no Docker command.
+LOADTEST_MYSQL ?= docker
+# 1: run each k6 test through loadtest/capture-resources.sh $(CAPTURE_ARGS).
+LOADTEST_CAPTURE ?=
+CAPTURE_ARGS ?=
+LOADTEST_K6 = $(if $(filter 1 true yes,$(LOADTEST_CAPTURE)),loadtest/capture-resources.sh $(CAPTURE_ARGS) --) \
+	k6 run --env API_URL=$(LOADTEST_URL)
+
+# Env vars of the load test backends. All k6 users share one IP address, so
+# both rate limits are high. The empty kubeconfig and git token variables keep
+# the backend away from real clusters and git hosts.
 LOADTEST_ENV = \
-	JWT_SECRET=$${JWT_SECRET:-dev-secret-change-in-production-minimum-16-chars} \
-	ADMIN_USERNAME=$${ADMIN_USERNAME:-admin} ADMIN_PASSWORD=$${ADMIN_PASSWORD:-admin} \
-	SELF_REGISTRATION=true \
-	HELM_BINARY=$${HELM_BINARY:-helm} \
-	KUBECONFIG_PATH=$${KUBECONFIG_PATH:-$$HOME/.kube/config} \
-	PPROF_ENABLED=$${PPROF_ENABLED:-true} PPROF_ADDR=$${PPROF_ADDR:-:6060} \
-	RATE_LIMIT=1000000 PORT=8081 GIN_MODE=release
-
-# Env vars for MySQL + OTel load testing
-LOADTEST_MYSQL_ENV = \
-	APP_DEBUG=false \
+	APP_DEBUG=false GIN_MODE=release \
+	SERVER_HOST=$${SERVER_HOST:-127.0.0.1} SERVER_PORT=$(LOADTEST_PORT) \
 	DB_HOST=$${DB_HOST:-127.0.0.1} DB_PORT=$${DB_PORT:-3306} \
 	DB_USER=$${DB_USER:-root} DB_PASSWORD=$${DB_PASSWORD:-rootpassword} DB_NAME=$${DB_NAME:-app} \
-	DB_MAX_OPEN_CONNS=$${DB_MAX_OPEN_CONNS:-200} DB_MAX_IDLE_CONNS=$${DB_MAX_IDLE_CONNS:-20} \
 	JWT_SECRET=$${JWT_SECRET:-dev-secret-change-in-production-minimum-16-chars} \
 	ADMIN_USERNAME=$${ADMIN_USERNAME:-admin} ADMIN_PASSWORD=$${ADMIN_PASSWORD:-admin} \
 	SELF_REGISTRATION=true \
 	HELM_BINARY=$${HELM_BINARY:-helm} \
-	KUBECONFIG_PATH=$${KUBECONFIG_PATH:-$$HOME/.kube/config} \
-	PPROF_ENABLED=$${PPROF_ENABLED:-true} PPROF_ADDR=$${PPROF_ADDR:-:6060} \
-	OTEL_ENABLED=true OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4317 \
-	OTEL_SERVICE_NAME=k8s-stack-manager OTEL_TRACE_SAMPLE_RATE=1.0 \
-	RATE_LIMIT=1000000 PORT=8081 GIN_MODE=release
+	KUBECONFIG= KUBECONFIG_PATH= IN_CLUSTER_FALLBACK_KUBECONFIG= \
+	AZURE_DEVOPS_PAT= GITHUB_TOKEN= GITLAB_TOKEN= \
+	PPROF_ENABLED=$${PPROF_ENABLED:-true} PPROF_ADDR=$${PPROF_ADDR:-127.0.0.1:6060} \
+	OTEL_TRACE_SAMPLE_RATE=$${OTEL_TRACE_SAMPLE_RATE:-0.05} \
+	RATE_LIMIT=$${RATE_LIMIT:-1000000} LOGIN_RATE_LIMIT=$${LOGIN_RATE_LIMIT:-1000000}
 
-loadtest-start-backend: ## Build and start backend in release mode for load testing
-	@echo "Stopping Docker backend (load test uses a local binary instead)..."
-	@docker compose stop backend 2>/dev/null || true
-	@echo "Building backend (release mode)..."
-	@cd backend && mkdir -p tmp
-	@cd backend && mkdir -p tmp && go build -o tmp/main ./api
-	@echo "Starting backend (GIN_MODE=release, RATE_LIMIT=1000000)..."
-	@cd backend && ( $(LOADTEST_ENV) ./tmp/main > tmp/loadtest.log 2>&1 & echo $$! > tmp/loadtest-backend.pid )
-	@n=0; while ! curl -sf http://localhost:8081/health/live >/dev/null 2>&1; do \
+# Env vars for MySQL + OTel load testing
+LOADTEST_MYSQL_ENV = $(LOADTEST_ENV) \
+	DB_MAX_OPEN_CONNS=$${DB_MAX_OPEN_CONNS:-200} DB_MAX_IDLE_CONNS=$${DB_MAX_IDLE_CONNS:-20} \
+	OTEL_ENABLED=true OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4317 \
+	OTEL_SERVICE_NAME=k8s-stack-manager
+
+# Fail when the backend port or the pprof port is in use: the health check or
+# the capture script would otherwise talk to another process.
+define loadtest_check_ports
+	@ports="$(LOADTEST_PORT)"; addr=$${PPROF_ADDR:-127.0.0.1:6060}; \
+	if [ "$${PPROF_ENABLED:-true}" = true ]; then ports="$$ports $${addr##*:}"; fi; \
+	if command -v lsof >/dev/null 2>&1; then tool=lsof; \
+	elif command -v ss >/dev/null 2>&1; then tool=ss; \
+	else echo "WARNING: lsof not found, port check skipped"; ports=; fi; \
+	for p in $$ports; do \
+		if [ $$tool = lsof ]; then used=$$(lsof -nP -iTCP:$$p -sTCP:LISTEN -t 2>/dev/null); \
+		else used=$$(ss -ltn "sport = :$$p" 2>/dev/null | tail -n +2); fi; \
+		if [ -n "$$used" ]; then \
+			echo "ERROR: port $$p is in use. Stop the other process, or set LOADTEST_PORT or PPROF_ADDR."; exit 1; \
+		fi; \
+	done
+endef
+
+# Wait until the load test backend is healthy. $(1): PID file, $(2): log file (both in backend/tmp).
+define loadtest_wait_backend
+	@n=0; until curl -sf $(LOADTEST_URL)/health/live >/dev/null 2>&1; do \
+		if ! kill -0 $$(cat backend/tmp/$(1)) 2>/dev/null; then \
+			echo "ERROR: the backend stopped. Last lines of backend/tmp/$(2):"; tail -20 backend/tmp/$(2); \
+			rm -f backend/tmp/$(1); exit 1; \
+		fi; \
 		n=$$((n+1)); \
-		if [ $$n -ge 30 ]; then echo "ERROR: Backend failed to start after 30s. See backend/tmp/loadtest.log"; exit 1; fi; \
+		if [ $$n -ge 30 ]; then \
+			echo "ERROR: Backend failed to start after 30s. See backend/tmp/$(2)"; \
+			kill $$(cat backend/tmp/$(1)) 2>/dev/null; rm -f backend/tmp/$(1); exit 1; \
+		fi; \
 		sleep 1; \
 	done
-	@echo "Backend is ready on :8081 (logs: backend/tmp/loadtest.log)"
+	@echo "Backend is ready on $(LOADTEST_URL) (logs: backend/tmp/$(2))"
+endef
+
+loadtest-start-backend: $(if $(filter docker,$(LOADTEST_MYSQL)),mysql-start) ## Build and start backend in release mode for load testing
+ifeq ($(LOADTEST_MYSQL),docker)
+	@echo "Stopping Docker backend (load test uses a local binary instead)..."
+	@docker compose stop backend 2>/dev/null || true
+endif
+	$(call loadtest_check_ports)
+	@echo "Building backend (release mode)..."
+	@cd backend && mkdir -p tmp && go build -o tmp/main ./api
+	@echo "Starting backend on port $(LOADTEST_PORT) (GIN_MODE=release, APP_DEBUG=false)..."
+	@cd backend && ( $(LOADTEST_ENV) ./tmp/main > tmp/loadtest.log 2>&1 & echo $$! > tmp/loadtest-backend.pid )
+	$(call loadtest_wait_backend,loadtest-backend.pid,loadtest.log)
 
 loadtest-start-frontend: ## Start frontend dev server for load testing
+	@if [ "$(LOADTEST_PORT)" != 8081 ]; then \
+		echo "ERROR: the frontend dev server calls the backend on port 8081. Use LOADTEST_PORT=8081."; exit 1; \
+	fi
 	@echo "Starting frontend dev server..."
 	@cd frontend && ( npm run dev > /tmp/loadtest-frontend.log 2>&1 & echo $$! > /tmp/loadtest-frontend.pid )
 	@n=0; while ! curl -sf http://localhost:3000 >/dev/null 2>&1; do \
@@ -438,11 +483,11 @@ loadtest-backend: loadtest-start-backend ## Run k6 backend load tests (starts/st
 
 loadtest-backend-run: ## Run k6 tests (assumes backend already running)
 	@command -v k6 >/dev/null 2>&1 || { echo "k6 not found. Install: brew install k6"; exit 1; }
-	@echo "Running backend API load test..."
-	k6 run loadtest/backend/k6-api.js
+	@echo "Running backend API load test against $(LOADTEST_URL)..."
+	$(LOADTEST_K6) loadtest/backend/k6-api.js
 	@echo ""
 	@echo "Running backend WebSocket load test..."
-	k6 run loadtest/backend/k6-websocket.js
+	$(LOADTEST_K6) loadtest/backend/k6-websocket.js
 
 loadtest-stress: loadtest-start-backend ## Run stress/optimization load tests (starts/stops backend)
 	@$(MAKE) loadtest-stress-run || ($(MAKE) loadtest-stop-backend; exit 1)
@@ -450,8 +495,11 @@ loadtest-stress: loadtest-start-backend ## Run stress/optimization load tests (s
 
 loadtest-stress-run: ## Run k6 stress tests (assumes backend already running)
 	@command -v k6 >/dev/null 2>&1 || { echo "k6 not found. Install: brew install k6"; exit 1; }
-	@echo "Running stress/optimization load tests..."
-	k6 run loadtest/backend/k6-stress.js
+	@echo "Running stress/optimization load tests against $(LOADTEST_URL)..."
+	$(LOADTEST_K6) loadtest/backend/k6-stress.js
+
+loadtest-capture: ## Record RSS, CPU and pprof profiles of the running load test backend (Ctrl-C stops)
+	loadtest/capture-resources.sh $(CAPTURE_ARGS)
 
 loadtest-frontend: loadtest-start ## Run Playwright frontend load tests (starts/stops backend + frontend)
 	@$(MAKE) loadtest-frontend-run || ($(MAKE) loadtest-stop; exit 1)
@@ -469,7 +517,7 @@ mysql-start: ## Start MySQL container
 		if [ $$n -ge 90 ]; then echo "ERROR: MySQL failed to start after 90s"; exit 1; fi; \
 		sleep 1; \
 	done
-	@echo "MySQL is ready on :3306"
+	@echo "MySQL is ready on :$${DB_PORT:-3306}"
 
 mysql-stop: ## Stop MySQL container
 	docker compose stop mysql
@@ -505,17 +553,12 @@ loadtest-mysql-start: ## Start MySQL + OTel + mysqld-exporter for load testing
 		if [ $$n -ge 30 ]; then echo "ERROR: OTel Collector failed to start after 30s"; exit 1; fi; \
 		sleep 1; \
 	done
+	$(call loadtest_check_ports)
 	@echo "Building backend (release mode)..."
-	@cd backend && mkdir -p tmp
 	@cd backend && mkdir -p tmp && go build -o tmp/main ./api
-	@echo "Starting backend (MySQL + OTel, GIN_MODE=release, RATE_LIMIT=1000000)..."
+	@echo "Starting backend on port $(LOADTEST_PORT) (MySQL + OTel, OTEL_TRACE_SAMPLE_RATE=$${OTEL_TRACE_SAMPLE_RATE:-0.05})..."
 	@cd backend && ( $(LOADTEST_MYSQL_ENV) ./tmp/main > tmp/loadtest-mysql.log 2>&1 & echo $$! > tmp/loadtest-mysql.pid )
-	@n=0; while ! curl -sf http://localhost:8081/health/live >/dev/null 2>&1; do \
-		n=$$((n+1)); \
-		if [ $$n -ge 30 ]; then echo "ERROR: Backend failed to start after 30s. See backend/tmp/loadtest-mysql.log"; exit 1; fi; \
-		sleep 1; \
-	done
-	@echo "Backend ready on :8081 (MySQL + OTel, logs: backend/tmp/loadtest-mysql.log)"
+	$(call loadtest_wait_backend,loadtest-mysql.pid,loadtest-mysql.log)
 
 loadtest-mysql-stop: ## Stop MySQL load test backend + infrastructure
 	@if [ -f backend/tmp/loadtest-mysql.pid ]; then \
