@@ -37,6 +37,8 @@ type Dispatcher struct {
 	client  *http.Client
 	workers workerPool
 	drops   dropLog
+	// retryDelay: 0 means the retryDelay constant; tests change it.
+	retryDelay time.Duration
 }
 
 // NewDispatcher creates a channel dispatcher. It starts no goroutine: the
@@ -127,6 +129,13 @@ func (d *Dispatcher) DeliverOnce(ctx context.Context, ch models.NotificationChan
 	return "success", statusCode, ""
 }
 
+func (d *Dispatcher) retryWait() time.Duration {
+	if d.retryDelay > 0 {
+		return d.retryDelay
+	}
+	return retryDelay
+}
+
 func (d *Dispatcher) deliver(ctx context.Context, ch *models.NotificationChannel, eventType string, body []byte) (status string, statusCode int, errMsg string) {
 	statusCode, err := d.post(ctx, ch, eventType, body)
 	if err == nil {
@@ -138,7 +147,7 @@ func (d *Dispatcher) deliver(ctx context.Context, ch *models.NotificationChannel
 		select {
 		case <-ctx.Done():
 			return "failed", 0, "context cancelled"
-		case <-time.After(retryDelay):
+		case <-time.After(d.retryWait()):
 		}
 		statusCode, err = d.post(ctx, ch, eventType, body)
 		if err == nil {

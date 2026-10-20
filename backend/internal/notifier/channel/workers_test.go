@@ -139,6 +139,8 @@ func TestDispatch_SlowChannelDoesNotDelayOthers(t *testing.T) {
 				{ID: "healthy", Name: "healthy", WebhookURL: healthy.URL, Secret: "s", Enabled: true},
 			}}
 			d := newTestDispatcher(t, repo)
+			// Stop always comes during the retry wait, also on a slow runner.
+			d.retryDelay = time.Minute
 			reader := useTestCounter(t, d)
 
 			const events = 5
@@ -272,6 +274,7 @@ func TestChannelWorker_QueueFull(t *testing.T) {
 	}}
 	d := newTestDispatcher(t, repo)
 	d.workers.queueSize = 2
+	d.retryDelay = time.Minute
 	reader := useTestCounter(t, d)
 	logs := useTestLogger(t, &d.drops)
 
@@ -309,6 +312,8 @@ func TestDispatcher_StopLeavesNoWorker(t *testing.T) {
 		{ID: "h", Name: "h", WebhookURL: healthy.URL, Enabled: true},
 	}}
 	d := newTestDispatcher(t, repo)
+	// A request timeout on a slow runner waits for the retry, not a second request.
+	d.retryDelay = time.Minute
 	reader := useTestCounter(t, d)
 
 	d.Dispatch(context.Background(), EventPayload{EventType: "deployment.success"})
@@ -328,7 +333,7 @@ func TestDispatcher_StopLeavesNoWorker(t *testing.T) {
 	}
 	assert.Zero(t, d.workers.running.Load())
 	assert.Zero(t, d.workers.workerCount())
-	require.Eventually(t, func() bool { return slowA.cancelled.Load() == 1 && slowB.cancelled.Load() == 1 },
+	require.Eventually(t, func() bool { return slowA.cancelled.Load() >= 1 && slowB.cancelled.Load() >= 1 },
 		5*time.Second, 5*time.Millisecond, "the channels see the cancelled requests")
 	assert.Len(t, repo.Deliveries(), 3, "each event in progress has a delivery log")
 

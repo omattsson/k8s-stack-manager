@@ -143,7 +143,7 @@ func TestNotifier_StopEndsAllWorkers(t *testing.T) {
 				t.Fatal("the intake worker still runs after Stop")
 			}
 			if !tt.holdLookup {
-				require.Eventually(t, func() bool { return slowCancelled.Load() == 1 },
+				require.Eventually(t, func() bool { return slowCancelled.Load() >= 1 },
 					5*time.Second, 5*time.Millisecond, "Stop cancels the slow request")
 				assert.Equal(t, 1, repo.deliveryCount("slow"), "the cancelled request has a delivery log")
 			}

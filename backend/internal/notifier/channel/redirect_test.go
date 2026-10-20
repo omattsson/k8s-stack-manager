@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"backend/internal/models"
 
@@ -82,7 +83,8 @@ func TestDispatch_TransportErrorHidesURL(t *testing.T) {
 
 	ch := models.NotificationChannel{ID: "ch-1", Name: "chat", WebhookURL: url, Enabled: true}
 	d := NewDispatcher(&mockChannelRepo{})
-	// The connection error is retried once (2 s delay).
+	// The connection error is retried once.
+	d.retryDelay = 10 * time.Millisecond
 	status, _, errMsg := d.DispatchTo(context.Background(), ch, EventPayload{EventType: "deployment.success"})
 	assert.Equal(t, "failed", status)
 	assert.Contains(t, errMsg, "sending request")

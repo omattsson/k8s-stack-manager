@@ -85,11 +85,13 @@ func TestDelivery_InvalidURLHidesURL(t *testing.T) {
 			ch := models.NotificationChannel{ID: "ch-1", Name: "chat", WebhookURL: tt.url, Secret: "signing-secret", Enabled: true}
 			repo := &mockChannelRepo{channels: []models.NotificationChannel{ch}}
 			d := newTestDispatcher(t, repo)
+			// Far above any slow runner, so only a retry reaches it.
+			d.retryDelay = time.Minute
 
 			start := time.Now()
 			status, code, errMsg := tt.send(t, d, repo, ch)
 
-			assert.Less(t, time.Since(start), retryDelay, "an invalid URL is not retried")
+			assert.Less(t, time.Since(start), d.retryDelay, "an invalid URL is not retried")
 			assert.Equal(t, "failed", status)
 			assert.Zero(t, code)
 			assert.Equal(t, "creating request: invalid webhook URL", errMsg)
