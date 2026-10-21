@@ -1116,7 +1116,12 @@ func (d *Database) AutoMigrate() error {
 
 	// Migration 61: action_runs (history of custom action calls, #640).
 	migrator.AddMigration(actionRunsMigration())
-	migrator.AddMigration(notificationTriggerMigration()) // Migration 64: notification trigger columns (#652).
+
+	// Migration 62: drop the redundant notifications.is_read index (#648).
+	migrator.AddMigration(dropNotificationIsReadIndexMigration())
+
+	// Migration 64: notification trigger columns (#652).
+	migrator.AddMigration(notificationTriggerMigration())
 
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
@@ -2019,6 +2024,38 @@ func actionRunsMigration() schema.Migration {
 				return tx.Migrator().DropTable(&models.ActionRun{})
 			}
 			return nil
+		},
+	}
+}
+
+// notificationIsReadIndexName is the single-column index on
+// notifications.is_read that AutoMigrate created in migration 4.
+const notificationIsReadIndexName = "idx_notifications_is_read"
+
+// dropNotificationIsReadIndexMigration is migration 62. It drops the
+// single-column index on notifications.is_read (#648). Every notification
+// query filters by user_id, so idx_notifications_user_read_created
+// (user_id, is_read, created_at) serves them; the extra index only added
+// lock ranges that MarkAllAsRead and Create of one user could deadlock on.
+// Up and Down are idempotent.
+func dropNotificationIsReadIndexMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261020000062",
+		Name:        "drop_notifications_is_read_index",
+		Description: "Drop the redundant single-column index on notifications.is_read",
+		Up: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if !m.HasTable(&models.Notification{}) || !m.HasIndex(&models.Notification{}, notificationIsReadIndexName) {
+				return nil
+			}
+			return m.DropIndex(&models.Notification{}, notificationIsReadIndexName)
+		},
+		Down: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if !m.HasTable(&models.Notification{}) || m.HasIndex(&models.Notification{}, notificationIsReadIndexName) {
+				return nil
+			}
+			return tx.Exec("CREATE INDEX " + notificationIsReadIndexName + " ON notifications (is_read)").Error // #nosec G202 -- index name is a constant
 		},
 	}
 }

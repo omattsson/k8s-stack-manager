@@ -13880,6 +13880,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "is_read": {
+                    "description": "IsRead has no single-column index: idx_notifications_user_read_created\n(user_id, is_read, created_at) serves every query (migration 62, #648).",
                     "type": "boolean"
                 },
                 "message": {
