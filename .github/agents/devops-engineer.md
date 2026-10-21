@@ -104,7 +104,7 @@ Do not run `make fmt` on the whole tree. Many Go files have existing `gofmt` dif
 ```dockerfile
 # Correct: minimal base, non-root, binaries only
 FROM alpine:3.24
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache 'ca-certificates>=20261020-r0' 'ca-certificates-bundle>=20261020-r0'
 COPY --from=build-prod /app/main .
 COPY --from=helm /usr/local/bin/helm /usr/local/bin/helm
 RUN adduser -D -u 65532 nonroot

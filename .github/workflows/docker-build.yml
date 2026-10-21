@@ -106,6 +106,7 @@ jobs:
         with:
           context: frontend
           file: frontend/Dockerfile
+          target: production
           # Release tags build amd64 and arm64; main builds amd64 only (the
           # release tag builds the same code again for both platforms).
           platforms: ${{ startsWith(github.ref, 'refs/tags/') && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
@@ -114,3 +115,6 @@ jobs:
           labels: ${{ steps.meta-frontend.outputs.labels }}
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,mode=max,scope=frontend
+          # Rebuild the production stage every time, so apk upgrade gets the
+          # current OS package fixes while the base image digest stays the same.
+          no-cache-filters: production
