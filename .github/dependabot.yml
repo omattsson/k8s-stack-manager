@@ -27,6 +27,13 @@ updates:
       mui:
         patterns:
           - "@mui/*"
+      # react and react-dom must have the same version; before dev-dependencies so @types/react lands here.
+      react:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
       dev-dependencies:
         dependency-type: "development"
         update-types:
