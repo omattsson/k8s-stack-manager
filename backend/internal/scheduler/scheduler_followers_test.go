@@ -5,7 +5,6 @@ import (
 	"sync"
 	"testing"
 
-	"backend/internal/hooks"
 	"backend/internal/models"
 	"backend/internal/notifier"
 
@@ -13,61 +12,48 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// recordingCleanupNotifier records the notification targets.
+// recordingCleanupNotifier records the summary and any instance
+// notification. NotifyInstance is not part of CleanupNotifier; a call would
+// mean that the scheduler sends a per-instance notification again (#651).
 type recordingCleanupNotifier struct {
 	mu            sync.Mutex
-	followers     map[string][]string
-	followerCalls []string
-	instanceCalls []models.NotificationTarget
 	instanceTypes []string
-	triggers      []*hooks.Trigger
+	summaryTypes  []string
 	summary       []models.NotificationTarget
 	summaryCalls  int
 }
 
-func (n *recordingCleanupNotifier) NotifyInstance(_ context.Context, target models.NotificationTarget, notifType, _, _ string, opts ...notifier.InstanceOption) error {
-	o := notifier.ResolveInstanceOptions(opts...)
+func (n *recordingCleanupNotifier) NotifyInstance(_ context.Context, _ models.NotificationTarget, notifType, _, _ string, _ ...notifier.InstanceOption) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	n.triggers = append(n.triggers, o.Trigger)
-	n.instanceCalls = append(n.instanceCalls, target)
 	n.instanceTypes = append(n.instanceTypes, notifType)
 	return nil
 }
 
-func (n *recordingCleanupNotifier) NotifySystemForInstances(_ context.Context, _, _, _, _, _ string, instances []models.NotificationTarget) error {
+func (n *recordingCleanupNotifier) NotifySystemForInstances(_ context.Context, notifType, _, _, _, _ string, instances []models.NotificationTarget) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.summaryCalls++
+	n.summaryTypes = append(n.summaryTypes, notifType)
 	n.summary = instances
 	return nil
 }
 
-func (n *recordingCleanupNotifier) FollowerIDs(_ context.Context, instanceID string) []string {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	n.followerCalls = append(n.followerCalls, instanceID)
-	return n.followers[instanceID]
-}
-
-func TestScheduler_PolicyRunNotificationTargets(t *testing.T) {
+// TestScheduler_PolicyRunNotifications checks that a policy run sends only
+// the summary cleanup.policy.executed: the deploy manager sends the one
+// notification of each stop, clean or delete (#651).
+func TestScheduler_PolicyRunNotifications(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name              string
-		action            string
-		dryRun            bool
-		wantFollowerCalls []string
-		wantInstanceCalls int
-		wantFollowers     []string // FollowerIDs of the i1 target
+		name   string
+		action string
+		dryRun bool
 	}{
-		{name: "delete: the executor notifies owner and followers, not the scheduler", action: "delete",
-			wantInstanceCalls: 0},
-		{name: "stop lets the notifier read the followers", action: "stop",
-			wantInstanceCalls: 1},
-		{name: "clean notifies with the policy trigger", action: "clean",
-			wantInstanceCalls: 1},
-		{name: "dry run sends only the summary", action: "delete", dryRun: true},
+		{name: "stop", action: "stop"},
+		{name: "clean", action: "clean"},
+		{name: "delete", action: "delete"},
+		{name: "dry run", action: "stop", dryRun: true},
 	}
 	for _, tt := range tests {
 		tt := tt
@@ -82,28 +68,21 @@ func TestScheduler_PolicyRunNotificationTargets(t *testing.T) {
 				{ID: "i1", Name: "team-a-1", OwnerID: "u1", StackDefinitionID: "d1", ClusterID: "c1", Namespace: "stack-team-a-1-u1", Branch: "main", Status: models.StackStatusStopped},
 				{ID: "i2", Name: "running", OwnerID: "u2", Status: models.StackStatusRunning},
 			}}
-			notif := &recordingCleanupNotifier{followers: map[string][]string{"i1": {"f1"}}}
+			notif := &recordingCleanupNotifier{}
 			s := NewScheduler(policyRepo, instanceRepo, &mockAuditRepo{}, &mockExecutor{}, notif)
 
 			s.executeScheduledPolicy(context.Background(), "p1")
 
-			assert.Equal(t, tt.wantFollowerCalls, notif.followerCalls)
+			notif.mu.Lock()
+			defer notif.mu.Unlock()
+			assert.Empty(t, notif.instanceTypes, "no per-instance notification from the scheduler")
 			require.Equal(t, 1, notif.summaryCalls)
+			assert.Equal(t, []string{"cleanup.policy.executed"}, notif.summaryTypes)
 			require.Len(t, notif.summary, 1, "the summary carries the affected instance for the channel filters")
 			assert.Equal(t, "team-a-1", notif.summary[0].InstanceName)
 			assert.Equal(t, "d1", notif.summary[0].DefinitionID)
 			assert.Equal(t, "c1", notif.summary[0].ClusterID)
-
-			require.Len(t, notif.instanceCalls, tt.wantInstanceCalls)
-			if tt.wantInstanceCalls > 0 {
-				assert.Equal(t, "cleanup.policy."+tt.action, notif.instanceTypes[0])
-				assert.Equal(t, "u1", notif.instanceCalls[0].OwnerID)
-				assert.Equal(t, tt.wantFollowers, notif.instanceCalls[0].FollowerIDs)
-				assert.Equal(t, "stack-team-a-1-u1", notif.instanceCalls[0].Namespace)
-				assert.Equal(t, "main", notif.instanceCalls[0].Branch)
-				require.NotNil(t, notif.triggers[0], "the card says Triggered by: Cleanup policy <name>")
-				assert.Equal(t, hooks.Trigger{Type: hooks.TriggerCleanupPolicy, ID: "p1", Name: p.Name}, *notif.triggers[0])
-			}
+			assert.Equal(t, "u1", notif.summary[0].OwnerID)
 		})
 	}
 }

@@ -1124,6 +1124,9 @@ func (d *Database) AutoMigrate() error {
 	// notification list (#654).
 	migrator.AddMigration(notificationListIndexMigration())
 
+	// Migration 64: notification trigger columns (#652).
+	migrator.AddMigration(notificationTriggerMigration())
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err

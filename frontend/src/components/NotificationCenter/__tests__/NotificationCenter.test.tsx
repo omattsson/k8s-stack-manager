@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import NotificationCenter from '../index';
@@ -36,6 +36,10 @@ vi.mock('../../../context/NotificationContext', () => ({
   }),
 }));
 
+vi.mock('../../../context/AuthContext', () => ({
+  useAuth: () => ({ user: { id: 'u1', username: 'me', role: 'user' } }),
+}));
+
 import { notificationService } from '../../../api/client';
 
 const mockNotifications = [
@@ -62,6 +66,21 @@ const mockNotifications = [
     created_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
   },
 ];
+
+const triggerNotifications = [
+  { id: 't1', trigger: { type: 'user', id: 'u2', name: 'alice' }, title: 'Stack stopped' },
+  { id: 't2', trigger: { type: 'user', id: 'u1', name: 'me' }, title: 'Stack created' },
+  { id: 't3', trigger: { type: 'ttl' }, title: 'Stack expired' },
+  { id: 't4', trigger: { type: 'cleanup-policy', id: 'p1', name: 'nightly' }, title: 'Stack cleaned' },
+  { id: 't5', title: 'Old notification' },
+].map((n) => ({
+  user_id: 'u1',
+  type: 'deployment.stopped',
+  message: `Message of ${n.id}`,
+  is_read: true,
+  created_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+  ...n,
+}));
 
 describe('NotificationCenter', () => {
   beforeEach(() => {
@@ -256,5 +275,47 @@ describe('NotificationCenter', () => {
 
     // markAsRead should NOT have been called for an already-read notification
     expect(notificationService.markAsRead).not.toHaveBeenCalled();
+  });
+
+  it('shows who did the action under each notification (#652)', async () => {
+    (notificationService.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      notifications: triggerNotifications,
+      total: triggerNotifications.length,
+      unread_count: 0,
+    });
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <NotificationCenter />
+      </MemoryRouter>,
+    );
+
+    await user.click(screen.getByRole('button', { name: /open notifications/i }));
+
+    const item = async (title: string) =>
+      within((await screen.findByText(title)).closest('li') as HTMLElement);
+    expect((await item('Stack stopped')).getByText('by alice')).toBeInTheDocument();
+    expect((await item('Stack created')).getByText('by you')).toBeInTheDocument();
+    expect((await item('Stack expired')).getByText('by expiry')).toBeInTheDocument();
+    expect((await item('Stack cleaned')).getByText('by Cleanup policy nightly')).toBeInTheDocument();
+    const old = await item('Old notification');
+    expect(old.getByText('5m ago')).toBeInTheDocument();
+    expect(old.queryByText(/^by /)).not.toBeInTheDocument();
+  });
+
+  it('shows no "by" line for notifications without a trigger', async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <NotificationCenter />
+      </MemoryRouter>,
+    );
+
+    await user.click(screen.getByRole('button', { name: /open notifications/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Deploy succeeded')).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/^by /)).not.toBeInTheDocument();
   });
 });

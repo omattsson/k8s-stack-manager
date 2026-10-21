@@ -21,8 +21,10 @@ import { useNavigate } from 'react-router-dom';
 import { notificationService } from '../../api/client';
 import { useWebSocket } from '../../hooks/useWebSocket';
 import { useNotification } from '../../context/NotificationContext';
-import { timeAgo, notificationIcon, entityRoute } from '../../utils/notificationHelpers';
+import { useAuth } from '../../context/AuthContext';
+import { notificationIcon, entityRoute } from '../../utils/notificationHelpers';
 import type { Notification } from '../../types';
+import NotificationMeta from './NotificationMeta';
 
 const POLL_INTERVAL_MS = 30_000;
 const POPOVER_LIMIT = 10;
@@ -30,6 +32,7 @@ const POPOVER_LIMIT = 10;
 const NotificationCenter = () => {
   const navigate = useNavigate();
   const { showInfo } = useNotification();
+  const { user } = useAuth();
 
   const [anchorEl, setAnchorEl] = useState<HTMLButtonElement | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -172,9 +175,11 @@ const NotificationCenter = () => {
                     >
                       {notification.message}
                     </Typography>
-                    <Typography variant="caption" color="text.disabled" component="span">
-                      {timeAgo(notification.created_at)}
-                    </Typography>
+                    <NotificationMeta
+                      createdAt={notification.created_at}
+                      trigger={notification.trigger}
+                      currentUserId={user?.id}
+                    />
                   </Box>
                 }
                 slotProps={{

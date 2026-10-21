@@ -19,7 +19,13 @@ import (
 	"github.com/google/uuid"
 )
 
-const dispatchQueueSize = 100
+// dispatchQueueSize is the intake queue of all channel events. Its worker
+// only finds and queues per channel, so it stays short (#649).
+const dispatchQueueSize = 1000
+
+// stopDrainTimeout is the longest time that Stop lets the queued channel
+// events go out before it cancels the deliveries (#649).
+const stopDrainTimeout = 2 * time.Second
 
 // Notifier creates notification records and broadcasts them in real time.
 type Notifier struct {
@@ -31,6 +37,13 @@ type Notifier struct {
 	clusterNames      *hooks.ClusterNameResolver
 	dispatchQueue     chan channel.EventPayload
 	done              chan struct{}
+	workerExited      chan struct{}
+	cancelDispatch    context.CancelFunc
+	// stopDrain: 0 means stopDrainTimeout; tests change it.
+	stopDrain time.Duration
+	// queueMu: enqueueDispatch sends under RLock; Stop closes done under
+	// Lock, so no event enters the queue after Stop has started.
+	queueMu sync.RWMutex
 	// publicURL is APP_PUBLIC_URL without a trailing slash; empty: no
 	// instance_url in the channel payload.
 	publicURL string
@@ -74,9 +87,11 @@ func (n *Notifier) WithPublicURL(publicURL string) *Notifier {
 	return n
 }
 
-// WithChannelDispatcher sets the external channel dispatcher for webhook delivery
-// and starts a single background worker for processing dispatches sequentially.
-// Safe to call once; subsequent calls are no-ops.
+// WithChannelDispatcher sets the external channel dispatcher for webhook
+// delivery and starts the intake worker. The intake worker finds the
+// channels of each event and queues it to the worker of each channel, so a
+// slow channel does not delay the others. Safe to call once; subsequent
+// calls are no-ops.
 func (n *Notifier) WithChannelDispatcher(d *channel.Dispatcher) *Notifier {
 	if d == nil {
 		return n
@@ -85,19 +100,37 @@ func (n *Notifier) WithChannelDispatcher(d *channel.Dispatcher) *Notifier {
 		n.channelDispatcher = d
 		n.dispatchQueue = make(chan channel.EventPayload, dispatchQueueSize)
 		n.done = make(chan struct{})
-		go n.dispatchWorker()
+		n.workerExited = make(chan struct{})
+		// Stop cancels ctx, so a channel or cluster name lookup does not
+		// hold up the shutdown.
+		ctx, cancel := context.WithCancel(context.Background())
+		n.cancelDispatch = cancel
+		go n.dispatchWorker(ctx)
 	})
 	return n
 }
 
-func (n *Notifier) dispatchWorker() {
-	for {
+// dispatchWorker passes each queued event to the dispatcher. After done it
+// passes the rest of the queue (Stop accepts no new event), then returns. It
+// returns at once when ctx ends.
+func (n *Notifier) dispatchWorker(ctx context.Context) {
+	defer close(n.workerExited)
+	for ctx.Err() == nil {
 		select {
-		case <-n.done:
+		case <-ctx.Done():
 			return
 		case payload := <-n.dispatchQueue:
-			ctx := context.Background()
 			n.channelDispatcher.Dispatch(ctx, n.withClusterName(ctx, payload))
+		case <-n.done:
+			for ctx.Err() == nil {
+				select {
+				case payload := <-n.dispatchQueue:
+					n.channelDispatcher.Dispatch(ctx, n.withClusterName(ctx, payload))
+				default:
+					return
+				}
+			}
+			return
 		}
 	}
 }
@@ -113,25 +146,72 @@ func (n *Notifier) withClusterName(ctx context.Context, payload channel.EventPay
 	return payload
 }
 
-// Stop shuts down the dispatch worker. Safe to call multiple times and
-// when no dispatcher is configured.
+// Stop shuts down the intake worker and the channel workers. It accepts no
+// new event. For at most stopDrainTimeout (2 s) the queued events still go
+// out, so the last events of a shutdown reach healthy channels. Then it
+// cancels the lookups and deliveries in progress, counts the rest as dropped
+// (reason shutdown) and waits until all workers have returned. Safe to call
+// multiple times and when no dispatcher is configured.
 func (n *Notifier) Stop() {
 	n.stopOnce.Do(func() {
-		if n.done != nil {
-			close(n.done)
+		if n.done == nil {
+			return
 		}
+		n.queueMu.Lock()
+		close(n.done)
+		n.queueMu.Unlock()
+
+		drain := n.stopDrain
+		if drain <= 0 {
+			drain = stopDrainTimeout
+		}
+		deadline := time.Now().Add(drain)
+		timer := time.NewTimer(drain)
+		select {
+		case <-n.workerExited:
+		case <-timer.C:
+		}
+		timer.Stop()
+
+		n.cancelDispatch()
+		<-n.workerExited
+		n.discardQueued()
+		n.channelDispatcher.Shutdown(time.Until(deadline))
 	})
 }
 
+// discardQueued counts the events left in the intake queue after the intake
+// worker has returned.
+func (n *Notifier) discardQueued() {
+	for {
+		select {
+		case payload := <-n.dispatchQueue:
+			n.channelDispatcher.RecordIntakeDrop(payload.EventType, channel.DropReasonShutdown)
+		default:
+			return
+		}
+	}
+}
+
+// enqueueDispatch queues payload for the intake worker. It never blocks: a
+// full queue, or a stopped notifier, drops the event. The dispatcher counts
+// the drop and logs at most one warning per minute and reason (#649).
 func (n *Notifier) enqueueDispatch(payload channel.EventPayload) {
 	if n.dispatchQueue == nil {
 		return
 	}
+	n.queueMu.RLock()
+	defer n.queueMu.RUnlock()
+	select {
+	case <-n.done:
+		n.channelDispatcher.RecordIntakeDrop(payload.EventType, channel.DropReasonShutdown)
+		return
+	default:
+	}
 	select {
 	case n.dispatchQueue <- payload:
-	case <-n.done:
 	default:
-		slog.Warn("notification channel dispatch queue full, dropping event", "event", payload.EventType)
+		n.channelDispatcher.RecordIntakeDrop(payload.EventType, channel.DropReasonQueueFull)
 	}
 }
 
@@ -144,10 +224,16 @@ func (n *Notifier) Notify(ctx context.Context, userID, notifType, title, message
 }
 
 func (n *Notifier) notify(ctx context.Context, userID, notifType, title, message, entityType, entityID string, dispatchExternal bool) error {
+	return n.notifyWithTrigger(ctx, userID, notifType, title, message, entityType, entityID, models.Trigger{}, dispatchExternal)
+}
+
+// notifyWithTrigger is notify that also stores the trigger of the action (#652).
+func (n *Notifier) notifyWithTrigger(ctx context.Context, userID, notifType, title, message, entityType, entityID string, trigger models.Trigger, dispatchExternal bool) error {
 	notification := &models.Notification{
 		ID:         uuid.New().String(),
 		UserID:     userID,
 		Type:       notifType,
+		Trigger:    trigger,
 		Title:      title,
 		Message:    message,
 		EntityType: entityType,
@@ -216,7 +302,7 @@ func (n *Notifier) FollowerIDs(ctx context.Context, instanceID string) []string 
 
 // InstanceOptions is the data of an instance event that only the caller
 // knows. NotifyInstance puts it into the channel payload; the in-app
-// notification does not use it.
+// notification uses only the trigger (#652).
 type InstanceOptions struct {
 	// Trigger is what started the operation (payload field trigger). Nil:
 	// no trigger.
@@ -274,9 +360,16 @@ func ResolveInstanceOptions(opts ...InstanceOption) InstanceOptions {
 // a public URL, not for instance.deleted) and the data of opts (trigger,
 // site URL).
 //
+// The trigger is the WithTrigger option, else the trigger of ctx
+// (hooks.WithTrigger). Each in-app notification and the payload get it.
+//
 // It returns the error of the owner's database insert; errors for followers
 // are logged.
 func (n *Notifier) NotifyInstance(ctx context.Context, target models.NotificationTarget, notifType, title, message string, opts ...InstanceOption) error {
+	o := ResolveInstanceOptions(opts...)
+	o.Trigger = n.instanceTrigger(ctx, o.Trigger)
+	trigger := rowTrigger(o.Trigger)
+
 	followers := target.FollowerIDs
 	if followers == nil {
 		followers = n.FollowerIDs(ctx, target.InstanceID)
@@ -297,7 +390,7 @@ func (n *Notifier) NotifyInstance(ctx context.Context, target models.Notificatio
 		if disabled[userID] {
 			continue
 		}
-		if err := n.notify(ctx, userID, notifType, title, message, EntityTypeStackInstance, target.InstanceID, false); err != nil {
+		if err := n.notifyWithTrigger(ctx, userID, notifType, title, message, EntityTypeStackInstance, target.InstanceID, trigger, false); err != nil {
 			if userID == target.OwnerID {
 				ownerErr = err
 			}
@@ -307,9 +400,28 @@ func (n *Notifier) NotifyInstance(ctx context.Context, target models.Notificatio
 	}
 
 	if n.channelDispatcher != nil {
-		n.enqueueDispatch(n.instancePayload(target, notifType, title, message, ResolveInstanceOptions(opts...)))
+		n.enqueueDispatch(n.instancePayload(target, notifType, title, message, o))
 	}
 	return ownerErr
+}
+
+// instanceTrigger returns opt, else the trigger of ctx, with the username of
+// a user trigger (resolveTrigger). It returns nil without a trigger.
+func (n *Notifier) instanceTrigger(ctx context.Context, opt *hooks.Trigger) *hooks.Trigger {
+	if opt == nil || opt.Type == "" {
+		if t, ok := hooks.TriggerFromContext(ctx); ok {
+			opt = &t
+		}
+	}
+	return n.resolveTrigger(opt)
+}
+
+// rowTrigger returns the trigger columns of a notification row for t.
+func rowTrigger(t *hooks.Trigger) models.Trigger {
+	if t == nil {
+		return models.Trigger{}
+	}
+	return models.Trigger{TriggerType: t.Type, TriggerID: t.ID, TriggerName: t.Name}
 }
 
 // instancePayload builds the channel payload of an instance event.

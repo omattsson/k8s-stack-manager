@@ -3,13 +3,16 @@ package channel
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"backend/internal/models"
+	"backend/pkg/dberrors"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,14 +22,75 @@ type mockChannelRepo struct {
 	channels    []models.NotificationChannel
 	deliveries  []models.NotificationDeliveryLog
 	findErr     error
+	getErr      error
 	deliveryErr error
+	mu          sync.Mutex
+}
+
+// Deliveries returns a copy of the delivery logs. The channel workers write
+// them in other goroutines.
+func (m *mockChannelRepo) Deliveries() []models.NotificationDeliveryLog {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]models.NotificationDeliveryLog(nil), m.deliveries...)
+}
+
+// newTestDispatcher returns a dispatcher that the test stops at its end.
+func newTestDispatcher(t *testing.T, repo models.NotificationChannelRepository) *Dispatcher {
+	t.Helper()
+	d := NewDispatcher(repo)
+	t.Cleanup(d.Stop)
+	return d
+}
+
+// waitDeliveries waits until repo has n delivery logs and returns them.
+func waitDeliveries(t *testing.T, repo *mockChannelRepo, n int) []models.NotificationDeliveryLog {
+	t.Helper()
+	require.Eventually(t, func() bool { return len(repo.Deliveries()) >= n },
+		10*time.Second, 5*time.Millisecond, "want %d delivery logs", n)
+	got := repo.Deliveries()
+	require.Len(t, got, n)
+	return got
 }
 
 func (m *mockChannelRepo) CreateChannel(_ context.Context, _ *models.NotificationChannel) error {
 	return nil
 }
-func (m *mockChannelRepo) GetChannel(_ context.Context, _ string) (*models.NotificationChannel, error) {
-	return nil, nil
+func (m *mockChannelRepo) GetChannel(_ context.Context, id string) (*models.NotificationChannel, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.getErr != nil {
+		return nil, m.getErr
+	}
+	for _, ch := range m.channels {
+		if ch.ID == id {
+			return &ch, nil
+		}
+	}
+	return nil, dberrors.NewDatabaseError("get_channel", dberrors.ErrNotFound)
+}
+
+// updateChannel changes the stored channel id; a nil change deletes it.
+func (m *mockChannelRepo) updateChannel(id string, change func(*models.NotificationChannel)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	kept := m.channels[:0:0]
+	for _, ch := range m.channels {
+		if ch.ID == id {
+			if change == nil {
+				continue
+			}
+			change(&ch)
+		}
+		kept = append(kept, ch)
+	}
+	m.channels = kept
+}
+
+func (m *mockChannelRepo) setGetErr(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.getErr = err
 }
 func (m *mockChannelRepo) UpdateChannel(_ context.Context, _ *models.NotificationChannel, _ bool) error {
 	return nil
@@ -48,12 +112,16 @@ func (m *mockChannelRepo) CountSubscriptionsByChannel(_ context.Context) (map[st
 	return nil, nil
 }
 func (m *mockChannelRepo) FindChannelsByEvent(_ context.Context, _ string) ([]models.NotificationChannel, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.findErr != nil {
 		return nil, m.findErr
 	}
-	return m.channels, nil
+	return append([]models.NotificationChannel(nil), m.channels...), nil
 }
 func (m *mockChannelRepo) CreateDeliveryLog(_ context.Context, log *models.NotificationDeliveryLog) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.deliveries = append(m.deliveries, *log)
 	return m.deliveryErr
 }
@@ -86,7 +154,7 @@ func TestDispatch_SendsToSubscribedChannels(t *testing.T) {
 		},
 	}
 
-	d := NewDispatcher(repo)
+	d := newTestDispatcher(t, repo)
 	d.Dispatch(context.Background(), EventPayload{
 		EventType:       "deployment.success",
 		Timestamp:       time.Now(),
@@ -97,19 +165,55 @@ func TestDispatch_SendsToSubscribedChannels(t *testing.T) {
 		EntityID:        "inst-1",
 	})
 
+	deliveries := waitDeliveries(t, repo, 2)
 	assert.Equal(t, int32(2), calls.Load())
-	assert.Len(t, repo.deliveries, 2)
-	assert.Equal(t, "success", repo.deliveries[0].Status)
-	assert.Equal(t, "success", repo.deliveries[1].Status)
+	assert.Equal(t, "success", deliveries[0].Status)
+	assert.Equal(t, "success", deliveries[1].Status)
+	assert.ElementsMatch(t, []string{"ch-1", "ch-2"}, []string{deliveries[0].ChannelID, deliveries[1].ChannelID})
 }
 
 func TestDispatch_NoChannels(t *testing.T) {
 	t.Parallel()
 
 	repo := &mockChannelRepo{channels: nil}
-	d := NewDispatcher(repo)
+	d := newTestDispatcher(t, repo)
 	d.Dispatch(context.Background(), EventPayload{EventType: "deployment.success"})
-	assert.Empty(t, repo.deliveries)
+	assert.Zero(t, d.workers.workerCount(), "no job was queued")
+	assert.Empty(t, repo.Deliveries())
+}
+
+// TestDispatch_LookupError checks that a failed channel lookup sends
+// nothing, and that a cancelled lookup counts as a shutdown drop.
+func TestDispatch_LookupError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		cancelled bool
+		wantDrops int64
+	}{
+		{name: "database error"},
+		{name: "cancelled lookup", cancelled: true, wantDrops: 1},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			repo := &mockChannelRepo{findErr: errors.New("db down")}
+			d := newTestDispatcher(t, repo)
+			reader := useTestCounter(t, d)
+			ctx, cancel := context.WithCancel(context.Background())
+			if tt.cancelled {
+				cancel()
+			}
+			defer cancel()
+
+			d.Dispatch(ctx, EventPayload{EventType: "deployment.success"})
+			assert.Zero(t, d.workers.workerCount())
+			assert.Empty(t, repo.Deliveries())
+			assert.Equal(t, tt.wantDrops, droppedSum(t, reader, "deployment.success", "", DropReasonShutdown))
+		})
+	}
 }
 
 func TestDispatch_WebhookFailure(t *testing.T) {
@@ -126,20 +230,20 @@ func TestDispatch_WebhookFailure(t *testing.T) {
 		},
 	}
 
-	d := NewDispatcher(repo)
+	d := newTestDispatcher(t, repo)
 	d.Dispatch(context.Background(), EventPayload{EventType: "deployment.error"})
 
-	require.Len(t, repo.deliveries, 1)
-	assert.Equal(t, "failed", repo.deliveries[0].Status)
-	assert.Contains(t, repo.deliveries[0].ErrorMessage, "500")
+	deliveries := waitDeliveries(t, repo, 1)
+	assert.Equal(t, "failed", deliveries[0].Status)
+	assert.Contains(t, deliveries[0].ErrorMessage, "500")
 }
 
 func TestDispatch_HMACSignature(t *testing.T) {
 	t.Parallel()
 
-	var gotSig string
+	var gotSig atomic.Value
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotSig = r.Header.Get("X-StackManager-Signature")
+		gotSig.Store(r.Header.Get("X-StackManager-Signature"))
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -150,20 +254,22 @@ func TestDispatch_HMACSignature(t *testing.T) {
 		},
 	}
 
-	d := NewDispatcher(repo)
+	d := newTestDispatcher(t, repo)
 	d.Dispatch(context.Background(), EventPayload{EventType: "test.event", Title: "test"})
+	waitDeliveries(t, repo, 1)
 
-	require.NotEmpty(t, gotSig)
-	assert.True(t, len(gotSig) > len("sha256="), "signature should have sha256= prefix")
-	assert.Contains(t, gotSig, "sha256=")
+	sig, _ := gotSig.Load().(string)
+	require.NotEmpty(t, sig)
+	assert.True(t, len(sig) > len("sha256="), "signature should have sha256= prefix")
+	assert.Contains(t, sig, "sha256=")
 }
 
 func TestDispatch_NoSignatureWithoutSecret(t *testing.T) {
 	t.Parallel()
 
-	var gotSig string
+	var gotSig atomic.Value
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotSig = r.Header.Get("X-StackManager-Signature")
+		gotSig.Store(r.Header.Get("X-StackManager-Signature"))
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -174,10 +280,13 @@ func TestDispatch_NoSignatureWithoutSecret(t *testing.T) {
 		},
 	}
 
-	d := NewDispatcher(repo)
+	d := newTestDispatcher(t, repo)
 	d.Dispatch(context.Background(), EventPayload{EventType: "test.event"})
+	waitDeliveries(t, repo, 1)
 
-	assert.Empty(t, gotSig)
+	sig, ok := gotSig.Load().(string)
+	require.True(t, ok, "the channel got the request")
+	assert.Empty(t, sig)
 }
 
 func TestDispatchTo_SingleChannel(t *testing.T) {
@@ -245,16 +354,18 @@ func TestDispatch_ChannelFilters(t *testing.T) {
 			repo := &mockChannelRepo{channels: []models.NotificationChannel{
 				{ID: "ch-1", Name: "filtered", WebhookURL: server.URL, Enabled: true, Filters: tt.filters},
 			}}
-			NewDispatcher(repo).Dispatch(context.Background(), EventPayload{
+			d := newTestDispatcher(t, repo)
+			d.Dispatch(context.Background(), EventPayload{
 				EventType: "deployment.success", Timestamp: time.Now(), Instances: tt.instances,
 			})
 
 			if tt.wantSent {
+				waitDeliveries(t, repo, 1)
 				assert.Equal(t, int32(1), calls.Load())
-				assert.Len(t, repo.deliveries, 1)
 			} else {
+				assert.Zero(t, d.workers.workerCount(), "no job was queued")
 				assert.Equal(t, int32(0), calls.Load())
-				assert.Empty(t, repo.deliveries, "a skipped channel gets no delivery log")
+				assert.Empty(t, repo.Deliveries(), "a skipped channel gets no delivery log")
 			}
 			assert.Len(t, repo.channels, 1, "the dispatcher does not change the repository result")
 		})

@@ -125,6 +125,7 @@ All configuration uses environment variables with a `.env` fallback (godotenv). 
 - `telemetry.Init(cfg.Otel)` in `api/main.go` sets up OTLP tracing, metrics and logs. `setupOTelLogging` (`api/bootstrap.go`) then makes the default `slog` logger write to stderr (slog text format) and to the OTel log pipeline (`telemetry.LogHandler`, the `otelslog` bridge), both at `LOG_LEVEL`. Do not wrap the package default slog handler: it writes through the `log` package, which writes back through the new default and deadlocks.
 - `telemetry.StartDBMetrics`, `telemetry.StartBusinessMetrics` and `telemetry.StartLeaderMetric` (`stackmanager_leader`) register gauges.
 - `internal/websocket/tracing.go` holds the hub and fan-out metrics: `websocket.fanout.events_written_total`, `events_dropped_total`, `events_delivered_total`, `events_skipped_total`, `poll_errors_total`, `delivery_lag`.
+- `internal/notifier/channel/metrics.go` holds the counter `notification.channel.dropped` (#649).
 - `middleware/metrics.go` records HTTP metrics. `middleware/auth_metrics.go` records auth outcomes. `middleware/otel.go` adds the user to spans.
 - `middleware/ws_redact.go` removes `?token=` from `/ws` URLs before logging and tracing.
 

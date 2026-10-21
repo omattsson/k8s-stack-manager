@@ -13,7 +13,6 @@ import (
 
 	"backend/internal/hooks"
 	"backend/internal/models"
-	"backend/internal/notifier"
 
 	"github.com/robfig/cron/v3"
 	"go.opentelemetry.io/otel/attribute"
@@ -38,16 +37,14 @@ type CleanupResult struct {
 	Action       string `json:"action"`
 	Status       string `json:"status"` // "success", "error", "dry_run"
 	Error        string `json:"error,omitempty"`
-	// target is the instance of the result for the notifications (owner,
-	// followers, channel filters). Not part of the API response.
+	// target is the instance of the result for the channel filters of the
+	// summary notification. Not part of the API response.
 	target models.NotificationTarget
 }
 
-// CleanupNotifier creates in-app notifications for cleanup events.
+// CleanupNotifier creates the summary notification of a policy run.
 // notifier.Notifier implements it.
 type CleanupNotifier interface {
-	// NotifyInstance notifies the owner and the followers of an instance.
-	NotifyInstance(ctx context.Context, target models.NotificationTarget, notifType, title, message string, opts ...notifier.InstanceOption) error
 	// NotifySystemForInstances notifies the admin and devops users and the
 	// channels whose filters match at least one of the instances.
 	NotifySystemForInstances(ctx context.Context, notifType, title, message, entityType, entityID string, instances []models.NotificationTarget) error
@@ -616,49 +613,8 @@ func (s *Scheduler) notifyPolicyExecuted(ctx context.Context, policy *models.Cle
 		"cleanup_policy", policy.ID,
 		targets,
 	)
-
-	if policy.DryRun {
-		return
-	}
-	// The context of this call has no trigger: pass the policy as the
-	// trigger of each instance event ("Triggered by: Cleanup policy <name>").
-	trigger := policyTrigger(policy)
-	for _, r := range results {
-		// The executor sends the owner instance.deleted for a delete, as
-		// the API delete path does.
-		if r.Status != "success" || r.Action == "delete" {
-			continue
-		}
-		// Literal types, so the notifier test can check them against
-		// notifier.PreferenceEventTypes.
-		var notifType string
-		switch r.Action {
-		case "stop":
-			notifType = "cleanup.policy.stop"
-		case "clean":
-			notifType = "cleanup.policy.clean"
-		default:
-			continue
-		}
-		_ = s.notifier.NotifyInstance(ctx, r.target, notifType,
-			fmt.Sprintf("Stack %q %s by cleanup policy", r.InstanceName, actionPastTense(r.Action)),
-			fmt.Sprintf("Cleanup policy %q performed %s on the stack %q", policy.Name, r.Action, r.InstanceName),
-			notifier.WithTrigger(&trigger),
-		)
-	}
-}
-
-func actionPastTense(action string) string {
-	switch action {
-	case "stop":
-		return "stopped"
-	case "clean":
-		return "cleaned"
-	case "delete":
-		return "deleted"
-	default:
-		return action + "ed"
-	}
+	// The deploy manager sends the per-instance notification of the stop,
+	// clean or delete, with its result and the policy trigger (#651).
 }
 
 // joinNames returns the first limit names joined with ", ", then

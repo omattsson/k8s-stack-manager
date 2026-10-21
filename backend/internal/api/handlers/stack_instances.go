@@ -499,6 +499,7 @@ type createInstanceRequest struct {
 // CreateInstance godoc
 // @Summary     Create a stack instance
 // @Description Create a new stack instance from a definition.
+// @Description The owner and the subscribed notification channels get the notification instance.created, with the caller as the trigger.
 // @Description Expiry: ttl_minutes counts from the deploy (omitted: DEFAULT_INSTANCE_TTL_MINUTES; 0: no expiry). expires_at (RFC 3339 with a time zone) is a fixed stop time instead: ttl_minutes becomes 0, and a deploy keeps the stop time. expires_at must be in the future and not later than now + MAX_INSTANCE_TTL_DAYS (default 30). A TTL above that limit, or expires_at together with ttl_minutes, gives 400.
 // @Tags        stack-instances
 // @Accept      json
@@ -674,13 +675,7 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 	hookCtx := hookTriggerCtx(c)
 	_ = h.fireInstanceHook(hookCtx, hooks.EventPostInstanceCreate, &inst)
 
-	if h.notifier != nil {
-		// A new instance has no followers yet.
-		target := models.NewNotificationTarget(&inst)
-		target.FollowerIDs = []string{}
-		_ = h.notifier.NotifyInstance(c.Request.Context(), target, "instance.created", "Stack created",
-			fmt.Sprintf("Stack %s has been created", inst.Name), notifyTriggerOpt(hookCtx))
-	}
+	notifyInstanceCreated(hookCtx, h.notifier, &inst)
 
 	h.deployManager.BroadcastInstanceCreated(inst.ID)
 
@@ -1003,6 +998,22 @@ func (h *InstanceHandler) afterInstanceDeleted(ctx context.Context, inst *models
 	}
 }
 
+// notifyInstanceCreated sends instance.created to the owner and the channels
+// with the trigger of ctx (hookTriggerCtx). Create, clone and quick deploy
+// use it (#650). A nil notifier sends nothing.
+func notifyInstanceCreated(ctx context.Context, n deployer.LifecycleNotifier, inst *models.StackInstance) {
+	if n == nil || inst == nil {
+		return
+	}
+	// A new instance has no followers yet.
+	target := models.NewNotificationTarget(inst)
+	target.FollowerIDs = []string{}
+	// The instance is committed: a client that disconnects must not cancel
+	// the notification insert. WithoutCancel keeps the trigger value.
+	_ = n.NotifyInstance(context.WithoutCancel(ctx), target, "instance.created", "Stack created",
+		fmt.Sprintf("Stack %s has been created", inst.Name), notifyTriggerOpt(ctx))
+}
+
 // notifyTriggerOpt is the notifier option with the trigger of ctx
 // (hooks.WithTrigger, see hookTriggerCtx); none when ctx has no trigger.
 func notifyTriggerOpt(ctx context.Context) notifier.InstanceOption {
@@ -1220,6 +1231,7 @@ func cloneNameCandidate(base string, n int) string {
 // @Description Create a new draft stack instance as a copy of an existing one. The clone belongs to the caller and uses the cluster and definition of the source.
 // @Description It copies the TTL (unless ttl_minutes or expires_at is given; a future fixed stop time of the source is copied too), the value overrides and the branch overrides. It copies the instance quota override only when the caller owns the source or is admin or devops; for an owner without the admin or devops role only when the override stays within the cluster quota. When it is not copied for that reason (or the cluster quota lookup fails), the response has a warning and the clone uses the cluster quota.
 // @Description The body is optional. Without a name, the server picks the first free name of <source>-copy, <source>-copy-2, ... (the namespace stack-<name>-<owner> must be free). A given name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters).
+// @Description The owner and the subscribed notification channels get the notification instance.created, with the caller as the trigger.
 // @Tags        stack-instances
 // @Accept      json
 // @Produce     json
@@ -1373,6 +1385,8 @@ func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
+
+	notifyInstanceCreated(hookTriggerCtx(c), h.notifier, clone)
 
 	h.deployManager.BroadcastInstanceCreated(clone.ID)
 
