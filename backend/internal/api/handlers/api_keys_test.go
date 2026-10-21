@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 
 	"backend/internal/config"
 	"backend/internal/models"
+	"backend/pkg/dberrors"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -62,7 +64,7 @@ func seedAPIKey(t *testing.T, repo *MockAPIKeyRepository, id, userID, name strin
 		KeyHash:   "hash-" + id,
 		CreatedAt: time.Now().UTC(),
 	}
-	require.NoError(t, repo.Create(key))
+	require.NoError(t, repo.Create(context.Background(), key))
 	return key
 }
 
@@ -238,6 +240,17 @@ func TestListAPIKeys(t *testing.T) {
 			},
 			wantStatus: http.StatusInternalServerError,
 		},
+		{
+			name:         "cancelled request returns 499",
+			callerID:     "admin-1",
+			callerRole:   "admin",
+			targetUserID: "user-1",
+			setupRepos: func(u *MockUserRepository, a *MockAPIKeyRepository) {
+				seedUser(t, u, "user-1", "alice", "testpass", "user")
+				a.SetListError(dberrors.NewDatabaseError("list_by_user", context.Canceled))
+			},
+			wantStatus: statusClientClosedRequest,
+		},
 	}
 
 	for _, tt := range tests {
@@ -338,6 +351,81 @@ func TestDeleteAPIKey(t *testing.T) {
 			router.ServeHTTP(w, req)
 
 			assert.Equal(t, tt.wantStatus, w.Code)
+		})
+	}
+}
+
+// TestAPIKeyHandler_CancelledRequestContext checks that a client cancel
+// does not stop the create and delete writes, and that delete still closes
+// the sockets of the key. The list read follows the cancel (499) (#656).
+func TestAPIKeyHandler_CancelledRequestContext(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		method     string
+		path       string
+		body       string
+		wantStatus int
+		wantKeys   int
+		wantClosed []string
+	}{
+		{
+			name:       "create",
+			method:     http.MethodPost,
+			path:       "/api/v1/users/user-1/api-keys",
+			body:       `{"name":"ci-token","expires_in_days":30}`,
+			wantStatus: http.StatusCreated,
+			wantKeys:   2,
+		},
+		{
+			name:       "delete",
+			method:     http.MethodDelete,
+			path:       "/api/v1/users/user-1/api-keys/key-1",
+			wantStatus: http.StatusNoContent,
+			wantKeys:   0,
+			wantClosed: []string{"key-1"},
+		},
+		{
+			name:       "list",
+			method:     http.MethodGet,
+			path:       "/api/v1/users/user-1/api-keys",
+			wantStatus: statusClientClosedRequest,
+			wantKeys:   1,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			userRepo := NewMockUserRepository()
+			seedUser(t, userRepo, "user-1", "alice", "testpass", "user")
+			mock := NewMockAPIKeyRepository()
+			seedAPIKey(t, mock, "key-1", "user-1", "existing")
+			revoker := &fakeRevoker{}
+
+			gin.SetMode(gin.TestMode)
+			r := gin.New()
+			r.Use(injectAuthContext("user-1", "user"))
+			h := NewAPIKeyHandler(mock, userRepo, &config.AuthConfig{})
+			h.SetWebSocketRevoker(revoker)
+			r.POST("/api/v1/users/:id/api-keys", h.CreateAPIKey)
+			r.GET("/api/v1/users/:id/api-keys", h.ListAPIKeys)
+			r.DELETE("/api/v1/users/:id/api-keys/:keyId", h.DeleteAPIKey)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			req := httptest.NewRequest(tt.method, tt.path, bytes.NewBufferString(tt.body)).WithContext(ctx)
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.wantStatus, w.Code)
+			keys, err := mock.ListByUser(context.Background(), "user-1")
+			require.NoError(t, err)
+			assert.Len(t, keys, tt.wantKeys)
+			assert.Equal(t, tt.wantClosed, revoker.keyCalls())
 		})
 	}
 }

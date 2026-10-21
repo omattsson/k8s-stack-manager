@@ -302,6 +302,7 @@ backend/
   - `handleDBError()` in `handlers/items.go` (Items reference implementation, uses `errors.As` and `errors.Is`).
   - `mapError()` in `handlers/errors.go` (all domain handlers, takes the entity name for the message).
 - Both map: 400 validation, 404 not found, 409 duplicate or conflict, 501 not implemented, 500 internal.
+- A cancelled request context (`context.Canceled`) gives 499 (client closed request) and a debug log, not 500. `context.DeadlineExceeded` stays 500.
 - Never expose a raw error message for a 500. Always return `"Internal server error"`.
 
 **Optimistic locking.** Only the `Item` reference model has `Version uint` (`default:1`). `GenericRepository.Update()` uses `WHERE version = ?`. On a conflict it returns a `"version mismatch"` error. The Items `UpdateItem` handler maps it to 409. The domain models have no version column. They use targeted or conditional writes (for example `UserRepository.UpdateRole`, the conditional instance status updates).

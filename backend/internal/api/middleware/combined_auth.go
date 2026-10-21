@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -30,6 +31,14 @@ func apiKeyLookupOutcome(err error) string {
 // API key per minute, reducing connection pool pressure under high load.
 // Entries auto-expire after 2 minutes so the cache stays bounded.
 var lastUsedCache = cache.New[time.Time](2*time.Minute, 1*time.Minute)
+
+// lastUsedUpdateTimeout bounds the last-used write, which runs after the
+// response with a context that the client cannot cancel.
+const lastUsedUpdateTimeout = 5 * time.Second
+
+// statusClientClosedRequest is the nginx status for a request that the
+// client cancelled before the response (net/http has no constant for it).
+const statusClientClosedRequest = 499
 
 // Limits of the concurrent Argon2id verifies of API keys (HTTP and /ws).
 const (
@@ -122,7 +131,7 @@ func CombinedAuth(deps APIKeyAuthDeps) gin.HandlerFunc {
 			return
 		}
 
-		_, user, failure := AuthenticateAPIKey(deps.APIKeyRepo, deps.UserRepo, apiKeyHeader)
+		_, user, failure := AuthenticateAPIKey(c.Request.Context(), deps.APIKeyRepo, deps.UserRepo, apiKeyHeader)
 		if failure != nil {
 			c.AbortWithStatusJSON(failure.Status, gin.H{"error": failure.Message})
 			return
@@ -139,8 +148,8 @@ func CombinedAuth(deps APIKeyAuthDeps) gin.HandlerFunc {
 // to the client; it never contains an internal error.
 type APIKeyAuthFailure struct {
 	Message string
-	Outcome string // metrics outcome: invalid, failure, expired, disabled, busy
-	Status  int    // HTTP status of the HTTP API-key auth (401, 403 for a disabled user, 503 when busy)
+	Outcome string // metrics outcome: invalid, failure, expired, disabled, busy; cancelled is not recorded
+	Status  int    // HTTP status of the HTTP API-key auth (401, 403 for a disabled user, 499 when cancelled, 503 when busy)
 }
 
 // AuthenticateAPIKey validates the value of an X-API-Key header
@@ -155,17 +164,23 @@ type APIKeyAuthFailure struct {
 // time of the key (throttled to once per key per minute). On failure it
 // records the outcome and returns a failure. A lookup error counts as an
 // invalid key (401) and is logged; the message never contains the error.
+// A ctx that is cancelled (the client went away) during the key lookup or
+// before a hash verify gives 499 ("cancelled"), a debug log and no metric.
 // An Argon2id hash verify needs a slot of the process-wide verify limiter;
 // without a free slot the result is 503 ("busy").
-func AuthenticateAPIKey(apiKeyRepo models.APIKeyRepository, userRepo models.UserRepository, header string) (*models.APIKey, *models.User, *APIKeyAuthFailure) {
-	return authenticateAPIKey(apiKeyRepo, userRepo, header, apiKeyVerifyLimiter)
+func AuthenticateAPIKey(ctx context.Context, apiKeyRepo models.APIKeyRepository, userRepo models.UserRepository, header string) (*models.APIKey, *models.User, *APIKeyAuthFailure) {
+	return authenticateAPIKey(ctx, apiKeyRepo, userRepo, header, apiKeyVerifyLimiter)
 }
 
 // authenticateAPIKey is AuthenticateAPIKey with the verify limiter (tests).
-func authenticateAPIKey(apiKeyRepo models.APIKeyRepository, userRepo models.UserRepository, header string, limiter *verifyLimiter) (*models.APIKey, *models.User, *APIKeyAuthFailure) {
+func authenticateAPIKey(ctx context.Context, apiKeyRepo models.APIKeyRepository, userRepo models.UserRepository, header string, limiter *verifyLimiter) (*models.APIKey, *models.User, *APIKeyAuthFailure) {
 	invalid := func(outcome string) *APIKeyAuthFailure {
 		RecordAPIKeyAuth(outcome)
 		return &APIKeyAuthFailure{Status: http.StatusUnauthorized, Message: "Invalid API key", Outcome: outcome}
+	}
+	cancelled := func(msg string, err error) *APIKeyAuthFailure {
+		slog.DebugContext(ctx, msg, "error", err)
+		return &APIKeyAuthFailure{Status: statusClientClosedRequest, Message: "Client closed request", Outcome: "cancelled"}
 	}
 
 	// Strip the sk_ prefix.
@@ -174,11 +189,14 @@ func authenticateAPIKey(apiKeyRepo models.APIKeyRepository, userRepo models.User
 		return nil, nil, invalid("invalid")
 	}
 
-	records, err := apiKeyRepo.FindByPrefix(raw[:16])
+	records, err := apiKeyRepo.FindByPrefix(ctx, raw[:16])
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return nil, nil, cancelled("API key lookup cancelled", err)
+		}
 		outcome := apiKeyLookupOutcome(err)
 		if outcome == "failure" {
-			slog.Error("API key lookup failed", "error", err)
+			slog.ErrorContext(ctx, "API key lookup failed", "error", err)
 		}
 		return nil, nil, invalid(outcome)
 	}
@@ -192,6 +210,10 @@ func authenticateAPIKey(apiKeyRepo models.APIKeyRepository, userRepo models.User
 				break
 			}
 			continue
+		}
+		// Skip the 64 MiB verify for a client that left.
+		if err := ctx.Err(); err != nil {
+			return nil, nil, cancelled("API key verify cancelled", err)
 		}
 		if !limiter.acquire() {
 			RecordAPIKeyAuth("busy")
@@ -235,8 +257,10 @@ func authenticateAPIKey(apiKeyRepo models.APIKeyRepository, userRepo models.User
 	prev, exists := lastUsedCache.Get(record.ID)
 	if !exists || now.Sub(prev) > time.Minute {
 		lastUsedCache.Set(record.ID, now)
+		updateCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), lastUsedUpdateTimeout)
 		go func(userID, keyID string, ts time.Time) {
-			_ = apiKeyRepo.UpdateLastUsed(userID, keyID, ts)
+			defer cancel()
+			_ = apiKeyRepo.UpdateLastUsed(updateCtx, userID, keyID, ts)
 		}(record.UserID, record.ID, now)
 	}
 	RecordAPIKeyAuth("success")

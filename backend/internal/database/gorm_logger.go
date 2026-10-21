@@ -50,7 +50,9 @@ func newSlogGormLogger(log *slog.Logger, debug bool) *slogGormLogger {
 
 // slogGormLogger is a GORM logger.Interface on slog.
 //
-//   - SQL error: level error, attributes sql, rows, duration and error.
+//   - SQL error: level error, attributes sql, rows, duration and error. A
+//     duplicate key is level warn; a cancelled context is level debug, or
+//     the slow query line with the error attribute when it was slow.
 //   - Slow query: level warn, attributes sql, rows, duration and threshold.
 //   - Other statements (GORM level Info, debug mode only): level debug,
 //     attributes sql, rows and duration.
@@ -105,11 +107,18 @@ func (l *slogGormLogger) Trace(ctx context.Context, begin time.Time, fc func() (
 	switch {
 	case l.level >= logger.Error && err != nil && !errors.Is(err, logger.ErrRecordNotFound):
 		level, msg, isErr = slog.LevelError, "SQL error", true
-		if isDuplicateKeyError(err) {
+		switch {
+		case isDuplicateKeyError(err):
 			// The repositories answer it with ErrDuplicateKey (409).
 			level, msg = slog.LevelWarn, "SQL duplicate key"
+		case errors.Is(err, context.Canceled):
+			// The client went away (#656); a passed deadline stays an error.
+			level, msg = slog.LevelDebug, "SQL query cancelled"
+			if l.isSlow(elapsed) {
+				level, msg, isSlow = slog.LevelWarn, "Slow SQL query", true
+			}
 		}
-	case l.level >= logger.Warn && l.slowThreshold > 0 && elapsed >= l.slowThreshold:
+	case l.isSlow(elapsed):
 		level, msg, isSlow = slog.LevelWarn, "Slow SQL query", true
 	case l.level >= logger.Info:
 		level, msg = slog.LevelDebug, "SQL query"
@@ -144,6 +153,11 @@ func (l *slogGormLogger) Trace(ctx context.Context, begin time.Time, fc func() (
 		r.AddAttrs(slog.Duration("threshold", l.slowThreshold))
 	}
 	_ = h.Handle(ctx, r)
+}
+
+// isSlow reports whether a statement of this duration gets the slow query line.
+func (l *slogGormLogger) isSlow(elapsed time.Duration) bool {
+	return l.level >= logger.Warn && l.slowThreshold > 0 && elapsed >= l.slowThreshold
 }
 
 // ParamsFilter drops the values of the SQL text in release mode, so the sql

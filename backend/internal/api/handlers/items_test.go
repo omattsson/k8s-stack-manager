@@ -911,6 +911,8 @@ func TestHandleDBError(t *testing.T) {
 	otherDBErr := &database.DatabaseError{Err: errors.New("other"), Op: "other db error"}
 	plainNotFound := errors.New("item not found in db")
 	plainOther := errors.New("some other error")
+	cancelledDBErr := &database.DatabaseError{Err: context.Canceled, Op: "not found"}
+	deadlineDBErr := &database.DatabaseError{Err: context.DeadlineExceeded, Op: "find"}
 
 	tests := []dbErr{
 		{err: nil, wantCode: http.StatusOK, wantMsg: ""},
@@ -920,6 +922,9 @@ func TestHandleDBError(t *testing.T) {
 		{err: otherDBErr, wantCode: http.StatusInternalServerError, wantMsg: "Internal server error"},
 		{err: plainNotFound, wantCode: http.StatusNotFound, wantMsg: "Item not found"},
 		{err: plainOther, wantCode: http.StatusInternalServerError, wantMsg: "Internal server error"},
+		{err: cancelledDBErr, wantCode: statusClientClosedRequest, wantMsg: msgClientClosedRequest},
+		{err: context.Canceled, wantCode: statusClientClosedRequest, wantMsg: msgClientClosedRequest},
+		{err: deadlineDBErr, wantCode: http.StatusInternalServerError, wantMsg: "Internal server error"},
 	}
 
 	for _, tt := range tests {

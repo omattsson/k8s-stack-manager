@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,7 +14,9 @@ import (
 	"time"
 
 	"backend/internal/models"
+	"backend/internal/sessionstore"
 	"backend/internal/websocket"
+	"backend/pkg/dberrors"
 
 	"github.com/gin-gonic/gin"
 	gorilla "github.com/gorilla/websocket"
@@ -58,7 +62,7 @@ func (f *wsKeyFixture) addKey(t *testing.T, id, userID string, expires *time.Tim
 	t.Helper()
 	raw, prefix, hash, err := models.GenerateAPIKey()
 	require.NoError(t, err)
-	require.NoError(t, f.keys.Create(&models.APIKey{ID: id, UserID: userID, Name: id, KeyHash: hash, Prefix: prefix, ExpiresAt: expires}))
+	require.NoError(t, f.keys.Create(context.Background(), &models.APIKey{ID: id, UserID: userID, Name: id, KeyHash: hash, Prefix: prefix, ExpiresAt: expires}))
 	f.raw[id] = "sk_" + raw
 }
 
@@ -140,6 +144,7 @@ func TestHandleWebSocket_APIKey(t *testing.T) {
 		{name: "unknown key", rawKey: "sk_0123456789abcdef0123456789abcdef", wantStatus: http.StatusUnauthorized, wantError: "Invalid API key"},
 		{name: "short key", rawKey: "sk_abc", wantStatus: http.StatusUnauthorized, wantError: "Invalid API key"},
 		{name: "lookup error does not leak", keyID: "key-ok", lookupErr: errors.New("dial tcp 10.0.0.1:3306: refused"), wantStatus: http.StatusUnauthorized, wantError: "Invalid API key"},
+		{name: "cancelled lookup gives 499", keyID: "key-ok", lookupErr: dberrors.NewDatabaseError("find_by_prefix", context.Canceled), wantStatus: statusClientClosedRequest, wantError: "Client closed request"},
 		{name: "key in query parameter is ignored", keyID: "key-ok", query: true, wantStatus: http.StatusUnauthorized, wantError: "Authentication required"},
 		{name: "API keys not enabled", keyID: "key-ok", noAPIKeys: true, wantStatus: http.StatusUnauthorized, wantError: "Authentication required"},
 		{name: "JWT in Authorization wins over the key", keyID: "key-expired", bearer: true, wantStatus: http.StatusSwitchingProtocols},
@@ -161,7 +166,7 @@ func TestHandleWebSocket_APIKey(t *testing.T) {
 				raw = f.raw[tt.keyID]
 			}
 			if tt.deleted {
-				require.NoError(t, f.keys.Delete("u-active", tt.keyID))
+				require.NoError(t, f.keys.Delete(context.Background(), "u-active", tt.keyID))
 			}
 			if tt.lookupErr != nil {
 				f.keys.SetFindError(tt.lookupErr)
@@ -270,7 +275,7 @@ func TestHandleWebSocket_APIKeyRevalidation(t *testing.T) {
 		name   string
 	}{
 		{name: "key deleted in the database", change: func(t *testing.T, f *wsKeyFixture) {
-			require.NoError(t, f.keys.Delete("u-active", "key-ok"))
+			require.NoError(t, f.keys.Delete(context.Background(), "u-active", "key-ok"))
 		}},
 		{name: "user disabled in the database", change: func(t *testing.T, f *wsKeyFixture) {
 			user, err := f.users.FindByID("u-active")
@@ -316,22 +321,22 @@ type countingKeyRepo struct {
 	prefixHits int
 }
 
-func (r *countingKeyRepo) FindByIDs(ids []string) ([]*models.APIKey, error) {
+func (r *countingKeyRepo) FindByIDs(ctx context.Context, ids []string) ([]*models.APIKey, error) {
 	r.batchCalls++
 	if r.batchErr != nil {
 		return nil, r.batchErr
 	}
-	return r.MockAPIKeyRepository.FindByIDs(ids)
+	return r.MockAPIKeyRepository.FindByIDs(ctx, ids)
 }
 
-func (r *countingKeyRepo) FindByID(userID, keyID string) (*models.APIKey, error) {
+func (r *countingKeyRepo) FindByID(ctx context.Context, userID, keyID string) (*models.APIKey, error) {
 	r.findCalls++
-	return r.MockAPIKeyRepository.FindByID(userID, keyID)
+	return r.MockAPIKeyRepository.FindByID(ctx, userID, keyID)
 }
 
-func (r *countingKeyRepo) FindByPrefix(prefix string) ([]*models.APIKey, error) {
+func (r *countingKeyRepo) FindByPrefix(ctx context.Context, prefix string) ([]*models.APIKey, error) {
 	r.prefixHits++
-	return r.MockAPIKeyRepository.FindByPrefix(prefix)
+	return r.MockAPIKeyRepository.FindByPrefix(ctx, prefix)
 }
 
 func TestNewWebSocketRevocationChecker_APIKeys(t *testing.T) {
@@ -393,6 +398,171 @@ func TestNewWebSocketRevocationChecker_APIKeys(t *testing.T) {
 			assert.Zero(t, keys.findCalls, "no per-key lookup")
 		})
 	}
+}
+
+// ctxKeyRepo records the context of FindByIDs and fails when it is done.
+type ctxKeyRepo struct {
+	models.APIKeyRepository
+	gotCtx context.Context
+}
+
+func (r *ctxKeyRepo) FindByIDs(ctx context.Context, _ []string) ([]*models.APIKey, error) {
+	r.gotCtx = ctx
+	if err := ctx.Err(); err != nil {
+		return nil, dberrors.NewDatabaseError("find_by_ids", err)
+	}
+	return nil, nil
+}
+
+// TestNewWebSocketRevocationChecker_APIKeyContext checks that the key lookup
+// runs with the context of the run, and that a cancelled run (hub shutdown)
+// closes no socket and logs no error.
+// Not parallel: it replaces the default slog logger.
+func TestNewWebSocketRevocationChecker_APIKeyContext(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	type runKey struct{}
+	identities := []websocket.ClientIdentity{{UserID: "u1", APIKeyID: "k-missing"}}
+	tests := []struct {
+		name    string
+		cancel  bool
+		want    []bool
+		wantLog string
+	}{
+		{name: "missing key is revoked", want: []bool{true}},
+		{name: "cancelled run revokes nothing", cancel: true, want: []bool{false},
+			wantLog: `level=DEBUG msg="WebSocket revalidation cancelled"`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			buf.Reset()
+			repo := &ctxKeyRepo{}
+			check := NewWebSocketRevocationChecker(nil, nil, repo)
+			require.NotNil(t, check)
+			ctx, cancel := context.WithCancel(context.WithValue(context.Background(), runKey{}, "run-1"))
+			defer cancel()
+			if tt.cancel {
+				cancel()
+			}
+
+			assert.Equal(t, tt.want, check(ctx, identities))
+			require.NotNil(t, repo.gotCtx)
+			assert.Equal(t, "run-1", repo.gotCtx.Value(runKey{}))
+			assert.NotContains(t, buf.String(), "level=ERROR")
+			if tt.wantLog != "" {
+				assert.Contains(t, buf.String(), tt.wantLog)
+			}
+		})
+	}
+}
+
+// cancellingStore cancels the run during the blocklist read, as a hub
+// shutdown does, and returns the context error.
+type cancellingStore struct {
+	sessionstore.SessionStore
+	cancel context.CancelFunc
+}
+
+func (s *cancellingStore) IsTokenBlocked(ctx context.Context, _ string) (bool, error) {
+	s.cancel()
+	return false, ctx.Err()
+}
+
+func (s *cancellingStore) IsUserBlocked(ctx context.Context, _ string, _ time.Time) (bool, error) {
+	return false, ctx.Err()
+}
+
+// TestNewWebSocketRevocationChecker_StoreCancelled checks that a session
+// store error during a hub shutdown closes no socket and logs no error.
+// Not parallel: it replaces the default slog logger.
+func TestNewWebSocketRevocationChecker_StoreCancelled(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	check := NewWebSocketRevocationChecker(&cancellingStore{cancel: cancel}, nil, nil)
+	require.NotNil(t, check)
+
+	got := check(ctx, []websocket.ClientIdentity{{UserID: "u1", TokenID: "jti-1", IssuedAt: time.Now()}})
+
+	assert.Equal(t, []bool{false}, got)
+	assert.Contains(t, buf.String(), `level=DEBUG msg="WebSocket revalidation cancelled"`)
+	assert.NotContains(t, buf.String(), "level=ERROR")
+}
+
+// ctxRecordingKeyRepo records the request value that each key lookup gets.
+type ctxRecordingKeyRepo struct {
+	*MockAPIKeyRepository
+	mu   sync.Mutex
+	vals map[string]any // method name -> value of wsReqKey
+}
+
+type wsReqKey struct{}
+
+func (r *ctxRecordingKeyRepo) record(method string, ctx context.Context) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.vals[method] = ctx.Value(wsReqKey{})
+}
+
+func (r *ctxRecordingKeyRepo) value(method string) (any, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	v, called := r.vals[method]
+	return v, called
+}
+
+func (r *ctxRecordingKeyRepo) FindByPrefix(ctx context.Context, prefix string) ([]*models.APIKey, error) {
+	r.record("FindByPrefix", ctx)
+	return r.MockAPIKeyRepository.FindByPrefix(ctx, prefix)
+}
+
+func (r *ctxRecordingKeyRepo) FindByID(ctx context.Context, userID, keyID string) (*models.APIKey, error) {
+	r.record("FindByID", ctx)
+	return r.MockAPIKeyRepository.FindByID(ctx, userID, keyID)
+}
+
+// TestHandleWebSocket_APIKeyRequestContext checks that the key lookup of the
+// upgrade and the key re-check after the registration run with the request
+// context (#656).
+func TestHandleWebSocket_APIKeyRequestContext(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	hub := websocket.NewHub()
+	go hub.Run()
+	defer hub.Shutdown()
+
+	f := newWSKeyFixture(t)
+	repo := &ctxRecordingKeyRepo{MockAPIKeyRepository: f.keys, vals: map[string]any{}}
+	handler := NewWebSocketHandler(hub, "*", wsTestJWTSecret).
+		WithRevocationChecks(nil, f.users).
+		WithAPIKeys(repo)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), wsReqKey{}, "req-ws"))
+		c.Next()
+	})
+	router.GET("/ws", handler.HandleWebSocket)
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	dialWSWithKey(t, server, f.raw["key-ok"])
+	waitForHubClients(t, hub, 1)
+
+	got, _ := repo.value("FindByPrefix")
+	assert.Equal(t, "req-ws", got, "the upgrade lookup gets the request context")
+	require.Eventually(t, func() bool { _, called := repo.value("FindByID"); return called },
+		3*time.Second, 10*time.Millisecond, "the re-check after the registration ran")
+	got, _ = repo.value("FindByID")
+	assert.Equal(t, "req-ws", got, "the re-check gets the request context")
 }
 
 // TestHandleWebSocket_APIKeyRateLimit checks that the per-IP limit runs

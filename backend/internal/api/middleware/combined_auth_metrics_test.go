@@ -28,8 +28,12 @@ type stubAPIKeyRepo struct {
 	err     error
 }
 
-func (s *stubAPIKeyRepo) FindByPrefix(string) ([]*models.APIKey, error)  { return s.records, s.err }
-func (s *stubAPIKeyRepo) UpdateLastUsed(string, string, time.Time) error { return nil }
+func (s *stubAPIKeyRepo) FindByPrefix(context.Context, string) ([]*models.APIKey, error) {
+	return s.records, s.err
+}
+func (s *stubAPIKeyRepo) UpdateLastUsed(context.Context, string, string, time.Time) error {
+	return nil
+}
 
 type stubUserRepo struct {
 	models.UserRepository
@@ -101,6 +105,8 @@ func TestCombinedAuth_APIKeyMetricOutcomes(t *testing.T) {
 	do(APIKeyAuthDeps{APIKeyRepo: &stubAPIKeyRepo{err: dberrors.NewDatabaseError("find_by_prefix", dberrors.ErrNotFound)}, UserRepo: &stubUserRepo{}}, "sk_"+rawKey)
 	// failure: operational repo error
 	do(APIKeyAuthDeps{APIKeyRepo: &stubAPIKeyRepo{err: errors.New("db down")}, UserRepo: &stubUserRepo{}}, "sk_"+rawKey)
+	// no outcome: the request context cancelled the lookup
+	do(APIKeyAuthDeps{APIKeyRepo: &stubAPIKeyRepo{err: dberrors.NewDatabaseError("find_by_prefix", context.Canceled)}, UserRepo: &stubUserRepo{}}, "sk_"+rawKey)
 	// disabled: valid key, disabled user
 	do(APIKeyAuthDeps{
 		APIKeyRepo: &stubAPIKeyRepo{records: []*models.APIKey{validKey}},
@@ -114,7 +120,8 @@ func TestCombinedAuth_APIKeyMetricOutcomes(t *testing.T) {
 
 	assert.Equal(t, int64(1), apiKeyStatusCount(t, reader, "missing"))
 	assert.Equal(t, int64(2), apiKeyStatusCount(t, reader, "invalid"), "short key + unknown prefix")
-	assert.Equal(t, int64(1), apiKeyStatusCount(t, reader, "failure"))
+	assert.Equal(t, int64(1), apiKeyStatusCount(t, reader, "failure"), "a cancelled lookup is no failure")
+	assert.Zero(t, apiKeyStatusCount(t, reader, "cancelled"))
 	assert.Equal(t, int64(1), apiKeyStatusCount(t, reader, "disabled"))
 	assert.Equal(t, int64(1), apiKeyStatusCount(t, reader, "success"))
 }
