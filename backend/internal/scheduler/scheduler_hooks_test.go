@@ -70,7 +70,8 @@ func (e *triggerExecutor) DeleteInstance(ctx context.Context, inst *models.Stack
 	return e.act(ctx, inst)
 }
 
-// systemNotifier records the system and owner notifications.
+// systemNotifier records the system notifications and any instance
+// notification (the scheduler sends none since #651).
 type systemNotifier struct {
 	mu       sync.Mutex
 	messages []string
@@ -235,20 +236,17 @@ func TestScheduler_ChannelMessageListsNames(t *testing.T) {
 		action        string
 		failIDs       map[string]bool
 		expectMessage string
-		expectOwners  int
 	}{
 		{
 			name: "few names", count: 2, action: "stop",
 			expectMessage: `Policy "p1" matched 2 instance(s), action: stop: stack-00, stack-01`,
-			expectOwners:  2,
 		},
 		{
 			name: "more than ten names", count: 12, action: "stop",
 			expectMessage: `Policy "p1" matched 12 instance(s), action: stop: stack-00, stack-01, stack-02, stack-03, stack-04, stack-05, stack-06, stack-07, stack-08, stack-09 and 2 more`,
-			expectOwners:  12,
 		},
 		{
-			name: "failed count and delete sends no owner notification from the scheduler", count: 2, action: "delete",
+			name: "failed count", count: 2, action: "delete",
 			failIDs:       map[string]bool{"i00": true},
 			expectMessage: `Policy "p1" matched 1 instance(s), action: delete: stack-01 (1 failed)`,
 		},
@@ -270,7 +268,7 @@ func TestScheduler_ChannelMessageListsNames(t *testing.T) {
 			defer notif.mu.Unlock()
 			require.Len(t, notif.messages, 1)
 			assert.Equal(t, tt.expectMessage, notif.messages[0])
-			assert.Len(t, notif.owners, tt.expectOwners)
+			assert.Empty(t, notif.owners, "the deploy manager sends the instance notifications (#651)")
 		})
 	}
 }

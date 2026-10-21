@@ -692,6 +692,14 @@ export interface Notification {
   is_read: boolean;
   entity_type?: string;
   entity_id?: string;
+  /** Who did the action. Omitted when unknown (for example older notifications). */
+  trigger?: {
+    type: 'user' | 'cleanup-policy' | 'ttl';
+    /** User ID or cleanup policy ID. */
+    id?: string;
+    /** Username or cleanup policy name. */
+    name?: string;
+  };
   created_at: string;
 }
 

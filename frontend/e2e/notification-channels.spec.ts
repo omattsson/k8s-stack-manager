@@ -21,6 +21,8 @@ import { STUB_HTTPS_URL, STUB_TLS_TRUSTED, expectedSignature, stubHealth, stubRe
  * (<APP_PUBLIC_URL>/stack-instances/<id>). `make test-e2e` starts the backend
  * with APP_PUBLIC_URL and gives Playwright the same value in
  * E2E_APP_PUBLIC_URL.
+ *
+ * A clone and a quick deploy send instance.created too (#650).
  */
 
 const PASSWORD = 'e2e-test-password';
@@ -44,6 +46,7 @@ let definitionId: string;
 let tlsReady = false;
 const channelIds: string[] = [];
 const instanceIds: string[] = [];
+const templateIds: string[] = [];
 
 const auth = (token: string) => ({ Authorization: `Bearer ${token}` });
 const CHANNELS = `${API_BASE}/api/v1/admin/notification-channels`;
@@ -132,6 +135,76 @@ async function receiveInstanceCreated(format: 'generic' | 'teams', key: string, 
   return { instanceId, body: recs[0].body };
 }
 
+/**
+ * Create a generic channel that filters on instanceName and takes
+ * instance.created, run create (which makes that instance as the devops
+ * user and returns its ID), and return the ID and the parsed body of the one
+ * instance.created request that the stub got.
+ */
+async function receiveCreatedFrom(
+  key: string,
+  instanceName: string,
+  create: () => Promise<string>,
+): Promise<{ instanceId: string; body: Record<string, unknown> }> {
+  const channelId = await createChannel(
+    { name: uniqueName('e2e-nc-created-ch'), webhook_url: `${STUB_HTTPS_URL}/webhook/${key}`, filters: { instance_name_patterns: [instanceName] } },
+    ['instance.created'],
+  );
+  const instanceId = await create();
+  const delivery = await waitForDelivery(channelId, 'instance.created');
+  expect(delivery.status, delivery.error_message).toBe('success');
+
+  const recs = (await stubRecords(api, `/webhook/${key}`)).filter((r) => r.headers['x-stackmanager-event'] === 'instance.created');
+  expect(recs).toHaveLength(1);
+  return { instanceId, body: JSON.parse(recs[0].body) as Record<string, unknown> };
+}
+
+/** Create and publish a template with one chart as the devops user, and return its ID. */
+async function createPublishedTemplate(): Promise<string> {
+  const res = await api.post(`${API_BASE}/api/v1/templates`, {
+    headers: auth(devops.token),
+    data: { name: uniqueName('e2e-nc-tpl'), description: 'Notification channels quick deploy', category: 'Web', version: '1.0.0' },
+  });
+  expect(res.status(), `create template: ${await res.text()}`).toBe(201);
+  const { id } = await res.json();
+  templateIds.push(id);
+  const chart = await api.post(`${API_BASE}/api/v1/templates/${id}/charts`, {
+    headers: auth(devops.token),
+    data: { chart_name: 'web', repository_url: 'https://charts.example.com', chart_version: '1.0.0' },
+  });
+  expect(chart.ok(), `add template chart: ${await chart.text()}`).toBe(true);
+  const pub = await api.post(`${API_BASE}/api/v1/templates/${id}/publish`, { headers: auth(devops.token) });
+  expect(pub.ok(), `publish template: ${await pub.text()}`).toBe(true);
+  return id;
+}
+
+/**
+ * Wait (best effort, at most 20 s: the test timeout is 60 s) until the deploy
+ * of a quick deploy ends, so that afterAll can delete the instance. Without
+ * cluster access the deploy fails at once.
+ */
+async function waitDeployEnded(instanceId: string): Promise<void> {
+  const busy = ['queued', 'deploying', 'stabilizing'];
+  await expect.poll(async () => {
+    const res = await api.get(`${API_BASE}/api/v1/stack-instances/${instanceId}`, { headers: auth(devops.token) });
+    return res.ok() && busy.includes((await res.json()).status);
+  }, { timeout: 20_000, message: `deploy of ${instanceId} ended` }).toBe(false)
+    .catch(() => console.warn(`waitDeployEnded: instance ${instanceId} still deploys after 20 s; afterAll may not delete it.`));
+}
+
+/**
+ * Wait (at most 30 s) until the instance is gone. A delete of an instance in
+ * error cleans first (202): the row and its quick deploy definition go when
+ * the clean ends. Returns false on a timeout.
+ */
+async function waitInstanceGone(instanceId: string): Promise<boolean> {
+  return expect.poll(async () => {
+    const res = await api.get(`${API_BASE}/api/v1/stack-instances/${instanceId}`, { headers: auth(adminToken) });
+    return res.status();
+  }, { timeout: 30_000, message: `instance ${instanceId} deleted` }).toBe(404)
+    .then(() => true, () => false);
+}
+
 interface TeamsFact { title: string; value: string }
 interface TeamsAction { type: string; title: string; url: string }
 interface TeamsEnvelope {
@@ -173,7 +246,19 @@ test.describe('Notification channels', () => {
   test.afterAll(async () => {
     if (!api) return;
     for (const id of channelIds) await api.delete(`${CHANNELS}/${id}`, { headers: auth(adminToken) });
-    for (const id of instanceIds) await api.delete(`${API_BASE}/api/v1/stack-instances/${id}`, { headers: auth(adminToken) });
+    const cleaning: string[] = [];
+    for (const id of instanceIds) {
+      const res = await api.delete(`${API_BASE}/api/v1/stack-instances/${id}`, { headers: auth(adminToken) });
+      if (res.status() === 202) cleaning.push(id);
+    }
+    // The quick deploy definition references the template until its instance is gone.
+    for (const id of cleaning) {
+      if (!(await waitInstanceGone(id))) console.warn(`afterAll: instance ${id} still exists after 30 s.`);
+    }
+    for (const id of templateIds) {
+      const res = await api.delete(`${API_BASE}/api/v1/templates/${id}`, { headers: auth(adminToken) });
+      if (res.status() === 409) console.warn(`afterAll: template ${id} is still referenced (409) and stays: ${await res.text()}`);
+    }
     if (definitionId) await api.delete(`${API_BASE}/api/v1/stack-definitions/${definitionId}`, { headers: auth(adminToken) });
     if (devops) await api.delete(`${API_BASE}/api/v1/users/${devops.id}`, { headers: auth(adminToken) });
     await api.dispose();
@@ -422,6 +507,62 @@ test.describe('Notification channels', () => {
     // The filter targets are internal: never sent.
     expect(body).not.toHaveProperty('instances');
     expect(body).not.toHaveProperty('Instances');
+  });
+
+  test('a clone sends instance.created with the trigger and the owner (#650)', async () => {
+    test.skip(!tlsReady, TLS_SKIP);
+    // The source belongs to admin; the clone belongs to the caller (devops).
+    const sourceId = await createInstance(uniqueName('e2e-nc-src'));
+    const cloneName = uniqueName('e2e-nc-clone');
+    const { instanceId, body } = await receiveCreatedFrom(uniqueName('clone'), cloneName, async () => {
+      const res = await api.post(`${API_BASE}/api/v1/stack-instances/${sourceId}/clone`, {
+        headers: auth(devops.token),
+        data: { name: cloneName },
+      });
+      expect(res.status(), `clone: ${await res.text()}`).toBe(201);
+      const { id } = await res.json();
+      instanceIds.push(id);
+      return id;
+    });
+
+    expect(body).toMatchObject({
+      event_type: 'instance.created',
+      title: 'Stack created',
+      message: `Stack ${cloneName} has been created`,
+      entity_type: 'stack_instance',
+      entity_id: instanceId,
+      trigger: { type: 'user', id: devops.id, name: devops.username },
+      owner_display_name: devops.displayName,
+      branch: 'main',
+    });
+  });
+
+  test('a quick deploy sends instance.created with the trigger and the owner (#650)', async () => {
+    test.skip(!tlsReady, TLS_SKIP);
+    const templateId = await createPublishedTemplate();
+    const instanceName = uniqueName('e2e-nc-quick');
+    const { instanceId, body } = await receiveCreatedFrom(uniqueName('quick'), instanceName, async () => {
+      const res = await api.post(`${API_BASE}/api/v1/templates/${templateId}/quick-deploy`, {
+        headers: auth(devops.token),
+        data: { instance_name: instanceName, branch: 'main' },
+      });
+      expect(res.status(), `quick deploy: ${await res.text()}`).toBe(202);
+      const { instance } = await res.json();
+      instanceIds.push(instance.id);
+      return instance.id;
+    });
+    await waitDeployEnded(instanceId);
+
+    expect(body).toMatchObject({
+      event_type: 'instance.created',
+      title: 'Stack created',
+      message: `Stack ${instanceName} has been created`,
+      entity_type: 'stack_instance',
+      entity_id: instanceId,
+      trigger: { type: 'user', id: devops.id, name: devops.username },
+      owner_display_name: devops.displayName,
+      branch: 'main',
+    });
   });
 
   test('the delivery logs show the test send and a real event', async ({ page }) => {

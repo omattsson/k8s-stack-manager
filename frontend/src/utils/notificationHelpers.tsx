@@ -8,6 +8,7 @@ import TimerOffOutlined from '@mui/icons-material/TimerOffOutlined';
 import WarningAmberOutlined from '@mui/icons-material/WarningAmberOutlined';
 import CleaningServicesOutlined from '@mui/icons-material/CleaningServicesOutlined';
 import VpnKeyOutlined from '@mui/icons-material/VpnKeyOutlined';
+import type { Notification } from '../types';
 
 /**
  * Returns a human-readable relative time string for a given ISO date.
@@ -43,6 +44,33 @@ export function notificationIcon(type: string) {
   if (type.includes('deleted')) return <DeleteOutlined color="action" fontSize="small" />;
   if (type.includes('created')) return <AddCircleOutlined color="success" fontSize="small" />;
   return <InfoOutlined color="info" fontSize="small" />;
+}
+
+/**
+ * Returns the "who did it" text of a notification, for example "by alice",
+ * "by you", "by expiry" or "by Cleanup policy nightly".
+ *
+ * @param trigger - The trigger of the notification (omitted for older notifications).
+ * @param currentUserId - The ID of the signed-in user, who receives the notification.
+ * @returns The text, or null when the trigger is missing or unknown.
+ */
+export function formatTrigger(
+  trigger: Notification['trigger'],
+  currentUserId?: string,
+): string | null {
+  if (!trigger) return null;
+  switch (trigger.type) {
+    case 'user':
+      if (currentUserId && trigger.id === currentUserId) return 'by you';
+      return trigger.name ? `by ${trigger.name}` : 'by a user';
+    case 'ttl':
+      // Also a fixed stop time (expires_at), so the text does not say "TTL" (#652).
+      return 'by expiry';
+    case 'cleanup-policy':
+      return trigger.name ? `by Cleanup policy ${trigger.name}` : 'by a cleanup policy';
+    default:
+      return null;
+  }
 }
 
 /**

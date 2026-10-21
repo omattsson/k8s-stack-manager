@@ -144,10 +144,16 @@ func (n *Notifier) Notify(ctx context.Context, userID, notifType, title, message
 }
 
 func (n *Notifier) notify(ctx context.Context, userID, notifType, title, message, entityType, entityID string, dispatchExternal bool) error {
+	return n.notifyWithTrigger(ctx, userID, notifType, title, message, entityType, entityID, models.Trigger{}, dispatchExternal)
+}
+
+// notifyWithTrigger is notify that also stores the trigger of the action (#652).
+func (n *Notifier) notifyWithTrigger(ctx context.Context, userID, notifType, title, message, entityType, entityID string, trigger models.Trigger, dispatchExternal bool) error {
 	notification := &models.Notification{
 		ID:         uuid.New().String(),
 		UserID:     userID,
 		Type:       notifType,
+		Trigger:    trigger,
 		Title:      title,
 		Message:    message,
 		EntityType: entityType,
@@ -216,7 +222,7 @@ func (n *Notifier) FollowerIDs(ctx context.Context, instanceID string) []string 
 
 // InstanceOptions is the data of an instance event that only the caller
 // knows. NotifyInstance puts it into the channel payload; the in-app
-// notification does not use it.
+// notification uses only the trigger (#652).
 type InstanceOptions struct {
 	// Trigger is what started the operation (payload field trigger). Nil:
 	// no trigger.
@@ -274,9 +280,16 @@ func ResolveInstanceOptions(opts ...InstanceOption) InstanceOptions {
 // a public URL, not for instance.deleted) and the data of opts (trigger,
 // site URL).
 //
+// The trigger is the WithTrigger option, else the trigger of ctx
+// (hooks.WithTrigger). Each in-app notification and the payload get it.
+//
 // It returns the error of the owner's database insert; errors for followers
 // are logged.
 func (n *Notifier) NotifyInstance(ctx context.Context, target models.NotificationTarget, notifType, title, message string, opts ...InstanceOption) error {
+	o := ResolveInstanceOptions(opts...)
+	o.Trigger = n.instanceTrigger(ctx, o.Trigger)
+	trigger := rowTrigger(o.Trigger)
+
 	followers := target.FollowerIDs
 	if followers == nil {
 		followers = n.FollowerIDs(ctx, target.InstanceID)
@@ -297,7 +310,7 @@ func (n *Notifier) NotifyInstance(ctx context.Context, target models.Notificatio
 		if disabled[userID] {
 			continue
 		}
-		if err := n.notify(ctx, userID, notifType, title, message, EntityTypeStackInstance, target.InstanceID, false); err != nil {
+		if err := n.notifyWithTrigger(ctx, userID, notifType, title, message, EntityTypeStackInstance, target.InstanceID, trigger, false); err != nil {
 			if userID == target.OwnerID {
 				ownerErr = err
 			}
@@ -307,9 +320,28 @@ func (n *Notifier) NotifyInstance(ctx context.Context, target models.Notificatio
 	}
 
 	if n.channelDispatcher != nil {
-		n.enqueueDispatch(n.instancePayload(target, notifType, title, message, ResolveInstanceOptions(opts...)))
+		n.enqueueDispatch(n.instancePayload(target, notifType, title, message, o))
 	}
 	return ownerErr
+}
+
+// instanceTrigger returns opt, else the trigger of ctx, with the username of
+// a user trigger (resolveTrigger). It returns nil without a trigger.
+func (n *Notifier) instanceTrigger(ctx context.Context, opt *hooks.Trigger) *hooks.Trigger {
+	if opt == nil || opt.Type == "" {
+		if t, ok := hooks.TriggerFromContext(ctx); ok {
+			opt = &t
+		}
+	}
+	return n.resolveTrigger(opt)
+}
+
+// rowTrigger returns the trigger columns of a notification row for t.
+func rowTrigger(t *hooks.Trigger) models.Trigger {
+	if t == nil {
+		return models.Trigger{}
+	}
+	return models.Trigger{TriggerType: t.Type, TriggerID: t.ID, TriggerName: t.Name}
 }
 
 // instancePayload builds the channel payload of an instance event.

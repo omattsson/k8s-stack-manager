@@ -412,6 +412,10 @@ The application records every mutating API call (POST, PUT, DELETE) with the use
 - An owner who also follows the instance gets one notification, not two.
 - The user who started the operation is not excluded. For example, a follower who deploys the instance also gets the deploy notification. The owner always got the notifications of the own operations. Followers get the same rule.
 - The WebSocket message `notification.new` goes only to the sockets of each receiver.
+- Each notification shows who did the action, after the time. "by alice" means that the user alice did it. "by you" means that you did it. "by expiry" means that the stack reached its TTL or its stop time. "by Cleanup policy nightly" means that the cleanup policy "nightly" did it. Older notifications have no such line.
+- Create, clone and quick deploy send "Stack created" (`instance.created`) to the owner and the channels.
+- A cleanup policy stop or clean sends one notification when the operation ends: `cleanup.policy.stop` or `cleanup.policy.clean`. The message names the policy. A failed stop or clean sends "Stop failed" or "Cleanup failed".
+- Upgrade note: a cleanup policy no longer sends `deployment.stopped` or `clean.completed`. To get the policy actions, subscribe the channels and the preferences to `cleanup.policy.stop` and `cleanup.policy.clean`.
 
 **Follow a stack instance.** The detail page of an instance has a **Follow** button next to the favorite star. It shows the number of followers.
 

@@ -1120,6 +1120,9 @@ func (d *Database) AutoMigrate() error {
 	// Migration 62: drop the redundant notifications.is_read index (#648).
 	migrator.AddMigration(dropNotificationIsReadIndexMigration())
 
+	// Migration 64: notification trigger columns (#652).
+	migrator.AddMigration(notificationTriggerMigration())
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err

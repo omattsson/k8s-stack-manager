@@ -18,13 +18,16 @@ import DoneAllIcon from '@mui/icons-material/DoneAll';
 import { useNavigate } from 'react-router-dom';
 import { notificationService } from '../../api/client';
 import LoadingState from '../../components/LoadingState';
-import { timeAgo, notificationIcon, entityRoute } from '../../utils/notificationHelpers';
+import NotificationMeta from '../../components/NotificationCenter/NotificationMeta';
+import { useAuth } from '../../context/AuthContext';
+import { notificationIcon, entityRoute } from '../../utils/notificationHelpers';
 import type { Notification } from '../../types';
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50];
 
 const Notifications = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
 
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [total, setTotal] = useState(0);
@@ -131,9 +134,11 @@ const Notifications = () => {
                       <Typography variant="body2" color="text.secondary" component="span">
                         {notification.message}
                       </Typography>
-                      <Typography variant="caption" color="text.disabled" component="span">
-                        {timeAgo(notification.created_at)}
-                      </Typography>
+                      <NotificationMeta
+                        createdAt={notification.created_at}
+                        trigger={notification.trigger}
+                        currentUserId={user?.id}
+                      />
                     </Box>
                   }
                   slotProps={{

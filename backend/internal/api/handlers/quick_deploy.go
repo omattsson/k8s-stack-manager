@@ -45,6 +45,7 @@ type QuickDeployHandler struct {
 	txRunner           database.TxRunner
 	sharedValuesRepo   models.SharedValuesRepository
 	versionRepo        models.TemplateVersionRepository
+	notifier           deployer.LifecycleNotifier
 	uniqueNames        bool
 }
 
@@ -70,6 +71,14 @@ func (h *QuickDeployHandler) WithUniqueInstanceNames(enabled bool) *QuickDeployH
 // Returns h for chaining.
 func (h *QuickDeployHandler) WithTemplateVersions(repo models.TemplateVersionRepository) *QuickDeployHandler {
 	h.versionRepo = repo
+	return h
+}
+
+// WithNotifier attaches the lifecycle notifier: quick deploy sends
+// instance.created to the owner and the notification channels (#650). Nil
+// sends nothing. Returns h for chaining.
+func (h *QuickDeployHandler) WithNotifier(n deployer.LifecycleNotifier) *QuickDeployHandler {
+	h.notifier = n
 	return h
 }
 
@@ -152,6 +161,7 @@ type quickDeployResponse struct {
 // @Description Expiry: ttl_minutes (omitted: DEFAULT_INSTANCE_TTL_MINUTES; 0: no expiry) or expires_at, a fixed stop time (RFC 3339 with a time zone, in the future, not later than now + MAX_INSTANCE_TTL_DAYS). Do not send both (400).
 // @Description The template content comes from the latest published snapshot, not the working copy. A template that is not published, or has no snapshot, gives 409 "Template has no published version".
 // @Description The new stack definition is owned by the instance (owner_instance_id): deleting the instance deletes the definition when no other instance uses it. The definition is named after the instance; when the caller already has a definition with that name, the name gets the suffix " (2)", " (3)", ...
+// @Description The owner and the subscribed notification channels get the notification instance.created, with the caller as the trigger.
 // @Tags        templates
 // @Accept      json
 // @Produce     json
@@ -368,6 +378,8 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
+
+	notifyInstanceCreated(hookTriggerCtx(c), h.notifier, inst)
 
 	// Open dashboards reload their list (the deploy below also sends
 	// deployment.status, which they treat the same way).
