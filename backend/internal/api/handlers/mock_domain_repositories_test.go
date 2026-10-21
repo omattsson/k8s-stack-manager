@@ -1650,6 +1650,15 @@ func (m *MockAuditLogRepository) SetError(err error) {
 
 // ---- APIKeyRepository mock ----
 
+// ctxDone returns the error of a done ctx as the GORM repository does
+// (WithContext), so the tests see a cancelled request.
+func ctxDone(ctx context.Context, op string) error {
+	if err := ctx.Err(); err != nil {
+		return dberrors.NewDatabaseError(op, err)
+	}
+	return nil
+}
+
 type MockAPIKeyRepository struct {
 	mu        sync.RWMutex
 	keys      map[string]*models.APIKey   // by ID
@@ -1667,7 +1676,10 @@ func NewMockAPIKeyRepository() *MockAPIKeyRepository {
 	}
 }
 
-func (m *MockAPIKeyRepository) Create(key *models.APIKey) error {
+func (m *MockAPIKeyRepository) Create(ctx context.Context, key *models.APIKey) error {
+	if err := ctxDone(ctx, "create"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.createErr != nil {
@@ -1682,7 +1694,10 @@ func (m *MockAPIKeyRepository) Create(key *models.APIKey) error {
 	return nil
 }
 
-func (m *MockAPIKeyRepository) FindByID(userID, keyID string) (*models.APIKey, error) {
+func (m *MockAPIKeyRepository) FindByID(ctx context.Context, userID, keyID string) (*models.APIKey, error) {
+	if err := ctxDone(ctx, "find_by_id"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.findErr != nil {
@@ -1696,7 +1711,10 @@ func (m *MockAPIKeyRepository) FindByID(userID, keyID string) (*models.APIKey, e
 	return &cp, nil
 }
 
-func (m *MockAPIKeyRepository) FindByIDs(keyIDs []string) ([]*models.APIKey, error) {
+func (m *MockAPIKeyRepository) FindByIDs(ctx context.Context, keyIDs []string) ([]*models.APIKey, error) {
+	if err := ctxDone(ctx, "find_by_ids"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.findErr != nil {
@@ -1712,7 +1730,10 @@ func (m *MockAPIKeyRepository) FindByIDs(keyIDs []string) ([]*models.APIKey, err
 	return out, nil
 }
 
-func (m *MockAPIKeyRepository) FindByPrefix(prefix string) ([]*models.APIKey, error) {
+func (m *MockAPIKeyRepository) FindByPrefix(ctx context.Context, prefix string) ([]*models.APIKey, error) {
+	if err := ctxDone(ctx, "find_by_prefix"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.findErr != nil {
@@ -1730,7 +1751,10 @@ func (m *MockAPIKeyRepository) FindByPrefix(prefix string) ([]*models.APIKey, er
 	return out, nil
 }
 
-func (m *MockAPIKeyRepository) ListByUser(userID string) ([]*models.APIKey, error) {
+func (m *MockAPIKeyRepository) ListByUser(ctx context.Context, userID string) ([]*models.APIKey, error) {
+	if err := ctxDone(ctx, "list_by_user"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.listErr != nil {
@@ -1746,7 +1770,10 @@ func (m *MockAPIKeyRepository) ListByUser(userID string) ([]*models.APIKey, erro
 	return out, nil
 }
 
-func (m *MockAPIKeyRepository) UpdateLastUsed(userID, keyID string, t time.Time) error {
+func (m *MockAPIKeyRepository) UpdateLastUsed(ctx context.Context, userID, keyID string, t time.Time) error {
+	if err := ctxDone(ctx, "update_last_used"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	k, ok := m.keys[keyID]
@@ -1757,7 +1784,10 @@ func (m *MockAPIKeyRepository) UpdateLastUsed(userID, keyID string, t time.Time)
 	return nil
 }
 
-func (m *MockAPIKeyRepository) Delete(userID, keyID string) error {
+func (m *MockAPIKeyRepository) Delete(ctx context.Context, userID, keyID string) error {
+	if err := ctxDone(ctx, "delete"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.deleteErr != nil {
@@ -1784,7 +1814,10 @@ func (m *MockAPIKeyRepository) Delete(userID, keyID string) error {
 }
 
 // DeleteAllForUser removes every key of the user; honours deleteErr.
-func (m *MockAPIKeyRepository) DeleteAllForUser(userID string) (int64, error) {
+func (m *MockAPIKeyRepository) DeleteAllForUser(ctx context.Context, userID string) (int64, error) {
+	if err := ctxDone(ctx, "delete_all_for_user"); err != nil {
+		return 0, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.deleteErr != nil {

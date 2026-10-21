@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -35,7 +36,7 @@ func (r *testAPIKeyRepo) addKey(k *models.APIKey) {
 	r.keys[k.Prefix] = append(r.keys[k.Prefix], k)
 }
 
-func (r *testAPIKeyRepo) FindByPrefix(prefix string) ([]*models.APIKey, error) {
+func (r *testAPIKeyRepo) FindByPrefix(_ context.Context, prefix string) ([]*models.APIKey, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	ks, ok := r.keys[prefix]
@@ -50,13 +51,21 @@ func (r *testAPIKeyRepo) FindByPrefix(prefix string) ([]*models.APIKey, error) {
 	return out, nil
 }
 
-func (r *testAPIKeyRepo) UpdateLastUsed(userID, keyID string, t time.Time) error { return nil }
-func (r *testAPIKeyRepo) Create(key *models.APIKey) error                        { return nil }
-func (r *testAPIKeyRepo) FindByID(userID, keyID string) (*models.APIKey, error)  { return nil, nil }
-func (r *testAPIKeyRepo) ListByUser(userID string) ([]*models.APIKey, error)     { return nil, nil }
-func (r *testAPIKeyRepo) FindByIDs(_ []string) ([]*models.APIKey, error)         { return nil, nil }
-func (r *testAPIKeyRepo) Delete(userID, keyID string) error                      { return nil }
-func (r *testAPIKeyRepo) DeleteAllForUser(_ string) (int64, error) {
+func (r *testAPIKeyRepo) UpdateLastUsed(_ context.Context, _, _ string, _ time.Time) error {
+	return nil
+}
+func (r *testAPIKeyRepo) Create(_ context.Context, _ *models.APIKey) error { return nil }
+func (r *testAPIKeyRepo) FindByID(_ context.Context, _, _ string) (*models.APIKey, error) {
+	return nil, nil
+}
+func (r *testAPIKeyRepo) ListByUser(_ context.Context, _ string) ([]*models.APIKey, error) {
+	return nil, nil
+}
+func (r *testAPIKeyRepo) FindByIDs(_ context.Context, _ []string) ([]*models.APIKey, error) {
+	return nil, nil
+}
+func (r *testAPIKeyRepo) Delete(_ context.Context, _, _ string) error { return nil }
+func (r *testAPIKeyRepo) DeleteAllForUser(_ context.Context, _ string) (int64, error) {
 	return 0, nil
 }
 

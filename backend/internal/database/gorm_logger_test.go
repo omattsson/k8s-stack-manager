@@ -126,6 +126,23 @@ func TestSlogGormLogger_Trace(t *testing.T) {
 			name: "debug: SQL error at level error", debug: true, handlerLevel: slog.LevelDebug, err: errSQL,
 			wantLevel: slog.LevelError, wantMsg: "SQL error", wantKeys: []string{"sql", "rows", "duration", "error"},
 		},
+		{
+			name: "release: cancelled context at level debug", handlerLevel: slog.LevelDebug, err: context.Canceled,
+			wantLevel: slog.LevelDebug, wantMsg: "SQL query cancelled", wantKeys: []string{"sql", "rows", "duration", "error"},
+		},
+		{
+			name: "release: wrapped cancelled context at level debug", handlerLevel: slog.LevelDebug, err: fmt.Errorf("query: %w", context.Canceled),
+			wantLevel: slog.LevelDebug, wantMsg: "SQL query cancelled", wantKeys: []string{"sql", "rows", "duration", "error"},
+		},
+		{name: "release with LOG_LEVEL info: cancelled context is not logged", err: context.Canceled},
+		{
+			name: "release: slow cancelled query keeps the slow line with the error", err: context.Canceled, elapsed: time.Second,
+			wantLevel: slog.LevelWarn, wantMsg: "Slow SQL query", wantKeys: []string{"sql", "rows", "duration", "error", "threshold"},
+		},
+		{
+			name: "release: deadline exceeded stays an error", err: context.DeadlineExceeded,
+			wantLevel: slog.LevelError, wantMsg: "SQL error", wantKeys: []string{"sql", "rows", "duration", "error"},
+		},
 		{name: "debug with LOG_LEVEL info: statement is not logged", debug: true, handlerLevel: slog.LevelInfo},
 		{name: "release with LOG_LEVEL error: slow query is not logged", handlerLevel: slog.LevelError, elapsed: time.Second},
 		{

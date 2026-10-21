@@ -541,25 +541,25 @@ func TestMySQLIntegration_APIKeyRepository(t *testing.T) {
 		Prefix:  "sk_test_abcdef12",
 	}
 
-	err := repo.Create(key)
+	err := repo.Create(context.Background(), key)
 	require.NoError(t, err)
 	assert.NotEmpty(t, key.ID)
 
-	byIDs, err := repo.FindByIDs([]string{key.ID, "missing-id"})
+	byIDs, err := repo.FindByIDs(context.Background(), []string{key.ID, "missing-id"})
 	require.NoError(t, err)
 	require.Len(t, byIDs, 1)
 	assert.Equal(t, key.ID, byIDs[0].ID)
 
-	found, err := repo.FindByPrefix("sk_test_abcdef12")
+	found, err := repo.FindByPrefix(context.Background(), "sk_test_abcdef12")
 	require.NoError(t, err)
 	require.Len(t, found, 1)
 	assert.Equal(t, "test-key", found[0].Name)
 
-	keys, err := repo.ListByUser("user1")
+	keys, err := repo.ListByUser(context.Background(), "user1")
 	require.NoError(t, err)
 	assert.Len(t, keys, 1)
 
-	err = repo.Delete("user1", key.ID)
+	err = repo.Delete(context.Background(), "user1", key.ID)
 	require.NoError(t, err)
 }
 

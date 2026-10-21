@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -201,8 +202,8 @@ func (h *WebSocketHandler) apiKeysEnabled() bool {
 
 // handleAPIKeyUpgrade authenticates the X-API-Key header with the checks of
 // the HTTP API-key auth and upgrades the connection. The per-IP rate limit
-// runs before the key lookup (429). A busy hash verify gives 503. All other
-// rejections give 401 (a disabled user too, the same status as a disabled
+// runs before the key lookup (429). A busy hash verify gives 503 and a client
+// that left gives 499. All other rejections give 401 (a disabled user too, the same status as a disabled
 // user on the JWT path). The socket identity records the key ID, the user
 // ID and the connection time as the issue time, so a key delete and a user
 // revocation close it. A key with an expiry closes the socket at that time.
@@ -212,10 +213,10 @@ func (h *WebSocketHandler) handleAPIKeyUpgrade(c *gin.Context, header string) {
 		return
 	}
 	authTime := time.Now()
-	key, user, failure := middleware.AuthenticateAPIKey(h.apiKeyRepo, h.userRepo, header)
+	key, user, failure := middleware.AuthenticateAPIKey(c.Request.Context(), h.apiKeyRepo, h.userRepo, header)
 	if failure != nil {
 		status := http.StatusUnauthorized
-		if failure.Status == http.StatusServiceUnavailable {
+		if failure.Status == http.StatusServiceUnavailable || failure.Status == statusClientClosedRequest {
 			status = failure.Status
 		}
 		c.JSON(status, gin.H{"error": failure.Message})
@@ -257,7 +258,7 @@ func (h *WebSocketHandler) handleAPIKeyUpgrade(c *gin.Context, header string) {
 // disable, role change during the upgrade). Lookup errors are logged and
 // pass (fail open): the revalidation checks again.
 func (h *WebSocketHandler) apiKeySocketRevoked(ctx context.Context, id websocket.ClientIdentity) bool {
-	if revoked, err := apiKeyRevoked(h.apiKeyRepo, id.UserID, id.APIKeyID, time.Now()); err != nil {
+	if revoked, err := apiKeyRevoked(ctx, h.apiKeyRepo, id.UserID, id.APIKeyID, time.Now()); err != nil {
 		slog.Error("WebSocket API key re-check failed", "user_id", id.UserID, "error", err)
 	} else if revoked {
 		return true
@@ -277,8 +278,8 @@ func (h *WebSocketHandler) apiKeySocketRevoked(ctx context.Context, id websocket
 
 // apiKeyRevoked reports whether the API key is deleted (not found) or
 // expired at now. Other lookup errors are returned.
-func apiKeyRevoked(repo models.APIKeyRepository, userID, keyID string, now time.Time) (bool, error) {
-	key, err := repo.FindByID(userID, keyID)
+func apiKeyRevoked(ctx context.Context, repo models.APIKeyRepository, userID, keyID string, now time.Time) (bool, error) {
+	key, err := repo.FindByID(ctx, userID, keyID)
 	if err != nil {
 		if isNotFoundError(err) {
 			return true, nil
@@ -362,7 +363,12 @@ func NewWebSocketRevocationChecker(store sessionstore.SessionStore, userRepo mod
 	}
 	return func(ctx context.Context, identities []websocket.ClientIdentity) []bool {
 		revoked := make([]bool, len(identities))
-		keys, err := loadSocketAPIKeys(apiKeyRepo, identities)
+		keys, err := loadSocketAPIKeys(ctx, apiKeyRepo, identities)
+		if errors.Is(err, context.Canceled) {
+			// The hub shuts down.
+			slog.Debug("WebSocket revalidation cancelled", "identities", len(identities))
+			return revoked
+		}
 		if err != nil {
 			slog.Error("WebSocket revalidation stopped: API key lookup failed; the next run retries",
 				"identities", len(identities), "error", err)
@@ -387,6 +393,10 @@ func NewWebSocketRevocationChecker(store sessionstore.SessionStore, userRepo mod
 				continue
 			}
 			if lookupErr != nil {
+				if ctx.Err() != nil {
+					slog.Debug("WebSocket revalidation cancelled", "checked", i, "identities", len(identities))
+					return revoked
+				}
 				slog.Error("WebSocket revalidation stopped: session store check failed; the next run retries",
 					"checked", i, "identities", len(identities), "error", lookupErr)
 				return revoked
@@ -414,7 +424,7 @@ func NewWebSocketRevocationChecker(store sessionstore.SessionStore, userRepo mod
 // loadSocketAPIKeys reads the API keys of the socket identities in one
 // FindByIDs call. It returns nil (no key checks) when repo is nil or no
 // socket uses a key; a key that does not exist is missing from the map.
-func loadSocketAPIKeys(repo models.APIKeyRepository, identities []websocket.ClientIdentity) (map[string]*models.APIKey, error) {
+func loadSocketAPIKeys(ctx context.Context, repo models.APIKeyRepository, identities []websocket.ClientIdentity) (map[string]*models.APIKey, error) {
 	if repo == nil {
 		return nil, nil
 	}
@@ -429,7 +439,7 @@ func loadSocketAPIKeys(repo models.APIKeyRepository, identities []websocket.Clie
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	found, err := repo.FindByIDs(ids)
+	found, err := repo.FindByIDs(ctx, ids)
 	if err != nil {
 		return nil, err
 	}

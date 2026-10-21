@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"testing"
 	"time"
@@ -49,7 +50,7 @@ func TestAuthenticateAPIKey_VerifyLimiter(t *testing.T) {
 			}
 
 			start := time.Now()
-			key, user, failure := authenticateAPIKey(keys, users, "sk_"+raw, limiter)
+			key, user, failure := authenticateAPIKey(context.Background(), keys, users, "sk_"+raw, limiter)
 			if tt.wantStatus != 0 {
 				require.NotNil(t, failure)
 				assert.Equal(t, tt.wantStatus, failure.Status)

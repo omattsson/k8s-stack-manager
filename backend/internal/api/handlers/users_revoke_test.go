@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -57,7 +58,7 @@ func newRevokeFixture(t *testing.T) *revokeFixture {
 		{ID: "key-target-2", UserID: revokeTargetID, Name: "cli", Prefix: "bbbbbbbbbbbbbbbb"},
 		{ID: "key-other-1", UserID: revokeOtherID, Name: "ci", Prefix: "cccccccccccccccc"},
 	} {
-		require.NoError(t, f.apiKeyRepo.Create(k))
+		require.NoError(t, f.apiKeyRepo.Create(context.Background(), k))
 	}
 	return f
 }
@@ -71,7 +72,7 @@ func (f *revokeFixture) tokenRevoked(id string) bool {
 
 func (f *revokeFixture) apiKeyIDs(t *testing.T, userID string) []string {
 	t.Helper()
-	keys, err := f.apiKeyRepo.ListByUser(userID)
+	keys, err := f.apiKeyRepo.ListByUser(context.Background(), userID)
 	require.NoError(t, err)
 	ids := make([]string, 0, len(keys))
 	for _, k := range keys {
@@ -83,7 +84,8 @@ func (f *revokeFixture) apiKeyIDs(t *testing.T, userID string) []string {
 // TestRevokeUserAccess_AllPaths checks that delete, disable, reset-password
 // and role change all use revokeUserAccess: block in the session store and revoke all refresh
 // tokens of the target user, and only of that user. Only delete removes the
-// API keys; disable and reset-password keep them.
+// API keys; disable and reset-password keep them. A client cancel does not
+// stop the revocation (the mock API key repository fails on a done ctx).
 func TestRevokeUserAccess_AllPaths(t *testing.T) {
 	t.Parallel()
 
@@ -95,6 +97,7 @@ func TestRevokeUserAccess_AllPaths(t *testing.T) {
 		wantStatus      int
 		wantUserExists  bool
 		wantKeysDeleted bool
+		cancelled       bool // the request context is cancelled before the call
 	}{
 		{
 			name:            "delete user",
@@ -103,6 +106,15 @@ func TestRevokeUserAccess_AllPaths(t *testing.T) {
 			wantStatus:      http.StatusNoContent,
 			wantUserExists:  false,
 			wantKeysDeleted: true,
+		},
+		{
+			name:            "delete user with a cancelled request",
+			method:          http.MethodDelete,
+			path:            "/api/v1/users/" + revokeTargetID,
+			wantStatus:      http.StatusNoContent,
+			wantUserExists:  false,
+			wantKeysDeleted: true,
+			cancelled:       true,
 		},
 		{
 			name:           "disable user",
@@ -141,6 +153,11 @@ func TestRevokeUserAccess_AllPaths(t *testing.T) {
 			req, _ := http.NewRequest(tt.method, tt.path, bytes.NewBufferString(tt.body))
 			if tt.body != "" {
 				req.Header.Set("Content-Type", "application/json")
+			}
+			if tt.cancelled {
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+				req = req.WithContext(ctx)
 			}
 			router.ServeHTTP(w, req)
 

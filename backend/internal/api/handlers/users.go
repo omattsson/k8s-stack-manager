@@ -115,7 +115,7 @@ func (h *UserHandler) revokeUserAccess(ctx context.Context, userID string, opts 
 	}
 
 	if opts.deleteAPIKeys && h.apiKeyRepo != nil {
-		if _, err := h.apiKeyRepo.DeleteAllForUser(userID); err != nil {
+		if _, err := h.apiKeyRepo.DeleteAllForUser(ctx, userID); err != nil {
 			slog.Warn("Failed to delete API keys", "user_id", userID, "error", err)
 		}
 	}

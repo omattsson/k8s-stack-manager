@@ -1,6 +1,7 @@
 package models
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -29,19 +30,19 @@ type APIKey struct {
 // APIKeyRepository defines data access operations for API keys.
 // Partition key = UserID, Row key = ID.
 type APIKeyRepository interface {
-	Create(key *APIKey) error
-	FindByID(userID, keyID string) (*APIKey, error)
+	Create(ctx context.Context, key *APIKey) error
+	FindByID(ctx context.Context, userID, keyID string) (*APIKey, error)
 	// FindByIDs returns the keys with these IDs that exist (of any user), in
 	// no defined order. Missing IDs are not an error; no IDs return nil.
-	FindByIDs(keyIDs []string) ([]*APIKey, error)
+	FindByIDs(ctx context.Context, keyIDs []string) ([]*APIKey, error)
 	// FindByPrefix performs a table scan filtered client-side; acceptable at low volume.
-	FindByPrefix(prefix string) ([]*APIKey, error)
-	ListByUser(userID string) ([]*APIKey, error)
-	UpdateLastUsed(userID, keyID string, t time.Time) error
-	Delete(userID, keyID string) error
+	FindByPrefix(ctx context.Context, prefix string) ([]*APIKey, error)
+	ListByUser(ctx context.Context, userID string) ([]*APIKey, error)
+	UpdateLastUsed(ctx context.Context, userID, keyID string, t time.Time) error
+	Delete(ctx context.Context, userID, keyID string) error
 	// DeleteAllForUser removes every API key of the user in one statement and
 	// returns the number of deleted keys. Zero keys is not an error.
-	DeleteAllForUser(userID string) (int64, error)
+	DeleteAllForUser(ctx context.Context, userID string) (int64, error)
 }
 
 // GenerateAPIKey creates a cryptographically random 32-byte key and returns:

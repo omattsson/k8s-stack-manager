@@ -745,14 +745,24 @@ func (s *stubChartBranchOverrideRepo) DeleteByInstance(_ string) error         {
 
 type stubAPIKeyRepo struct{}
 
-func (s *stubAPIKeyRepo) Create(_ *models.APIKey) error                   { return nil }
-func (s *stubAPIKeyRepo) FindByID(_, _ string) (*models.APIKey, error)    { return nil, nil }
-func (s *stubAPIKeyRepo) FindByPrefix(_ string) ([]*models.APIKey, error) { return nil, nil }
-func (s *stubAPIKeyRepo) FindByIDs(_ []string) ([]*models.APIKey, error)  { return nil, nil }
-func (s *stubAPIKeyRepo) ListByUser(_ string) ([]*models.APIKey, error)   { return nil, nil }
-func (s *stubAPIKeyRepo) UpdateLastUsed(_, _ string, _ time.Time) error   { return nil }
-func (s *stubAPIKeyRepo) Delete(_, _ string) error                        { return nil }
-func (s *stubAPIKeyRepo) DeleteAllForUser(_ string) (int64, error) {
+func (s *stubAPIKeyRepo) Create(_ context.Context, _ *models.APIKey) error { return nil }
+func (s *stubAPIKeyRepo) FindByID(_ context.Context, _, _ string) (*models.APIKey, error) {
+	return nil, nil
+}
+func (s *stubAPIKeyRepo) FindByPrefix(_ context.Context, _ string) ([]*models.APIKey, error) {
+	return nil, nil
+}
+func (s *stubAPIKeyRepo) FindByIDs(_ context.Context, _ []string) ([]*models.APIKey, error) {
+	return nil, nil
+}
+func (s *stubAPIKeyRepo) ListByUser(_ context.Context, _ string) ([]*models.APIKey, error) {
+	return nil, nil
+}
+func (s *stubAPIKeyRepo) UpdateLastUsed(_ context.Context, _, _ string, _ time.Time) error {
+	return nil
+}
+func (s *stubAPIKeyRepo) Delete(_ context.Context, _, _ string) error { return nil }
+func (s *stubAPIKeyRepo) DeleteAllForUser(_ context.Context, _ string) (int64, error) {
 	return 0, nil
 }
 

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -170,7 +171,9 @@ func (h *APIKeyHandler) CreateAPIKey(c *gin.Context) {
 		ExpiresAt: expiresAt,
 	}
 
-	if err := h.apiKeyRepo.Create(key); err != nil {
+	// A client cancel must not turn a committed write into a 499 without an
+	// audit entry (#656).
+	if err := h.apiKeyRepo.Create(context.WithoutCancel(c.Request.Context()), key); err != nil {
 		status, message := mapError(err, "API key")
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -217,9 +220,10 @@ func (h *APIKeyHandler) ListAPIKeys(c *gin.Context) {
 		return
 	}
 
-	keys, err := h.apiKeyRepo.ListByUser(userID)
+	keys, err := h.apiKeyRepo.ListByUser(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		status, message := mapError(err, "API key")
+		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
@@ -253,7 +257,8 @@ func (h *APIKeyHandler) DeleteAPIKey(c *gin.Context) {
 		return
 	}
 
-	if err := h.apiKeyRepo.Delete(userID, keyID); err != nil {
+	// Detached for the reason in CreateAPIKey; the socket close must also run.
+	if err := h.apiKeyRepo.Delete(context.WithoutCancel(c.Request.Context()), userID, keyID); err != nil {
 		status, message := mapError(err, "API key")
 		c.JSON(status, gin.H{"error": message})
 		return

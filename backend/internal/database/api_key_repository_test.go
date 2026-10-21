@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -47,7 +48,7 @@ func TestGORMAPIKeyRepository_Create(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			repo := setupAPIKeyRepo(t)
-			err := repo.Create(&tt.key)
+			err := repo.Create(context.Background(), &tt.key)
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {
@@ -78,9 +79,9 @@ func TestGORMAPIKeyRepository_FindByID(t *testing.T) {
 			t.Parallel()
 			repo := setupAPIKeyRepo(t)
 			if tt.seed {
-				require.NoError(t, repo.Create(&models.APIKey{ID: tt.keyID, UserID: tt.userID, Name: "test", Prefix: "pfx", KeyHash: "h"}))
+				require.NoError(t, repo.Create(context.Background(), &models.APIKey{ID: tt.keyID, UserID: tt.userID, Name: "test", Prefix: "pfx", KeyHash: "h"}))
 			}
-			key, err := repo.FindByID(tt.userID, tt.keyID)
+			key, err := repo.FindByID(context.Background(), tt.userID, tt.keyID)
 			if tt.wantErr {
 				assert.Error(t, err)
 				assert.Nil(t, key)
@@ -96,18 +97,18 @@ func TestGORMAPIKeyRepository_FindByPrefix(t *testing.T) {
 	t.Parallel()
 
 	repo := setupAPIKeyRepo(t)
-	require.NoError(t, repo.Create(&models.APIKey{ID: "k-pfx1", UserID: "u1", Name: "k1", Prefix: "unique-prefix", KeyHash: "h1"}))
+	require.NoError(t, repo.Create(context.Background(), &models.APIKey{ID: "k-pfx1", UserID: "u1", Name: "k1", Prefix: "unique-prefix", KeyHash: "h1"}))
 
 	t.Run("found", func(t *testing.T) {
 		t.Parallel()
-		keys, err := repo.FindByPrefix("unique-prefix")
+		keys, err := repo.FindByPrefix(context.Background(), "unique-prefix")
 		require.NoError(t, err)
 		assert.Len(t, keys, 1)
 	})
 
 	t.Run("not found", func(t *testing.T) {
 		t.Parallel()
-		_, err := repo.FindByPrefix("nonexistent")
+		_, err := repo.FindByPrefix(context.Background(), "nonexistent")
 		assert.Error(t, err)
 	})
 }
@@ -116,8 +117,8 @@ func TestGORMAPIKeyRepository_FindByIDs(t *testing.T) {
 	t.Parallel()
 
 	repo := setupAPIKeyRepo(t)
-	require.NoError(t, repo.Create(&models.APIKey{ID: "k-ids1", UserID: "u1", Name: "k1", Prefix: "p-ids1", KeyHash: "h1"}))
-	require.NoError(t, repo.Create(&models.APIKey{ID: "k-ids2", UserID: "u2", Name: "k2", Prefix: "p-ids2", KeyHash: "h2"}))
+	require.NoError(t, repo.Create(context.Background(), &models.APIKey{ID: "k-ids1", UserID: "u1", Name: "k1", Prefix: "p-ids1", KeyHash: "h1"}))
+	require.NoError(t, repo.Create(context.Background(), &models.APIKey{ID: "k-ids2", UserID: "u2", Name: "k2", Prefix: "p-ids2", KeyHash: "h2"}))
 	many := make([]string, 0, apiKeyIDsPerQuery+2)
 	for i := 0; i < apiKeyIDsPerQuery; i++ {
 		many = append(many, fmt.Sprintf("missing-%d", i))
@@ -138,7 +139,7 @@ func TestGORMAPIKeyRepository_FindByIDs(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			keys, err := repo.FindByIDs(tt.ids)
+			keys, err := repo.FindByIDs(context.Background(), tt.ids)
 			require.NoError(t, err)
 			var got []string
 			for _, k := range keys {
@@ -153,11 +154,11 @@ func TestGORMAPIKeyRepository_ListByUser(t *testing.T) {
 	t.Parallel()
 
 	repo := setupAPIKeyRepo(t)
-	require.NoError(t, repo.Create(&models.APIKey{ID: "k-lu1", UserID: "u-list", Name: "k1", Prefix: "p1", KeyHash: "h1"}))
-	require.NoError(t, repo.Create(&models.APIKey{ID: "k-lu2", UserID: "u-list", Name: "k2", Prefix: "p2", KeyHash: "h2"}))
-	require.NoError(t, repo.Create(&models.APIKey{ID: "k-lu3", UserID: "u-other", Name: "k3", Prefix: "p3", KeyHash: "h3"}))
+	require.NoError(t, repo.Create(context.Background(), &models.APIKey{ID: "k-lu1", UserID: "u-list", Name: "k1", Prefix: "p1", KeyHash: "h1"}))
+	require.NoError(t, repo.Create(context.Background(), &models.APIKey{ID: "k-lu2", UserID: "u-list", Name: "k2", Prefix: "p2", KeyHash: "h2"}))
+	require.NoError(t, repo.Create(context.Background(), &models.APIKey{ID: "k-lu3", UserID: "u-other", Name: "k3", Prefix: "p3", KeyHash: "h3"}))
 
-	keys, err := repo.ListByUser("u-list")
+	keys, err := repo.ListByUser(context.Background(), "u-list")
 	require.NoError(t, err)
 	assert.Len(t, keys, 2)
 }
@@ -180,9 +181,9 @@ func TestGORMAPIKeyRepository_UpdateLastUsed(t *testing.T) {
 			t.Parallel()
 			repo := setupAPIKeyRepo(t)
 			if tt.seed {
-				require.NoError(t, repo.Create(&models.APIKey{ID: "k-ulu", UserID: "u-ulu", Name: "test", Prefix: "p", KeyHash: "h"}))
+				require.NoError(t, repo.Create(context.Background(), &models.APIKey{ID: "k-ulu", UserID: "u-ulu", Name: "test", Prefix: "p", KeyHash: "h"}))
 			}
-			err := repo.UpdateLastUsed("u-ulu", "k-ulu", time.Now())
+			err := repo.UpdateLastUsed(context.Background(), "u-ulu", "k-ulu", time.Now())
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {
@@ -210,9 +211,9 @@ func TestGORMAPIKeyRepository_Delete(t *testing.T) {
 			t.Parallel()
 			repo := setupAPIKeyRepo(t)
 			if tt.seed {
-				require.NoError(t, repo.Create(&models.APIKey{ID: "k-del", UserID: "u-del", Name: "test", Prefix: "p", KeyHash: "h"}))
+				require.NoError(t, repo.Create(context.Background(), &models.APIKey{ID: "k-del", UserID: "u-del", Name: "test", Prefix: "p", KeyHash: "h"}))
 			}
-			err := repo.Delete("u-del", "k-del")
+			err := repo.Delete(context.Background(), "u-del", "k-del")
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {
@@ -243,13 +244,13 @@ func TestGORMAPIKeyRepository_DeleteAllForUser(t *testing.T) {
 			t.Parallel()
 			repo := setupAPIKeyRepo(t)
 			for i := 0; i < tt.seedTarget; i++ {
-				require.NoError(t, repo.Create(&models.APIKey{
+				require.NoError(t, repo.Create(context.Background(), &models.APIKey{
 					ID: fmt.Sprintf("k-t-%d", i), UserID: "u-target", Name: "test", Prefix: fmt.Sprintf("pt%d", i), KeyHash: "h",
 				}))
 			}
-			require.NoError(t, repo.Create(&models.APIKey{ID: "k-other", UserID: "u-other", Name: "test", Prefix: "po", KeyHash: "h"}))
+			require.NoError(t, repo.Create(context.Background(), &models.APIKey{ID: "k-other", UserID: "u-other", Name: "test", Prefix: "po", KeyHash: "h"}))
 
-			n, err := repo.DeleteAllForUser(tt.userID)
+			n, err := repo.DeleteAllForUser(context.Background(), tt.userID)
 			if tt.wantErr {
 				assert.Error(t, err)
 				return
@@ -257,10 +258,10 @@ func TestGORMAPIKeyRepository_DeleteAllForUser(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantDeleted, n)
 
-			left, err := repo.ListByUser("u-target")
+			left, err := repo.ListByUser(context.Background(), "u-target")
 			require.NoError(t, err)
 			assert.Empty(t, left)
-			other, err := repo.ListByUser("u-other")
+			other, err := repo.ListByUser(context.Background(), "u-other")
 			require.NoError(t, err)
 			assert.Len(t, other, 1, "other users keep their keys")
 		})

@@ -69,6 +69,9 @@ func handleDBError(err error) (int, string) {
 	if err == nil {
 		return http.StatusOK, ""
 	}
+	if status, msg, ok := cancelledRequestError(err); ok {
+		return status, msg
+	}
 
 	var dbErr *database.DatabaseError
 	if errors.As(err, &dbErr) {

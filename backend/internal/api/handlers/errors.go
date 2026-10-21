@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -22,6 +24,11 @@ const (
 	// msgCleanConflict is the 409 message when a clean lost against another
 	// clean or a delete of the same instance.
 	msgCleanConflict = "Cannot clean: another operation started on the instance"
+	// msgClientClosedRequest is the message of statusClientClosedRequest.
+	msgClientClosedRequest = "Client closed request"
+	// statusClientClosedRequest is the nginx status for a request that the
+	// client cancelled before the response (net/http has no constant for it).
+	statusClientClosedRequest = 499
 )
 
 // Common entity names used with mapError across multiple handler files.
@@ -40,6 +47,10 @@ const (
 func mapError(err error, entityName string) (int, string) {
 	if err == nil {
 		return http.StatusOK, ""
+	}
+
+	if status, msg, ok := cancelledRequestError(err); ok {
+		return status, msg
 	}
 
 	// Check for dberrors sentinel types via errors.Is (works with wrapped errors).
@@ -70,4 +81,15 @@ func mapError(err error, entityName string) (int, string) {
 
 	// Never leak internal error details.
 	return http.StatusInternalServerError, msgInternalServerError
+}
+
+// cancelledRequestError maps an error caused by a cancelled request context
+// to 499. A deadline that passed is not a client cancel and stays a 500.
+// It assumes context.Canceled comes from the request; a server-side cancel also gives 499.
+func cancelledRequestError(err error) (int, string, bool) {
+	if !errors.Is(err, context.Canceled) {
+		return 0, "", false
+	}
+	slog.Debug("Request cancelled by the client", "error", err)
+	return statusClientClosedRequest, msgClientClosedRequest, true
 }
