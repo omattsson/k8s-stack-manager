@@ -19,24 +19,24 @@ func NewGORMRefreshTokenRepository(db *gorm.DB) *GORMRefreshTokenRepository {
 	return &GORMRefreshTokenRepository{db: db}
 }
 
-func (r *GORMRefreshTokenRepository) Create(token *models.RefreshToken) error {
-	return r.db.Create(token).Error
+func (r *GORMRefreshTokenRepository) Create(ctx context.Context, token *models.RefreshToken) error {
+	return r.db.WithContext(ctx).Create(token).Error
 }
 
-func (r *GORMRefreshTokenRepository) FindByTokenHash(hash string) (*models.RefreshToken, error) {
+func (r *GORMRefreshTokenRepository) FindByTokenHash(ctx context.Context, hash string) (*models.RefreshToken, error) {
 	var token models.RefreshToken
-	if err := r.db.Where("token_hash = ?", hash).First(&token).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("token_hash = ?", hash).First(&token).Error; err != nil {
 		return nil, err
 	}
 	return &token, nil
 }
 
-func (r *GORMRefreshTokenRepository) RevokeByID(id string) error {
-	return r.db.Model(&models.RefreshToken{}).Where("id = ?", id).Update("revoked", true).Error
+func (r *GORMRefreshTokenRepository) RevokeByID(ctx context.Context, id string) error {
+	return r.db.WithContext(ctx).Model(&models.RefreshToken{}).Where("id = ?", id).Update("revoked", true).Error
 }
 
-func (r *GORMRefreshTokenRepository) MarkRotatedIfActive(id string, rotatedAt time.Time) (int64, error) {
-	tx := r.db.Model(&models.RefreshToken{}).
+func (r *GORMRefreshTokenRepository) MarkRotatedIfActive(ctx context.Context, id string, rotatedAt time.Time) (int64, error) {
+	tx := r.db.WithContext(ctx).Model(&models.RefreshToken{}).
 		Where("id = ? AND revoked = ?", id, false).
 		Updates(map[string]interface{}{"revoked": true, "rotated_at": rotatedAt})
 	return tx.RowsAffected, tx.Error
@@ -44,15 +44,15 @@ func (r *GORMRefreshTokenRepository) MarkRotatedIfActive(id string, rotatedAt ti
 
 // RevokeFamily revokes the active tokens of a family. "id = ?" also matches a
 // legacy token (empty family_id) that started the family.
-func (r *GORMRefreshTokenRepository) RevokeFamily(familyID string) error {
-	return r.db.Model(&models.RefreshToken{}).
+func (r *GORMRefreshTokenRepository) RevokeFamily(ctx context.Context, familyID string) error {
+	return r.db.WithContext(ctx).Model(&models.RefreshToken{}).
 		Where("(family_id = ? OR id = ?) AND revoked = ?", familyID, familyID, false).
 		Update("revoked", true).Error
 }
 
-func (r *GORMRefreshTokenRepository) CountActiveInFamily(familyID string) (int64, error) {
+func (r *GORMRefreshTokenRepository) CountActiveInFamily(ctx context.Context, familyID string) (int64, error) {
 	var count int64
-	err := r.db.Model(&models.RefreshToken{}).
+	err := r.db.WithContext(ctx).Model(&models.RefreshToken{}).
 		Where("(family_id = ? OR id = ?) AND revoked = ? AND expires_at > ?", familyID, familyID, false, time.Now().UTC()).
 		Count(&count).Error
 	return count, err
@@ -66,12 +66,12 @@ func (r *GORMRefreshTokenRepository) TouchFamily(ctx context.Context, familyID s
 		Update("last_activity", at).Error
 }
 
-func (r *GORMRefreshTokenRepository) RevokeAllForUser(userID string) error {
-	return r.db.Model(&models.RefreshToken{}).Where("user_id = ? AND revoked = ?", userID, false).Update("revoked", true).Error
+func (r *GORMRefreshTokenRepository) RevokeAllForUser(ctx context.Context, userID string) error {
+	return r.db.WithContext(ctx).Model(&models.RefreshToken{}).Where("user_id = ? AND revoked = ?", userID, false).Update("revoked", true).Error
 }
 
-func (r *GORMRefreshTokenRepository) RevokeAllForUserExcept(userID string, excludeID string) error {
-	return r.db.Model(&models.RefreshToken{}).
+func (r *GORMRefreshTokenRepository) RevokeAllForUserExcept(ctx context.Context, userID string, excludeID string) error {
+	return r.db.WithContext(ctx).Model(&models.RefreshToken{}).
 		Where("user_id = ? AND revoked = ? AND id != ?", userID, false, excludeID).
 		Update("revoked", true).Error
 }
@@ -80,11 +80,12 @@ func (r *GORMRefreshTokenRepository) RevokeAllForUserExcept(userID string, exclu
 // newest ones and excludeID. It reads the IDs first (MySQL refuses LIMIT in an
 // IN subquery); a token created after the read is newer than every revoked one
 // and stays active.
-func (r *GORMRefreshTokenRepository) RevokeOldestForUser(userID string, keep int, excludeID string) (int64, error) {
+func (r *GORMRefreshTokenRepository) RevokeOldestForUser(ctx context.Context, userID string, keep int, excludeID string) (int64, error) {
 	if keep < 0 {
 		keep = 0
 	}
-	q := r.db.Model(&models.RefreshToken{}).
+	db := r.db.WithContext(ctx)
+	q := db.Model(&models.RefreshToken{}).
 		Where("user_id = ? AND revoked = ? AND expires_at > ?", userID, false, time.Now().UTC())
 	if excludeID != "" {
 		q = q.Where("id <> ?", excludeID)
@@ -96,7 +97,7 @@ func (r *GORMRefreshTokenRepository) RevokeOldestForUser(userID string, keep int
 	if len(ids) == 0 {
 		return 0, nil
 	}
-	tx := r.db.Model(&models.RefreshToken{}).
+	tx := db.Model(&models.RefreshToken{}).
 		Where("id IN ? AND revoked = ?", ids, false).
 		Update("revoked", true)
 	return tx.RowsAffected, tx.Error
@@ -106,21 +107,24 @@ func (r *GORMRefreshTokenRepository) RevokeOldestForUser(userID string, keep int
 // most MAX_REFRESH_TOKENS_PER_USER active tokens plus a few concurrent ones.
 const maxRevokeBatch = 1000
 
-func (r *GORMRefreshTokenRepository) DeleteExpired() (int64, error) {
-	tx := r.db.Where("expires_at < ?", time.Now().UTC()).Delete(&models.RefreshToken{})
+func (r *GORMRefreshTokenRepository) DeleteExpired(ctx context.Context) (int64, error) {
+	tx := r.db.WithContext(ctx).Where("expires_at < ?", time.Now().UTC()).Delete(&models.RefreshToken{})
 	return tx.RowsAffected, tx.Error
 }
 
-func (r *GORMRefreshTokenRepository) CountActiveForUser(userID string) (int64, error) {
+func (r *GORMRefreshTokenRepository) CountActiveForUser(ctx context.Context, userID string) (int64, error) {
 	var count int64
-	err := r.db.Model(&models.RefreshToken{}).
+	err := r.db.WithContext(ctx).Model(&models.RefreshToken{}).
 		Where("user_id = ? AND revoked = ? AND expires_at > ?", userID, false, time.Now().UTC()).
 		Count(&count).Error
 	return count, err
 }
 
-func (r *GORMRefreshTokenRepository) WithTx(fn func(txRepo models.RefreshTokenRepository) error) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
+// WithTx runs fn in a transaction with ctx. A cancel inside the transaction
+// can surface as sql.ErrTxDone; withContextErr keeps the context error (499).
+func (r *GORMRefreshTokenRepository) WithTx(ctx context.Context, fn func(txRepo models.RefreshTokenRepository) error) error {
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		return fn(NewGORMRefreshTokenRepository(tx))
 	})
+	return withContextErr(ctx, "refresh token transaction", err)
 }

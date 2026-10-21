@@ -337,15 +337,15 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 
 	// Issue the refresh token cookie for a browser session.
 	if startsSession {
-		rawRefresh, refreshExpiry, issueErr := createRefreshToken(c, h.refreshTokenRepo, h.authCfg, user.ID, sess, "")
+		rawRefresh, refreshExpiry, issueErr := createRefreshToken(ctx, c, h.refreshTokenRepo, h.authCfg, user.ID, sess, "")
 		if issueErr != nil {
 			slog.Error("Failed to issue refresh token for OIDC user", "user_id", user.ID, "error", issueErr)
 			// Continue — access token is still valid.
 		} else {
 			// Close the revoke race (same as local login): a revoke-all after
 			// the issue must not leave a working session.
-			if err := recheckSessionActive(h.refreshTokenRepo, sess.familyID); err != nil {
-				abandonSession(h.refreshTokenRepo, sess.familyID)
+			if err := recheckSessionActive(ctx, h.refreshTokenRepo, sess.familyID); err != nil {
+				abandonSession(ctx, h.refreshTokenRepo, sess.familyID)
 				clearRefreshCookieWith(c, h.authCfg)
 				if errors.Is(err, errSessionRevoked) {
 					loginOutcome = "revoked"

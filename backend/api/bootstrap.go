@@ -681,6 +681,27 @@ func buildRouter(cfg *config.Config, hs *handlerSet, deps routerDeps) (*gin.Engi
 // refresh tokens.
 const refreshTokenCleanupInterval = time.Hour
 
+// refreshTokenCleanupRun returns the Run function of the leader worker
+// refresh-token-cleanup. Each cleanup runs with the worker context, so the
+// end of the leadership term stops a running delete (#656).
+func refreshTokenCleanupRun(cleanup func(ctx context.Context), interval time.Duration) func(ctx context.Context) {
+	return func(ctx context.Context) {
+		// Once at the start of the term, then each interval: a leader change
+		// must not delay the cleanup by up to one interval each time.
+		cleanup(ctx)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				cleanup(ctx)
+			}
+		}
+	}
+}
+
 // buildLeaderWorkers creates the background workers that run on the leader
 // replica only (TTL reaper, expiry warner, cleanup scheduler, quota and
 // secret monitors, secret refresher, cluster health poller, k8s status
@@ -729,21 +750,7 @@ func buildLeaderWorkers(
 		leader.Worker{Name: "secret-refresher", Run: svc.SecretRefresher.Run},
 		leader.Worker{Name: "cluster-health-poller", Run: svc.HealthPoller.Run},
 		leader.Worker{Name: "k8s-status-watcher", Run: svc.K8sWatcher.Run},
-		leader.Worker{Name: "refresh-token-cleanup", Run: func(ctx context.Context) {
-			// Once at the start of the term, then hourly: a leader change
-			// must not delay the cleanup by up to one interval each time.
-			hs.Auth.CleanupExpiredTokens()
-			ticker := time.NewTicker(refreshTokenCleanupInterval)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-ticker.C:
-					hs.Auth.CleanupExpiredTokens()
-				}
-			}
-		}},
+		leader.Worker{Name: "refresh-token-cleanup", Run: refreshTokenCleanupRun(hs.Auth.CleanupExpiredTokens, refreshTokenCleanupInterval)},
 	)
 
 	// Namespace-scoped access: give stack namespaces that existed before

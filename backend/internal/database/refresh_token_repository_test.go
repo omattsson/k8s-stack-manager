@@ -36,7 +36,7 @@ func seedRefreshToken(t *testing.T, repo *GORMRefreshTokenRepository, id, family
 	if mutate != nil {
 		mutate(rt)
 	}
-	require.NoError(t, repo.Create(rt))
+	require.NoError(t, repo.Create(context.Background(), rt))
 }
 
 func loadRefreshToken(t *testing.T, repo *GORMRefreshTokenRepository, id string) models.RefreshToken {
@@ -67,7 +67,7 @@ func TestGORMRefreshTokenRepository_MarkRotatedIfActive(t *testing.T) {
 			seedRefreshToken(t, repo, "rt-1", "rt-1", func(rt *models.RefreshToken) { rt.Revoked = tt.revoked })
 
 			at := time.Now().UTC().Truncate(time.Second)
-			affected, err := repo.MarkRotatedIfActive("rt-1", at)
+			affected, err := repo.MarkRotatedIfActive(context.Background(), "rt-1", at)
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantAffected, affected)
 
@@ -81,7 +81,7 @@ func TestGORMRefreshTokenRepository_MarkRotatedIfActive(t *testing.T) {
 			}
 
 			// A second consumption never succeeds.
-			affected, err = repo.MarkRotatedIfActive("rt-1", at)
+			affected, err = repo.MarkRotatedIfActive(context.Background(), "rt-1", at)
 			require.NoError(t, err)
 			assert.Equal(t, int64(0), affected)
 		})
@@ -98,7 +98,7 @@ func TestGORMRefreshTokenRepository_RevokeFamily(t *testing.T) {
 	// Another session of the same user.
 	seedRefreshToken(t, repo, "other-1", "other-1", nil)
 
-	require.NoError(t, repo.RevokeFamily("legacy-1"))
+	require.NoError(t, repo.RevokeFamily(context.Background(), "legacy-1"))
 	// RevokeFamily must not set rotated_at (only a rotation does).
 	for _, id := range []string{"legacy-1", "succ-1"} {
 		got := loadRefreshToken(t, repo, id)
@@ -129,7 +129,7 @@ func TestGORMRefreshTokenRepository_CountActiveInFamily(t *testing.T) {
 		tt := tt
 		t.Run(tt.family, func(t *testing.T) {
 			t.Parallel()
-			got, err := repo.CountActiveInFamily(tt.family)
+			got, err := repo.CountActiveInFamily(context.Background(), tt.family)
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
 		})
@@ -240,7 +240,7 @@ func TestGORMRefreshTokenRepository_RevokeOldestForUser(t *testing.T) {
 				rt.CreatedAt = now.Add(-time.Hour)
 			})
 
-			n, err := repo.RevokeOldestForUser("u1", tt.keep, tt.excludeID)
+			n, err := repo.RevokeOldestForUser(context.Background(), "u1", tt.keep, tt.excludeID)
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantCount, n)
 

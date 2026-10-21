@@ -109,7 +109,7 @@ func (h *UserHandler) revokeUserAccess(ctx context.Context, userID string, opts 
 	h.blockIssuedTokens(ctx, userID)
 
 	if h.refreshTokenRepo != nil {
-		if err := h.refreshTokenRepo.RevokeAllForUser(userID); err != nil {
+		if err := h.refreshTokenRepo.RevokeAllForUser(ctx, userID); err != nil {
 			slog.Warn("Failed to revoke refresh tokens", "user_id", userID, "error", err)
 		}
 	}

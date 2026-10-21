@@ -225,7 +225,7 @@ func TestChangeUserRole(t *testing.T) {
 				userRepo.mu.Unlock()
 			}
 			// Refresh tokens of the target, to check the revocation.
-			require.NoError(t, f.refreshRepo.Create(&models.RefreshToken{
+			require.NoError(t, f.refreshRepo.Create(context.Background(), &models.RefreshToken{
 				ID: "rt-role-target", UserID: stored, TokenHash: "hr", ExpiresAt: time.Now().Add(time.Hour),
 			}))
 

@@ -842,30 +842,47 @@ func (s *stubUserFavoriteRepo) IsFavorite(_, _, _ string) (bool, error)       { 
 
 // ---- stubRefreshTokenRepo ----
 
+// stubRefreshTokenRepo stores nothing. Every method returns the error of a
+// done ctx, as the GORM repository does (#656).
 type stubRefreshTokenRepo struct{}
 
-func (s *stubRefreshTokenRepo) Create(_ *models.RefreshToken) error { return nil }
-func (s *stubRefreshTokenRepo) FindByTokenHash(_ string) (*models.RefreshToken, error) {
-	return nil, nil
+func (s *stubRefreshTokenRepo) Create(ctx context.Context, _ *models.RefreshToken) error {
+	return ctx.Err()
 }
-func (s *stubRefreshTokenRepo) RevokeByID(_ string) error                  { return nil }
-func (s *stubRefreshTokenRepo) RevokeAllForUser(_ string) error            { return nil }
-func (s *stubRefreshTokenRepo) RevokeAllForUserExcept(_, _ string) error   { return nil }
-func (s *stubRefreshTokenRepo) DeleteExpired() (int64, error)              { return 0, nil }
-func (s *stubRefreshTokenRepo) CountActiveForUser(_ string) (int64, error) { return 0, nil }
-func (s *stubRefreshTokenRepo) WithTx(fn func(txRepo models.RefreshTokenRepository) error) error {
+func (s *stubRefreshTokenRepo) FindByTokenHash(ctx context.Context, _ string) (*models.RefreshToken, error) {
+	return nil, ctx.Err()
+}
+func (s *stubRefreshTokenRepo) RevokeByID(ctx context.Context, _ string) error { return ctx.Err() }
+func (s *stubRefreshTokenRepo) RevokeAllForUser(ctx context.Context, _ string) error {
+	return ctx.Err()
+}
+func (s *stubRefreshTokenRepo) RevokeAllForUserExcept(ctx context.Context, _, _ string) error {
+	return ctx.Err()
+}
+func (s *stubRefreshTokenRepo) DeleteExpired(ctx context.Context) (int64, error) {
+	return 0, ctx.Err()
+}
+func (s *stubRefreshTokenRepo) CountActiveForUser(ctx context.Context, _ string) (int64, error) {
+	return 0, ctx.Err()
+}
+func (s *stubRefreshTokenRepo) WithTx(ctx context.Context, fn func(txRepo models.RefreshTokenRepository) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	return fn(s)
 }
-func (s *stubRefreshTokenRepo) MarkRotatedIfActive(_ string, _ time.Time) (int64, error) {
-	return 0, nil
+func (s *stubRefreshTokenRepo) MarkRotatedIfActive(ctx context.Context, _ string, _ time.Time) (int64, error) {
+	return 0, ctx.Err()
 }
-func (s *stubRefreshTokenRepo) RevokeFamily(_ string) error                 { return nil }
-func (s *stubRefreshTokenRepo) CountActiveInFamily(_ string) (int64, error) { return 0, nil }
-func (s *stubRefreshTokenRepo) TouchFamily(_ context.Context, _ string, _ time.Time) error {
-	return nil
+func (s *stubRefreshTokenRepo) RevokeFamily(ctx context.Context, _ string) error { return ctx.Err() }
+func (s *stubRefreshTokenRepo) CountActiveInFamily(ctx context.Context, _ string) (int64, error) {
+	return 0, ctx.Err()
 }
-func (s *stubRefreshTokenRepo) RevokeOldestForUser(_ string, _ int, _ string) (int64, error) {
-	return 0, nil
+func (s *stubRefreshTokenRepo) TouchFamily(ctx context.Context, _ string, _ time.Time) error {
+	return ctx.Err()
+}
+func (s *stubRefreshTokenRepo) RevokeOldestForUser(ctx context.Context, _ string, _ int, _ string) (int64, error) {
+	return 0, ctx.Err()
 }
 
 // ---- stubTxRunner ----
