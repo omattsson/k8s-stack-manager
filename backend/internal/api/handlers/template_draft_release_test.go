@@ -1085,7 +1085,7 @@ func TestDraftRelease_SecondReview(t *testing.T) {
 		{
 			name: "upgrade diff: empty target chart_version and chart_path are unchanged",
 			run: func(t *testing.T, e *draftReleaseEnv) {
-				require.NoError(t, e.defs.Create(&models.StackDefinition{
+				require.NoError(t, e.defs.Create(context.Background(), &models.StackDefinition{
 					ID: "d1", Name: "d1", OwnerID: "uid-dev", SourceTemplateID: "t1", SourceTemplateVersion: "1.0.0",
 				}))
 				require.NoError(t, e.defCharts.Create(&models.ChartConfig{

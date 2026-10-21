@@ -170,9 +170,9 @@ func (h *TemplateHandler) ListTemplates(c *gin.Context) {
 
 	defCountMap := make(map[string]int)
 	if h.definitionRepo != nil && len(templateIDs) > 0 {
-		counts, countErr := h.definitionRepo.CountByTemplateIDs(templateIDs)
+		counts, countErr := h.definitionRepo.CountByTemplateIDs(c.Request.Context(), templateIDs)
 		if countErr != nil {
-			slog.Warn("failed to batch-fetch definition counts", "error", countErr)
+			logLookupError(c.Request.Context(), "failed to batch-fetch definition counts", countErr)
 		} else {
 			defCountMap = counts
 		}
@@ -548,8 +548,17 @@ func (h *TemplateHandler) DeleteTemplate(c *gin.Context) {
 
 	// Check that no definitions reference this template.
 	if h.definitionRepo != nil {
-		defs, err := h.definitionRepo.ListByTemplate(id)
-		if err == nil && len(defs) > 0 {
+		defs, err := h.definitionRepo.ListByTemplate(c.Request.Context(), id)
+		// A failed check must not let the delete through (#656).
+		if err != nil {
+			status, message := mapError(err, entityStackDefinition)
+			if status == http.StatusInternalServerError {
+				slog.Error("Failed to check the definitions of the template", "template_id", id, "error", err)
+			}
+			c.JSON(status, gin.H{"error": message})
+			return
+		}
+		if len(defs) > 0 {
 			c.JSON(http.StatusConflict, gin.H{"error": "Cannot delete template: stack definitions reference it"})
 			return
 		}
@@ -911,6 +920,9 @@ func (h *TemplateHandler) InstantiateTemplate(c *gin.Context) {
 			c.JSON(http.StatusConflict, gin.H{"error": msgNoPublishedVersion})
 			return
 		}
+		if respondCancelled(c, err) {
+			return
+		}
 		slog.Error("failed to read published template version", "template_id", tmpl.ID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
@@ -951,8 +963,9 @@ func (h *TemplateHandler) InstantiateTemplate(c *gin.Context) {
 
 	var chartConfigs []models.ChartConfig
 	// See CreateTemplate for the detached context.
-	txErr := h.txRunner.RunInTx(context.WithoutCancel(c.Request.Context()), func(repos database.TxRepos) error {
-		if err := repos.StackDefinition.Create(def); err != nil {
+	wctx := context.WithoutCancel(c.Request.Context())
+	txErr := h.txRunner.RunInTx(wctx, func(repos database.TxRepos) error {
+		if err := repos.StackDefinition.Create(wctx, def); err != nil {
 			return err
 		}
 		ccs, copyErr := copyTemplateChartsToDefinitionTx(releaseCharts, def.ID, now, repos)

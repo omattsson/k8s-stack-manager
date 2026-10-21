@@ -57,7 +57,7 @@ func cleanupOwnedDefinitionIfOwned(ctx context.Context, runner TxRunner, inst *m
 		if repos.StackDefinition == nil {
 			return nil
 		}
-		def, err := repos.StackDefinition.FindByID(inst.StackDefinitionID)
+		def, err := repos.StackDefinition.FindByID(ctx, inst.StackDefinitionID)
 		if errors.Is(err, dberrors.ErrNotFound) {
 			return nil
 		}
@@ -127,7 +127,7 @@ func CleanupOwnedDefinition(ctx context.Context, repos TxRepos, inst *models.Sta
 	// Lock the definition row (SELECT ... FOR UPDATE). This only serializes
 	// concurrent cleanups and updates of the definition: there is no foreign
 	// key, so the lock does not block an instance insert that references it.
-	def, err := repos.StackDefinition.FindByIDForUpdate(inst.StackDefinitionID)
+	def, err := repos.StackDefinition.FindByIDForUpdate(ctx, inst.StackDefinitionID)
 	if err != nil {
 		if errors.Is(err, dberrors.ErrNotFound) {
 			return nil
@@ -161,7 +161,7 @@ func CleanupOwnedDefinition(ctx context.Context, repos TxRepos, inst *models.Sta
 			return fmt.Errorf("deleting charts: %w", err)
 		}
 	}
-	if err := repos.StackDefinition.Delete(def.ID); err != nil {
+	if err := repos.StackDefinition.Delete(ctx, def.ID); err != nil {
 		return fmt.Errorf("deleting definition: %w", err)
 	}
 	slog.Info("deleted quick deploy definition that no instance uses",

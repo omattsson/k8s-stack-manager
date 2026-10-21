@@ -97,7 +97,7 @@ func TestDeleteInstanceWithOwnedDefinition(t *testing.T) {
 			quotaRepo := NewGORMInstanceQuotaOverrideRepository(db)
 			ctx := context.Background()
 
-			require.NoError(t, defRepo.Create(&models.StackDefinition{ID: "d1", Name: "qd", OwnerID: "u1", OwnerInstanceID: tt.owner}))
+			require.NoError(t, defRepo.Create(context.Background(), &models.StackDefinition{ID: "d1", Name: "qd", OwnerID: "u1", OwnerInstanceID: tt.owner}))
 			require.NoError(t, ccRepo.Create(&models.ChartConfig{ID: "c1", StackDefinitionID: "d1", ChartName: "web"}))
 			inst := &models.StackInstance{ID: "i1", StackDefinitionID: "d1", Name: "qd", Namespace: "stack-qd-u1", OwnerID: "u1", Status: models.StackStatusDraft}
 			require.NoError(t, instRepo.Create(context.Background(), inst))
@@ -138,7 +138,7 @@ func TestDeleteInstanceWithOwnedDefinition(t *testing.T) {
 			require.NoError(t, err)
 			assert.Len(t, runs, 1, "action runs of another instance stay")
 
-			_, err = defRepo.FindByID("d1")
+			_, err = defRepo.FindByID(context.Background(), "d1")
 			assert.Equal(t, tt.wantDefKept, err == nil)
 			charts, err := ccRepo.ListByDefinition("d1")
 			require.NoError(t, err)
@@ -167,7 +167,7 @@ func TestDeleteInstanceWithOwnedDefinition_CleanupErrorKeepsDelete(t *testing.T)
 	db := setupTestDBWithAllTables(t)
 	instRepo := NewGORMStackInstanceRepository(db)
 	defRepo := NewGORMStackDefinitionRepository(db)
-	require.NoError(t, defRepo.Create(&models.StackDefinition{ID: "d1", Name: "qd", OwnerID: "u1", OwnerInstanceID: "i1"}))
+	require.NoError(t, defRepo.Create(context.Background(), &models.StackDefinition{ID: "d1", Name: "qd", OwnerID: "u1", OwnerInstanceID: "i1"}))
 	inst := &models.StackInstance{ID: "i1", StackDefinitionID: "d1", Name: "qd", Namespace: "stack-qd-u1", OwnerID: "u1", Status: models.StackStatusDraft}
 	require.NoError(t, instRepo.Create(context.Background(), inst))
 
@@ -176,7 +176,7 @@ func TestDeleteInstanceWithOwnedDefinition_CleanupErrorKeepsDelete(t *testing.T)
 	assert.Equal(t, 2, runner.calls)
 	_, err := instRepo.FindByID(context.Background(), "i1")
 	assert.Error(t, err, "instance stays deleted")
-	_, err = defRepo.FindByID("d1")
+	_, err = defRepo.FindByID(context.Background(), "d1")
 	assert.NoError(t, err, "definition cleanup failed and is left for a later delete")
 }
 

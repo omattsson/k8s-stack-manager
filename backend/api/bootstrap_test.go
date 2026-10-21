@@ -509,37 +509,48 @@ func (s *stubStackInstanceRepo) ListByStatus(ctx context.Context, _ string, _ in
 
 type stubStackDefinitionRepo struct{}
 
-func (s *stubStackDefinitionRepo) Create(_ *models.StackDefinition) error { return nil }
-func (s *stubStackDefinitionRepo) FindByID(_ string) (*models.StackDefinition, error) {
-	return nil, nil
+func (s *stubStackDefinitionRepo) Create(ctx context.Context, _ *models.StackDefinition) error {
+	return ctx.Err()
 }
-func (s *stubStackDefinitionRepo) FindByName(_ string) ([]models.StackDefinition, error) {
-	return nil, nil
+func (s *stubStackDefinitionRepo) FindByID(ctx context.Context, _ string) (*models.StackDefinition, error) {
+	return nil, ctx.Err()
 }
-func (s *stubStackDefinitionRepo) Update(_ *models.StackDefinition) error  { return nil }
-func (s *stubStackDefinitionRepo) SetTemplateLink(_, _, _ string) error    { return nil }
-func (s *stubStackDefinitionRepo) Delete(_ string) error                   { return nil }
-func (s *stubStackDefinitionRepo) List() ([]models.StackDefinition, error) { return nil, nil }
-func (s *stubStackDefinitionRepo) ListPaged(_ models.StackDefinitionFilter, _, _ int) ([]models.StackDefinition, int64, error) {
-	return nil, 0, nil
+func (s *stubStackDefinitionRepo) FindByName(ctx context.Context, _ string) ([]models.StackDefinition, error) {
+	return nil, ctx.Err()
 }
-func (s *stubStackDefinitionRepo) ListByOwner(_ string) ([]models.StackDefinition, error) {
-	return nil, nil
+func (s *stubStackDefinitionRepo) Update(ctx context.Context, _ *models.StackDefinition) error {
+	return ctx.Err()
 }
-func (s *stubStackDefinitionRepo) ListByTemplate(_ string) ([]models.StackDefinition, error) {
-	return nil, nil
+func (s *stubStackDefinitionRepo) SetTemplateLink(ctx context.Context, _, _, _ string) error {
+	return ctx.Err()
 }
-func (s *stubStackDefinitionRepo) CountByTemplateIDs(_ []string) (map[string]int, error) {
-	return nil, nil
+func (s *stubStackDefinitionRepo) Delete(ctx context.Context, _ string) error { return ctx.Err() }
+func (s *stubStackDefinitionRepo) List(ctx context.Context) ([]models.StackDefinition, error) {
+	return nil, ctx.Err()
 }
-func (s *stubStackDefinitionRepo) FindByIDForUpdate(_ string) (*models.StackDefinition, error) {
-	return nil, nil
+func (s *stubStackDefinitionRepo) ListPaged(ctx context.Context, _ models.StackDefinitionFilter, _, _ int) ([]models.StackDefinition, int64, error) {
+	return nil, 0, ctx.Err()
 }
-func (s *stubStackDefinitionRepo) ListIDsByTemplateIDs(_ []string) (map[string][]string, error) {
-	return nil, nil
+func (s *stubStackDefinitionRepo) ListByOwner(ctx context.Context, _ string) ([]models.StackDefinition, error) {
+	return nil, ctx.Err()
 }
-func (s *stubStackDefinitionRepo) Count() (int64, error) { return 0, nil }
-func (s *stubStackDefinitionRepo) NamesByIDs(_ []string) (map[string]string, error) {
+func (s *stubStackDefinitionRepo) ListByTemplate(ctx context.Context, _ string) ([]models.StackDefinition, error) {
+	return nil, ctx.Err()
+}
+func (s *stubStackDefinitionRepo) CountByTemplateIDs(ctx context.Context, _ []string) (map[string]int, error) {
+	return nil, ctx.Err()
+}
+func (s *stubStackDefinitionRepo) FindByIDForUpdate(ctx context.Context, _ string) (*models.StackDefinition, error) {
+	return nil, ctx.Err()
+}
+func (s *stubStackDefinitionRepo) ListIDsByTemplateIDs(ctx context.Context, _ []string) (map[string][]string, error) {
+	return nil, ctx.Err()
+}
+func (s *stubStackDefinitionRepo) Count(ctx context.Context) (int64, error) { return 0, ctx.Err() }
+func (s *stubStackDefinitionRepo) NamesByIDs(ctx context.Context, _ []string) (map[string]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return map[string]string{}, nil
 }
 

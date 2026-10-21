@@ -641,7 +641,10 @@ func NewMockStackDefinitionRepository() *MockStackDefinitionRepository {
 	return &MockStackDefinitionRepository{items: make(map[string]*models.StackDefinition)}
 }
 
-func (m *MockStackDefinitionRepository) Create(d *models.StackDefinition) error {
+func (m *MockStackDefinitionRepository) Create(ctx context.Context, d *models.StackDefinition) error {
+	if err := ctxDone(ctx, "create"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -651,7 +654,10 @@ func (m *MockStackDefinitionRepository) Create(d *models.StackDefinition) error 
 	return nil
 }
 
-func (m *MockStackDefinitionRepository) FindByID(id string) (*models.StackDefinition, error) {
+func (m *MockStackDefinitionRepository) FindByID(ctx context.Context, id string) (*models.StackDefinition, error) {
+	if err := ctxDone(ctx, "find_by_id"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.fetchErr != nil {
@@ -665,11 +671,17 @@ func (m *MockStackDefinitionRepository) FindByID(id string) (*models.StackDefini
 	return &cp, nil
 }
 
-func (m *MockStackDefinitionRepository) FindByIDForUpdate(id string) (*models.StackDefinition, error) {
-	return m.FindByID(id)
+func (m *MockStackDefinitionRepository) FindByIDForUpdate(ctx context.Context, id string) (*models.StackDefinition, error) {
+	if err := ctxDone(ctx, "find_by_id_for_update"); err != nil {
+		return nil, err
+	}
+	return m.FindByID(ctx, id)
 }
 
-func (m *MockStackDefinitionRepository) FindByName(name string) ([]models.StackDefinition, error) {
+func (m *MockStackDefinitionRepository) FindByName(ctx context.Context, name string) ([]models.StackDefinition, error) {
+	if err := ctxDone(ctx, "find_by_name"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -684,7 +696,10 @@ func (m *MockStackDefinitionRepository) FindByName(name string) ([]models.StackD
 	return result, nil
 }
 
-func (m *MockStackDefinitionRepository) Update(d *models.StackDefinition) error {
+func (m *MockStackDefinitionRepository) Update(ctx context.Context, d *models.StackDefinition) error {
+	if err := ctxDone(ctx, "update"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -697,7 +712,10 @@ func (m *MockStackDefinitionRepository) Update(d *models.StackDefinition) error 
 	return nil
 }
 
-func (m *MockStackDefinitionRepository) SetTemplateLink(id, templateID, version string) error {
+func (m *MockStackDefinitionRepository) SetTemplateLink(ctx context.Context, id, templateID, version string) error {
+	if err := ctxDone(ctx, "set_template_link"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -714,7 +732,10 @@ func (m *MockStackDefinitionRepository) SetTemplateLink(id, templateID, version 
 	return nil
 }
 
-func (m *MockStackDefinitionRepository) Delete(id string) error {
+func (m *MockStackDefinitionRepository) Delete(ctx context.Context, id string) error {
+	if err := ctxDone(ctx, "delete"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -727,7 +748,10 @@ func (m *MockStackDefinitionRepository) Delete(id string) error {
 	return nil
 }
 
-func (m *MockStackDefinitionRepository) List() ([]models.StackDefinition, error) {
+func (m *MockStackDefinitionRepository) List(ctx context.Context) ([]models.StackDefinition, error) {
+	if err := ctxDone(ctx, "list"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -740,7 +764,10 @@ func (m *MockStackDefinitionRepository) List() ([]models.StackDefinition, error)
 	return out, nil
 }
 
-func (m *MockStackDefinitionRepository) ListPaged(filter models.StackDefinitionFilter, limit, offset int) ([]models.StackDefinition, int64, error) {
+func (m *MockStackDefinitionRepository) ListPaged(ctx context.Context, filter models.StackDefinitionFilter, limit, offset int) ([]models.StackDefinition, int64, error) {
+	if err := ctxDone(ctx, "list_paged"); err != nil {
+		return nil, 0, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -774,7 +801,10 @@ func (m *MockStackDefinitionRepository) ListPaged(filter models.StackDefinitionF
 	return all, total, nil
 }
 
-func (m *MockStackDefinitionRepository) ListByOwner(ownerID string) ([]models.StackDefinition, error) {
+func (m *MockStackDefinitionRepository) ListByOwner(ctx context.Context, ownerID string) ([]models.StackDefinition, error) {
+	if err := ctxDone(ctx, "list_by_owner"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	var out []models.StackDefinition
@@ -786,7 +816,10 @@ func (m *MockStackDefinitionRepository) ListByOwner(ownerID string) ([]models.St
 	return out, nil
 }
 
-func (m *MockStackDefinitionRepository) ListByTemplate(templateID string) ([]models.StackDefinition, error) {
+func (m *MockStackDefinitionRepository) ListByTemplate(ctx context.Context, templateID string) ([]models.StackDefinition, error) {
+	if err := ctxDone(ctx, "list_by_template"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -801,7 +834,10 @@ func (m *MockStackDefinitionRepository) ListByTemplate(templateID string) ([]mod
 	return out, nil
 }
 
-func (m *MockStackDefinitionRepository) CountByTemplateIDs(templateIDs []string) (map[string]int, error) {
+func (m *MockStackDefinitionRepository) CountByTemplateIDs(ctx context.Context, templateIDs []string) (map[string]int, error) {
+	if err := ctxDone(ctx, "count_by_template_ids"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -820,7 +856,10 @@ func (m *MockStackDefinitionRepository) CountByTemplateIDs(templateIDs []string)
 	return result, nil
 }
 
-func (m *MockStackDefinitionRepository) Count() (int64, error) {
+func (m *MockStackDefinitionRepository) Count(ctx context.Context) (int64, error) {
+	if err := ctxDone(ctx, "count"); err != nil {
+		return 0, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -829,7 +868,10 @@ func (m *MockStackDefinitionRepository) Count() (int64, error) {
 	return int64(len(m.items)), nil
 }
 
-func (m *MockStackDefinitionRepository) NamesByIDs(ids []string) (map[string]string, error) {
+func (m *MockStackDefinitionRepository) NamesByIDs(ctx context.Context, ids []string) (map[string]string, error) {
+	if err := ctxDone(ctx, "names_by_ids"); err != nil {
+		return nil, err
+	}
 	m.namesCalls.Add(1)
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -845,7 +887,10 @@ func (m *MockStackDefinitionRepository) NamesByIDs(ids []string) (map[string]str
 	return out, nil
 }
 
-func (m *MockStackDefinitionRepository) ListIDsByTemplateIDs(templateIDs []string) (map[string][]string, error) {
+func (m *MockStackDefinitionRepository) ListIDsByTemplateIDs(ctx context.Context, templateIDs []string) (map[string][]string, error) {
+	if err := ctxDone(ctx, "list_ids_by_template_ids"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {

@@ -122,7 +122,7 @@ func TestCompareInstances(t *testing.T) {
 			queryRight: "i1",
 			setup: func(instRepo *MockStackInstanceRepository, defRepo *MockStackDefinitionRepository, ccRepo *MockChartConfigRepository, ovRepo *MockValueOverrideRepository) {
 				seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusRunning)
-				require.NoError(t, defRepo.Create(&models.StackDefinition{
+				require.NoError(t, defRepo.Create(context.Background(), &models.StackDefinition{
 					ID:   "d1",
 					Name: "def-a",
 				}))
@@ -152,7 +152,7 @@ func TestCompareInstances(t *testing.T) {
 			setup: func(instRepo *MockStackInstanceRepository, defRepo *MockStackDefinitionRepository, ccRepo *MockChartConfigRepository, ovRepo *MockValueOverrideRepository) {
 				seedInstance(t, instRepo, "i-left", "stack-left", "d1", "uid-1", models.StackStatusRunning)
 				seedInstance(t, instRepo, "i-right", "stack-right", "d1", "uid-2", models.StackStatusRunning)
-				require.NoError(t, defRepo.Create(&models.StackDefinition{
+				require.NoError(t, defRepo.Create(context.Background(), &models.StackDefinition{
 					ID:   "d1",
 					Name: "def-a",
 				}))
@@ -198,11 +198,11 @@ func TestCompareInstances(t *testing.T) {
 			setup: func(instRepo *MockStackInstanceRepository, defRepo *MockStackDefinitionRepository, ccRepo *MockChartConfigRepository, ovRepo *MockValueOverrideRepository) {
 				seedInstance(t, instRepo, "i-left", "stack-left", "d1", "uid-1", models.StackStatusRunning)
 				seedInstance(t, instRepo, "i-right", "stack-right", "d2", "uid-2", models.StackStatusRunning)
-				require.NoError(t, defRepo.Create(&models.StackDefinition{
+				require.NoError(t, defRepo.Create(context.Background(), &models.StackDefinition{
 					ID:   "d1",
 					Name: "def-a",
 				}))
-				require.NoError(t, defRepo.Create(&models.StackDefinition{
+				require.NoError(t, defRepo.Create(context.Background(), &models.StackDefinition{
 					ID:   "d2",
 					Name: "def-b",
 				}))
@@ -269,7 +269,7 @@ func TestCompareInstances(t *testing.T) {
 				}
 				require.NoError(t, instRepo.Create(context.Background(), inst1))
 				require.NoError(t, instRepo.Create(context.Background(), inst2))
-				require.NoError(t, defRepo.Create(&models.StackDefinition{
+				require.NoError(t, defRepo.Create(context.Background(), &models.StackDefinition{
 					ID:   "d1",
 					Name: "def-a",
 				}))
@@ -297,7 +297,7 @@ func TestCompareInstances(t *testing.T) {
 				// Left instance points to a non-existent definition.
 				seedInstance(t, instRepo, "i-left", "stack-left", "d-missing", "uid-1", models.StackStatusRunning)
 				seedInstance(t, instRepo, "i-right", "stack-right", "d1", "uid-2", models.StackStatusRunning)
-				require.NoError(t, defRepo.Create(&models.StackDefinition{
+				require.NoError(t, defRepo.Create(context.Background(), &models.StackDefinition{
 					ID:   "d1",
 					Name: "def-a",
 				}))
@@ -317,11 +317,11 @@ func TestCompareInstances(t *testing.T) {
 			setup: func(instRepo *MockStackInstanceRepository, defRepo *MockStackDefinitionRepository, ccRepo *MockChartConfigRepository, ovRepo *MockValueOverrideRepository) {
 				seedInstance(t, instRepo, "i-left", "stack-left", "d1", "uid-1", models.StackStatusRunning)
 				seedInstance(t, instRepo, "i-right", "stack-right", "d2", "uid-2", models.StackStatusRunning)
-				require.NoError(t, defRepo.Create(&models.StackDefinition{
+				require.NoError(t, defRepo.Create(context.Background(), &models.StackDefinition{
 					ID:   "d1",
 					Name: "def-a",
 				}))
-				require.NoError(t, defRepo.Create(&models.StackDefinition{
+				require.NoError(t, defRepo.Create(context.Background(), &models.StackDefinition{
 					ID:   "d2",
 					Name: "def-b",
 				}))
@@ -341,7 +341,7 @@ func TestCompareInstances(t *testing.T) {
 			setup: func(instRepo *MockStackInstanceRepository, defRepo *MockStackDefinitionRepository, ccRepo *MockChartConfigRepository, ovRepo *MockValueOverrideRepository) {
 				seedInstance(t, instRepo, "i-left", "stack-left", "d1", "uid-1", models.StackStatusRunning)
 				seedInstance(t, instRepo, "i-right", "stack-right", "d1", "uid-2", models.StackStatusRunning)
-				require.NoError(t, defRepo.Create(&models.StackDefinition{
+				require.NoError(t, defRepo.Create(context.Background(), &models.StackDefinition{
 					ID:   "d1",
 					Name: "def-a",
 				}))

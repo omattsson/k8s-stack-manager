@@ -446,7 +446,7 @@ func TestExportChartValues_Additional(t *testing.T) {
 			DefaultBranch:    "master",
 			SourceTemplateID: "tmpl-1",
 		}
-		require.NoError(t, defRepo.Create(def))
+		require.NoError(t, defRepo.Create(context.Background(), def))
 		seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusDraft)
 		seedChartConfigForTest(t, ccRepo, "c1", "d1", "backend")
 
@@ -743,7 +743,7 @@ func TestCompareInstances_Additional(t *testing.T) {
 			DefaultBranch:    "master",
 			SourceTemplateID: "tmpl-1",
 		}
-		require.NoError(t, defRepo.Create(def))
+		require.NoError(t, defRepo.Create(context.Background(), def))
 
 		seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusRunning)
 		seedInstance(t, instRepo, "i2", "stack-b", "d1", "uid-1", models.StackStatusRunning)
@@ -941,7 +941,7 @@ func TestDeployInstance_Additional(t *testing.T) {
 			DefaultBranch:    "master",
 			SourceTemplateID: "tmpl-1",
 		}
-		require.NoError(t, defRepo.Create(def))
+		require.NoError(t, defRepo.Create(context.Background(), def))
 
 		seedChartConfigForTest(t, ccRepo, "cc1", "d-tmpl", "backend")
 

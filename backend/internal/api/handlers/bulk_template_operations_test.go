@@ -106,7 +106,7 @@ func TestBulkDeleteTemplates(t *testing.T) {
 			callerRole: "devops",
 			setup: func(tmplRepo *MockStackTemplateRepository, defRepo *MockStackDefinitionRepository) {
 				seedTemplate(t, tmplRepo, "t1", "Template With Defs", "uid-1", false)
-				require.NoError(t, defRepo.Create(&models.StackDefinition{
+				require.NoError(t, defRepo.Create(context.Background(), &models.StackDefinition{
 					ID:               "d1",
 					Name:             "Def A",
 					OwnerID:          "uid-1",
@@ -493,13 +493,13 @@ func TestListTemplates_Enriched(t *testing.T) {
 			callerRole: "admin",
 			setup: func(tmplRepo *MockStackTemplateRepository, defRepo *MockStackDefinitionRepository, userRepo *MockUserRepository) {
 				seedTemplate(t, tmplRepo, "t1", "Tmpl A", "uid-1", true)
-				require.NoError(t, defRepo.Create(&models.StackDefinition{
+				require.NoError(t, defRepo.Create(context.Background(), &models.StackDefinition{
 					ID:               "d1",
 					Name:             "Def 1",
 					OwnerID:          "uid-1",
 					SourceTemplateID: "t1",
 				}))
-				require.NoError(t, defRepo.Create(&models.StackDefinition{
+				require.NoError(t, defRepo.Create(context.Background(), &models.StackDefinition{
 					ID:               "d2",
 					Name:             "Def 2",
 					OwnerID:          "uid-1",

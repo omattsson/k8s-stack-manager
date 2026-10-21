@@ -85,7 +85,7 @@ func TestGORMStackDefinitionRepository_ListPagedFilterAndNames(t *testing.T) {
 		{ID: "def-3", Name: "beta", OwnerID: "o1", DefaultBranch: "main"},
 	}
 	for i := range defs {
-		require.NoError(t, repo.Create(&defs[i]))
+		require.NoError(t, repo.Create(context.Background(), &defs[i]))
 	}
 
 	tests := []struct {
@@ -104,7 +104,7 @@ func TestGORMStackDefinitionRepository_ListPagedFilterAndNames(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got, total, err := repo.ListPaged(tt.filter, 10, 0)
+			got, total, err := repo.ListPaged(context.Background(), tt.filter, 10, 0)
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantTotal, total)
 			ids := make([]string, len(got))
@@ -117,11 +117,11 @@ func TestGORMStackDefinitionRepository_ListPagedFilterAndNames(t *testing.T) {
 
 	t.Run("names by IDs", func(t *testing.T) {
 		t.Parallel()
-		names, err := repo.NamesByIDs([]string{"def-1", "def-3", "missing"})
+		names, err := repo.NamesByIDs(context.Background(), []string{"def-1", "def-3", "missing"})
 		require.NoError(t, err)
 		assert.Equal(t, map[string]string{"def-1": "alpha", "def-3": "beta"}, names)
 
-		empty, err := repo.NamesByIDs(nil)
+		empty, err := repo.NamesByIDs(context.Background(), nil)
 		require.NoError(t, err)
 		assert.Empty(t, empty)
 	})

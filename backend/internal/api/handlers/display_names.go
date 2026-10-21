@@ -69,14 +69,14 @@ type nameLookup func(ids []string) (map[string]string, error)
 
 // lookupNames calls lookup once for the distinct non-empty ids. A nil lookup
 // or a lookup error gives an empty map (the error is logged).
-func lookupNames(lookup nameLookup, kind string, ids []string) map[string]string {
+func lookupNames(ctx context.Context, lookup nameLookup, kind string, ids []string) map[string]string {
 	ids = uniqueNonEmpty(ids)
 	if lookup == nil || len(ids) == 0 {
 		return map[string]string{}
 	}
 	names, err := lookup(ids)
 	if err != nil {
-		slog.Warn("failed to batch-fetch names", "kind", kind, "error", err)
+		logLookupError(ctx, "failed to batch-fetch names", err, "kind", kind)
 		return map[string]string{}
 	}
 	return names
@@ -103,13 +103,13 @@ func (h *InstanceHandler) setInstanceNames(ctx context.Context, instances ...*mo
 	usernames := lookupUsernames(ctx, h.userRepo, ownerIDs)
 	var defLookup, clusterLookup nameLookup
 	if h.definitionRepo != nil {
-		defLookup = h.definitionRepo.NamesByIDs
+		defLookup = func(ids []string) (map[string]string, error) { return h.definitionRepo.NamesByIDs(ctx, ids) }
 	}
 	if h.clusterRepo != nil {
 		clusterLookup = h.clusterRepo.NamesByIDs
 	}
-	defNames := lookupNames(defLookup, "stack_definition", defIDs)
-	clusterNames := lookupNames(clusterLookup, "cluster", clusterIDs)
+	defNames := lookupNames(ctx, defLookup, "stack_definition", defIDs)
+	clusterNames := lookupNames(ctx, clusterLookup, "cluster", clusterIDs)
 
 	for _, inst := range instances {
 		inst.OwnerUsername = usernames[inst.OwnerID]
@@ -255,11 +255,12 @@ func listPagination(c *gin.Context) (page, pageSize, offset int) {
 }
 
 // logLookupError logs a failed display-name lookup at warn, or at debug when
-// the request was cancelled (the client left).
-func logLookupError(ctx context.Context, msg string, err error) {
+// the request was cancelled (the client left). args are extra attributes.
+func logLookupError(ctx context.Context, msg string, err error, args ...any) {
+	args = append(args, "error", err)
 	if errors.Is(err, context.Canceled) {
-		slog.DebugContext(ctx, msg, "error", err)
+		slog.DebugContext(ctx, msg, args...)
 		return
 	}
-	slog.WarnContext(ctx, msg, "error", err)
+	slog.WarnContext(ctx, msg, args...)
 }

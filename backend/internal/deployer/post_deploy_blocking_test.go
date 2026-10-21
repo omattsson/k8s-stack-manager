@@ -485,7 +485,7 @@ func TestCleanupExecutor_DeleteInstance_FiresDeleteEvents(t *testing.T) {
 				inst.Status = status
 				require.NoError(t, instanceRepo.Update(context.Background(), inst))
 				defRepo := newMockDefinitionRepo()
-				require.NoError(t, defRepo.Create(&models.StackDefinition{ID: "def-1", Name: "def"}))
+				require.NoError(t, defRepo.Create(context.Background(), &models.StackDefinition{ID: "def-1", Name: "def"}))
 				ccRepo := newMockChartConfigRepo()
 				require.NoError(t, ccRepo.Create(&models.ChartConfig{ID: "c1", StackDefinitionID: "def-1", ChartName: "app"}))
 				mgr := NewManager(ManagerConfig{

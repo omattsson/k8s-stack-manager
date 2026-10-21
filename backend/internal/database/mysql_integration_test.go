@@ -135,23 +135,23 @@ func TestMySQLIntegration_StackDefinitionRepository(t *testing.T) {
 		DefaultBranch: "main",
 	}
 
-	err := repo.Create(def)
+	err := repo.Create(context.Background(), def)
 	require.NoError(t, err)
 	assert.NotEmpty(t, def.ID)
 
-	found, err := repo.FindByID(def.ID)
+	found, err := repo.FindByID(context.Background(), def.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "test-stack", found.Name)
 
-	defs, err := repo.List()
+	defs, err := repo.List(context.Background())
 	require.NoError(t, err)
 	assert.Len(t, defs, 1)
 
-	defs, err = repo.ListByOwner("user1")
+	defs, err = repo.ListByOwner(context.Background(), "user1")
 	require.NoError(t, err)
 	assert.Len(t, defs, 1)
 
-	err = repo.Delete(def.ID)
+	err = repo.Delete(context.Background(), def.ID)
 	require.NoError(t, err)
 }
 

@@ -2,7 +2,7 @@ package handlers
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -117,7 +117,16 @@ func (h *InstanceHandler) SetOverride(c *gin.Context) {
 
 	// Check for locked values from the source template.
 	if err := h.checkLockedValues(c.Request.Context(), inst, chartID, input.Values); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		if _, ok := errors.AsType[*lockedValuesError](err); ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		// A failed read must not skip the check (#656).
+		status, message := mapError(err, entityStackDefinition)
+		if status == http.StatusInternalServerError {
+			slog.Error("failed to check locked values", logKeyInstanceID, instanceID, "chart_id", chartID, "error", err)
+		}
+		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
@@ -310,30 +319,47 @@ func (h *InstanceHandler) DeleteOverride(c *gin.Context) {
 	c.JSON(status, gin.H{"error": message})
 }
 
+// lockedValuesError is a conflict of override values with the locked values
+// of the source template (400).
+type lockedValuesError struct{ msg string }
+
+func (e *lockedValuesError) Error() string { return e.msg }
+
 // checkLockedValues verifies that the submitted override values do not conflict
-// with locked values from the source template. Returns an error if conflicts exist.
+// with locked values from the source template. A conflict gives a
+// *lockedValuesError; a failed read gives its error. A missing definition or
+// chart has no locked values.
 func (h *InstanceHandler) checkLockedValues(ctx context.Context, inst *models.StackInstance, chartID, overrideYAML string) error {
 	if overrideYAML == "" {
 		return nil
 	}
 
 	// Look up the definition to check for a source template.
-	def, err := h.definitionRepo.FindByID(inst.StackDefinitionID)
-	if err != nil || def.SourceTemplateID == "" {
+	def, err := h.definitionRepo.FindByID(ctx, inst.StackDefinitionID)
+	if isNotFoundError(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if def.SourceTemplateID == "" {
 		return nil
 	}
 
 	// Look up the chart config to get its ChartName.
 	chart, err := h.chartConfigRepo.FindByID(chartID)
-	if err != nil {
+	if isNotFoundError(err) {
 		return nil
+	}
+	if err != nil {
+		return err
 	}
 
 	// Find the matching template chart config by ChartName (latest
 	// published snapshot of the source template).
 	templateCharts, err := releasedTemplateCharts(ctx, h.versionRepo, h.templateChartRepo, def.SourceTemplateID)
 	if err != nil {
-		return nil
+		return err
 	}
 
 	var lockedYAML string
@@ -367,7 +393,7 @@ func (h *InstanceHandler) checkLockedValues(ctx context.Context, inst *models.St
 	}
 
 	if len(conflicts) > 0 {
-		return fmt.Errorf("Cannot override locked values: %s", strings.Join(conflicts, ", "))
+		return &lockedValuesError{msg: "Cannot override locked values: " + strings.Join(conflicts, ", ")}
 	}
 
 	return nil

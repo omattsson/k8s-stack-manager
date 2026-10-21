@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -70,7 +71,7 @@ func TestAddChartConfig(t *testing.T) {
 			defID: "def-1",
 			body:  `{"chart_name":"nginx","repository_url":"https://charts.example.com"}`,
 			setupDef: func(repo *MockStackDefinitionRepository) {
-				repo.Create(&models.StackDefinition{
+				repo.Create(context.Background(), &models.StackDefinition{
 					ID: "def-1", Name: "My Def", OwnerID: "uid-1",
 					DefaultBranch: "master",
 					CreatedAt:     time.Now().UTC(), UpdatedAt: time.Now().UTC(),
@@ -97,7 +98,7 @@ func TestAddChartConfig(t *testing.T) {
 			defID: "def-1",
 			body:  `{not valid json}`,
 			setupDef: func(repo *MockStackDefinitionRepository) {
-				repo.Create(&models.StackDefinition{
+				repo.Create(context.Background(), &models.StackDefinition{
 					ID: "def-1", Name: "My Def", OwnerID: "uid-1",
 					DefaultBranch: "master",
 					CreatedAt:     time.Now().UTC(), UpdatedAt: time.Now().UTC(),
@@ -110,7 +111,7 @@ func TestAddChartConfig(t *testing.T) {
 			defID: "def-1",
 			body:  `{"repository_url":"https://charts.example.com"}`,
 			setupDef: func(repo *MockStackDefinitionRepository) {
-				repo.Create(&models.StackDefinition{
+				repo.Create(context.Background(), &models.StackDefinition{
 					ID: "def-1", Name: "My Def", OwnerID: "uid-1",
 					DefaultBranch: "master",
 					CreatedAt:     time.Now().UTC(), UpdatedAt: time.Now().UTC(),
@@ -449,7 +450,7 @@ func TestDeleteChartConfig(t *testing.T) {
 			CreatedAt:        time.Now().UTC(),
 			UpdatedAt:        time.Now().UTC(),
 		}
-		require.NoError(t, defRepo.Create(def))
+		require.NoError(t, defRepo.Create(context.Background(), def))
 
 		chartRepo := NewMockChartConfigRepository()
 		seedChartConfig(t, chartRepo, "chart-1", "def-1", "nginx")
@@ -512,7 +513,7 @@ func TestDeleteChartConfig(t *testing.T) {
 			CreatedAt:        time.Now().UTC(),
 			UpdatedAt:        time.Now().UTC(),
 		}
-		require.NoError(t, defRepo.Create(def))
+		require.NoError(t, defRepo.Create(context.Background(), def))
 
 		chartRepo := NewMockChartConfigRepository()
 		seedChartConfig(t, chartRepo, "chart-1", "def-1", "nginx")

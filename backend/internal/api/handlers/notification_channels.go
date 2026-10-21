@@ -121,7 +121,9 @@ func (h *NotificationChannelHandler) filterWarnings(ctx context.Context, f model
 		}
 	}
 	if h.definitionRepo != nil && len(f.DefinitionIDs) > 0 {
-		if names, err := h.definitionRepo.NamesByIDs(f.DefinitionIDs); err != nil {
+		if names, err := h.definitionRepo.NamesByIDs(ctx, f.DefinitionIDs); errors.Is(err, context.Canceled) {
+			slog.DebugContext(ctx, "Channel filter definition check cancelled", "error", err)
+		} else if err != nil {
 			slog.Error("Failed to check channel filter definitions", "error", err)
 		} else {
 			for _, id := range f.DefinitionIDs {

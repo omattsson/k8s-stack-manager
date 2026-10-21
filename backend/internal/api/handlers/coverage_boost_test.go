@@ -270,7 +270,7 @@ func TestExportAllValues(t *testing.T) {
 				seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusRunning)
 				def := seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
 				def.SourceTemplateID = "tmpl-1"
-				require.NoError(t, defRepo.Update(def))
+				require.NoError(t, defRepo.Update(context.Background(), def))
 				require.NoError(t, ccRepo.Create(&models.ChartConfig{
 					ID:                "c1",
 					StackDefinitionID: "d1",

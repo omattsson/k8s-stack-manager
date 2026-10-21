@@ -25,14 +25,20 @@ func newMockDefinitionRepo() *mockDefinitionRepo {
 	return &mockDefinitionRepo{items: make(map[string]*models.StackDefinition)}
 }
 
-func (m *mockDefinitionRepo) Create(d *models.StackDefinition) error {
+func (m *mockDefinitionRepo) Create(ctx context.Context, d *models.StackDefinition) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.items[d.ID] = d
 	return nil
 }
 
-func (m *mockDefinitionRepo) FindByID(id string) (*models.StackDefinition, error) {
+func (m *mockDefinitionRepo) FindByID(ctx context.Context, id string) (*models.StackDefinition, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -45,7 +51,10 @@ func (m *mockDefinitionRepo) FindByID(id string) (*models.StackDefinition, error
 	return d, nil
 }
 
-func (m *mockDefinitionRepo) FindByName(name string) ([]models.StackDefinition, error) {
+func (m *mockDefinitionRepo) FindByName(ctx context.Context, name string) ([]models.StackDefinition, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	var result []models.StackDefinition
@@ -57,21 +66,30 @@ func (m *mockDefinitionRepo) FindByName(name string) ([]models.StackDefinition, 
 	return result, nil
 }
 
-func (m *mockDefinitionRepo) Update(d *models.StackDefinition) error {
+func (m *mockDefinitionRepo) Update(ctx context.Context, d *models.StackDefinition) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.items[d.ID] = d
 	return nil
 }
 
-func (m *mockDefinitionRepo) Delete(id string) error {
+func (m *mockDefinitionRepo) Delete(ctx context.Context, id string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.items, id)
 	return nil
 }
 
-func (m *mockDefinitionRepo) List() ([]models.StackDefinition, error) {
+func (m *mockDefinitionRepo) List(ctx context.Context) ([]models.StackDefinition, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	var out []models.StackDefinition
@@ -81,8 +99,11 @@ func (m *mockDefinitionRepo) List() ([]models.StackDefinition, error) {
 	return out, nil
 }
 
-func (m *mockDefinitionRepo) ListPaged(_ models.StackDefinitionFilter, limit, offset int) ([]models.StackDefinition, int64, error) {
-	all, err := m.List()
+func (m *mockDefinitionRepo) ListPaged(ctx context.Context, _ models.StackDefinitionFilter, limit, offset int) ([]models.StackDefinition, int64, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err
+	}
+	all, err := m.List(ctx)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -97,15 +118,24 @@ func (m *mockDefinitionRepo) ListPaged(_ models.StackDefinitionFilter, limit, of
 	return all, total, nil
 }
 
-func (m *mockDefinitionRepo) ListByOwner(_ string) ([]models.StackDefinition, error) {
-	return m.List()
+func (m *mockDefinitionRepo) ListByOwner(ctx context.Context, _ string) ([]models.StackDefinition, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return m.List(ctx)
 }
 
-func (m *mockDefinitionRepo) ListByTemplate(_ string) ([]models.StackDefinition, error) {
-	return m.List()
+func (m *mockDefinitionRepo) ListByTemplate(ctx context.Context, _ string) ([]models.StackDefinition, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return m.List(ctx)
 }
 
-func (m *mockDefinitionRepo) CountByTemplateIDs(templateIDs []string) (map[string]int, error) {
+func (m *mockDefinitionRepo) CountByTemplateIDs(ctx context.Context, templateIDs []string) (map[string]int, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	wanted := make(map[string]struct{}, len(templateIDs))
@@ -121,25 +151,40 @@ func (m *mockDefinitionRepo) CountByTemplateIDs(templateIDs []string) (map[strin
 	return result, nil
 }
 
-func (m *mockDefinitionRepo) Count() (int64, error) {
+func (m *mockDefinitionRepo) Count(ctx context.Context) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return int64(len(m.items)), nil
 }
 
-func (m *mockDefinitionRepo) FindByIDForUpdate(id string) (*models.StackDefinition, error) {
-	return m.FindByID(id)
+func (m *mockDefinitionRepo) FindByIDForUpdate(ctx context.Context, id string) (*models.StackDefinition, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return m.FindByID(ctx, id)
 }
 
-func (m *mockDefinitionRepo) SetTemplateLink(_, _, _ string) error {
+func (m *mockDefinitionRepo) SetTemplateLink(ctx context.Context, _, _, _ string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	return nil
 }
 
-func (m *mockDefinitionRepo) NamesByIDs(_ []string) (map[string]string, error) {
+func (m *mockDefinitionRepo) NamesByIDs(ctx context.Context, _ []string) (map[string]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return map[string]string{}, nil
 }
 
-func (m *mockDefinitionRepo) ListIDsByTemplateIDs(_ []string) (map[string][]string, error) {
+func (m *mockDefinitionRepo) ListIDsByTemplateIDs(ctx context.Context, _ []string) (map[string][]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return nil, nil
 }
 

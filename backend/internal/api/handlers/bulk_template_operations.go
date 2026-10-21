@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -151,14 +152,18 @@ func (h *TemplateHandler) executeBulkTemplateOperation(c *gin.Context, opName st
 // @Failure     403     {object} map[string]string
 // @Router      /api/v1/templates/bulk/delete [post]
 func (h *TemplateHandler) BulkDeleteTemplates(c *gin.Context) {
-	h.executeBulkTemplateOperation(c, "delete", func(_ *gin.Context, tmpl *models.StackTemplate) error {
+	h.executeBulkTemplateOperation(c, "delete", func(c *gin.Context, tmpl *models.StackTemplate) error {
 		if tmpl.IsPublished {
 			return fmt.Errorf("template is published")
 		}
 
-		// Check that no definitions reference this template.
+		// Check that no definitions reference this template. A failed check
+		// stops the delete.
 		if h.definitionRepo != nil {
-			defs, err := h.definitionRepo.ListByTemplate(tmpl.ID)
+			defs, err := h.definitionRepo.ListByTemplate(c.Request.Context(), tmpl.ID)
+			if errors.Is(err, context.Canceled) {
+				return errors.New("request cancelled")
+			}
 			if err != nil {
 				slog.Error("bulk delete: failed to check definitions", logKeyBulkTemplateID, tmpl.ID, "error", err)
 				return fmt.Errorf("failed to check linked definitions")

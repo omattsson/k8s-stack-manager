@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -30,7 +31,7 @@ func newTemplateLinkEnv(t *testing.T) *draftReleaseEnv {
 	require.NoError(t, e.templates.Create(&models.StackTemplate{
 		ID: "t2", Name: "Draft stack", Version: "0.1.0", OwnerID: "uid-dev", CreatedAt: now, UpdatedAt: now,
 	}))
-	require.NoError(t, e.defs.Create(&models.StackDefinition{
+	require.NoError(t, e.defs.Create(context.Background(), &models.StackDefinition{
 		ID: "d1", Name: "Imported", OwnerID: "uid-owner", DefaultBranch: "master", CreatedAt: now, UpdatedAt: now,
 	}))
 	require.NoError(t, e.defCharts.Create(&models.ChartConfig{
@@ -95,10 +96,10 @@ func TestSetTemplateLink(t *testing.T) {
 			t.Parallel()
 			e := newTemplateLinkEnv(t)
 			if tt.preLink {
-				def, err := e.defs.FindByID("d1")
+				def, err := e.defs.FindByID(context.Background(), "d1")
 				require.NoError(t, err)
 				def.SourceTemplateID, def.SourceTemplateVersion = "t1", "1.0.0"
-				require.NoError(t, e.defs.Update(def))
+				require.NoError(t, e.defs.Update(context.Background(), def))
 			}
 			chartsBefore, err := e.defCharts.ListByDefinition("d1")
 			require.NoError(t, err)
@@ -120,7 +121,7 @@ func TestSetTemplateLink(t *testing.T) {
 			assert.Equal(t, tt.wantID, resp.SourceTemplateID)
 			assert.Equal(t, tt.wantVersion, resp.SourceTemplateVersion)
 
-			stored, err := e.defs.FindByID("d1")
+			stored, err := e.defs.FindByID(context.Background(), "d1")
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantID, stored.SourceTemplateID)
 			assert.Equal(t, tt.wantVersion, stored.SourceTemplateVersion)
@@ -131,7 +132,7 @@ func TestSetTemplateLink(t *testing.T) {
 			assert.Equal(t, chartsBefore, chartsAfter)
 
 			// The analytics template usage counts the linked definition.
-			counts, err := e.defs.CountByTemplateIDs([]string{"t1"})
+			counts, err := e.defs.CountByTemplateIDs(context.Background(), []string{"t1"})
 			require.NoError(t, err)
 			want := 0
 			if tt.wantID == "t1" {
@@ -204,7 +205,7 @@ func TestImportDefinition_SourceTemplate(t *testing.T) {
 			} else {
 				assert.Equal(t, []string{tt.wantWarning}, resp.Warnings)
 			}
-			stored, err := e.defs.FindByID(resp.ID)
+			stored, err := e.defs.FindByID(context.Background(), resp.ID)
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantID, stored.SourceTemplateID)
 		})

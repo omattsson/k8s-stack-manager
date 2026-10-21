@@ -34,7 +34,7 @@ func TestDatabaseMySQL_CleanupOwnedDefinitionLock(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			db := setupMySQLTestDB(t)
 			defRepo := NewGORMStackDefinitionRepository(db)
-			require.NoError(t, defRepo.Create(&models.StackDefinition{ID: "d1", Name: "qd", OwnerID: "u1", OwnerInstanceID: tt.owner}))
+			require.NoError(t, defRepo.Create(context.Background(), &models.StackDefinition{ID: "d1", Name: "qd", OwnerID: "u1", OwnerInstanceID: tt.owner}))
 			inst := &models.StackInstance{ID: "i1", StackDefinitionID: "d1", Name: "qd", Namespace: "stack-qd-u1", OwnerID: "u1", Status: models.StackStatusDraft}
 			require.NoError(t, NewGORMStackInstanceRepository(db).Create(context.Background(), inst))
 
@@ -50,7 +50,7 @@ func TestDatabaseMySQL_CleanupOwnedDefinitionLock(t *testing.T) {
 				}
 			}
 			assert.Equal(t, tt.wantLocks, locks)
-			_, err := defRepo.FindByID("d1")
+			_, err := defRepo.FindByID(context.Background(), "d1")
 			assert.Equal(t, tt.wantDefKept, err == nil)
 		})
 	}

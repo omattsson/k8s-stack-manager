@@ -92,7 +92,7 @@ func (h *DefinitionHandler) resolveTemplateLink(ctx context.Context, templateID,
 // @Router      /api/v1/stack-definitions/{id}/template-link [put]
 func (h *DefinitionHandler) SetTemplateLink(c *gin.Context) {
 	id := c.Param("id")
-	def, err := h.definitionRepo.FindByID(id)
+	def, err := h.definitionRepo.FindByID(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
@@ -124,6 +124,9 @@ func (h *DefinitionHandler) SetTemplateLink(c *gin.Context) {
 				c.JSON(linkErr.status, gin.H{"error": linkErr.message})
 				return
 			}
+			if respondCancelled(c, err) {
+				return
+			}
 			slog.Error("failed to resolve template link", "definition_id", def.ID, "template_id", req.TemplateID, "error", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 			return
@@ -132,7 +135,9 @@ func (h *DefinitionHandler) SetTemplateLink(c *gin.Context) {
 	}
 
 	// A targeted write: a concurrent edit of other fields is not lost.
-	if err := h.definitionRepo.SetTemplateLink(def.ID, templateID, version); err != nil {
+	// Detached from here on: a committed link must answer 200 for its audit entry (#656).
+	wctx := context.WithoutCancel(c.Request.Context())
+	if err := h.definitionRepo.SetTemplateLink(wctx, def.ID, templateID, version); err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		if status == http.StatusInternalServerError {
 			slog.Error("failed to update template link", "definition_id", def.ID, "error", err)
@@ -140,7 +145,7 @@ func (h *DefinitionHandler) SetTemplateLink(c *gin.Context) {
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
-	updated, err := h.definitionRepo.FindByID(def.ID)
+	updated, err := h.definitionRepo.FindByID(wctx, def.ID)
 	if err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})

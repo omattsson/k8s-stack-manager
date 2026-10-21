@@ -75,7 +75,7 @@ func seedDefinition(t *testing.T, repo *MockStackDefinitionRepository, id, name,
 		CreatedAt:     time.Now().UTC(),
 		UpdatedAt:     time.Now().UTC(),
 	}
-	require.NoError(t, repo.Create(def))
+	require.NoError(t, repo.Create(context.Background(), def))
 	return def
 }
 
@@ -593,7 +593,7 @@ func TestDeleteDefinition_InstanceCheckFails(t *testing.T) {
 
 			assert.Equal(t, tt.wantStatus, w.Code)
 			assert.JSONEq(t, fmt.Sprintf(`{"error":%q}`, tt.wantBody), w.Body.String())
-			_, err := defRepo.FindByID("d1")
+			_, err := defRepo.FindByID(context.Background(), "d1")
 			assert.NoError(t, err, "the definition is kept")
 		})
 	}

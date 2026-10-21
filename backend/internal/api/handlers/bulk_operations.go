@@ -58,6 +58,20 @@ func bulkLookupError(err error) string {
 	}
 }
 
+// bulkDefinitionError returns the result error of a failed definition
+// lookup. The lookup runs before the first write, so a cancel changes nothing.
+func bulkDefinitionError(err error, definitionID string) error {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return errors.New("request cancelled")
+	case errors.Is(err, dberrors.ErrNotFound):
+		return errors.New("stack definition not found")
+	default:
+		slog.Error("bulk operation: stack definition lookup failed", "definition_id", definitionID, "error", err)
+		return errors.New(bulkLookupFailed)
+	}
+}
+
 // bulkOperationFunc is the signature for a function that operates on a single instance.
 // It receives the instance and returns an optional log ID, and an error.
 type bulkOperationFunc func(c *gin.Context, inst *models.StackInstance) (string, error)
@@ -166,9 +180,9 @@ func (h *InstanceHandler) BulkDeploy(c *gin.Context) {
 			return "", fmt.Errorf("%s", msgStopTimePassed)
 		}
 
-		def, err := h.definitionRepo.FindByID(inst.StackDefinitionID)
+		def, err := h.definitionRepo.FindByID(c.Request.Context(), inst.StackDefinitionID)
 		if err != nil {
-			return "", fmt.Errorf("stack definition not found")
+			return "", bulkDefinitionError(err, inst.StackDefinitionID)
 		}
 
 		charts, err := h.chartConfigRepo.ListByDefinition(def.ID)
@@ -265,9 +279,9 @@ func (h *InstanceHandler) BulkStop(c *gin.Context) {
 			return "", fmt.Errorf("cannot stop: instance is currently %s", inst.Status)
 		}
 
-		def, err := h.definitionRepo.FindByID(inst.StackDefinitionID)
+		def, err := h.definitionRepo.FindByID(c.Request.Context(), inst.StackDefinitionID)
 		if err != nil {
-			return "", fmt.Errorf("stack definition not found")
+			return "", bulkDefinitionError(err, inst.StackDefinitionID)
 		}
 
 		charts, err := h.chartConfigRepo.ListByDefinition(def.ID)
@@ -321,9 +335,9 @@ func (h *InstanceHandler) BulkClean(c *gin.Context) {
 			return "", fmt.Errorf("cannot clean: instance is currently %s", inst.Status)
 		}
 
-		def, err := h.definitionRepo.FindByID(inst.StackDefinitionID)
+		def, err := h.definitionRepo.FindByID(c.Request.Context(), inst.StackDefinitionID)
 		if err != nil {
-			return "", fmt.Errorf("stack definition not found")
+			return "", bulkDefinitionError(err, inst.StackDefinitionID)
 		}
 
 		charts, err := h.chartConfigRepo.ListByDefinition(def.ID)

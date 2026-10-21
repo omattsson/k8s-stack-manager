@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -56,7 +57,7 @@ type upgradeCheckEnv struct {
 func newUpgradeCheckEnv(t *testing.T, latest models.TemplateChartSnapshotData) upgradeCheckEnv {
 	t.Helper()
 	defRepo := NewMockStackDefinitionRepository()
-	require.NoError(t, defRepo.Create(&models.StackDefinition{
+	require.NoError(t, defRepo.Create(context.Background(), &models.StackDefinition{
 		ID: "d1", Name: "My Def", OwnerID: "uid-1",
 		SourceTemplateID: "t1", SourceTemplateVersion: "1.0",
 	}))
@@ -206,7 +207,7 @@ func TestCheckUpgrade_AddedAndRemovedCharts(t *testing.T) {
 	newChart.ChartVersion = "2.0.0"
 
 	defRepo := NewMockStackDefinitionRepository()
-	require.NoError(t, defRepo.Create(&models.StackDefinition{
+	require.NoError(t, defRepo.Create(context.Background(), &models.StackDefinition{
 		ID: "d1", Name: "My Def", OwnerID: "uid-1", SourceTemplateID: "t1", SourceTemplateVersion: "1.0",
 	}))
 	ccRepo := NewMockChartConfigRepository()
@@ -279,7 +280,7 @@ func TestCheckUpgrade_Reason(t *testing.T) {
 			t.Parallel()
 			defRepo := NewMockStackDefinitionRepository()
 			def := tt.def
-			require.NoError(t, defRepo.Create(&def))
+			require.NoError(t, defRepo.Create(context.Background(), &def))
 			verRepo := NewMockTemplateVersionRepository()
 			if tt.withVersion {
 				seedVersion(t, verRepo, "v2", "t1", "2.0", schemaV1SnapshotJSON(t, "2.0", upgradeBaseChart()), time.Now())

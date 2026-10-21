@@ -609,7 +609,7 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 	}
 
 	// Verify definition exists.
-	if _, err := h.definitionRepo.FindByID(inst.StackDefinitionID); err != nil {
+	if _, err := h.definitionRepo.FindByID(c.Request.Context(), inst.StackDefinitionID); err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -927,7 +927,7 @@ func (h *InstanceHandler) deleteInstance(c *gin.Context, inst *models.StackInsta
 		if h.deployManager == nil {
 			return "", &instanceDeleteError{status: http.StatusServiceUnavailable, message: msgDeployerNotConfigured}
 		}
-		def, err := h.definitionRepo.FindByID(inst.StackDefinitionID)
+		def, err := h.definitionRepo.FindByID(wctx, inst.StackDefinitionID)
 		if err != nil {
 			status, message := mapError(err, entityStackDefinition)
 			return "", &instanceDeleteError{status: status, message: message}
@@ -1570,7 +1570,7 @@ func (h *InstanceHandler) ExportChartValues(c *gin.Context) {
 		return
 	}
 
-	def, err := h.definitionRepo.FindByID(inst.StackDefinitionID)
+	def, err := h.definitionRepo.FindByID(c.Request.Context(), inst.StackDefinitionID)
 	if err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
@@ -1612,7 +1612,7 @@ func (h *InstanceHandler) ExportAllValues(c *gin.Context) {
 		return
 	}
 
-	def, err := h.definitionRepo.FindByID(inst.StackDefinitionID)
+	def, err := h.definitionRepo.FindByID(c.Request.Context(), inst.StackDefinitionID)
 	if err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
@@ -1707,7 +1707,7 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 		return
 	}
 
-	def, err := h.definitionRepo.FindByID(inst.StackDefinitionID)
+	def, err := h.definitionRepo.FindByID(c.Request.Context(), inst.StackDefinitionID)
 	if err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
@@ -1827,7 +1827,7 @@ func (h *InstanceHandler) DeployPreview(c *gin.Context) {
 		return
 	}
 
-	def, err := h.definitionRepo.FindByID(inst.StackDefinitionID)
+	def, err := h.definitionRepo.FindByID(c.Request.Context(), inst.StackDefinitionID)
 	if err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
@@ -1938,7 +1938,7 @@ func (h *InstanceHandler) StopInstance(c *gin.Context) {
 	}
 
 	// Fetch chart configs so StopWithCharts can run helm uninstall per chart.
-	def, err := h.definitionRepo.FindByID(inst.StackDefinitionID)
+	def, err := h.definitionRepo.FindByID(c.Request.Context(), inst.StackDefinitionID)
 	if err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
@@ -2025,7 +2025,7 @@ func (h *InstanceHandler) CleanInstance(c *gin.Context) {
 		return
 	}
 
-	def, err := h.definitionRepo.FindByID(inst.StackDefinitionID)
+	def, err := h.definitionRepo.FindByID(c.Request.Context(), inst.StackDefinitionID)
 	if err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
@@ -2639,18 +2639,22 @@ func (h *InstanceHandler) CompareInstances(c *gin.Context) {
 	}
 
 	// Fetch definitions.
-	leftDef, err := h.definitionRepo.FindByID(leftInst.StackDefinitionID)
+	leftDef, err := h.definitionRepo.FindByID(c.Request.Context(), leftInst.StackDefinitionID)
 	if err != nil {
-		slog.Error("compare: failed to fetch left definition", logKeyInstanceID, leftID, "error", err)
 		status, message := mapError(err, entityStackDefinition)
+		if status == http.StatusInternalServerError {
+			slog.Error("compare: failed to fetch left definition", logKeyInstanceID, leftID, "error", err)
+		}
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
-	rightDef, err := h.definitionRepo.FindByID(rightInst.StackDefinitionID)
+	rightDef, err := h.definitionRepo.FindByID(c.Request.Context(), rightInst.StackDefinitionID)
 	if err != nil {
-		slog.Error("compare: failed to fetch right definition", logKeyInstanceID, rightID, "error", err)
 		status, message := mapError(err, entityStackDefinition)
+		if status == http.StatusInternalServerError {
+			slog.Error("compare: failed to fetch right definition", logKeyInstanceID, rightID, "error", err)
+		}
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -2872,7 +2876,7 @@ func (h *InstanceHandler) RollbackInstance(c *gin.Context) {
 		}
 	}
 
-	def, err := h.definitionRepo.FindByID(inst.StackDefinitionID)
+	def, err := h.definitionRepo.FindByID(c.Request.Context(), inst.StackDefinitionID)
 	if err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
