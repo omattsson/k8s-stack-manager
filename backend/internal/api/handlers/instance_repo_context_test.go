@@ -94,6 +94,55 @@ func (r *hookInstanceRepo) ListExpiringSoon(ctx context.Context, threshold time.
 	return r.MockStackInstanceRepository.ListExpiringSoon(ctx, threshold)
 }
 
+// hookDefinitionRepo runs the hook of hooks with "before:Definition.<Method>"
+// and "after:Definition.<Method>" around the definition reads and writes.
+type hookDefinitionRepo struct {
+	*MockStackDefinitionRepository
+	hooks *hookInstanceRepo
+}
+
+func (r *hookDefinitionRepo) FindByID(ctx context.Context, id string) (*models.StackDefinition, error) {
+	r.hooks.run("before:Definition.FindByID", ctx)
+	defer r.hooks.run("after:Definition.FindByID", ctx)
+	return r.MockStackDefinitionRepository.FindByID(ctx, id)
+}
+
+func (r *hookDefinitionRepo) FindByName(ctx context.Context, name string) ([]models.StackDefinition, error) {
+	r.hooks.run("before:Definition.FindByName", ctx)
+	defer r.hooks.run("after:Definition.FindByName", ctx)
+	return r.MockStackDefinitionRepository.FindByName(ctx, name)
+}
+
+func (r *hookDefinitionRepo) Create(ctx context.Context, d *models.StackDefinition) error {
+	r.hooks.run("before:Definition.Create", ctx)
+	defer r.hooks.run("after:Definition.Create", ctx)
+	return r.MockStackDefinitionRepository.Create(ctx, d)
+}
+
+func (r *hookDefinitionRepo) Update(ctx context.Context, d *models.StackDefinition) error {
+	r.hooks.run("before:Definition.Update", ctx)
+	defer r.hooks.run("after:Definition.Update", ctx)
+	return r.MockStackDefinitionRepository.Update(ctx, d)
+}
+
+func (r *hookDefinitionRepo) SetTemplateLink(ctx context.Context, id, templateID, version string) error {
+	r.hooks.run("before:Definition.SetTemplateLink", ctx)
+	defer r.hooks.run("after:Definition.SetTemplateLink", ctx)
+	return r.MockStackDefinitionRepository.SetTemplateLink(ctx, id, templateID, version)
+}
+
+func (r *hookDefinitionRepo) Delete(ctx context.Context, id string) error {
+	r.hooks.run("before:Definition.Delete", ctx)
+	defer r.hooks.run("after:Definition.Delete", ctx)
+	return r.MockStackDefinitionRepository.Delete(ctx, id)
+}
+
+func (r *hookDefinitionRepo) ListByTemplate(ctx context.Context, templateID string) ([]models.StackDefinition, error) {
+	r.hooks.run("before:Definition.ListByTemplate", ctx)
+	defer r.hooks.run("after:Definition.ListByTemplate", ctx)
+	return r.MockStackDefinitionRepository.ListByTemplate(ctx, templateID)
+}
+
 // cancelAt returns a hook that cancels the request at call number n of
 // point (1-based).
 func cancelAt(point string, n int32, cancel context.CancelFunc) func(string, context.Context) {
@@ -206,6 +255,7 @@ func (r ctxQuotaOverrideRepo) Delete(ctx context.Context, instanceID string) err
 // context, with the audit middleware and a deploy manager.
 type writeCtxFixture struct {
 	inst      *hookInstanceRepo
+	def       *hookDefinitionRepo
 	logs      *MockDeploymentLogRepository
 	ov        *MockValueOverrideRepository
 	followers *MockInstanceFollowerRepository
@@ -228,10 +278,11 @@ func newWriteCtxFixture(t *testing.T) *writeCtxFixture {
 		notif:     &followerCtxNotifier{followers: []string{"f-1"}},
 		audit:     NewMockAuditLogRepository(),
 	}
-	def := NewMockStackDefinitionRepository()
+	f.def = &hookDefinitionRepo{MockStackDefinitionRepository: NewMockStackDefinitionRepository(), hooks: f.inst}
+	def := f.def
 	cc := NewMockChartConfigRepository()
 	bo := NewMockChartBranchOverrideRepository()
-	seedDefinition(t, def, "d1", "def-1", "uid-1")
+	seedDefinition(t, def.MockStackDefinitionRepository, "d1", "def-1", "uid-1")
 	require.NoError(t, cc.Create(&models.ChartConfig{ID: "cc1", StackDefinitionID: "d1", ChartName: "web", DefaultValues: "replicas: 1\n"}))
 	expires := time.Now().UTC().Add(30 * time.Minute)
 	for _, s := range []struct {
@@ -369,21 +420,21 @@ func TestInstanceWrites_CancelledAfterReadsStillCommit(t *testing.T) {
 		},
 		{
 			name: "stop", method: http.MethodPost, path: "/api/v1/stack-instances/run-1/stop",
-			cancelAt: "after:FindByID", wantStatus: http.StatusAccepted,
+			cancelAt: "after:Definition.FindByID", wantStatus: http.StatusAccepted,
 			check: func(t *testing.T, f *writeCtxFixture, _ *httptest.ResponseRecorder) {
 				assert.Equal(t, []string{models.DeployActionStop}, f.logActions(t, "run-1"))
 			},
 		},
 		{
 			name: "clean", method: http.MethodPost, path: "/api/v1/stack-instances/stopped-1/clean",
-			cancelAt: "after:FindByID", wantStatus: http.StatusAccepted,
+			cancelAt: "after:Definition.FindByID", wantStatus: http.StatusAccepted,
 			check: func(t *testing.T, f *writeCtxFixture, _ *httptest.ResponseRecorder) {
 				assert.Equal(t, []string{models.DeployActionClean}, f.logActions(t, "stopped-1"))
 			},
 		},
 		{
 			name: "rollback", method: http.MethodPost, path: "/api/v1/stack-instances/run-1/rollback",
-			cancelAt: "after:FindByID", wantStatus: http.StatusAccepted,
+			cancelAt: "after:Definition.FindByID", wantStatus: http.StatusAccepted,
 			check: func(t *testing.T, f *writeCtxFixture, _ *httptest.ResponseRecorder) {
 				assert.Equal(t, []string{models.DeployActionRollback}, f.logActions(t, "run-1"))
 			},
@@ -439,7 +490,7 @@ func TestInstanceWrites_CancelledAfterReadsStillCommit(t *testing.T) {
 		},
 		{
 			name: "bulk clean", method: http.MethodPost, path: "/api/v1/stack-instances/bulk/clean",
-			body: `{"instance_ids":["stopped-1"]}`, cancelAt: "after:FindByID", wantStatus: http.StatusOK,
+			body: `{"instance_ids":["stopped-1"]}`, cancelAt: "after:Definition.FindByID", wantStatus: http.StatusOK,
 			check: func(t *testing.T, f *writeCtxFixture, w *httptest.ResponseRecorder) {
 				results := bulkResults(t, w)
 				require.Len(t, results, 1)
@@ -449,7 +500,7 @@ func TestInstanceWrites_CancelledAfterReadsStillCommit(t *testing.T) {
 		},
 		{
 			name: "bulk stop", method: http.MethodPost, path: "/api/v1/stack-instances/bulk/stop",
-			body: `{"instance_ids":["run-1"]}`, cancelAt: "after:FindByID", wantStatus: http.StatusOK,
+			body: `{"instance_ids":["run-1"]}`, cancelAt: "after:Definition.FindByID", wantStatus: http.StatusOK,
 			check: func(t *testing.T, f *writeCtxFixture, w *httptest.ResponseRecorder) {
 				results := bulkResults(t, w)
 				require.Len(t, results, 1)
@@ -480,7 +531,7 @@ func TestInstanceWrites_CancelledAfterReadsStillCommit(t *testing.T) {
 		},
 		{
 			name: "value override", method: http.MethodPut, path: "/api/v1/stack-instances/draft-1/overrides/cc1",
-			body: `{"values":"replicas: 2\n"}`, cancelAt: "after:FindByID", wantStatus: http.StatusOK,
+			body: `{"values":"replicas: 2\n"}`, cancelAt: "after:Definition.FindByID", wantStatus: http.StatusOK,
 			check: func(t *testing.T, f *writeCtxFixture, _ *httptest.ResponseRecorder) {
 				ov, err := f.ov.FindByInstanceAndChart("draft-1", "cc1")
 				require.NoError(t, err)
@@ -718,7 +769,7 @@ func TestInstanceReads_CancelledRequest(t *testing.T) {
 		defRepo := NewMockStackDefinitionRepository()
 		tmplRepo := NewMockStackTemplateRepository()
 		seedTemplate(t, tmplRepo, "t1", "tmpl", "uid-1", true)
-		require.NoError(t, defRepo.Create(&models.StackDefinition{ID: "d1", Name: "def", OwnerID: "uid-1", SourceTemplateID: "t1"}))
+		require.NoError(t, defRepo.Create(context.Background(), &models.StackDefinition{ID: "d1", Name: "def", OwnerID: "uid-1", SourceTemplateID: "t1"}))
 		return setupAnalyticsRouter(tmplRepo, defRepo, seeded(t), newMockDeployLogRepo(), NewMockUserRepository())
 	}
 	adminRouter := func(t *testing.T) *gin.Engine {
@@ -820,7 +871,7 @@ func TestDeleteDefinition_CancelledInstanceCheck(t *testing.T) {
 	r.ServeHTTP(w, cancelledRequest(t, http.MethodDelete, "/api/v1/stack-definitions/d1", ""))
 
 	assert.Equal(t, statusClientClosedRequest, w.Code, w.Body.String())
-	_, err := defRepo.FindByID("d1")
+	_, err := defRepo.FindByID(context.Background(), "d1")
 	assert.NoError(t, err, "the definition is kept")
 }
 

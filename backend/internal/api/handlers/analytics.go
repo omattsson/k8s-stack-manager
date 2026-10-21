@@ -123,8 +123,11 @@ func (h *AnalyticsHandler) GetOverview(c *gin.Context) {
 		return
 	}
 
-	definitionCount, err := h.definitionRepo.Count()
+	definitionCount, err := h.definitionRepo.Count(c.Request.Context())
 	if err != nil {
+		if respondCancelled(c, err) {
+			return
+		}
 		slog.Error("analytics: failed to count definitions", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
@@ -272,12 +275,12 @@ func (h *AnalyticsHandler) computeTemplateStats(ctx context.Context, templates [
 // error (potentially wrapping ErrNotImplemented) if any repository call is
 // unsupported, so the caller can fall back.
 func (h *AnalyticsHandler) computeTemplateStatsOptimized(ctx context.Context, templates []models.StackTemplate, templateIDs []string) ([]TemplateStats, error) {
-	defCountsByTemplate, err := h.definitionRepo.CountByTemplateIDs(templateIDs)
+	defCountsByTemplate, err := h.definitionRepo.CountByTemplateIDs(ctx, templateIDs)
 	if err != nil {
 		return nil, err
 	}
 
-	defIDsByTemplate, err := h.definitionRepo.ListIDsByTemplateIDs(templateIDs)
+	defIDsByTemplate, err := h.definitionRepo.ListIDsByTemplateIDs(ctx, templateIDs)
 	if err != nil {
 		return nil, err
 	}

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -23,8 +24,8 @@ var errNoFreeDefinitionName = errors.New("no free definition name")
 
 // definitionNameTaken reports whether ownerID already owns a definition named
 // name, other than the definition excludeID.
-func definitionNameTaken(repo models.StackDefinitionRepository, ownerID, name, excludeID string) (bool, error) {
-	defs, err := repo.FindByName(name)
+func definitionNameTaken(ctx context.Context, repo models.StackDefinitionRepository, ownerID, name, excludeID string) (bool, error) {
+	defs, err := repo.FindByName(ctx, name)
 	if err != nil {
 		return false, err
 	}
@@ -38,10 +39,10 @@ func definitionNameTaken(repo models.StackDefinitionRepository, ownerID, name, e
 
 // uniqueDefinitionName returns the first candidate(n), n = 1, 2, ..., that
 // ownerID does not use as a definition name yet.
-func uniqueDefinitionName(repo models.StackDefinitionRepository, ownerID string, candidate func(n int) string) (string, error) {
+func uniqueDefinitionName(ctx context.Context, repo models.StackDefinitionRepository, ownerID string, candidate func(n int) string) (string, error) {
 	for n := 1; n <= maxDefinitionNameAttempts; n++ {
 		name := candidate(n)
-		taken, err := definitionNameTaken(repo, ownerID, name, "")
+		taken, err := definitionNameTaken(ctx, repo, ownerID, name, "")
 		if err != nil {
 			return "", err
 		}
@@ -81,7 +82,7 @@ func numberedDefinitionName(base string) func(n int) string {
 // when the name is taken (409) or the check fails (500). It returns true when
 // the caller must stop.
 func respondDefinitionNameTaken(c *gin.Context, repo models.StackDefinitionRepository, ownerID, name, excludeID string) bool {
-	taken, err := definitionNameTaken(repo, ownerID, name, excludeID)
+	taken, err := definitionNameTaken(c.Request.Context(), repo, ownerID, name, excludeID)
 	if err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})

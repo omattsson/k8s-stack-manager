@@ -118,10 +118,10 @@ func (f *svFixture) addShared(t *testing.T, id, clusterID string, priority int, 
 // lockOnTemplate makes d1 come from template tmpl-1 with locked values for app.
 func (f *svFixture) lockOnTemplate(t *testing.T, chartName, locked string) {
 	t.Helper()
-	def, err := f.defRepo.FindByID("d1")
+	def, err := f.defRepo.FindByID(context.Background(), "d1")
 	require.NoError(t, err)
 	def.SourceTemplateID = "tmpl-1"
-	require.NoError(t, f.defRepo.Update(def))
+	require.NoError(t, f.defRepo.Update(context.Background(), def))
 	require.NoError(t, f.tcRepo.Create(&models.TemplateChartConfig{
 		ID: "tc-1", StackTemplateID: "tmpl-1", ChartName: chartName, LockedValues: locked,
 	}))

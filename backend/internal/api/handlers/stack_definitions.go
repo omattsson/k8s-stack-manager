@@ -179,7 +179,7 @@ func (h *DefinitionHandler) ListDefinitions(c *gin.Context) {
 
 	page, pageSize, offset := listPagination(c)
 
-	defs, total, err := h.definitionRepo.ListPaged(filter, pageSize, offset)
+	defs, total, err := h.definitionRepo.ListPaged(c.Request.Context(), filter, pageSize, offset)
 	if err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
@@ -267,7 +267,8 @@ func (h *DefinitionHandler) CreateDefinition(c *gin.Context) {
 		return
 	}
 
-	if err := h.definitionRepo.Create(&def); err != nil {
+	// Detached: a committed create must answer 201, so its audit entry follows (#656).
+	if err := h.definitionRepo.Create(context.WithoutCancel(c.Request.Context()), &def); err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -293,7 +294,7 @@ func (h *DefinitionHandler) GetDefinition(c *gin.Context) {
 		return
 	}
 
-	def, err := h.definitionRepo.FindByID(id)
+	def, err := h.definitionRepo.FindByID(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
@@ -337,7 +338,7 @@ func (h *DefinitionHandler) UpdateDefinition(c *gin.Context) {
 		return
 	}
 
-	existing, err := h.definitionRepo.FindByID(id)
+	existing, err := h.definitionRepo.FindByID(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
@@ -369,7 +370,7 @@ func (h *DefinitionHandler) UpdateDefinition(c *gin.Context) {
 		return
 	}
 
-	if err := h.definitionRepo.Update(existing); err != nil {
+	if err := h.definitionRepo.Update(context.WithoutCancel(c.Request.Context()), existing); err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -397,7 +398,7 @@ func (h *DefinitionHandler) DeleteDefinition(c *gin.Context) {
 		return
 	}
 
-	def, err := h.definitionRepo.FindByID(id)
+	def, err := h.definitionRepo.FindByID(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
@@ -428,7 +429,7 @@ func (h *DefinitionHandler) DeleteDefinition(c *gin.Context) {
 		}
 	}
 
-	if err := h.definitionRepo.Delete(id); err != nil {
+	if err := h.definitionRepo.Delete(context.WithoutCancel(c.Request.Context()), id); err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -455,7 +456,7 @@ func (h *DefinitionHandler) ExportDefinition(c *gin.Context) {
 		return
 	}
 
-	def, err := h.definitionRepo.FindByID(id)
+	def, err := h.definitionRepo.FindByID(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
@@ -584,7 +585,7 @@ func (h *DefinitionHandler) ImportDefinition(c *gin.Context) {
 
 	// Definition names are unique per owner: an existing name gets the
 	// suffix " (imported)", " (imported 2)", ...
-	finalName, nameErr := uniqueDefinitionName(h.definitionRepo, def.OwnerID, importedDefinitionName(def.Name))
+	finalName, nameErr := uniqueDefinitionName(c.Request.Context(), h.definitionRepo, def.OwnerID, importedDefinitionName(def.Name))
 	if errors.Is(nameErr, errNoFreeDefinitionName) {
 		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("A stack definition named %q already exists for this owner", def.Name)})
 		return
@@ -622,8 +623,9 @@ func (h *DefinitionHandler) ImportDefinition(c *gin.Context) {
 
 	var createdCharts []models.ChartConfig
 	// Detached: a committed import must answer 201, so its audit entry follows (#656).
-	txErr := h.txRunner.RunInTx(context.WithoutCancel(c.Request.Context()), func(repos database.TxRepos) error {
-		if err := repos.StackDefinition.Create(&def); err != nil {
+	wctx := context.WithoutCancel(c.Request.Context())
+	txErr := h.txRunner.RunInTx(wctx, func(repos database.TxRepos) error {
+		if err := repos.StackDefinition.Create(wctx, &def); err != nil {
 			return err
 		}
 		for i := range chartModels {
@@ -672,7 +674,7 @@ func (h *DefinitionHandler) CheckUpgrade(c *gin.Context) {
 		return
 	}
 
-	def, err := h.definitionRepo.FindByID(id)
+	def, err := h.definitionRepo.FindByID(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
@@ -694,6 +696,9 @@ func (h *DefinitionHandler) CheckUpgrade(c *gin.Context) {
 				CurrentVersion: def.SourceTemplateVersion,
 				Reason:         upgradeReasonNoPublishedVersion,
 			})
+			return
+		}
+		if respondCancelled(c, err) {
 			return
 		}
 		slog.Error("failed to read latest template version", "template_id", def.SourceTemplateID, "error", err)
@@ -932,7 +937,7 @@ func (h *DefinitionHandler) ApplyUpgrade(c *gin.Context) {
 		return
 	}
 
-	def, err := h.definitionRepo.FindByID(id)
+	def, err := h.definitionRepo.FindByID(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
@@ -953,6 +958,9 @@ func (h *DefinitionHandler) ApplyUpgrade(c *gin.Context) {
 	if err != nil {
 		if errors.Is(err, errNoPublishedVersion) {
 			c.JSON(http.StatusConflict, gin.H{"error": msgNoPublishedVersion})
+			return
+		}
+		if respondCancelled(c, err) {
 			return
 		}
 		slog.Error("failed to read latest template version for upgrade", "template_id", def.SourceTemplateID, "error", err)
@@ -980,6 +988,9 @@ func (h *DefinitionHandler) ApplyUpgrade(c *gin.Context) {
 	}
 
 	now := time.Now().UTC()
+	// Detached from the first chart write: the chart writes and the definition
+	// update must not stop half way (#656).
+	wctx := context.WithoutCancel(c.Request.Context())
 
 	// Apply changes: add new required charts, update existing chart defaults.
 	for _, tch := range release.Charts {
@@ -1023,7 +1034,7 @@ func (h *DefinitionHandler) ApplyUpgrade(c *gin.Context) {
 	def.SourceTemplateVersion = latest.Version
 	def.UpdatedAt = now
 
-	if err := h.definitionRepo.Update(def); err != nil {
+	if err := h.definitionRepo.Update(wctx, def); err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
 		return

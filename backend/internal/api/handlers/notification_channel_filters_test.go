@@ -45,7 +45,7 @@ func setupChannelFilterRouter(t *testing.T) (*gin.Engine, *MockNotificationChann
 	users := NewMockUserRepository()
 	require.NoError(t, users.Create(context.Background(), &models.User{ID: "u1", Username: "alice", Role: "user"}))
 	defs := NewMockStackDefinitionRepository()
-	require.NoError(t, defs.Create(&models.StackDefinition{ID: "d1", Name: "full-stack"}))
+	require.NoError(t, defs.Create(context.Background(), &models.StackDefinition{ID: "d1", Name: "full-stack"}))
 	clusters := NewMockClusterRepository()
 	require.NoError(t, clusters.Create(&models.Cluster{ID: "c1", Name: "dev"}))
 	h := NewNotificationChannelHandler(repo).WithFilterLookups(users, defs, clusters)

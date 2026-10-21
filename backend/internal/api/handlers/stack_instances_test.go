@@ -764,7 +764,7 @@ func TestCreateInstance_WithTTL(t *testing.T) {
 		t.Parallel()
 		instRepo := NewMockStackInstanceRepository()
 		defRepo := NewMockStackDefinitionRepository()
-		defRepo.Create(&models.StackDefinition{ID: "d1", Name: "def1", OwnerID: "uid-1"})
+		defRepo.Create(context.Background(), &models.StackDefinition{ID: "d1", Name: "def1", OwnerID: "uid-1"})
 
 		router := setupInstanceRouterWithTTL(instRepo, defRepo, 0, "uid-1", "alice")
 
@@ -786,7 +786,7 @@ func TestCreateInstance_WithTTL(t *testing.T) {
 		t.Parallel()
 		instRepo := NewMockStackInstanceRepository()
 		defRepo := NewMockStackDefinitionRepository()
-		defRepo.Create(&models.StackDefinition{ID: "d1", Name: "def1", OwnerID: "uid-1"})
+		defRepo.Create(context.Background(), &models.StackDefinition{ID: "d1", Name: "def1", OwnerID: "uid-1"})
 
 		router := setupInstanceRouterWithTTL(instRepo, defRepo, 60, "uid-1", "alice")
 
@@ -807,7 +807,7 @@ func TestCreateInstance_WithTTL(t *testing.T) {
 		t.Parallel()
 		instRepo := NewMockStackInstanceRepository()
 		defRepo := NewMockStackDefinitionRepository()
-		defRepo.Create(&models.StackDefinition{ID: "d1", Name: "def1", OwnerID: "uid-1"})
+		defRepo.Create(context.Background(), &models.StackDefinition{ID: "d1", Name: "def1", OwnerID: "uid-1"})
 
 		router := setupInstanceRouterWithTTL(instRepo, defRepo, 0, "uid-1", "alice")
 
@@ -987,7 +987,7 @@ func TestCreateInstance_MaxTTLExceeded(t *testing.T) {
 
 	instRepo := NewMockStackInstanceRepository()
 	defRepo := NewMockStackDefinitionRepository()
-	defRepo.Create(&models.StackDefinition{ID: "d1", Name: "def1", OwnerID: "uid-1"})
+	defRepo.Create(context.Background(), &models.StackDefinition{ID: "d1", Name: "def1", OwnerID: "uid-1"})
 
 	router := setupInstanceRouterWithTTL(instRepo, defRepo, 0, "uid-1", "alice")
 

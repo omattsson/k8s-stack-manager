@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // StackDefinition represents a user's stack configuration.
 type StackDefinition struct {
@@ -35,28 +38,28 @@ type StackDefinitionFilter struct {
 
 // StackDefinitionRepository defines data access operations for stack definitions.
 type StackDefinitionRepository interface {
-	Create(definition *StackDefinition) error
-	FindByID(id string) (*StackDefinition, error)
+	Create(ctx context.Context, definition *StackDefinition) error
+	FindByID(ctx context.Context, id string) (*StackDefinition, error)
 	// FindByIDForUpdate is FindByID with a row lock (SELECT ... FOR UPDATE).
 	// Use it inside a transaction.
-	FindByIDForUpdate(id string) (*StackDefinition, error)
-	FindByName(name string) ([]StackDefinition, error)
-	Update(definition *StackDefinition) error
+	FindByIDForUpdate(ctx context.Context, id string) (*StackDefinition, error)
+	FindByName(ctx context.Context, name string) ([]StackDefinition, error)
+	Update(ctx context.Context, definition *StackDefinition) error
 	// SetTemplateLink writes only source_template_id,
 	// source_template_version and updated_at, so a concurrent full-row
 	// update of other fields is not lost. Empty values remove the link.
-	SetTemplateLink(id, templateID, version string) error
-	Delete(id string) error
-	List() ([]StackDefinition, error)
+	SetTemplateLink(ctx context.Context, id, templateID, version string) error
+	Delete(ctx context.Context, id string) error
+	List(ctx context.Context) ([]StackDefinition, error)
 	// ListPaged returns one page of the definitions that match filter,
 	// newest first, and the total number of matching definitions.
-	ListPaged(filter StackDefinitionFilter, limit, offset int) ([]StackDefinition, int64, error)
+	ListPaged(ctx context.Context, filter StackDefinitionFilter, limit, offset int) ([]StackDefinition, int64, error)
 	// NamesByIDs returns the name of each definition in ids that exists,
 	// keyed by ID, in one query.
-	NamesByIDs(ids []string) (map[string]string, error)
-	ListByOwner(ownerID string) ([]StackDefinition, error)
-	ListByTemplate(templateID string) ([]StackDefinition, error)
-	CountByTemplateIDs(templateIDs []string) (map[string]int, error)
-	ListIDsByTemplateIDs(templateIDs []string) (map[string][]string, error)
-	Count() (int64, error)
+	NamesByIDs(ctx context.Context, ids []string) (map[string]string, error)
+	ListByOwner(ctx context.Context, ownerID string) ([]StackDefinition, error)
+	ListByTemplate(ctx context.Context, templateID string) ([]StackDefinition, error)
+	CountByTemplateIDs(ctx context.Context, templateIDs []string) (map[string]int, error)
+	ListIDsByTemplateIDs(ctx context.Context, templateIDs []string) (map[string][]string, error)
+	Count(ctx context.Context) (int64, error)
 }

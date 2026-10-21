@@ -274,7 +274,7 @@ func TestGetOverview(t *testing.T) {
 			) {
 				_ = tmplRepo.Create(&models.StackTemplate{ID: "t1", Name: "Template 1"})
 				_ = tmplRepo.Create(&models.StackTemplate{ID: "t2", Name: "Template 2"})
-				_ = defRepo.Create(&models.StackDefinition{ID: "d1", SourceTemplateID: "t1"})
+				_ = defRepo.Create(context.Background(), &models.StackDefinition{ID: "d1", SourceTemplateID: "t1"})
 				_ = instRepo.Create(context.Background(), &models.StackInstance{ID: "i1", StackDefinitionID: "d1", OwnerID: "u1", Status: "running"})
 				_ = instRepo.Create(context.Background(), &models.StackInstance{ID: "i2", StackDefinitionID: "d1", OwnerID: "u2", Status: "stopped"})
 				_ = logRepo.Create(context.Background(), &models.DeploymentLog{ID: "l1", StackInstanceID: "i1", Action: "deploy", Status: "success"})
@@ -357,9 +357,9 @@ func TestGetTemplateStats(t *testing.T) {
 			) {
 				_ = tmplRepo.Create(&models.StackTemplate{ID: "t1", Name: "Web Stack", Category: "Full Stack", IsPublished: true})
 				_ = tmplRepo.Create(&models.StackTemplate{ID: "t2", Name: "Empty Template", Category: "Other", IsPublished: false})
-				_ = defRepo.Create(&models.StackDefinition{ID: "d1", SourceTemplateID: "t1"})
-				_ = defRepo.Create(&models.StackDefinition{ID: "d2", SourceTemplateID: "t1"})
-				_ = defRepo.Create(&models.StackDefinition{ID: "d3"}) // standalone, no template
+				_ = defRepo.Create(context.Background(), &models.StackDefinition{ID: "d1", SourceTemplateID: "t1"})
+				_ = defRepo.Create(context.Background(), &models.StackDefinition{ID: "d2", SourceTemplateID: "t1"})
+				_ = defRepo.Create(context.Background(), &models.StackDefinition{ID: "d3"}) // standalone, no template
 				_ = instRepo.Create(context.Background(), &models.StackInstance{ID: "i1", StackDefinitionID: "d1", OwnerID: "u1", Status: "running"})
 				_ = instRepo.Create(context.Background(), &models.StackInstance{ID: "i2", StackDefinitionID: "d2", OwnerID: "u2", Status: "stopped"})
 				_ = logRepo.Create(context.Background(), &models.DeploymentLog{ID: "l1", StackInstanceID: "i1", Action: "deploy", Status: "success"})

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -448,7 +449,7 @@ func TestCheckUpgrade(t *testing.T) {
 			name:  "upgrade available",
 			defID: "d1",
 			setup: func(defRepo *MockStackDefinitionRepository, ccRepo *MockChartConfigRepository, verRepo *MockTemplateVersionRepository) {
-				defRepo.Create(&models.StackDefinition{
+				defRepo.Create(context.Background(), &models.StackDefinition{
 					ID: "d1", Name: "My Def", OwnerID: "u1",
 					SourceTemplateID: "t1", SourceTemplateVersion: "1.0",
 				})
@@ -466,7 +467,7 @@ func TestCheckUpgrade(t *testing.T) {
 			name:  "no upgrade when at latest",
 			defID: "d1",
 			setup: func(defRepo *MockStackDefinitionRepository, _ *MockChartConfigRepository, verRepo *MockTemplateVersionRepository) {
-				defRepo.Create(&models.StackDefinition{
+				defRepo.Create(context.Background(), &models.StackDefinition{
 					ID: "d1", Name: "My Def", OwnerID: "u1",
 					SourceTemplateID: "t1", SourceTemplateVersion: "2.0",
 				})
@@ -480,7 +481,7 @@ func TestCheckUpgrade(t *testing.T) {
 			name:  "no source template returns false",
 			defID: "d1",
 			setup: func(defRepo *MockStackDefinitionRepository, _ *MockChartConfigRepository, _ *MockTemplateVersionRepository) {
-				defRepo.Create(&models.StackDefinition{
+				defRepo.Create(context.Background(), &models.StackDefinition{
 					ID: "d1", Name: "My Def", OwnerID: "u1",
 				})
 			},
@@ -539,7 +540,7 @@ func TestApplyUpgrade(t *testing.T) {
 			name:  "adds new charts and updates existing",
 			defID: "d1",
 			setup: func(defRepo *MockStackDefinitionRepository, ccRepo *MockChartConfigRepository, verRepo *MockTemplateVersionRepository) {
-				defRepo.Create(&models.StackDefinition{
+				defRepo.Create(context.Background(), &models.StackDefinition{
 					ID: "d1", Name: "My Def", OwnerID: "u1",
 					SourceTemplateID: "t1", SourceTemplateVersion: "1.0",
 				})
@@ -582,7 +583,7 @@ func TestApplyUpgrade(t *testing.T) {
 			name:  "no source template returns 400",
 			defID: "d1",
 			setup: func(defRepo *MockStackDefinitionRepository, _ *MockChartConfigRepository, _ *MockTemplateVersionRepository) {
-				defRepo.Create(&models.StackDefinition{
+				defRepo.Create(context.Background(), &models.StackDefinition{
 					ID: "d1", Name: "My Def", OwnerID: "u1",
 				})
 			},
@@ -592,7 +593,7 @@ func TestApplyUpgrade(t *testing.T) {
 			name:  "already at latest returns 409",
 			defID: "d1",
 			setup: func(defRepo *MockStackDefinitionRepository, _ *MockChartConfigRepository, verRepo *MockTemplateVersionRepository) {
-				defRepo.Create(&models.StackDefinition{
+				defRepo.Create(context.Background(), &models.StackDefinition{
 					ID: "d1", Name: "My Def", OwnerID: "u1",
 					SourceTemplateID: "t1", SourceTemplateVersion: "2.0",
 				})

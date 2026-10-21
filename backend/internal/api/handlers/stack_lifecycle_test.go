@@ -633,7 +633,7 @@ func TestDeleteInstance_OwnedDefinition(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			env := newLifecycleEnv()
-			require.NoError(t, env.def.Create(&models.StackDefinition{ID: "d1", Name: "zz-qd", OwnerID: "uid-1", OwnerInstanceID: tt.ownerInstance}))
+			require.NoError(t, env.def.Create(context.Background(), &models.StackDefinition{ID: "d1", Name: "zz-qd", OwnerID: "uid-1", OwnerInstanceID: tt.ownerInstance}))
 			seedChartConfig(t, env.cc, "cc1", "d1", "web")
 			seedInstance(t, env.inst, "i1", "zz-qd", "d1", "uid-1", models.StackStatusDraft)
 			if tt.otherUser {
@@ -643,7 +643,7 @@ func TestDeleteInstance_OwnedDefinition(t *testing.T) {
 			w := serve(env.router(t, nil, "uid-1", "alice", "user"), http.MethodDelete, "/api/v1/stack-instances/i1", "")
 			require.Equal(t, http.StatusNoContent, w.Code, w.Body.String())
 
-			_, err := env.def.FindByID("d1")
+			_, err := env.def.FindByID(context.Background(), "d1")
 			assert.Equal(t, tt.wantDefKept, err == nil)
 			charts, err := env.cc.ListByDefinition("d1")
 			require.NoError(t, err)

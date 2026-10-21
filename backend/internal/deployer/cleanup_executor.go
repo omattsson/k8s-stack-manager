@@ -39,7 +39,7 @@ func NewCleanupExecutor(
 
 // StopInstance resolves charts and initiates an async Helm uninstall.
 func (e *CleanupExecutor) StopInstance(ctx context.Context, inst *models.StackInstance) error {
-	charts, err := e.resolveCharts(inst)
+	charts, err := e.resolveCharts(ctx, inst)
 	if err != nil {
 		return err
 	}
@@ -53,7 +53,7 @@ func (e *CleanupExecutor) StopInstance(ctx context.Context, inst *models.StackIn
 
 // CleanInstance resolves charts and initiates Helm uninstall + namespace deletion.
 func (e *CleanupExecutor) CleanInstance(ctx context.Context, inst *models.StackInstance) error {
-	charts, err := e.resolveCharts(inst)
+	charts, err := e.resolveCharts(ctx, inst)
 	if err != nil {
 		return err
 	}
@@ -94,10 +94,14 @@ func (e *CleanupExecutor) DeleteInstance(ctx context.Context, inst *models.Stack
 			return errors.New(hooks.UserMessage(hookErr, hooks.EventPreInstanceDelete, "delete"))
 		}
 	}
+	// After pre-instance-delete the end of the job must not stop the delete
+	// or its side effects (afterDelete), as for the API delete (#656).
+	// WithoutCancel keeps the trigger.
+	dctx := context.WithoutCancel(ctx)
 	if needsClean {
 		// As the API delete: a definition without charts still gets the
 		// namespace delete.
-		def, err := e.definitionRepo.FindByID(inst.StackDefinitionID)
+		def, err := e.definitionRepo.FindByID(dctx, inst.StackDefinitionID)
 		if err != nil {
 			return fmt.Errorf("finding definition: %w", err)
 		}
@@ -105,7 +109,7 @@ func (e *CleanupExecutor) DeleteInstance(ctx context.Context, inst *models.Stack
 		if err != nil {
 			return fmt.Errorf("listing charts: %w", err)
 		}
-		if _, err := e.manager.CleanForDelete(ctx, inst, charts); err != nil {
+		if _, err := e.manager.CleanForDelete(dctx, inst, charts); err != nil {
 			if errors.Is(err, models.ErrDeleteConflict) {
 				return fmt.Errorf("cannot delete instance %s: another operation started on it", inst.ID)
 			}
@@ -114,9 +118,6 @@ func (e *CleanupExecutor) DeleteInstance(ctx context.Context, inst *models.Stack
 		return nil
 	}
 
-	// The end of the job must not stop the delete or its side effects
-	// (afterDelete). WithoutCancel keeps the trigger.
-	dctx := context.WithoutCancel(ctx)
 	// The delete removes the follower rows: read the followers first, so
 	// that they get the "instance.deleted" notification.
 	var followerIDs []string
@@ -176,8 +177,8 @@ func (e *CleanupExecutor) afterDelete(ctx context.Context, inst *models.StackIns
 	e.manager.notifyInstance(target, "instance.deleted", "Stack deleted", message, notifier.WithTrigger(notifyTrigger))
 }
 
-func (e *CleanupExecutor) resolveCharts(inst *models.StackInstance) ([]models.ChartConfig, error) {
-	def, err := e.definitionRepo.FindByID(inst.StackDefinitionID)
+func (e *CleanupExecutor) resolveCharts(ctx context.Context, inst *models.StackInstance) ([]models.ChartConfig, error) {
+	def, err := e.definitionRepo.FindByID(ctx, inst.StackDefinitionID)
 	if err != nil {
 		return nil, fmt.Errorf("finding definition: %w", err)
 	}

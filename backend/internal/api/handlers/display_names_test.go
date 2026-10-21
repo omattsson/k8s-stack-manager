@@ -63,8 +63,8 @@ func newNameTestRepos(t *testing.T) nameTestRepos {
 	}
 	require.NoError(t, r.user.Create(context.Background(), &models.User{ID: "uid-alice", Username: "alice"}))
 	require.NoError(t, r.user.Create(context.Background(), &models.User{ID: "uid-bob", Username: "bob"}))
-	require.NoError(t, r.def.Create(&models.StackDefinition{ID: "def-a", Name: "Definition A", OwnerID: "uid-alice"}))
-	require.NoError(t, r.def.Create(&models.StackDefinition{ID: "def-b", Name: "Definition B", OwnerID: "uid-bob"}))
+	require.NoError(t, r.def.Create(context.Background(), &models.StackDefinition{ID: "def-a", Name: "Definition A", OwnerID: "uid-alice"}))
+	require.NoError(t, r.def.Create(context.Background(), &models.StackDefinition{ID: "def-b", Name: "Definition B", OwnerID: "uid-bob"}))
 	require.NoError(t, r.cluster.Create(&models.Cluster{ID: "cl-1", Name: "cluster-one"}))
 	require.NoError(t, r.cluster.Create(&models.Cluster{ID: "cl-2", Name: "cluster-two"}))
 	return r
@@ -425,7 +425,7 @@ func TestListDefinitions_OwnerFilter(t *testing.T) {
 			} {
 				d := d
 				d.CreatedAt = base.Add(-time.Duration(i) * time.Minute)
-				require.NoError(t, defRepo.Create(&d))
+				require.NoError(t, defRepo.Create(context.Background(), &d))
 			}
 			router := setupDefinitionNameRouter(defRepo, userRepo, tt.caller)
 
@@ -477,8 +477,8 @@ func TestDefinitionOwnerUsername_DetailAndCreate(t *testing.T) {
 			defRepo := NewMockStackDefinitionRepository()
 			userRepo := NewMockUserRepository()
 			require.NoError(t, userRepo.Create(context.Background(), &models.User{ID: "uid-alice", Username: "alice"}))
-			require.NoError(t, defRepo.Create(&models.StackDefinition{ID: "d1", Name: "first", OwnerID: "uid-alice"}))
-			require.NoError(t, defRepo.Create(&models.StackDefinition{ID: "d-orphan", Name: "orphan", OwnerID: "uid-gone"}))
+			require.NoError(t, defRepo.Create(context.Background(), &models.StackDefinition{ID: "d1", Name: "first", OwnerID: "uid-alice"}))
+			require.NoError(t, defRepo.Create(context.Background(), &models.StackDefinition{ID: "d-orphan", Name: "orphan", OwnerID: "uid-gone"}))
 			router := setupDefinitionNameRouter(defRepo, userRepo, "uid-alice")
 
 			w := httptest.NewRecorder()

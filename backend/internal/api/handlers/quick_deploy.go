@@ -214,6 +214,9 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 			c.JSON(http.StatusConflict, gin.H{"error": msgNoPublishedVersion})
 			return
 		}
+		if respondCancelled(c, err) {
+			return
+		}
 		slog.Error("Quick deploy: failed to read published template version", "template_id", tmpl.ID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
@@ -351,9 +354,11 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 	// it when no other instance uses it. Its name is unique for the owner:
 	// an existing name gets the suffix " (2)", " (3)", ...
 	def.OwnerInstanceID = inst.ID
-	defName, nameErr := uniqueDefinitionName(h.definitionRepo, userID, numberedDefinitionName(req.InstanceName))
+	defName, nameErr := uniqueDefinitionName(c.Request.Context(), h.definitionRepo, userID, numberedDefinitionName(req.InstanceName))
 	if nameErr != nil {
-		slog.Error("Quick deploy: no free definition name", "instance_name", req.InstanceName, "error", nameErr)
+		if !errors.Is(nameErr, context.Canceled) {
+			slog.Error("Quick deploy: no free definition name", "instance_name", req.InstanceName, "error", nameErr)
+		}
 		if errors.Is(nameErr, errNoFreeDefinitionName) {
 			c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("A stack definition named %q already exists for this owner", req.InstanceName)})
 			return
@@ -368,7 +373,7 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 	// that leaves must not stop the create, the deploy or the audit entry.
 	wctx := writeCtx(c)
 	txErr := h.txRunner.RunInTx(wctx, func(repos database.TxRepos) error {
-		if err := repos.StackDefinition.Create(def); err != nil {
+		if err := repos.StackDefinition.Create(wctx, def); err != nil {
 			return err
 		}
 		for i := range chartConfigs {

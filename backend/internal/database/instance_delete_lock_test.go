@@ -29,20 +29,20 @@ type lockSpyDefinitionRepo struct {
 	spy *defReadSpy
 }
 
-func (r *lockSpyDefinitionRepo) FindByID(id string) (*models.StackDefinition, error) {
+func (r *lockSpyDefinitionRepo) FindByID(ctx context.Context, id string) (*models.StackDefinition, error) {
 	r.spy.events = append(r.spy.events, fmt.Sprintf("tx%d:find", r.spy.tx))
 	if r.spy.findErr != nil {
 		return nil, r.spy.findErr
 	}
-	return r.StackDefinitionRepository.FindByID(id)
+	return r.StackDefinitionRepository.FindByID(ctx, id)
 }
 
-func (r *lockSpyDefinitionRepo) FindByIDForUpdate(id string) (*models.StackDefinition, error) {
+func (r *lockSpyDefinitionRepo) FindByIDForUpdate(ctx context.Context, id string) (*models.StackDefinition, error) {
 	r.spy.events = append(r.spy.events, fmt.Sprintf("tx%d:lock", r.spy.tx))
 	if r.spy.lockedGone {
 		return nil, dberrors.NewDatabaseError("find_by_id_for_update", dberrors.ErrNotFound)
 	}
-	def, err := r.StackDefinitionRepository.FindByIDForUpdate(id)
+	def, err := r.StackDefinitionRepository.FindByIDForUpdate(ctx, id)
 	if err == nil && r.spy.lockedOwner != nil {
 		def.OwnerInstanceID = *r.spy.lockedOwner
 	}
@@ -98,7 +98,7 @@ func TestDeleteInstanceWithOwnedDefinition_LocksOnlyOwnedDefinitions(t *testing.
 			ccRepo := NewGORMChartConfigRepository(db)
 			instRepo := NewGORMStackInstanceRepository(db)
 			if tt.owner != "-" {
-				require.NoError(t, defRepo.Create(&models.StackDefinition{ID: "d1", Name: "qd", OwnerID: "u1", OwnerInstanceID: tt.owner}))
+				require.NoError(t, defRepo.Create(context.Background(), &models.StackDefinition{ID: "d1", Name: "qd", OwnerID: "u1", OwnerInstanceID: tt.owner}))
 				require.NoError(t, ccRepo.Create(&models.ChartConfig{ID: "c1", StackDefinitionID: "d1", ChartName: "web"}))
 			}
 			inst := &models.StackInstance{ID: "i1", StackDefinitionID: "d1", Name: "qd", Namespace: "stack-qd-u1", OwnerID: "u1", Status: models.StackStatusDraft}
@@ -113,7 +113,7 @@ func TestDeleteInstanceWithOwnedDefinition_LocksOnlyOwnedDefinitions(t *testing.
 			if tt.owner == "-" {
 				return
 			}
-			_, err = defRepo.FindByID("d1")
+			_, err = defRepo.FindByID(context.Background(), "d1")
 			assert.Equal(t, tt.wantDefKept, err == nil)
 			charts, err := ccRepo.ListByDefinition("d1")
 			require.NoError(t, err)
@@ -142,7 +142,7 @@ func TestCleanupOwnedDefinition_LocksFirst(t *testing.T) {
 			t.Parallel()
 			db := setupTestDBWithAllTables(t)
 			defRepo := NewGORMStackDefinitionRepository(db)
-			require.NoError(t, defRepo.Create(&models.StackDefinition{ID: "d1", Name: "qd", OwnerID: "u1", OwnerInstanceID: tt.owner}))
+			require.NoError(t, defRepo.Create(context.Background(), &models.StackDefinition{ID: "d1", Name: "qd", OwnerID: "u1", OwnerInstanceID: tt.owner}))
 			inst := &models.StackInstance{ID: "i1", StackDefinitionID: "d1"}
 
 			spy := &defReadSpy{}
@@ -152,7 +152,7 @@ func TestCleanupOwnedDefinition_LocksFirst(t *testing.T) {
 			}))
 
 			assert.Equal(t, []string{"tx1:lock"}, spy.events)
-			_, err := defRepo.FindByID("d1")
+			_, err := defRepo.FindByID(context.Background(), "d1")
 			assert.Equal(t, tt.wantDefKept, err == nil)
 		})
 	}

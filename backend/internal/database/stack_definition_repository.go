@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"errors"
 	"time"
 
@@ -26,14 +27,14 @@ func NewGORMStackDefinitionRepository(db *gorm.DB) *GORMStackDefinitionRepositor
 }
 
 // Create inserts a new stack definition record.
-func (r *GORMStackDefinitionRepository) Create(definition *models.StackDefinition) error {
+func (r *GORMStackDefinitionRepository) Create(ctx context.Context, definition *models.StackDefinition) error {
 	if definition.ID == "" {
 		definition.ID = uuid.New().String()
 	}
 	now := time.Now().UTC()
 	definition.CreatedAt = now
 	definition.UpdatedAt = now
-	if err := r.db.Create(definition).Error; err != nil {
+	if err := r.db.WithContext(ctx).Create(definition).Error; err != nil {
 		if isDuplicateKeyError(err) {
 			return dberrors.NewDatabaseError("create", dberrors.ErrDuplicateKey)
 		}
@@ -43,9 +44,9 @@ func (r *GORMStackDefinitionRepository) Create(definition *models.StackDefinitio
 }
 
 // FindByID returns a stack definition by its ID.
-func (r *GORMStackDefinitionRepository) FindByID(id string) (*models.StackDefinition, error) {
+func (r *GORMStackDefinitionRepository) FindByID(ctx context.Context, id string) (*models.StackDefinition, error) {
 	var definition models.StackDefinition
-	if err := r.db.Where("id = ?", id).First(&definition).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&definition).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, dberrors.NewDatabaseError("find_by_id", dberrors.ErrNotFound)
 		}
@@ -56,9 +57,9 @@ func (r *GORMStackDefinitionRepository) FindByID(id string) (*models.StackDefini
 
 // FindByIDForUpdate returns a stack definition by its ID and locks its row
 // (SELECT ... FOR UPDATE) until the surrounding transaction ends.
-func (r *GORMStackDefinitionRepository) FindByIDForUpdate(id string) (*models.StackDefinition, error) {
+func (r *GORMStackDefinitionRepository) FindByIDForUpdate(ctx context.Context, id string) (*models.StackDefinition, error) {
 	var definition models.StackDefinition
-	if err := r.db.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", id).First(&definition).Error; err != nil {
+	if err := r.db.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", id).First(&definition).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, dberrors.NewDatabaseError("find_by_id_for_update", dberrors.ErrNotFound)
 		}
@@ -68,17 +69,17 @@ func (r *GORMStackDefinitionRepository) FindByIDForUpdate(id string) (*models.St
 }
 
 // FindByName returns all stack definitions with the given exact name.
-func (r *GORMStackDefinitionRepository) FindByName(name string) ([]models.StackDefinition, error) {
+func (r *GORMStackDefinitionRepository) FindByName(ctx context.Context, name string) ([]models.StackDefinition, error) {
 	var definitions []models.StackDefinition
-	if err := r.db.Where("name = ?", name).Find(&definitions).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("name = ?", name).Find(&definitions).Error; err != nil {
 		return nil, dberrors.NewDatabaseError("find_by_name", err)
 	}
 	return definitions, nil
 }
 
 // SetTemplateLink writes the template link columns of one definition.
-func (r *GORMStackDefinitionRepository) SetTemplateLink(id, templateID, version string) error {
-	result := r.db.Model(&models.StackDefinition{}).Where("id = ?", id).Updates(map[string]any{
+func (r *GORMStackDefinitionRepository) SetTemplateLink(ctx context.Context, id, templateID, version string) error {
+	result := r.db.WithContext(ctx).Model(&models.StackDefinition{}).Where("id = ?", id).Updates(map[string]any{
 		"source_template_id":      templateID,
 		"source_template_version": version,
 		"updated_at":              time.Now().UTC(),
@@ -89,7 +90,7 @@ func (r *GORMStackDefinitionRepository) SetTemplateLink(id, templateID, version 
 	if result.RowsAffected == 0 {
 		// MySQL counts only changed rows: check that the row exists.
 		var count int64
-		if err := r.db.Model(&models.StackDefinition{}).Where("id = ?", id).Count(&count).Error; err != nil {
+		if err := r.db.WithContext(ctx).Model(&models.StackDefinition{}).Where("id = ?", id).Count(&count).Error; err != nil {
 			return dberrors.NewDatabaseError("set_template_link", err)
 		}
 		if count == 0 {
@@ -100,9 +101,13 @@ func (r *GORMStackDefinitionRepository) SetTemplateLink(id, templateID, version 
 }
 
 // Update persists changes to an existing stack definition.
-func (r *GORMStackDefinitionRepository) Update(definition *models.StackDefinition) error {
+func (r *GORMStackDefinitionRepository) Update(ctx context.Context, definition *models.StackDefinition) error {
 	definition.UpdatedAt = time.Now().UTC()
-	if err := r.db.Save(definition).Error; err != nil {
+	if err := r.db.WithContext(ctx).Save(definition).Error; err != nil {
+		// Save can run in a default transaction: keep the context error (#656).
+		if ctx.Err() != nil {
+			return withContextErr(ctx, "update", err)
+		}
 		if isDuplicateKeyError(err) {
 			return dberrors.NewDatabaseError("update", dberrors.ErrDuplicateKey)
 		}
@@ -112,8 +117,8 @@ func (r *GORMStackDefinitionRepository) Update(definition *models.StackDefinitio
 }
 
 // Delete removes a stack definition by ID.
-func (r *GORMStackDefinitionRepository) Delete(id string) error {
-	result := r.db.Where("id = ?", id).Delete(&models.StackDefinition{})
+func (r *GORMStackDefinitionRepository) Delete(ctx context.Context, id string) error {
+	result := r.db.WithContext(ctx).Where("id = ?", id).Delete(&models.StackDefinition{})
 	if result.Error != nil {
 		return dberrors.NewDatabaseError("delete", result.Error)
 	}
@@ -124,9 +129,9 @@ func (r *GORMStackDefinitionRepository) Delete(id string) error {
 }
 
 // List returns all stack definitions.
-func (r *GORMStackDefinitionRepository) List() ([]models.StackDefinition, error) {
+func (r *GORMStackDefinitionRepository) List(ctx context.Context) ([]models.StackDefinition, error) {
 	var definitions []models.StackDefinition
-	if err := r.db.Find(&definitions).Error; err != nil {
+	if err := r.db.WithContext(ctx).Find(&definitions).Error; err != nil {
 		return nil, dberrors.NewDatabaseError("list", err)
 	}
 	return definitions, nil
@@ -147,13 +152,13 @@ func applyDefinitionFilter(q *gorm.DB, f models.StackDefinitionFilter) *gorm.DB 
 // ListPaged returns a page of the stack definitions that match filter,
 // ordered by created_at DESC, along with the total count of matching
 // definitions. Only columns needed for list views are selected.
-func (r *GORMStackDefinitionRepository) ListPaged(filter models.StackDefinitionFilter, limit, offset int) ([]models.StackDefinition, int64, error) {
+func (r *GORMStackDefinitionRepository) ListPaged(ctx context.Context, filter models.StackDefinitionFilter, limit, offset int) ([]models.StackDefinition, int64, error) {
 	var total int64
-	if err := applyDefinitionFilter(r.db.Model(&models.StackDefinition{}), filter).Count(&total).Error; err != nil {
+	if err := applyDefinitionFilter(r.db.WithContext(ctx).Model(&models.StackDefinition{}), filter).Count(&total).Error; err != nil {
 		return nil, 0, dberrors.NewDatabaseError("count", err)
 	}
 	definitions := []models.StackDefinition{}
-	if err := applyDefinitionFilter(r.db.Select("id, name, description, owner_id, source_template_id, default_branch, owner_instance_id, created_at, updated_at"), filter).
+	if err := applyDefinitionFilter(r.db.WithContext(ctx).Select("id, name, description, owner_id, source_template_id, default_branch, owner_instance_id, created_at, updated_at"), filter).
 		Order("created_at DESC").Limit(limit).Offset(offset).Find(&definitions).Error; err != nil {
 		return nil, 0, dberrors.NewDatabaseError("list_paged", err)
 	}
@@ -162,32 +167,32 @@ func (r *GORMStackDefinitionRepository) ListPaged(filter models.StackDefinitionF
 
 // NamesByIDs returns the name of each definition in ids that exists, keyed
 // by ID. It selects only the id and name columns in one query.
-func (r *GORMStackDefinitionRepository) NamesByIDs(ids []string) (map[string]string, error) {
-	return namesByIDs(r.db, &models.StackDefinition{}, ids)
+func (r *GORMStackDefinitionRepository) NamesByIDs(ctx context.Context, ids []string) (map[string]string, error) {
+	return namesByIDs(r.db.WithContext(ctx), &models.StackDefinition{}, ids)
 }
 
 // Count returns the total number of stack definitions.
-func (r *GORMStackDefinitionRepository) Count() (int64, error) {
+func (r *GORMStackDefinitionRepository) Count(ctx context.Context) (int64, error) {
 	var count int64
-	if err := r.db.Model(&models.StackDefinition{}).Count(&count).Error; err != nil {
+	if err := r.db.WithContext(ctx).Model(&models.StackDefinition{}).Count(&count).Error; err != nil {
 		return 0, dberrors.NewDatabaseError("count", err)
 	}
 	return count, nil
 }
 
 // ListByOwner returns all stack definitions owned by the given user.
-func (r *GORMStackDefinitionRepository) ListByOwner(ownerID string) ([]models.StackDefinition, error) {
+func (r *GORMStackDefinitionRepository) ListByOwner(ctx context.Context, ownerID string) ([]models.StackDefinition, error) {
 	var definitions []models.StackDefinition
-	if err := r.db.Where("owner_id = ?", ownerID).Find(&definitions).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("owner_id = ?", ownerID).Find(&definitions).Error; err != nil {
 		return nil, dberrors.NewDatabaseError("list_by_owner", err)
 	}
 	return definitions, nil
 }
 
 // ListByTemplate returns all stack definitions derived from the given template.
-func (r *GORMStackDefinitionRepository) ListByTemplate(templateID string) ([]models.StackDefinition, error) {
+func (r *GORMStackDefinitionRepository) ListByTemplate(ctx context.Context, templateID string) ([]models.StackDefinition, error) {
 	var definitions []models.StackDefinition
-	if err := r.db.Where("source_template_id = ?", templateID).Find(&definitions).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("source_template_id = ?", templateID).Find(&definitions).Error; err != nil {
 		return nil, dberrors.NewDatabaseError("list_by_template", err)
 	}
 	return definitions, nil
@@ -196,7 +201,7 @@ func (r *GORMStackDefinitionRepository) ListByTemplate(templateID string) ([]mod
 // CountByTemplateIDs returns a map of template ID to definition count for the
 // given template IDs in a single query, eliminating N+1 lookups. IDs are
 // processed in chunks of 500 to stay within MySQL's IN clause limits.
-func (r *GORMStackDefinitionRepository) CountByTemplateIDs(templateIDs []string) (map[string]int, error) {
+func (r *GORMStackDefinitionRepository) CountByTemplateIDs(ctx context.Context, templateIDs []string) (map[string]int, error) {
 	if len(templateIDs) == 0 {
 		return make(map[string]int), nil
 	}
@@ -214,7 +219,7 @@ func (r *GORMStackDefinitionRepository) CountByTemplateIDs(templateIDs []string)
 			Count            int
 		}
 		var rows []countRow
-		if err := r.db.Model(&models.StackDefinition{}).
+		if err := r.db.WithContext(ctx).Model(&models.StackDefinition{}).
 			Select("source_template_id, COUNT(*) as count").
 			Where("source_template_id IN ?", chunk).
 			Group("source_template_id").
@@ -231,7 +236,7 @@ func (r *GORMStackDefinitionRepository) CountByTemplateIDs(templateIDs []string)
 // ListIDsByTemplateIDs returns a map of template ID to definition IDs, selecting
 // only the id and source_template_id columns for efficiency. IDs are processed
 // in chunks of 500 to stay within MySQL's IN clause limits.
-func (r *GORMStackDefinitionRepository) ListIDsByTemplateIDs(templateIDs []string) (map[string][]string, error) {
+func (r *GORMStackDefinitionRepository) ListIDsByTemplateIDs(ctx context.Context, templateIDs []string) (map[string][]string, error) {
 	if len(templateIDs) == 0 {
 		return make(map[string][]string), nil
 	}
@@ -249,7 +254,7 @@ func (r *GORMStackDefinitionRepository) ListIDsByTemplateIDs(templateIDs []strin
 			SourceTemplateID string
 		}
 		var rows []idRow
-		if err := r.db.Model(&models.StackDefinition{}).
+		if err := r.db.WithContext(ctx).Model(&models.StackDefinition{}).
 			Select("id, source_template_id").
 			Where("source_template_id IN ?", chunk).
 			Find(&rows).Error; err != nil {

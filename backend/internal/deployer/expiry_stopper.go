@@ -31,7 +31,7 @@ func NewExpiryStopper(
 
 // StopInstance resolves charts for the instance and initiates an async Helm uninstall.
 func (s *ExpiryStopper) StopInstance(ctx context.Context, inst *models.StackInstance) error {
-	def, err := s.definitionRepo.FindByID(inst.StackDefinitionID)
+	def, err := s.definitionRepo.FindByID(ctx, inst.StackDefinitionID)
 	if err != nil {
 		return fmt.Errorf("finding definition: %w", err)
 	}

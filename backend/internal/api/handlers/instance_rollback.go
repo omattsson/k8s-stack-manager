@@ -153,9 +153,9 @@ func (h *InstanceHandler) instanceValuesDrift(ctx context.Context, inst *models.
 	if inst.LastDeployedValues == "" || !h.lastOperationWasRollback(ctx, inst.ID) {
 		return false
 	}
-	def, err := h.definitionRepo.FindByID(inst.StackDefinitionID)
+	def, err := h.definitionRepo.FindByID(ctx, inst.StackDefinitionID)
 	if err != nil {
-		slog.Warn("values drift: definition lookup failed", logKeyInstanceID, inst.ID, "error", err)
+		logLookupError(ctx, "values drift: definition lookup failed", err, logKeyInstanceID, inst.ID)
 		return false
 	}
 	charts, err := h.chartConfigRepo.ListByDefinition(def.ID)

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -202,7 +203,7 @@ func TestSetOverride(t *testing.T) {
 			CreatedAt:        time.Now().UTC(),
 			UpdatedAt:        time.Now().UTC(),
 		}
-		require.NoError(t, defRepo.Create(def))
+		require.NoError(t, defRepo.Create(context.Background(), def))
 
 		ccRepo := NewMockChartConfigRepository()
 		seedChartConfig(t, ccRepo, "chart-1", "def-1", "nginx")

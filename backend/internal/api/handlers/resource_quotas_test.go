@@ -477,7 +477,7 @@ func TestPerUserInstanceLimit(t *testing.T) {
 			Status:            models.StackStatusRunning,
 		})
 
-		_ = defRepo.Create(&models.StackDefinition{
+		_ = defRepo.Create(context.Background(), &models.StackDefinition{
 			ID:      "def-1",
 			Name:    "test-def",
 			OwnerID: "test-user-id",
@@ -546,7 +546,7 @@ func TestPerUserInstanceLimit(t *testing.T) {
 			Status:            models.StackStatusRunning,
 		})
 
-		_ = defRepo.Create(&models.StackDefinition{
+		_ = defRepo.Create(context.Background(), &models.StackDefinition{
 			ID:      "def-1",
 			Name:    "test-def",
 			OwnerID: "test-user-id",
@@ -600,7 +600,7 @@ func TestPerUserInstanceLimit(t *testing.T) {
 		}
 		_ = clusterRepo.Create(cl)
 
-		_ = defRepo.Create(&models.StackDefinition{
+		_ = defRepo.Create(context.Background(), &models.StackDefinition{
 			ID:      "def-1",
 			Name:    "test-def",
 			OwnerID: "test-user-id",

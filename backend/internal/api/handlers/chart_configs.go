@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -27,7 +28,7 @@ func (h *DefinitionHandler) AddChartConfig(c *gin.Context) {
 	defID := c.Param("id")
 
 	// Verify definition exists.
-	if _, err := h.definitionRepo.FindByID(defID); err != nil {
+	if _, err := h.definitionRepo.FindByID(c.Request.Context(), defID); err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -161,7 +162,7 @@ func (h *DefinitionHandler) UpdateChartConfig(c *gin.Context) {
 	// installs with the backend identity. Only devops and admin users may
 	// change it; other users may change the default values and the order.
 	if !isPrivilegedRole(c) {
-		def, err := h.definitionRepo.FindByID(existing.StackDefinitionID)
+		def, err := h.definitionRepo.FindByID(c.Request.Context(), existing.StackDefinitionID)
 		if err != nil {
 			status, message := mapError(err, entityStackDefinition)
 			c.JSON(status, gin.H{"error": message})
@@ -251,16 +252,32 @@ func (h *DefinitionHandler) DeleteChartConfig(c *gin.Context) {
 
 	// Check if the definition was created from a template with a required chart.
 	if defID != "" && h.templateChartRepo != nil {
-		def, err := h.definitionRepo.FindByID(defID)
+		// A failed read must not skip the required chart check (#656). A
+		// definition that is gone has no template rule.
+		def, err := h.definitionRepo.FindByID(c.Request.Context(), defID)
+		if err != nil && !isNotFoundError(err) {
+			status, message := mapError(err, entityStackDefinition)
+			if status == http.StatusInternalServerError {
+				slog.Error("Failed to read the definition for the required chart check", "definition_id", defID, "error", err)
+			}
+			c.JSON(status, gin.H{"error": message})
+			return
+		}
 		if err == nil && def.SourceTemplateID != "" {
 			// Required charts of the latest published snapshot.
 			templateCharts, err := releasedTemplateCharts(c.Request.Context(), h.versionRepo, h.templateChartRepo, def.SourceTemplateID)
-			if err == nil {
-				for _, tc := range templateCharts {
-					if tc.ChartName == chart.ChartName && tc.Required {
-						c.JSON(http.StatusConflict, gin.H{"error": "Cannot delete required chart: " + chart.ChartName})
-						return
-					}
+			if err != nil {
+				if respondCancelled(c, err) {
+					return
+				}
+				slog.Error("failed to read the required charts of the template", "template_id", def.SourceTemplateID, "error", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+				return
+			}
+			for _, tc := range templateCharts {
+				if tc.ChartName == chart.ChartName && tc.Required {
+					c.JSON(http.StatusConflict, gin.H{"error": "Cannot delete required chart: " + chart.ChartName})
+					return
 				}
 			}
 		}

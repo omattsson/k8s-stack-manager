@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -48,7 +49,7 @@ func TestDefinitionModifyAccess(t *testing.T) {
 			router.ServeHTTP(w, req)
 
 			assert.Equal(t, tt.wantStatus, w.Code, w.Body.String())
-			_, err := defRepo.FindByID("d1")
+			_, err := defRepo.FindByID(context.Background(), "d1")
 			if tt.method == http.MethodDelete && tt.wantStatus == http.StatusForbidden {
 				assert.NoError(t, err, "a refused delete must keep the definition")
 			}
@@ -114,7 +115,7 @@ func TestApplyUpgradeAccess(t *testing.T) {
 	defRepo := NewMockStackDefinitionRepository()
 	def := seedDefinition(t, defRepo, "d1", "Def", "owner")
 	def.SourceTemplateID = "t1"
-	require.NoError(t, defRepo.Update(def))
+	require.NoError(t, defRepo.Update(context.Background(), def))
 
 	router := setupDefinitionUpgradeRouter(t, defRepo, NewMockChartConfigRepository(), NewMockStackInstanceRepository(),
 		NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(), NewMockTemplateVersionRepository(), "other", "user")
