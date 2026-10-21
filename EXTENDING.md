@@ -354,6 +354,7 @@ A normal `post-deploy` subscriber is fire-and-forget. The stack is `running` and
   - With `ignore`, the stack gets `running`, and the owner gets the warning "Post-deploy step db-restore failed".
 - Only a stop ends the wait early. The API refuses clean, delete, deploy and rollback while the stack is `stabilizing`. The k8s status watcher does not set `error` during the wait. When a stop ends the wait, the deployer closes the request. This does not stop remote work, so your subscriber must stop its work when the request closes. The stop runs `helm uninstall` at the same time.
 - A server shutdown ends the deploy with `error` ("Interrupted by a server restart. Deploy again.").
+- When the stack cannot be read at the start of the wait, no blocking subscriber runs, and the deploy ends with `error`.
 - After a SIGKILL or a node loss, the leader sets the stack to `error` ("Interrupted: the server that ran this operation stopped. Deploy again.") when both conditions are true: the deploy passed its deadline (its time budget, including the blocking timeouts, plus 5 minutes), and the replica has no heartbeat for 2 minutes. A stop ends the state earlier. No hook event fires for this recovery.
 
 `blocking` is valid only for a subscription that lists `post-deploy`. The full contract is in [backend/docs/hooks.md](backend/docs/hooks.md#blocking-post-deploy-subscribers).

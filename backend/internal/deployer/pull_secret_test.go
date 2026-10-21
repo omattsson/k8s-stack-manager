@@ -39,7 +39,7 @@ func TestManager_Deploy_ProvisionsPullSecret(t *testing.T) {
 			Branch:            "main",
 			Status:            models.StackStatusDraft,
 		}
-		require.NoError(t, instanceRepo.Create(inst))
+		require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 		regCfg := &models.RegistryConfig{
 			URL:        "myregistry.azurecr.io",
@@ -106,7 +106,7 @@ func TestManager_Deploy_ProvisionsPullSecret(t *testing.T) {
 			Branch:            "main",
 			Status:            models.StackStatusDraft,
 		}
-		require.NoError(t, instanceRepo.Create(inst))
+		require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 		mgr := NewManager(ManagerConfig{
 			Registry: &mockClusterResolver{
@@ -129,7 +129,7 @@ func TestManager_Deploy_ProvisionsPullSecret(t *testing.T) {
 
 		// Wait for deploy to complete.
 		require.Eventually(t, func() bool {
-			updated, _ := instanceRepo.FindByID("inst-ps-2")
+			updated, _ := instanceRepo.FindByID(context.Background(), "inst-ps-2")
 			return updated != nil && updated.Status != models.StackStatusDeploying
 		}, 3*time.Second, 20*time.Millisecond)
 
@@ -163,7 +163,7 @@ func TestManager_Deploy_ProvisionsPullSecret(t *testing.T) {
 			Branch:            "main",
 			Status:            models.StackStatusDraft,
 		}
-		require.NoError(t, instanceRepo.Create(inst))
+		require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 		regCfg := &models.RegistryConfig{
 			URL:        "myregistry.azurecr.io",
@@ -195,11 +195,11 @@ func TestManager_Deploy_ProvisionsPullSecret(t *testing.T) {
 
 		// Deploy should still complete (no charts to install, so it succeeds).
 		require.Eventually(t, func() bool {
-			updated, _ := instanceRepo.FindByID("inst-ps-3")
+			updated, _ := instanceRepo.FindByID(context.Background(), "inst-ps-3")
 			return updated != nil && updated.Status != models.StackStatusDeploying
 		}, 3*time.Second, 20*time.Millisecond)
 
-		updated, _ := instanceRepo.FindByID("inst-ps-3")
+		updated, _ := instanceRepo.FindByID(context.Background(), "inst-ps-3")
 		assert.Equal(t, models.StackStatusRunning, updated.Status)
 	})
 }

@@ -310,6 +310,12 @@ func hookTriggerCtx(c *gin.Context) context.Context {
 	})
 }
 
+// writeCtx is hookTriggerCtx without the request cancel. Use it from the
+// first instance write on (#656).
+func writeCtx(c *gin.Context) context.Context {
+	return context.WithoutCancel(hookTriggerCtx(c))
+}
+
 // NewInstanceHandler creates a new InstanceHandler.
 func NewInstanceHandler(
 	instanceRepo models.StackInstanceRepository,
@@ -430,7 +436,7 @@ func (h *InstanceHandler) ListInstances(c *gin.Context) {
 
 	page, pageSize, offset := listPagination(c)
 
-	instances, total, err := h.instanceRepo.ListPaged(filter, pageSize, offset)
+	instances, total, err := h.instanceRepo.ListPaged(c.Request.Context(), filter, pageSize, offset)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
@@ -461,7 +467,7 @@ func (h *InstanceHandler) ListInstances(c *gin.Context) {
 func (h *InstanceHandler) GetRecentInstances(c *gin.Context) {
 	userID := middleware.GetUserIDFromContext(c)
 
-	instances, err := h.instanceRepo.ListByOwner(userID)
+	instances, err := h.instanceRepo.ListByOwner(c.Request.Context(), userID)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
@@ -619,19 +625,20 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 		return
 	}
 
+	wctx := writeCtx(c)
 	if h.txRunner != nil && maxInstancesPerUser > 0 {
 		// Transactional path — count check + create are serialized within
 		// a transaction, closing the TOCTOU window for concurrent creates.
 		limitMsg := fmt.Sprintf("Maximum instances per user reached for this cluster (limit: %d)", maxInstancesPerUser)
-		txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
-			count, countErr := repos.StackInstance.CountByClusterAndOwner(inst.ClusterID, inst.OwnerID)
+		txErr := h.txRunner.RunInTx(wctx, func(repos database.TxRepos) error {
+			count, countErr := repos.StackInstance.CountByClusterAndOwner(wctx, inst.ClusterID, inst.OwnerID)
 			if countErr != nil {
 				return countErr
 			}
 			if count >= maxInstancesPerUser {
 				return fmt.Errorf("%w: %s", ErrInstanceLimitExceeded, limitMsg)
 			}
-			return repos.StackInstance.Create(&inst)
+			return repos.StackInstance.Create(wctx, &inst)
 		})
 		if txErr != nil {
 			if errors.Is(txErr, ErrInstanceLimitExceeded) {
@@ -646,7 +653,7 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 		// Non-transactional path — still enforce the limit (TOCTOU possible
 		// but acceptable when txRunner is not configured).
 		limitMsg := fmt.Sprintf("Maximum instances per user reached for this cluster (limit: %d)", maxInstancesPerUser)
-		count, countErr := h.instanceRepo.CountByClusterAndOwner(inst.ClusterID, inst.OwnerID)
+		count, countErr := h.instanceRepo.CountByClusterAndOwner(wctx, inst.ClusterID, inst.OwnerID)
 		if countErr != nil {
 			status, message := mapError(countErr, entityStackInstance)
 			c.JSON(status, gin.H{"error": message})
@@ -656,13 +663,13 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 			c.JSON(http.StatusConflict, gin.H{"error": limitMsg})
 			return
 		}
-		if err := h.instanceRepo.Create(&inst); err != nil {
+		if err := h.instanceRepo.Create(wctx, &inst); err != nil {
 			status, message := mapError(err, entityStackInstance)
 			c.JSON(status, gin.H{"error": message})
 			return
 		}
 	} else {
-		if err := h.instanceRepo.Create(&inst); err != nil {
+		if err := h.instanceRepo.Create(wctx, &inst); err != nil {
 			status, message := mapError(err, entityStackInstance)
 			c.JSON(status, gin.H{"error": message})
 			return
@@ -672,10 +679,9 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 	// Post-instance-create hook: ignore-by-default. Cannot undo the create at
 	// this point; subscribers exist for downstream notification (CMDB sync,
 	// audit logs, etc).
-	hookCtx := hookTriggerCtx(c)
-	_ = h.fireInstanceHook(hookCtx, hooks.EventPostInstanceCreate, &inst)
+	_ = h.fireInstanceHook(wctx, hooks.EventPostInstanceCreate, &inst)
 
-	notifyInstanceCreated(hookCtx, h.notifier, &inst)
+	notifyInstanceCreated(wctx, h.notifier, &inst)
 
 	h.deployManager.BroadcastInstanceCreated(inst.ID)
 
@@ -702,7 +708,7 @@ func (h *InstanceHandler) GetInstance(c *gin.Context) {
 		return
 	}
 
-	inst, err := h.instanceRepo.FindByID(id)
+	inst, err := h.instanceRepo.FindByID(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
@@ -738,7 +744,7 @@ func (h *InstanceHandler) UpdateInstance(c *gin.Context) {
 		return
 	}
 
-	existing, err := h.instanceRepo.FindByID(id)
+	existing, err := h.instanceRepo.FindByID(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
@@ -811,7 +817,7 @@ func (h *InstanceHandler) UpdateInstance(c *gin.Context) {
 		return
 	}
 
-	if err := h.instanceRepo.Update(existing); err != nil {
+	if err := h.instanceRepo.Update(writeCtx(c), existing); err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -841,7 +847,7 @@ func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 		return
 	}
 
-	inst, err := h.instanceRepo.FindByID(id)
+	inst, err := h.instanceRepo.FindByID(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
@@ -914,6 +920,9 @@ func (h *InstanceHandler) deleteInstance(c *gin.Context, inst *models.StackInsta
 		return "", &instanceDeleteError{status: http.StatusForbidden, message: "pre-instance-delete hook rejected the request"}
 	}
 
+	// A client that leaves must not stop the delete or its side effects (#656).
+	wctx := context.WithoutCancel(ctx)
+
 	if needsClean {
 		if h.deployManager == nil {
 			return "", &instanceDeleteError{status: http.StatusServiceUnavailable, message: msgDeployerNotConfigured}
@@ -929,7 +938,7 @@ func (h *InstanceHandler) deleteInstance(c *gin.Context, inst *models.StackInsta
 			return "", &instanceDeleteError{status: status, message: message}
 		}
 
-		logID, err := h.deployManager.CleanForDelete(ctx, inst, charts)
+		logID, err := h.deployManager.CleanForDelete(wctx, inst, charts)
 		if errors.Is(err, models.ErrDeleteConflict) {
 			return "", &instanceDeleteError{status: http.StatusConflict, message: "Cannot delete: another operation started on the instance"}
 		}
@@ -948,9 +957,9 @@ func (h *InstanceHandler) deleteInstance(c *gin.Context, inst *models.StackInsta
 
 	// The delete removes the follower rows: read the followers first, so
 	// that they get the "instance.deleted" notification.
-	followerIDs := h.followerIDsBeforeDelete(c.Request.Context(), inst.ID)
+	followerIDs := h.followerIDsBeforeDelete(wctx, inst.ID)
 
-	if txErr := database.DeleteInstanceWithOwnedDefinition(h.txRunner, inst); txErr != nil {
+	if txErr := database.DeleteInstanceWithOwnedDefinition(wctx, h.txRunner, inst); txErr != nil {
 		status, message := mapError(txErr, entityStackInstance)
 		if status == http.StatusInternalServerError {
 			slog.Error("failed to delete instance", logKeyInstanceID, inst.ID, "error", txErr)
@@ -958,9 +967,7 @@ func (h *InstanceHandler) deleteInstance(c *gin.Context, inst *models.StackInsta
 		return "", &instanceDeleteError{status: status, message: message}
 	}
 
-	// The row is gone: a client that left must not cancel the hooks and the
-	// notification. WithoutCancel keeps the trigger value.
-	h.afterInstanceDeleted(context.WithoutCancel(ctx), inst, followerIDs)
+	h.afterInstanceDeleted(wctx, inst, followerIDs)
 	return "", nil
 }
 
@@ -1060,7 +1067,7 @@ func (h *InstanceHandler) InvokeAction(c *gin.Context) {
 		return
 	}
 
-	inst, err := h.instanceRepo.FindByID(id)
+	inst, err := h.instanceRepo.FindByID(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
@@ -1249,7 +1256,7 @@ func cloneNameCandidate(base string, n int) string {
 // @Router      /api/v1/stack-instances/{id}/clone [post]
 func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 	id := c.Param("id")
-	source, err := h.instanceRepo.FindByID(id)
+	source, err := h.instanceRepo.FindByID(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
@@ -1307,8 +1314,11 @@ func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 		base := sanitizeRFC1123Label(source.Name)
 		for n := 1; n <= maxCloneNameAttempts; n++ {
 			candidate := cloneNameCandidate(base, n)
-			_, findErr := h.instanceRepo.FindByNamespace(buildNamespace(candidate, ownerName))
+			_, findErr := h.instanceRepo.FindByNamespace(c.Request.Context(), buildNamespace(candidate, ownerName))
 			if findErr != nil && !errors.Is(findErr, dberrors.ErrNotFound) {
+				if respondCancelled(c, findErr) {
+					return
+				}
 				slog.Error("Failed to check namespace uniqueness for clone",
 					logKeyInstanceID, id, "error", findErr)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
@@ -1318,8 +1328,11 @@ func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 				continue // the namespace is taken
 			}
 			if h.uniqueNames {
-				holder, nameErr := h.nameGuard().nameHolder(candidate, source.ClusterID, "")
+				holder, nameErr := h.nameGuard().nameHolder(c.Request.Context(), candidate, source.ClusterID, "")
 				if nameErr != nil {
+					if respondCancelled(c, nameErr) {
+						return
+					}
 					slog.Error("Failed to check instance name uniqueness for clone",
 						logKeyInstanceID, id, "error", nameErr)
 					c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
@@ -1376,10 +1389,11 @@ func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 	quotaPolicy := h.cloneQuotaPolicy(c, source)
 
 	// Instance create + override copies are atomic.
+	wctx := writeCtx(c)
 	var warning string
-	txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
+	txErr := h.txRunner.RunInTx(wctx, func(repos database.TxRepos) error {
 		var err error
-		warning, err = cloneInstanceTx(c.Request.Context(), repos, source.ID, clone, now, quotaPolicy)
+		warning, err = cloneInstanceTx(wctx, repos, source.ID, clone, now, quotaPolicy)
 		return err
 	})
 	if txErr != nil {
@@ -1388,7 +1402,7 @@ func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 		return
 	}
 
-	notifyInstanceCreated(hookTriggerCtx(c), h.notifier, clone)
+	notifyInstanceCreated(wctx, h.notifier, clone)
 
 	h.deployManager.BroadcastInstanceCreated(clone.ID)
 
@@ -1463,7 +1477,7 @@ func (h *InstanceHandler) cloneQuotaPolicy(c *gin.Context, source *models.StackI
 // set and allows it. Repositories that are not in repos are skipped. It
 // returns the warning of quotaPolicy when the policy skips the quota override.
 func cloneInstanceTx(ctx context.Context, repos database.TxRepos, sourceID string, clone *models.StackInstance, now time.Time, quotaPolicy func(*models.InstanceQuotaOverride) (bool, string)) (string, error) {
-	if err := repos.StackInstance.Create(clone); err != nil {
+	if err := repos.StackInstance.Create(ctx, clone); err != nil {
 		return "", err
 	}
 	if repos.ValueOverride != nil {
@@ -1544,7 +1558,7 @@ func (h *InstanceHandler) ExportChartValues(c *gin.Context) {
 	instanceID := c.Param("id")
 	chartID := c.Param("chartId")
 
-	inst, err := h.instanceRepo.FindByID(instanceID)
+	inst, err := h.instanceRepo.FindByID(c.Request.Context(), instanceID)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
@@ -1591,7 +1605,7 @@ func (h *InstanceHandler) ExportChartValues(c *gin.Context) {
 func (h *InstanceHandler) ExportAllValues(c *gin.Context) {
 	instanceID := c.Param("id")
 
-	inst, err := h.instanceRepo.FindByID(instanceID)
+	inst, err := h.instanceRepo.FindByID(c.Request.Context(), instanceID)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
@@ -1661,7 +1675,7 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 		return
 	}
 
-	inst, err := h.instanceRepo.FindByID(id)
+	inst, err := h.instanceRepo.FindByID(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
@@ -1735,9 +1749,10 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 
 	// Restart the TTL clock on deploy, but never make the expiry earlier: a
 	// redeploy of an instance that was extended keeps the later expiry.
+	wctx := writeCtx(c)
 	if inst.TTLMinutes > 0 {
 		inst.ExpiresAt = deployExpiry(inst.ExpiresAt, inst.TTLMinutes, h.maxTTL(), time.Now().UTC())
-		_ = h.instanceRepo.Update(inst)
+		_ = h.instanceRepo.Update(wctx, inst)
 	}
 
 	var chartInfos []deployer.ChartDeployInfo
@@ -1762,7 +1777,7 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 		UserID:             middleware.GetUserIDFromContext(c),
 	}
 
-	logID, err := h.deployManager.Deploy(hookTriggerCtx(c), req)
+	logID, err := h.deployManager.Deploy(wctx, req)
 	if err != nil {
 		slog.Error("Failed to start deployment",
 			logKeyInstanceID, id,
@@ -1795,7 +1810,7 @@ func (h *InstanceHandler) DeployPreview(c *gin.Context) {
 		return
 	}
 
-	inst, err := h.instanceRepo.FindByID(id)
+	inst, err := h.instanceRepo.FindByID(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
@@ -1900,7 +1915,7 @@ func (h *InstanceHandler) StopInstance(c *gin.Context) {
 		return
 	}
 
-	inst, err := h.instanceRepo.FindByID(id)
+	inst, err := h.instanceRepo.FindByID(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
@@ -1949,7 +1964,7 @@ func (h *InstanceHandler) StopInstance(c *gin.Context) {
 		})
 	}
 
-	logID, err := h.deployManager.StopWithCharts(hookTriggerCtx(c), inst, chartInfos)
+	logID, err := h.deployManager.StopWithCharts(writeCtx(c), inst, chartInfos)
 	if err != nil {
 		slog.Error("Failed to start stop operation",
 			logKeyInstanceID, id,
@@ -1987,7 +2002,7 @@ func (h *InstanceHandler) CleanInstance(c *gin.Context) {
 		return
 	}
 
-	inst, err := h.instanceRepo.FindByID(id)
+	inst, err := h.instanceRepo.FindByID(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
@@ -2024,7 +2039,7 @@ func (h *InstanceHandler) CleanInstance(c *gin.Context) {
 		return
 	}
 
-	logID, err := h.deployManager.Clean(hookTriggerCtx(c), inst, charts)
+	logID, err := h.deployManager.Clean(writeCtx(c), inst, charts)
 	if errors.Is(err, models.ErrCleanConflict) {
 		c.JSON(http.StatusConflict, gin.H{"error": msgCleanConflict})
 		return
@@ -2078,7 +2093,7 @@ func (h *InstanceHandler) GetDeployLog(c *gin.Context) {
 
 	// Verify instance exists. The queries use the stored ID (MySQL
 	// compares IDs without case).
-	inst, err := h.instanceRepo.FindByID(id)
+	inst, err := h.instanceRepo.FindByID(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
@@ -2181,7 +2196,7 @@ func (h *InstanceHandler) GetInstanceStatus(c *gin.Context) {
 		return
 	}
 
-	inst, err := h.instanceRepo.FindByID(id)
+	inst, err := h.instanceRepo.FindByID(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
@@ -2253,7 +2268,7 @@ func (h *InstanceHandler) GetInstancePods(c *gin.Context) {
 		return
 	}
 
-	inst, err := h.instanceRepo.FindByID(id)
+	inst, err := h.instanceRepo.FindByID(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
@@ -2312,11 +2327,14 @@ func (h *InstanceHandler) GetInstancePods(c *gin.Context) {
 // UNIQUE_INSTANCE_NAMES the suggestions are only names that are free on
 // clusterID and give a free namespace for owner.
 func (h *InstanceHandler) checkNamespaceUniqueness(c *gin.Context, namespace, instanceName, clusterID, owner string) bool {
-	existing, err := h.instanceRepo.FindByNamespace(namespace)
+	existing, err := h.instanceRepo.FindByNamespace(c.Request.Context(), namespace)
 	if err != nil {
 		// Not found is the happy path — namespace is available.
 		if errors.Is(err, dberrors.ErrNotFound) {
 			return false
+		}
+		if respondCancelled(c, err) {
+			return true
 		}
 		// Unexpected error — log and respond with 500.
 		slog.Error("Failed to check namespace uniqueness",
@@ -2335,7 +2353,7 @@ func (h *InstanceHandler) checkNamespaceUniqueness(c *gin.Context, namespace, in
 	)
 	suggestions := generateNameSuggestions(instanceName)
 	if h.uniqueNames {
-		suggestions = h.nameGuard().freeSuggestions(instanceName, clusterID, owner)
+		suggestions = h.nameGuard().freeSuggestions(c.Request.Context(), instanceName, clusterID, owner)
 	}
 	c.JSON(http.StatusConflict, NamespaceConflictResponse{
 		Error:       "namespace already exists",
@@ -2423,7 +2441,7 @@ func (h *InstanceHandler) ExtendTTL(c *gin.Context) {
 		return
 	}
 
-	inst, err := h.instanceRepo.FindByID(id)
+	inst, err := h.instanceRepo.FindByID(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
@@ -2512,7 +2530,7 @@ func (h *InstanceHandler) ExtendTTL(c *gin.Context) {
 	}
 	inst.UpdatedAt = now
 
-	if err := h.instanceRepo.Update(inst); err != nil {
+	if err := h.instanceRepo.Update(writeCtx(c), inst); err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -2605,7 +2623,7 @@ func (h *InstanceHandler) CompareInstances(c *gin.Context) {
 	}
 
 	// Fetch left instance.
-	leftInst, err := h.instanceRepo.FindByID(leftID)
+	leftInst, err := h.instanceRepo.FindByID(c.Request.Context(), leftID)
 	if err != nil {
 		status, message := mapError(err, "Left stack instance")
 		c.JSON(status, gin.H{"error": message})
@@ -2613,7 +2631,7 @@ func (h *InstanceHandler) CompareInstances(c *gin.Context) {
 	}
 
 	// Fetch right instance.
-	rightInst, err := h.instanceRepo.FindByID(rightID)
+	rightInst, err := h.instanceRepo.FindByID(c.Request.Context(), rightID)
 	if err != nil {
 		status, message := mapError(err, "Right stack instance")
 		c.JSON(status, gin.H{"error": message})
@@ -2825,7 +2843,7 @@ func (h *InstanceHandler) RollbackInstance(c *gin.Context) {
 		return
 	}
 
-	inst, err := h.instanceRepo.FindByID(id)
+	inst, err := h.instanceRepo.FindByID(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
@@ -2904,7 +2922,7 @@ func (h *InstanceHandler) RollbackInstance(c *gin.Context) {
 		chartInfos = append(chartInfos, deployer.ChartDeployInfo{ChartConfig: ch})
 	}
 
-	logID, err := h.deployManager.Rollback(hookTriggerCtx(c), deployer.RollbackRequest{
+	logID, err := h.deployManager.Rollback(writeCtx(c), deployer.RollbackRequest{
 		Instance:            inst,
 		Charts:              chartInfos,
 		TargetLogID:         body.TargetLogID,
@@ -2953,7 +2971,7 @@ func (h *InstanceHandler) GetDeployLogEntry(c *gin.Context) {
 		return
 	}
 
-	inst, err := h.instanceRepo.FindByID(instanceID)
+	inst, err := h.instanceRepo.FindByID(c.Request.Context(), instanceID)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
@@ -3007,7 +3025,7 @@ func (h *InstanceHandler) GetDeployLogValues(c *gin.Context) {
 		return
 	}
 
-	inst, err := h.instanceRepo.FindByID(instanceID)
+	inst, err := h.instanceRepo.FindByID(c.Request.Context(), instanceID)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})

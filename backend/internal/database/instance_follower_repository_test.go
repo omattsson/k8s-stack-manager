@@ -18,7 +18,7 @@ func seedFollowInstances(t *testing.T, db *gorm.DB, ids ...string) {
 	t.Helper()
 	repo := NewGORMStackInstanceRepository(db)
 	for _, id := range ids {
-		require.NoError(t, repo.Create(&models.StackInstance{ID: id, Name: id, Namespace: "stack-" + id, OwnerID: "owner", StackDefinitionID: "d1", Status: models.StackStatusDraft}))
+		require.NoError(t, repo.Create(context.Background(), &models.StackInstance{ID: id, Name: id, Namespace: "stack-" + id, OwnerID: "owner", StackDefinitionID: "d1", Status: models.StackStatusDraft}))
 	}
 }
 

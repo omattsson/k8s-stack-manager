@@ -42,9 +42,14 @@ func isPostDeployHookError(err error) bool {
 	return errors.As(err, &failed)
 }
 
-// ErrDeployInterrupted ends a deploy whose blocking post-deploy hooks were
-// stopped by a server shutdown. Its message is user-safe.
+// ErrDeployInterrupted ends a deploy whose readiness wait or blocking
+// post-deploy hooks a server shutdown stopped. Its message is user-safe.
 var ErrDeployInterrupted = errors.New("Interrupted by a server restart. Deploy again.") //nolint:staticcheck // ST1005: user-facing sentence
+
+// errPostDeployNotStarted ends a deploy whose blocking post-deploy phase
+// could not read the stack, so the subscribers did not run. Its message is
+// user-safe.
+var errPostDeployNotStarted = errors.New("The post-deploy steps did not run: the stack could not be read. Deploy again.") //nolint:staticcheck // ST1005: user-facing sentence
 
 // blockingPhaseMargin is added to the sum of the blocking hook timeouts for
 // the context and the watcher marker of the blocking phase.
@@ -63,32 +68,27 @@ const blockingPhaseMargin = time.Minute
 // stabilizing, or a newer deployment log), the wait is cancelled and
 // result.cancelled is set. A read error of the instance does not cancel.
 // A server shutdown ends the deploy with ErrDeployInterrupted for every
-// failure policy.
+// failure policy. A failed read at the start ends it with
+// errPostDeployNotStarted.
 func (m *Manager) runBlockingPostDeploy(instanceID string, deployLog *models.DeploymentLog, opts hookOpts) blockingPostDeployResult {
 	var res blockingPostDeployResult
 	if m.hooks == nil || !m.hooks.HasBlocking(hooks.EventPostDeploy) {
 		return res
 	}
-	// Another operation during the Helm phase or the readiness wait:
-	// finalizeDeploy keeps its status and only closes the log.
-	if owned, _ := m.ownsInstance(instanceID, deployLog.ID, models.StackStatusDeploying, models.StackStatusStabilizing); !owned {
+	// The subscribers never ran: an empty result would finalize as success.
+	if m.shutdownCtx.Err() != nil {
+		slog.Warn("blocking post-deploy hooks skipped: server shutdown",
+			"instance_id", instanceID, "log_id", deployLog.ID)
+		return m.blockingNotStarted(instanceID, deployLog.ID, ErrDeployInterrupted)
+	}
+	inst, state := m.startBlockingPhase(instanceID, deployLog.ID)
+	switch state {
+	case ownershipLost:
 		return res
+	case ownershipUnknown:
+		return m.blockingNotStarted(instanceID, deployLog.ID, errPostDeployNotStarted)
 	}
-	inst, err := m.instanceRepo.FindByID(instanceID)
-	if err != nil {
-		slog.Error("blocking post-deploy: find instance failed", "instance_id", instanceID, "error", err)
-		return res
-	}
-	phaseTimeout := m.hooks.BlockingTimeout(hooks.EventPostDeploy) + blockingPhaseMargin
-	until := time.Now().UTC().Add(phaseTimeout)
-	inst.Status = models.StackStatusStabilizing
-	inst.PostDeployHookUntil = &until
-	if err := m.instanceRepo.Update(inst); err != nil {
-		// The watcher below also accepts deploying, so the wait goes on.
-		slog.Warn("failed to mark the blocking post-deploy phase", "instance_id", instanceID, "error", err)
-	} else {
-		m.broadcastStatus(instanceID, models.StackStatusStabilizing, deployLog.ID)
-	}
+	until := *inst.PostDeployHookUntil
 
 	progress := newHookProgress(maxHookProgressLen)
 	logLine := func(line string) {
@@ -101,8 +101,8 @@ func (m *Manager) runBlockingPostDeploy(instanceID string, deployLog *models.Dep
 	defer cancelHooks()
 
 	// Watch the instance. Cancel the wait when another operation took it.
-	watch := watchOwnership(hookCtx, cancelHooks, m.stabilizePollInterval, func() (bool, string) {
-		return m.blockingPhaseOwned(instanceID, deployLog.ID)
+	watch := watchOwnership(hookCtx, cancelHooks, m.stabilizePollInterval, func(ctx context.Context) (bool, string) {
+		return m.blockingPhaseOwned(ctx, instanceID, deployLog.ID)
 	})
 
 	meta := make(map[string]string, len(opts.Metadata)+1)
@@ -121,7 +121,7 @@ func (m *Manager) runBlockingPostDeploy(instanceID string, deployLog *models.Dep
 	current, lost := watch.stop()
 	if !lost {
 		// The answer can come just after another operation started.
-		if owned, st := m.blockingPhaseOwned(instanceID, deployLog.ID); !owned {
+		if owned, st := m.blockingPhaseOwned(m.shutdownCtx, instanceID, deployLog.ID); !owned {
 			current, lost = st, true
 		}
 	}
@@ -160,11 +160,46 @@ func (m *Manager) runBlockingPostDeploy(instanceID string, deployLog *models.Dep
 	return res
 }
 
+// blockingNotStarted is the result of a blocking phase that did not start:
+// err fails the deploy, and its ERROR line goes into the log.
+func (m *Manager) blockingNotStarted(instanceID, logID string, err error) blockingPostDeployResult {
+	line := "ERROR: " + err.Error()
+	m.broadcastLog(instanceID, logID, line)
+	return blockingPostDeployResult{err: err, output: line + "\n"}
+}
+
+// startBlockingPhase marks the instance stabilizing with PostDeployHookUntil.
+// ownershipLost: another operation took the instance during the Helm phase
+// or the readiness wait; finalizeDeploy keeps its status and only closes the
+// log. ownershipUnknown: the read failed; the caller fails the deploy. A
+// shutdown must not fail the read, see finalWriteCtx.
+func (m *Manager) startBlockingPhase(instanceID, logID string) (*models.StackInstance, ownership) {
+	ctx, cancel := m.finalWriteCtx()
+	defer cancel()
+	state, inst, err := m.instanceOwnership(ctx, instanceID, logID, models.StackStatusDeploying, models.StackStatusStabilizing)
+	if state == ownershipUnknown {
+		slog.Error("blocking post-deploy: find instance failed", "instance_id", instanceID, "error", err)
+	}
+	if state != ownershipOwned {
+		return nil, state
+	}
+	until := time.Now().UTC().Add(m.hooks.BlockingTimeout(hooks.EventPostDeploy) + blockingPhaseMargin)
+	inst.Status = models.StackStatusStabilizing
+	inst.PostDeployHookUntil = &until
+	if err := m.instanceRepo.Update(ctx, inst); err != nil {
+		// The watcher of the phase also accepts deploying, so the wait goes on.
+		slog.Warn("failed to mark the blocking post-deploy phase", "instance_id", instanceID, "error", err)
+	} else {
+		m.broadcastStatus(instanceID, models.StackStatusStabilizing, logID)
+	}
+	return inst, ownershipOwned
+}
+
 // blockingPhaseOwned reports whether the deploy of logID still owns the
 // instance during its blocking post-deploy phase: the status is stabilizing
 // (or deploying, when the stabilizing update failed) and no newer deployment
 // log exists. A read error of the instance counts as owned (logged), so a
 // short database outage does not cancel the wait.
-func (m *Manager) blockingPhaseOwned(instanceID, logID string) (bool, string) {
-	return m.hookPhaseOwned(instanceID, logID, models.StackStatusStabilizing, models.StackStatusDeploying)
+func (m *Manager) blockingPhaseOwned(ctx context.Context, instanceID, logID string) (bool, string) {
+	return m.hookPhaseOwned(ctx, instanceID, logID, models.StackStatusStabilizing, models.StackStatusDeploying)
 }

@@ -172,7 +172,7 @@ func (h *InstanceHandler) ListActions(c *gin.Context) {
 		return
 	}
 
-	inst, err := h.instanceRepo.FindByID(id)
+	inst, err := h.instanceRepo.FindByID(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
@@ -238,7 +238,7 @@ func (h *InstanceHandler) GetActionJobLog(c *gin.Context) {
 		return
 	}
 
-	inst, err := h.instanceRepo.FindByID(id)
+	inst, err := h.instanceRepo.FindByID(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
@@ -463,7 +463,7 @@ func (h *InstanceHandler) ListActionRuns(c *gin.Context) {
 	}
 	cursor := c.Query("cursor")
 
-	inst, err := h.instanceRepo.FindByID(id)
+	inst, err := h.instanceRepo.FindByID(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})

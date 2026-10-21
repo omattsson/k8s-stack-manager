@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -55,9 +56,9 @@ type spyTxRunner struct {
 	spy   *defReadSpy
 }
 
-func (r *spyTxRunner) RunInTx(fn func(repos TxRepos) error) error {
+func (r *spyTxRunner) RunInTx(ctx context.Context, fn func(repos TxRepos) error) error {
 	r.spy.tx++
-	return r.inner.RunInTx(func(repos TxRepos) error {
+	return r.inner.RunInTx(ctx, func(repos TxRepos) error {
 		repos.StackDefinition = &lockSpyDefinitionRepo{StackDefinitionRepository: repos.StackDefinition, spy: r.spy}
 		return fn(repos)
 	})
@@ -101,13 +102,13 @@ func TestDeleteInstanceWithOwnedDefinition_LocksOnlyOwnedDefinitions(t *testing.
 				require.NoError(t, ccRepo.Create(&models.ChartConfig{ID: "c1", StackDefinitionID: "d1", ChartName: "web"}))
 			}
 			inst := &models.StackInstance{ID: "i1", StackDefinitionID: "d1", Name: "qd", Namespace: "stack-qd-u1", OwnerID: "u1", Status: models.StackStatusDraft}
-			require.NoError(t, instRepo.Create(inst))
+			require.NoError(t, instRepo.Create(context.Background(), inst))
 
 			spy := &defReadSpy{findErr: tt.findErr, lockedOwner: tt.lockedOwner, lockedGone: tt.lockedGone}
-			require.NoError(t, DeleteInstanceWithOwnedDefinition(&spyTxRunner{inner: NewGORMTxRunner(db), spy: spy}, inst))
+			require.NoError(t, DeleteInstanceWithOwnedDefinition(context.Background(), &spyTxRunner{inner: NewGORMTxRunner(db), spy: spy}, inst))
 
 			assert.Equal(t, tt.wantEvents, spy.events)
-			_, err := instRepo.FindByID("i1")
+			_, err := instRepo.FindByID(context.Background(), "i1")
 			assert.Error(t, err, "instance is deleted")
 			if tt.owner == "-" {
 				return
@@ -146,8 +147,8 @@ func TestCleanupOwnedDefinition_LocksFirst(t *testing.T) {
 
 			spy := &defReadSpy{}
 			runner := &spyTxRunner{inner: NewGORMTxRunner(db), spy: spy}
-			require.NoError(t, runner.RunInTx(func(repos TxRepos) error {
-				return CleanupOwnedDefinition(repos, inst)
+			require.NoError(t, runner.RunInTx(context.Background(), func(repos TxRepos) error {
+				return CleanupOwnedDefinition(context.Background(), repos, inst)
 			}))
 
 			assert.Equal(t, []string{"tx1:lock"}, spy.events)

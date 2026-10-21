@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -98,8 +99,17 @@ func (h *AdminHandler) ListOrphanedNamespaces(c *gin.Context) {
 
 	var orphaned []OrphanedNamespaceResponse
 	for _, ns := range namespaces {
-		_, err := h.instanceRepo.FindByNamespace(ns.Name)
+		_, err := h.instanceRepo.FindByNamespace(ctx, ns.Name)
 		if err != nil {
+			// A cancel or deadline would fail every lookup: answer it, not a partial list.
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				if respondCancelled(c, err) {
+					return
+				}
+				slog.Error("Failed to check namespace against DB", logKeyNamespace, ns.Name, "error", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+				return
+			}
 			var dbErr *dberrors.DatabaseError
 			if errors.As(err, &dbErr) && errors.Is(dbErr.Err, dberrors.ErrNotFound) {
 				// Namespace is orphaned — no matching instance in DB.
@@ -204,7 +214,7 @@ func (h *AdminHandler) DeleteOrphanedNamespace(c *gin.Context) {
 	}
 
 	// Verify the namespace is truly orphaned.
-	_, err = h.instanceRepo.FindByNamespace(namespace)
+	_, err = h.instanceRepo.FindByNamespace(ctx, namespace)
 	if err == nil {
 		// Instance exists — namespace is NOT orphaned.
 		c.JSON(http.StatusConflict, gin.H{"error": "Namespace is not orphaned — a matching stack instance exists"})
@@ -212,6 +222,9 @@ func (h *AdminHandler) DeleteOrphanedNamespace(c *gin.Context) {
 	}
 	var dbErr *dberrors.DatabaseError
 	if !errors.As(err, &dbErr) || !errors.Is(dbErr.Err, dberrors.ErrNotFound) {
+		if respondCancelled(c, err) {
+			return
+		}
 		// Unexpected error querying the DB.
 		slog.Error("Failed to verify namespace orphan status", logKeyNamespace, namespace, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})

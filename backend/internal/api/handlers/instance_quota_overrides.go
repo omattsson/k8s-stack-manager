@@ -217,7 +217,7 @@ type setQuotaOverrideRequest struct {
 func (h *InstanceQuotaOverrideHandler) GetQuotaOverride(c *gin.Context) {
 	instanceID := c.Param("id")
 
-	inst, err := h.instanceRepo.FindByID(instanceID)
+	inst, err := h.instanceRepo.FindByID(c.Request.Context(), instanceID)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		if status == http.StatusInternalServerError {
@@ -314,7 +314,7 @@ func effectiveQuotaValues(q *models.ResourceQuotaConfig) EffectiveQuotaValues {
 // @Security    BearerAuth
 // @Router      /api/v1/stack-instances/{id}/quota [get]
 func (h *InstanceQuotaOverrideHandler) GetEffectiveQuota(c *gin.Context) {
-	inst, err := h.instanceRepo.FindByID(c.Param("id"))
+	inst, err := h.instanceRepo.FindByID(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		if status == http.StatusInternalServerError {
@@ -377,7 +377,7 @@ func (h *InstanceQuotaOverrideHandler) GetEffectiveQuota(c *gin.Context) {
 func (h *InstanceQuotaOverrideHandler) SetQuotaOverride(c *gin.Context) {
 	instanceID := c.Param("id")
 
-	inst, err := h.instanceRepo.FindByID(instanceID)
+	inst, err := h.instanceRepo.FindByID(c.Request.Context(), instanceID)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		if status == http.StatusInternalServerError {
@@ -467,7 +467,10 @@ func (h *InstanceQuotaOverrideHandler) SetQuotaOverride(c *gin.Context) {
 		}
 	}
 
-	if err := h.overrideRepo.Upsert(c.Request.Context(), override); err != nil {
+	// A client that leaves must not cancel the write and then skip the
+	// namespace apply and the audit entry (#656).
+	wctx := context.WithoutCancel(c.Request.Context())
+	if err := h.overrideRepo.Upsert(wctx, override); err != nil {
 		status, message := mapError(err, entityInstanceQuotaOverride)
 		if status == http.StatusInternalServerError {
 			slog.Error("failed to upsert quota override", logKeyIQOInstanceID, instanceID, "error", err)
@@ -477,7 +480,7 @@ func (h *InstanceQuotaOverrideHandler) SetQuotaOverride(c *gin.Context) {
 	}
 
 	// Re-read to return the persisted state (includes ID, timestamps).
-	saved, err := h.overrideRepo.GetByInstanceID(c.Request.Context(), instanceID)
+	saved, err := h.overrideRepo.GetByInstanceID(wctx, instanceID)
 	if err != nil {
 		status, message := mapError(err, entityInstanceQuotaOverride)
 		if status == http.StatusInternalServerError {
@@ -506,7 +509,7 @@ func (h *InstanceQuotaOverrideHandler) SetQuotaOverride(c *gin.Context) {
 func (h *InstanceQuotaOverrideHandler) DeleteQuotaOverride(c *gin.Context) {
 	instanceID := c.Param("id")
 
-	inst, err := h.instanceRepo.FindByID(instanceID)
+	inst, err := h.instanceRepo.FindByID(c.Request.Context(), instanceID)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		if status == http.StatusInternalServerError {
@@ -521,7 +524,8 @@ func (h *InstanceQuotaOverrideHandler) DeleteQuotaOverride(c *gin.Context) {
 		return
 	}
 
-	if err := h.overrideRepo.Delete(c.Request.Context(), instanceID); err != nil {
+	// See SetQuotaOverride.
+	if err := h.overrideRepo.Delete(context.WithoutCancel(c.Request.Context()), instanceID); err != nil {
 		status, message := mapError(err, entityInstanceQuotaOverride)
 		if status == http.StatusInternalServerError {
 			slog.Error("failed to delete quota override", logKeyIQOInstanceID, instanceID, "error", err)

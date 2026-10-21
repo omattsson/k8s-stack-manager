@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -335,7 +336,7 @@ func TestCloneInstance_LongOwnerGeneratedNames(t *testing.T) {
 
 	instRepo := NewMockStackInstanceRepository()
 	source := "feature-payments-refactor"
-	require.NoError(t, instRepo.Create(&models.StackInstance{
+	require.NoError(t, instRepo.Create(context.Background(), &models.StackInstance{
 		ID: "i1", StackDefinitionID: "d1", Name: source,
 		Namespace: buildNamespace(source, longTestOwner), OwnerID: "uid-1",
 		Branch: "master", Status: models.StackStatusRunning,
@@ -377,7 +378,7 @@ func TestUpdateInstance_RenameKeepsNamespace(t *testing.T) {
 			t.Parallel()
 			instRepo := NewMockStackInstanceRepository()
 			ns := buildNamespace(tt.oldName, tt.owner)
-			require.NoError(t, instRepo.Create(&models.StackInstance{
+			require.NoError(t, instRepo.Create(context.Background(), &models.StackInstance{
 				ID: "i1", StackDefinitionID: "d1", Name: tt.oldName,
 				Namespace: ns, OwnerID: "uid-1",
 				Branch: "master", Status: models.StackStatusRunning,
@@ -391,7 +392,7 @@ func TestUpdateInstance_RenameKeepsNamespace(t *testing.T) {
 			router.ServeHTTP(w, req)
 
 			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-			stored, err := instRepo.FindByID("i1")
+			stored, err := instRepo.FindByID(context.Background(), "i1")
 			require.NoError(t, err)
 			assert.Equal(t, tt.newName, stored.Name)
 			assert.Equal(t, ns, stored.Namespace)

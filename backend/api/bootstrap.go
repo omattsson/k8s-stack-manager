@@ -411,6 +411,10 @@ func buildDomainServices(
 	}, nil
 }
 
+// duplicateNamesTimeout bounds the startup query for duplicate instance
+// names (UNIQUE_INSTANCE_NAMES, #656).
+const duplicateNamesTimeout = 30 * time.Second
+
 // buildHandlers creates all HTTP handlers.
 func buildHandlers(
 	cfg *config.Config,
@@ -481,7 +485,9 @@ func buildHandlers(
 		}
 		slog.Info("Instance names are unique for each cluster (UNIQUE_INSTANCE_NAMES)")
 		// One query over all instances on every replica start; small table.
-		handlers.LogDuplicateInstanceNames(lookup, defaultClusterID)
+		dupCtx, cancelDup := context.WithTimeout(context.Background(), duplicateNamesTimeout)
+		handlers.LogDuplicateInstanceNames(dupCtx, lookup, defaultClusterID)
+		cancelDup()
 	}
 
 	// Instance handler.

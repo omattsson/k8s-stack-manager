@@ -29,7 +29,7 @@ func TestDatabaseMySQL_InstanceFollowers(t *testing.T) {
 	instances := NewGORMStackInstanceRepository(db)
 	repo := NewGORMInstanceFollowerRepository(db)
 	for _, id := range []string{"fi-1", "fi-2"} {
-		require.NoError(t, instances.Create(&models.StackInstance{ID: id, Name: id, Namespace: "stack-" + id, OwnerID: "owner", StackDefinitionID: "d1", Status: models.StackStatusDraft}))
+		require.NoError(t, instances.Create(context.Background(), &models.StackInstance{ID: id, Name: id, Namespace: "stack-" + id, OwnerID: "owner", StackDefinitionID: "d1", Status: models.StackStatusDraft}))
 	}
 
 	require.NoError(t, repo.Follow(ctx, "u1", "fi-1"))
@@ -59,10 +59,10 @@ func TestDatabaseMySQL_InstanceFollowers(t *testing.T) {
 	require.NoError(t, repo.Unfollow(ctx, "u2", "fi-1"), "a repeated unfollow is not an error")
 
 	// The instance delete removes the followers in the same transaction.
-	inst, err := instances.FindByID("fi-1")
+	inst, err := instances.FindByID(context.Background(), "fi-1")
 	require.NoError(t, err)
-	require.NoError(t, NewGORMTxRunner(db).RunInTx(func(repos TxRepos) error {
-		return DeleteInstanceRecord(repos, inst)
+	require.NoError(t, NewGORMTxRunner(db).RunInTx(context.Background(), func(repos TxRepos) error {
+		return DeleteInstanceRecord(context.Background(), repos, inst)
 	}))
 	ids, err = repo.ListUserIDsByInstance(ctx, "fi-1")
 	require.NoError(t, err)

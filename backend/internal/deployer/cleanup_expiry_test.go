@@ -298,7 +298,7 @@ func TestCleanupExecutor_DeleteInstance(t *testing.T) {
 				Name:   "test",
 				Status: tt.status,
 			}
-			require.NoError(t, instRepo.Create(inst))
+			require.NoError(t, instRepo.Create(context.Background(), inst))
 
 			exec := &CleanupExecutor{instanceRepo: instRepo}
 
@@ -308,12 +308,12 @@ func TestCleanupExecutor_DeleteInstance(t *testing.T) {
 				assert.Error(t, err)
 				assert.Contains(t, err.Error(), tt.errMsg)
 				// Verify instance was NOT deleted.
-				_, findErr := instRepo.FindByID(inst.ID)
+				_, findErr := instRepo.FindByID(context.Background(), inst.ID)
 				assert.NoError(t, findErr)
 			} else {
 				assert.NoError(t, err)
 				// Verify instance was deleted.
-				_, findErr := instRepo.FindByID(inst.ID)
+				_, findErr := instRepo.FindByID(context.Background(), inst.ID)
 				assert.Error(t, findErr)
 			}
 		})
@@ -451,7 +451,7 @@ func TestCleanupExecutor_StopInstance_WithCharts(t *testing.T) {
 		Namespace:         "stack-test",
 		Status:            models.StackStatusRunning,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	mgr := NewManager(ManagerConfig{
 		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
@@ -489,7 +489,7 @@ func TestCleanupExecutor_CleanInstance_WithCharts(t *testing.T) {
 		Namespace:         "stack-test",
 		Status:            models.StackStatusStopped,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	mgr := NewManager(ManagerConfig{
 		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
@@ -593,7 +593,7 @@ func TestExpiryStopper_StopInstance_WithCharts(t *testing.T) {
 		Namespace:         "stack-test",
 		Status:            models.StackStatusRunning,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	mgr := NewManager(ManagerConfig{
 		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
@@ -648,7 +648,7 @@ func TestCleanupExecutor_DeleteInstance_CancelledContext(t *testing.T) {
 
 	instRepo := newMockInstanceRepo()
 	inst := &models.StackInstance{ID: "inst-del-cancelled", Name: "test", Status: models.StackStatusStopped}
-	require.NoError(t, instRepo.Create(inst))
+	require.NoError(t, instRepo.Create(context.Background(), inst))
 	exec := &CleanupExecutor{instanceRepo: instRepo}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -656,6 +656,6 @@ func TestCleanupExecutor_DeleteInstance_CancelledContext(t *testing.T) {
 	err := exec.DeleteInstance(ctx, inst)
 	require.ErrorIs(t, err, context.Canceled)
 
-	_, findErr := instRepo.FindByID(inst.ID)
+	_, findErr := instRepo.FindByID(context.Background(), inst.ID)
 	assert.NoError(t, findErr, "a cancelled delete must not remove the instance")
 }

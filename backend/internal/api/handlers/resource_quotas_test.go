@@ -458,7 +458,7 @@ func TestPerUserInstanceLimit(t *testing.T) {
 		_ = clusterRepo.Create(cl)
 
 		// Create 2 existing instances for the user on this cluster.
-		_ = instanceRepo.Create(&models.StackInstance{
+		_ = instanceRepo.Create(context.Background(), &models.StackInstance{
 			ID:                "inst-1",
 			Name:              "inst-one",
 			StackDefinitionID: "def-1",
@@ -467,7 +467,7 @@ func TestPerUserInstanceLimit(t *testing.T) {
 			Namespace:         "stack-inst-one-testuser",
 			Status:            models.StackStatusRunning,
 		})
-		_ = instanceRepo.Create(&models.StackInstance{
+		_ = instanceRepo.Create(context.Background(), &models.StackInstance{
 			ID:                "inst-2",
 			Name:              "inst-two",
 			StackDefinitionID: "def-1",
@@ -536,7 +536,7 @@ func TestPerUserInstanceLimit(t *testing.T) {
 		_ = clusterRepo.Create(cl)
 
 		// Only 1 existing instance.
-		_ = instanceRepo.Create(&models.StackInstance{
+		_ = instanceRepo.Create(context.Background(), &models.StackInstance{
 			ID:                "inst-1",
 			Name:              "inst-one",
 			StackDefinitionID: "def-1",

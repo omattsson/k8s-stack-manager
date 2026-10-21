@@ -910,53 +910,67 @@ func (s *stubStackDefinitionRepo) Count() (int64, error) { return 0, nil }
 
 type stubStackInstanceRepo struct{}
 
-func (s *stubStackInstanceRepo) Create(_ *models.StackInstance) error             { return nil }
-func (s *stubStackInstanceRepo) FindByID(_ string) (*models.StackInstance, error) { return nil, nil }
-func (s *stubStackInstanceRepo) FindByNamespace(_ string) (*models.StackInstance, error) {
-	return nil, nil
+func (s *stubStackInstanceRepo) Create(ctx context.Context, _ *models.StackInstance) error {
+	return ctx.Err()
 }
-func (s *stubStackInstanceRepo) Update(_ *models.StackInstance) error  { return nil }
-func (s *stubStackInstanceRepo) Delete(_ string) error                 { return nil }
-func (s *stubStackInstanceRepo) List() ([]models.StackInstance, error) { return nil, nil }
-func (s *stubStackInstanceRepo) ListPaged(_ models.StackInstanceFilter, _, _ int) ([]models.StackInstance, int, error) {
-	return nil, 0, nil
+func (s *stubStackInstanceRepo) FindByID(ctx context.Context, _ string) (*models.StackInstance, error) {
+	return nil, ctx.Err()
 }
-func (s *stubStackInstanceRepo) ListByOwner(_ string) ([]models.StackInstance, error) {
-	return nil, nil
+func (s *stubStackInstanceRepo) FindByNamespace(ctx context.Context, _ string) (*models.StackInstance, error) {
+	return nil, ctx.Err()
 }
-func (s *stubStackInstanceRepo) FindByName(_ string) ([]models.StackInstance, error) {
-	return nil, nil
+func (s *stubStackInstanceRepo) Update(ctx context.Context, _ *models.StackInstance) error {
+	return ctx.Err()
 }
-func (s *stubStackInstanceRepo) FindByCluster(_ string) ([]models.StackInstance, error) {
-	return nil, nil
+func (s *stubStackInstanceRepo) Delete(ctx context.Context, _ string) error { return ctx.Err() }
+func (s *stubStackInstanceRepo) List(ctx context.Context) ([]models.StackInstance, error) {
+	return nil, ctx.Err()
 }
-func (s *stubStackInstanceRepo) CountByClusterAndOwner(_, _ string) (int, error) { return 0, nil }
-func (s *stubStackInstanceRepo) CountAll() (int, error)                          { return 0, nil }
-func (s *stubStackInstanceRepo) CountByStatus(_ string) (int, error)             { return 0, nil }
-func (s *stubStackInstanceRepo) CountByDefinitionIDs(_ []string) (map[string]int, error) {
-	return nil, nil
+func (s *stubStackInstanceRepo) ListPaged(ctx context.Context, _ models.StackInstanceFilter, _, _ int) ([]models.StackInstance, int, error) {
+	return nil, 0, ctx.Err()
 }
-func (s *stubStackInstanceRepo) CountByOwnerIDs(_ []string) (map[string]int, error) {
-	return nil, nil
+func (s *stubStackInstanceRepo) ListByOwner(ctx context.Context, _ string) ([]models.StackInstance, error) {
+	return nil, ctx.Err()
 }
-func (s *stubStackInstanceRepo) ListIDsByDefinitionIDs(_ []string) (map[string][]string, error) {
-	return nil, nil
+func (s *stubStackInstanceRepo) FindByName(ctx context.Context, _ string) ([]models.StackInstance, error) {
+	return nil, ctx.Err()
 }
-func (s *stubStackInstanceRepo) ListIDsByOwnerIDs(_ []string) (map[string][]string, error) {
-	return nil, nil
+func (s *stubStackInstanceRepo) FindByCluster(ctx context.Context, _ string) ([]models.StackInstance, error) {
+	return nil, ctx.Err()
 }
-func (s *stubStackInstanceRepo) ExistsByDefinitionAndStatus(_, _ string) (bool, error) {
-	return false, nil
+func (s *stubStackInstanceRepo) CountByClusterAndOwner(ctx context.Context, _, _ string) (int, error) {
+	return 0, ctx.Err()
 }
-func (s *stubStackInstanceRepo) ListExpired() ([]*models.StackInstance, error) { return nil, nil }
-func (s *stubStackInstanceRepo) ListExpiringSoon(_ time.Duration) ([]*models.StackInstance, error) {
-	return nil, nil
+func (s *stubStackInstanceRepo) CountAll(ctx context.Context) (int, error) { return 0, ctx.Err() }
+func (s *stubStackInstanceRepo) CountByStatus(ctx context.Context, _ string) (int, error) {
+	return 0, ctx.Err()
 }
-func (*stubStackInstanceRepo) MarkExpiryWarned(_ string, _, _ time.Time) (bool, error) {
-	return false, nil
+func (s *stubStackInstanceRepo) CountByDefinitionIDs(ctx context.Context, _ []string) (map[string]int, error) {
+	return nil, ctx.Err()
 }
-func (s *stubStackInstanceRepo) ListByStatus(_ string, _ int) ([]*models.StackInstance, error) {
-	return nil, nil
+func (s *stubStackInstanceRepo) CountByOwnerIDs(ctx context.Context, _ []string) (map[string]int, error) {
+	return nil, ctx.Err()
+}
+func (s *stubStackInstanceRepo) ListIDsByDefinitionIDs(ctx context.Context, _ []string) (map[string][]string, error) {
+	return nil, ctx.Err()
+}
+func (s *stubStackInstanceRepo) ListIDsByOwnerIDs(ctx context.Context, _ []string) (map[string][]string, error) {
+	return nil, ctx.Err()
+}
+func (s *stubStackInstanceRepo) ExistsByDefinitionAndStatus(ctx context.Context, _, _ string) (bool, error) {
+	return false, ctx.Err()
+}
+func (s *stubStackInstanceRepo) ListExpired(ctx context.Context) ([]*models.StackInstance, error) {
+	return nil, ctx.Err()
+}
+func (s *stubStackInstanceRepo) ListExpiringSoon(ctx context.Context, _ time.Duration) ([]*models.StackInstance, error) {
+	return nil, ctx.Err()
+}
+func (*stubStackInstanceRepo) MarkExpiryWarned(ctx context.Context, _ string, _, _ time.Time) (bool, error) {
+	return false, ctx.Err()
+}
+func (s *stubStackInstanceRepo) ListByStatus(ctx context.Context, _ string, _ int) ([]*models.StackInstance, error) {
+	return nil, ctx.Err()
 }
 
 type stubChartConfigRepo struct{}
@@ -1178,7 +1192,10 @@ func (s *stubSessionStore) Stop()                           {}
 
 type stubTxRunner struct{}
 
-func (s *stubTxRunner) RunInTx(fn func(repos database.TxRepos) error) error {
+func (s *stubTxRunner) RunInTx(ctx context.Context, fn func(repos database.TxRepos) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	return fn(database.TxRepos{})
 }
 
@@ -1878,7 +1895,9 @@ func TestRateLimiters_Stop_NilSafe(t *testing.T) {
 	assert.NotPanics(t, func() { rl2.Stop() })
 }
 
-func (*stubStackInstanceRepo) CountByStatuses(statuses []string) (int, error) { return 0, nil }
+func (*stubStackInstanceRepo) CountByStatuses(ctx context.Context, statuses []string) (int, error) {
+	return 0, ctx.Err()
+}
 
 func (*stubClusterRepo) CountAll() (int, error) { return 0, nil }
 

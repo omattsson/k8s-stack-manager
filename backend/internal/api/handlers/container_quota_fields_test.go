@@ -175,7 +175,7 @@ func TestSetQuotaOverride_ContainerFields(t *testing.T) {
 			instRepo := NewMockStackInstanceRepository()
 			inst := seedInstance(t, instRepo, "inst-1", "my-stack", "def-1", "uid-1", models.StackStatusRunning)
 			inst.ClusterID = "cl-1"
-			require.NoError(t, instRepo.Update(inst))
+			require.NoError(t, instRepo.Update(context.Background(), inst))
 			oRepo := NewMockInstanceQuotaOverrideRepository()
 			quotaRepo := NewMockResourceQuotaRepository()
 			cq := clusterQuota

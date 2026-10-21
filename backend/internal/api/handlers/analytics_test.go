@@ -275,8 +275,8 @@ func TestGetOverview(t *testing.T) {
 				_ = tmplRepo.Create(&models.StackTemplate{ID: "t1", Name: "Template 1"})
 				_ = tmplRepo.Create(&models.StackTemplate{ID: "t2", Name: "Template 2"})
 				_ = defRepo.Create(&models.StackDefinition{ID: "d1", SourceTemplateID: "t1"})
-				_ = instRepo.Create(&models.StackInstance{ID: "i1", StackDefinitionID: "d1", OwnerID: "u1", Status: "running"})
-				_ = instRepo.Create(&models.StackInstance{ID: "i2", StackDefinitionID: "d1", OwnerID: "u2", Status: "stopped"})
+				_ = instRepo.Create(context.Background(), &models.StackInstance{ID: "i1", StackDefinitionID: "d1", OwnerID: "u1", Status: "running"})
+				_ = instRepo.Create(context.Background(), &models.StackInstance{ID: "i2", StackDefinitionID: "d1", OwnerID: "u2", Status: "stopped"})
 				_ = logRepo.Create(context.Background(), &models.DeploymentLog{ID: "l1", StackInstanceID: "i1", Action: "deploy", Status: "success"})
 				_ = logRepo.Create(context.Background(), &models.DeploymentLog{ID: "l2", StackInstanceID: "i1", Action: "deploy", Status: "error"})
 				_ = logRepo.Create(context.Background(), &models.DeploymentLog{ID: "l3", StackInstanceID: "i1", Action: "stop", Status: "success"})
@@ -360,8 +360,8 @@ func TestGetTemplateStats(t *testing.T) {
 				_ = defRepo.Create(&models.StackDefinition{ID: "d1", SourceTemplateID: "t1"})
 				_ = defRepo.Create(&models.StackDefinition{ID: "d2", SourceTemplateID: "t1"})
 				_ = defRepo.Create(&models.StackDefinition{ID: "d3"}) // standalone, no template
-				_ = instRepo.Create(&models.StackInstance{ID: "i1", StackDefinitionID: "d1", OwnerID: "u1", Status: "running"})
-				_ = instRepo.Create(&models.StackInstance{ID: "i2", StackDefinitionID: "d2", OwnerID: "u2", Status: "stopped"})
+				_ = instRepo.Create(context.Background(), &models.StackInstance{ID: "i1", StackDefinitionID: "d1", OwnerID: "u1", Status: "running"})
+				_ = instRepo.Create(context.Background(), &models.StackInstance{ID: "i2", StackDefinitionID: "d2", OwnerID: "u2", Status: "stopped"})
 				_ = logRepo.Create(context.Background(), &models.DeploymentLog{ID: "l1", StackInstanceID: "i1", Action: "deploy", Status: "success"})
 				_ = logRepo.Create(context.Background(), &models.DeploymentLog{ID: "l2", StackInstanceID: "i1", Action: "deploy", Status: "success"})
 				_ = logRepo.Create(context.Background(), &models.DeploymentLog{ID: "l3", StackInstanceID: "i2", Action: "deploy", Status: "error"})
@@ -469,9 +469,9 @@ func TestGetUserStats(t *testing.T) {
 				_ = userRepo.Create(context.Background(), &models.User{ID: "u1", Username: "alice"})
 				_ = userRepo.Create(context.Background(), &models.User{ID: "u2", Username: "bob"})
 
-				_ = instRepo.Create(&models.StackInstance{ID: "i1", StackDefinitionID: "d1", OwnerID: "u1", Status: "running"})
-				_ = instRepo.Create(&models.StackInstance{ID: "i2", StackDefinitionID: "d1", OwnerID: "u1", Status: "stopped"})
-				_ = instRepo.Create(&models.StackInstance{ID: "i3", StackDefinitionID: "d2", OwnerID: "u2", Status: "draft"})
+				_ = instRepo.Create(context.Background(), &models.StackInstance{ID: "i1", StackDefinitionID: "d1", OwnerID: "u1", Status: "running"})
+				_ = instRepo.Create(context.Background(), &models.StackInstance{ID: "i2", StackDefinitionID: "d1", OwnerID: "u1", Status: "stopped"})
+				_ = instRepo.Create(context.Background(), &models.StackInstance{ID: "i3", StackDefinitionID: "d2", OwnerID: "u2", Status: "draft"})
 
 				_ = logRepo.Create(context.Background(), &models.DeploymentLog{ID: "l1", StackInstanceID: "i1", Action: "deploy", Status: "success", StartedAt: earlier, UserID: "u1"})
 				_ = logRepo.Create(context.Background(), &models.DeploymentLog{ID: "l2", StackInstanceID: "i1", Action: "deploy", Status: "success", StartedAt: now, CompletedAt: &now, UserID: "u1"})
@@ -516,7 +516,7 @@ func TestGetUserStats(t *testing.T) {
 				_ = userRepo.Create(context.Background(), &models.User{ID: "u1", Username: "alice"})
 				_ = userRepo.Create(context.Background(), &models.User{ID: "u2", Username: "bob"})
 				// Only i1 (owned by alice) still exists; "gone" was deleted.
-				_ = instRepo.Create(&models.StackInstance{ID: "i1", StackDefinitionID: "d1", OwnerID: "u1", Status: "running"})
+				_ = instRepo.Create(context.Background(), &models.StackInstance{ID: "i1", StackDefinitionID: "d1", OwnerID: "u1", Status: "running"})
 
 				// Bob deploys alice's instance.
 				_ = logRepo.Create(context.Background(), &models.DeploymentLog{ID: "l1", StackInstanceID: "i1", Action: "deploy", Status: "success", StartedAt: earlier, UserID: "u2"})

@@ -261,11 +261,25 @@ func NewManager(cfg ManagerConfig) *Manager {
 	}
 }
 
+// namespacePhaseTimeout bounds the namespace phase check of Deploy: callers
+// pass a detached context (writeCtx, a job context).
+const namespacePhaseTimeout = 15 * time.Second
+
+// finalWriteTimeout bounds the final reads and writes of one deploy, stop,
+// clean or rollback (finalWriteCtx).
+const finalWriteTimeout = 30 * time.Second
+
+// finalWriteCtx is the context of the final reads and writes. Shutdown
+// cancels m.shutdownCtx before it waits for the operations (#656).
+func (m *Manager) finalWriteCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(m.shutdownCtx), finalWriteTimeout)
+}
+
 // clearDeleteAfterClean clears the persisted delete mark of the instance
 // (stack_instances.delete_after_clean) when the repository supports it.
-func (m *Manager) clearDeleteAfterClean(instanceID string) {
+func (m *Manager) clearDeleteAfterClean(ctx context.Context, instanceID string) {
 	if marker, ok := m.instanceRepo.(models.CleanStartMarker); ok {
-		if err := marker.ClearDeleteAfterClean(instanceID); err != nil {
+		if err := marker.ClearDeleteAfterClean(ctx, instanceID); err != nil {
 			slog.Warn("failed to clear delete_after_clean", "instance_id", instanceID, "error", err)
 		}
 	}
@@ -410,12 +424,12 @@ func (m *Manager) Shutdown() {
 // Deploy starts an async deployment. Returns the deployment log ID immediately.
 // The actual deployment runs in a background goroutine with concurrency limiting.
 //
-// The ctx parameter is used for early cancellation: if the request context is
+// The ctx parameter is used for early cancellation: if the caller context is
 // already done before work begins, Deploy returns an error immediately. The
 // background goroutine uses m.shutdownCtx instead, because it outlives the
-// HTTP request that triggered the deploy.
+// caller.
 func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error) {
-	// Short-circuit if the request context is already cancelled.
+	// Short-circuit if the caller context is already cancelled.
 	if err := ctx.Err(); err != nil {
 		return "", fmt.Errorf("request cancelled: %w", err)
 	}
@@ -458,7 +472,9 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 
 	// Reject deploy when the target namespace is still terminating (#182).
 	if k8sClient != nil {
-		phase, phaseErr := k8sClient.GetNamespacePhase(ctx, req.Instance.Namespace)
+		phaseCtx, phaseCancel := context.WithTimeout(ctx, namespacePhaseTimeout)
+		phase, phaseErr := k8sClient.GetNamespacePhase(phaseCtx, req.Instance.Namespace)
+		phaseCancel()
 		if phaseErr != nil {
 			return "", fmt.Errorf("checking namespace phase: %w", phaseErr)
 		}
@@ -497,11 +513,11 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 	req.Instance.PostDeployHookUntil = nil
 
 	if m.txRunner != nil {
-		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
+		if err := m.txRunner.RunInTx(ctx, func(repos database.TxRepos) error {
 			if err := repos.DeploymentLog.Create(ctx, deployLog); err != nil {
 				return fmt.Errorf("creating deployment log: %w", err)
 			}
-			if err := repos.StackInstance.Update(req.Instance); err != nil {
+			if err := repos.StackInstance.Update(ctx, req.Instance); err != nil {
 				return fmt.Errorf("updating instance status: %w", err)
 			}
 			return nil
@@ -512,7 +528,7 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 		if err := m.logRepo.Create(ctx, deployLog); err != nil {
 			return "", fmt.Errorf("creating deployment log: %w", err)
 		}
-		if err := m.instanceRepo.Update(req.Instance); err != nil {
+		if err := m.instanceRepo.Update(ctx, req.Instance); err != nil {
 			return "", fmt.Errorf("updating instance status: %w", err)
 		}
 	}
@@ -642,7 +658,7 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 	// charts. finalizeDeploy keeps the new status and only closes the log.
 	// The watcher of firePreHook sees most changes. This check covers a hook
 	// that answers before the next watcher poll.
-	if owned, current := m.ownsInstance(instanceID, deployLog.ID, models.StackStatusDeploying); !owned {
+	if owned, current := m.ownsAfterPreHook(instanceID, deployLog.ID); !owned {
 		m.cancelDeployAfterPreHook(instanceID, deployLog, hookOutput, current, lastDeployedValues)
 		return
 	}
@@ -955,7 +971,12 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 	if deployErr == nil && m.stabilizeTimeout > 0 && k8sClient != nil {
 		readinessRan = true
 		var waitErr error
-		if lastStatus, waitErr = m.awaitReadiness(k8sClient, instanceID, namespace, deployLog.ID); waitErr != nil {
+		if lastStatus, waitErr = m.awaitReadiness(k8sClient, instanceID, namespace, deployLog.ID); errors.Is(waitErr, ErrDeployInterrupted) {
+			line := "ERROR: " + waitErr.Error()
+			m.broadcastLog(instanceID, deployLog.ID, line)
+			allOutput += line + "\n"
+			deployErr = waitErr
+		} else if waitErr != nil {
 			readinessWarning = waitErr.Error()
 		}
 	}
@@ -971,7 +992,11 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 	// error message) and into the readiness warning.
 	podEventLines, podEvent := podWatch.stop()
 	allOutput += podEventLines
-	deployErr = withPodEvent(deployErr, podEvent)
+	// An interrupt keeps its exact message: an event text such as "timed
+	// out" would make it a deploy timeout.
+	if !errors.Is(deployErr, ErrDeployInterrupted) {
+		deployErr = withPodEvent(deployErr, podEvent)
+	}
 	if readinessWarning != "" {
 		if podEvent != "" {
 			readinessWarning += " (pod event: " + podEvent + ")"
@@ -1007,15 +1032,14 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 // stabilize timeout expires. A timeout is returned as an error (treated as a
 // warning by the caller, not a hard deploy failure). It also returns the last
 // namespace status that it read (nil when no read succeeded), for the
-// primary URL of the stack (see primaryURL).
+// primary URL of the stack (see primaryURL). A server shutdown before or
+// during the wait ends it with one last status read (readinessAfterShutdown).
 func (m *Manager) awaitReadiness(k8sClient *k8s.Client, instanceID, namespace, logID string) (*k8s.NamespaceStatus, error) {
-	inst, err := m.instanceRepo.FindByID(instanceID)
-	if err != nil {
-		return nil, fmt.Errorf("find instance for stabilize: %w", err)
+	if m.shutdownCtx.Err() != nil {
+		return m.readinessAfterShutdown(k8sClient, instanceID, namespace, logID, nil)
 	}
-	inst.Status = models.StackStatusStabilizing
-	if err := m.instanceRepo.Update(inst); err != nil {
-		slog.Warn("failed to set stabilizing status", "instance_id", instanceID, "error", err)
+	if err := m.markStabilizing(instanceID); err != nil {
+		return nil, err
 	}
 	m.broadcastStatus(instanceID, models.StackStatusStabilizing, logID)
 	m.broadcastLog(instanceID, logID, "Helm charts installed, waiting for pods to become ready...")
@@ -1030,11 +1054,14 @@ func (m *Manager) awaitReadiness(k8sClient *k8s.Client, instanceID, namespace, l
 	for {
 		select {
 		case <-stabilizeCtx.Done():
+			if m.shutdownCtx.Err() != nil {
+				return m.readinessAfterShutdown(k8sClient, instanceID, namespace, logID, last)
+			}
 			m.broadcastLog(instanceID, logID, fmt.Sprintf("WARNING: readiness timeout after %s", m.stabilizeTimeout))
 			return last, fmt.Errorf("readiness timeout after %s", m.stabilizeTimeout)
 		case <-ticker.C:
 			// Abort early if the instance was stopped/cleaned while stabilizing.
-			if current, findErr := m.instanceRepo.FindByID(instanceID); findErr == nil {
+			if current, findErr := m.instanceRepo.FindByID(stabilizeCtx, instanceID); findErr == nil {
 				if current.Status != models.StackStatusStabilizing {
 					m.broadcastLog(instanceID, logID, fmt.Sprintf("Stabilization aborted: instance status changed to %s", current.Status))
 					return last, fmt.Errorf("stabilization aborted: status changed to %s", current.Status)
@@ -1061,6 +1088,44 @@ func (m *Manager) awaitReadiness(k8sClient *k8s.Client, instanceID, namespace, l
 	}
 }
 
+// shutdownStatusTimeout bounds the last namespace status read of a readiness
+// wait that a shutdown ends.
+const shutdownStatusTimeout = 5 * time.Second
+
+// readinessAfterShutdown reads the namespace status once more after a
+// shutdown. Healthy pods count as ready, so a backend restart does not fail
+// a stack that is up. Otherwise it returns ErrDeployInterrupted.
+func (m *Manager) readinessAfterShutdown(k8sClient *k8s.Client, instanceID, namespace, logID string, last *k8s.NamespaceStatus) (*k8s.NamespaceStatus, error) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(m.shutdownCtx), shutdownStatusTimeout)
+	defer cancel()
+	nsStatus, err := k8sClient.GetNamespaceStatus(ctx, namespace, k8s.StatusOptions{})
+	if err != nil {
+		slog.Warn("readiness check after shutdown failed", "instance_id", instanceID, "error", err)
+		return last, ErrDeployInterrupted
+	}
+	if nsStatus.Status == k8s.StatusHealthy {
+		m.broadcastLog(instanceID, logID, "All pods healthy")
+		return nsStatus, nil
+	}
+	return nsStatus, ErrDeployInterrupted
+}
+
+// markStabilizing sets the instance status stabilizing at the start of the
+// readiness wait. A shutdown must not fail the read (see finalWriteCtx).
+func (m *Manager) markStabilizing(instanceID string) error {
+	ctx, cancel := m.finalWriteCtx()
+	defer cancel()
+	inst, err := m.instanceRepo.FindByID(ctx, instanceID)
+	if err != nil {
+		return fmt.Errorf("find instance for stabilize: %w", err)
+	}
+	inst.Status = models.StackStatusStabilizing
+	if err := m.instanceRepo.Update(ctx, inst); err != nil {
+		slog.Warn("failed to set stabilizing status", "instance_id", instanceID, "error", err)
+	}
+	return nil
+}
+
 // finalizeDeploy updates the instance and deployment log with the final status.
 // The deployLog is passed directly from the goroutine closure to avoid an
 // extra FindByID call. readinessWarning is non-empty when pod readiness timed
@@ -1080,8 +1145,10 @@ const msgFinalizeInstanceUnreadable = "The deploy ended, but the stack could not
 // none).
 func (m *Manager) finalizeDeployWith(instanceID string, deployLog *models.DeploymentLog, output string, deployErr error, partialDeploy bool, lastDeployedValues string, readinessWarning string, postDeployIgnored []hooks.IgnoredFailure, siteURL string) {
 	now := time.Now().UTC()
+	ctx, cancel := m.finalWriteCtx()
+	defer cancel()
 
-	instance, err := m.instanceRepo.FindByID(instanceID)
+	instance, err := m.instanceRepo.FindByID(ctx, instanceID)
 	if err != nil {
 		slog.Error("failed to find instance for finalization",
 			"instance_id", instanceID, "error", err)
@@ -1091,7 +1158,7 @@ func (m *Manager) finalizeDeployWith(instanceID string, deployLog *models.Deploy
 		deployLog.CompletedAt = &now
 		deployLog.Status = models.DeployLogError
 		deployLog.ErrorMessage = msgFinalizeInstanceUnreadable
-		m.fallbackLogUpdate(instanceID, deployLog)
+		m.fallbackLogUpdate(ctx, instanceID, deployLog)
 		return
 	}
 
@@ -1104,7 +1171,7 @@ func (m *Manager) finalizeDeployWith(instanceID string, deployLog *models.Deploy
 		instance.Status != models.StackStatusStabilizing
 	// A newer operation (for example a new deploy after a stop during a
 	// blocking post-deploy hook) also owns the instance now.
-	if !concurrentOp && m.newerOperation(instanceID, deployLog.ID) {
+	if !concurrentOp && m.newerOperation(ctx, instanceID, deployLog.ID) {
 		concurrentOp = true
 	}
 	if concurrentOp {
@@ -1123,7 +1190,7 @@ func (m *Manager) finalizeDeployWith(instanceID string, deployLog *models.Deploy
 			}
 			deployLog.ErrorMessage = truncateString(sanitized, maxLogErrorLen)
 		}
-		m.writeFinal(nil, deployLog, "deploy")
+		m.writeFinal(ctx, nil, deployLog, "deploy")
 		return
 	}
 
@@ -1172,7 +1239,7 @@ func (m *Manager) finalizeDeployWith(instanceID string, deployLog *models.Deploy
 		)
 	}
 
-	if !m.writeFinal(instance, deployLog, "deploy") {
+	if !m.writeFinal(ctx, instance, deployLog, "deploy") {
 		m.logActions.Delete(deployLog.ID)
 		return
 	}
@@ -1211,7 +1278,7 @@ func (m *Manager) finalizeDeployWith(instanceID string, deployLog *models.Deploy
 	if deployErr != nil && !partialDeploy {
 		// A failed blocking post-deploy subscriber is a hook failure, also
 		// when it timed out: no deploy-timeout event.
-		if isTimeoutError(deployErr) && !isPostDeployHookError(deployErr) {
+		if isTimeoutError(deployErr) && !isPostDeployHookError(deployErr) && !errors.Is(deployErr, ErrDeployInterrupted) {
 			m.notifyInstance(models.NewNotificationTarget(instance), "deploy.timeout",
 				"Deployment timed out",
 				fmt.Sprintf("Deployment of %s exceeded the timeout threshold", instance.Name), trigger)
@@ -1237,12 +1304,12 @@ func (m *Manager) finalizeDeployWith(instanceID string, deployLog *models.Deploy
 // Returns the deployment log ID immediately. If charts is nil or empty, the
 // stop finalizes immediately without running helm uninstall.
 //
-// The ctx parameter is used for early cancellation: if the request context is
+// The ctx parameter is used for early cancellation: if the caller context is
 // already done before work begins, StopWithCharts returns an error immediately.
 // The background goroutine uses m.shutdownCtx instead, because it outlives the
-// HTTP request that triggered the stop.
+// caller.
 func (m *Manager) StopWithCharts(ctx context.Context, instance *models.StackInstance, charts []ChartDeployInfo) (string, error) {
-	// Short-circuit if the request context is already cancelled.
+	// Short-circuit if the caller context is already cancelled.
 	if err := ctx.Err(); err != nil {
 		return "", fmt.Errorf("request cancelled: %w", err)
 	}
@@ -1285,11 +1352,11 @@ func (m *Manager) StopWithCharts(ctx context.Context, instance *models.StackInst
 	instance.ErrorMessage = ""
 
 	if m.txRunner != nil {
-		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
+		if err := m.txRunner.RunInTx(ctx, func(repos database.TxRepos) error {
 			if err := repos.DeploymentLog.Create(ctx, deployLog); err != nil {
 				return fmt.Errorf("creating deployment log: %w", err)
 			}
-			if err := repos.StackInstance.Update(instance); err != nil {
+			if err := repos.StackInstance.Update(ctx, instance); err != nil {
 				return fmt.Errorf("updating instance status: %w", err)
 			}
 			return nil
@@ -1300,7 +1367,7 @@ func (m *Manager) StopWithCharts(ctx context.Context, instance *models.StackInst
 		if err := m.logRepo.Create(ctx, deployLog); err != nil {
 			return "", fmt.Errorf("creating deployment log: %w", err)
 		}
-		if err := m.instanceRepo.Update(instance); err != nil {
+		if err := m.instanceRepo.Update(ctx, instance); err != nil {
 			return "", fmt.Errorf("updating instance status: %w", err)
 		}
 	}
@@ -1398,8 +1465,10 @@ func (m *Manager) executeStopWithCharts(helm HelmExecutor, instanceID string, de
 // extra FindByID call.
 func (m *Manager) finalizeStop(instanceID string, deployLog *models.DeploymentLog, output string, stopErr error) {
 	now := time.Now().UTC()
+	ctx, cancel := m.finalWriteCtx()
+	defer cancel()
 
-	instance, err := m.instanceRepo.FindByID(instanceID)
+	instance, err := m.instanceRepo.FindByID(ctx, instanceID)
 	if err != nil {
 		slog.Error("failed to find instance for stop finalization",
 			"instance_id", instanceID, "error", err)
@@ -1436,7 +1505,7 @@ func (m *Manager) finalizeStop(instanceID string, deployLog *models.DeploymentLo
 		)
 	}
 
-	if !m.writeFinal(instance, deployLog, "stop") {
+	if !m.writeFinal(ctx, instance, deployLog, "stop") {
 		m.logActions.Delete(deployLog.ID)
 		return
 	}
@@ -1533,7 +1602,7 @@ func sanitizeDeployError(err error) string {
 	// which is the outermost fmt.Errorf wrapper in executeDeploy / executeStopWithCharts.
 	// Partial/total chart failure messages are already user-safe — pass through.
 	if strings.HasPrefix(msg, "all charts failed") || strings.HasPrefix(msg, "partial deploy") ||
-		errors.Is(err, ErrInvalidQuota) || errors.Is(err, ErrDeployInterrupted) {
+		errors.Is(err, ErrInvalidQuota) || errors.Is(err, ErrDeployInterrupted) || errors.Is(err, errPostDeployNotStarted) {
 		return msg
 	}
 
@@ -1558,10 +1627,10 @@ func sanitizeDeployError(err error) string {
 // and deletes the Kubernetes namespace, returning the instance to draft status.
 // Returns the deployment log ID immediately.
 //
-// The ctx parameter is used for early cancellation: if the request context is
+// The ctx parameter is used for early cancellation: if the caller context is
 // already done before work begins, Clean returns an error immediately. The
 // background goroutine uses m.shutdownCtx instead, because it outlives the
-// HTTP request that triggered the clean.
+// caller.
 func (m *Manager) Clean(ctx context.Context, instance *models.StackInstance, charts []models.ChartConfig) (string, error) {
 	return m.startClean(ctx, instance, charts, false)
 }
@@ -1583,16 +1652,16 @@ func (m *Manager) CleanForDelete(ctx context.Context, instance *models.StackInst
 // conditional update of models.CleanStartMarker (status in
 // models.CleanStatuses; a plain clean also needs no delete mark, a delete
 // sets it). A repository without the marker gets a plain Update.
-func markCleanStart(repo models.StackInstanceRepository, instance *models.StackInstance, forDelete bool) error {
+func markCleanStart(ctx context.Context, repo models.StackInstanceRepository, instance *models.StackInstance, forDelete bool) error {
 	if marker, ok := repo.(models.CleanStartMarker); ok {
-		return marker.MarkCleanStart(instance.ID, models.CleanStatuses, forDelete)
+		return marker.MarkCleanStart(ctx, instance.ID, models.CleanStatuses, forDelete)
 	}
 	instance.DeleteAfterClean = forDelete
-	return repo.Update(instance)
+	return repo.Update(ctx, instance)
 }
 
 func (m *Manager) startClean(ctx context.Context, instance *models.StackInstance, charts []models.ChartConfig, forDelete bool) (string, error) {
-	// Short-circuit if the request context is already cancelled.
+	// Short-circuit if the caller context is already cancelled.
 	if err := ctx.Err(); err != nil {
 		return "", fmt.Errorf("request cancelled: %w", err)
 	}
@@ -1639,10 +1708,10 @@ func (m *Manager) startClean(ctx context.Context, instance *models.StackInstance
 	instance.ErrorMessage = ""
 
 	if m.txRunner != nil {
-		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
+		if err := m.txRunner.RunInTx(ctx, func(repos database.TxRepos) error {
 			// The instance first: the conditional update of a delete
 			// decides before the log exists.
-			if err := markCleanStart(repos.StackInstance, instance, forDelete); err != nil {
+			if err := markCleanStart(ctx, repos.StackInstance, instance, forDelete); err != nil {
 				return fmt.Errorf("updating instance status: %w", err)
 			}
 			if err := repos.DeploymentLog.Create(ctx, deployLog); err != nil {
@@ -1655,7 +1724,7 @@ func (m *Manager) startClean(ctx context.Context, instance *models.StackInstance
 			return "", err
 		}
 	} else {
-		if err := markCleanStart(m.instanceRepo, instance, forDelete); err != nil {
+		if err := markCleanStart(ctx, m.instanceRepo, instance, forDelete); err != nil {
 			m.logActions.Delete(logID)
 			return "", fmt.Errorf("updating instance status: %w", err)
 		}
@@ -1695,7 +1764,9 @@ func (m *Manager) executeClean(helm HelmExecutor, k8sClient *k8s.Client, instanc
 	defer func() { <-m.semaphore }()
 	if !m.extendDeadline(deployLog, helm, len(charts)) {
 		// The instance stays (status error): no delete after the clean.
-		m.clearDeleteAfterClean(instanceID)
+		ctx, cancel := m.finalWriteCtx()
+		m.clearDeleteAfterClean(ctx, instanceID)
+		cancel()
 		return
 	}
 
@@ -1798,8 +1869,10 @@ func (m *Manager) executeClean(helm HelmExecutor, k8sClient *k8s.Client, instanc
 // On success the instance is returned to draft status with cleared error and deploy time.
 func (m *Manager) finalizeClean(instanceID string, deployLog *models.DeploymentLog, output string, cleanErr error) {
 	now := time.Now().UTC()
+	ctx, cancel := m.finalWriteCtx()
+	defer cancel()
 
-	instance, err := m.instanceRepo.FindByID(instanceID)
+	instance, err := m.instanceRepo.FindByID(ctx, instanceID)
 	if err != nil {
 		slog.Error("failed to find instance for clean finalization",
 			"instance_id", instanceID, "error", err)
@@ -1822,7 +1895,7 @@ func (m *Manager) finalizeClean(instanceID string, deployLog *models.DeploymentL
 			// The instance stays: clear the mark, so a later clean does
 			// not delete it, and tell why it still exists.
 			instance.DeleteAfterClean = false
-			m.clearDeleteAfterClean(instanceID)
+			m.clearDeleteAfterClean(ctx, instanceID)
 			instance.ErrorMessage = truncateString(models.DeleteCleanFailedMessage+" "+sanitized, maxInstanceErrorLen)
 		}
 		deployLog.Status = models.DeployLogError
@@ -1847,12 +1920,12 @@ func (m *Manager) finalizeClean(instanceID string, deployLog *models.DeploymentL
 		)
 	}
 
-	if !m.writeFinal(instance, deployLog, "clean") {
+	if !m.writeFinal(ctx, instance, deployLog, "clean") {
 		m.logActions.Delete(deployLog.ID)
 		// The instance stays (another operation owns it): no delete after
 		// the clean.
 		if shouldDelete {
-			m.clearDeleteAfterClean(instanceID)
+			m.clearDeleteAfterClean(ctx, instanceID)
 		}
 		return
 	}
@@ -1871,14 +1944,14 @@ func (m *Manager) finalizeClean(instanceID string, deployLog *models.DeploymentL
 	} else if shouldDelete {
 		var delErr error
 		if m.txRunner != nil {
-			delErr = database.DeleteInstanceWithOwnedDefinition(m.txRunner, instance)
+			delErr = database.DeleteInstanceWithOwnedDefinition(ctx, m.txRunner, instance)
 		} else {
-			delErr = m.instanceRepo.Delete(instanceID)
+			delErr = m.instanceRepo.Delete(ctx, instanceID)
 		}
 		if delErr != nil {
 			slog.Error("failed to delete instance after clean",
 				"instance_id", instanceID, "error", delErr)
-			m.clearDeleteAfterClean(instanceID)
+			m.clearDeleteAfterClean(ctx, instanceID)
 			m.broadcastStatus(instanceID, models.StackStatusDraft, deployLog.ID)
 		} else {
 			deleted = true
@@ -2032,11 +2105,11 @@ func (m *Manager) Rollback(ctx context.Context, req RollbackRequest) (string, er
 	req.Instance.ErrorMessage = ""
 
 	if m.txRunner != nil {
-		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
+		if err := m.txRunner.RunInTx(ctx, func(repos database.TxRepos) error {
 			if err := repos.DeploymentLog.Create(ctx, deployLog); err != nil {
 				return fmt.Errorf("creating deployment log: %w", err)
 			}
-			if err := repos.StackInstance.Update(req.Instance); err != nil {
+			if err := repos.StackInstance.Update(ctx, req.Instance); err != nil {
 				return fmt.Errorf("updating instance status: %w", err)
 			}
 			return nil
@@ -2047,7 +2120,7 @@ func (m *Manager) Rollback(ctx context.Context, req RollbackRequest) (string, er
 		if err := m.logRepo.Create(ctx, deployLog); err != nil {
 			return "", fmt.Errorf("creating deployment log: %w", err)
 		}
-		if err := m.instanceRepo.Update(req.Instance); err != nil {
+		if err := m.instanceRepo.Update(ctx, req.Instance); err != nil {
 			return "", fmt.Errorf("updating instance status: %w", err)
 		}
 	}
@@ -2122,7 +2195,7 @@ func (m *Manager) executeRollback(job rollbackJob) {
 	// Another operation (a stop) during a long hook wins:
 	// do not touch the releases or the instance. This check covers a hook
 	// that answers before the next watcher poll of firePreHook.
-	if owned, current := m.ownsInstance(instanceID, deployLog.ID, models.StackStatusDeploying); !owned {
+	if owned, current := m.ownsAfterPreHook(instanceID, deployLog.ID); !owned {
 		reason := rollbackCancelReason(current)
 		m.finalizeRollbackCancelled(instanceID, deployLog, allOutput, reason)
 		return
@@ -2274,8 +2347,10 @@ func (m *Manager) collectChartValues(ctx context.Context, helm HelmExecutor, nam
 // values become the values snapshot of the rollback log.
 func (m *Manager) finalizeRollback(instanceID string, deployLog *models.DeploymentLog, output string, rollbackErr error, applied map[string]string, siteURL string) {
 	now := time.Now().UTC()
+	ctx, cancel := m.finalWriteCtx()
+	defer cancel()
 
-	instance, err := m.instanceRepo.FindByID(instanceID)
+	instance, err := m.instanceRepo.FindByID(ctx, instanceID)
 	if err != nil {
 		slog.Error("failed to find instance for rollback finalization",
 			"instance_id", instanceID, "error", err)
@@ -2287,7 +2362,7 @@ func (m *Manager) finalizeRollback(instanceID string, deployLog *models.Deployme
 
 	// If another operation (stop, clean, deploy) started during the
 	// rollback, keep its status (and stopped_at); only close the rollback log.
-	if owned, current := m.ownsInstance(instanceID, deployLog.ID, models.StackStatusDeploying, models.StackStatusStabilizing); !owned {
+	if owned, current := m.ownsInstance(ctx, instanceID, deployLog.ID, models.StackStatusDeploying, models.StackStatusStabilizing); !owned {
 		slog.Warn("finalizeRollback: another operation changed the instance, skipping instance update",
 			"instance_id", instanceID, "current_status", current)
 		m.finalizeRollbackCancelled(instanceID, deployLog, output,
@@ -2334,7 +2409,7 @@ func (m *Manager) finalizeRollback(instanceID string, deployLog *models.Deployme
 		)
 	}
 
-	if !m.writeFinal(instance, deployLog, "rollback") {
+	if !m.writeFinal(ctx, instance, deployLog, "rollback") {
 		m.logActions.Delete(deployLog.ID)
 		return
 	}
@@ -2427,7 +2502,7 @@ var ErrInvalidQuota = errors.New("invalid resource quota")
 // it is not valid, so a bad quota fails with a clear message instead of a
 // Kubernetes API error.
 func (m *Manager) effectiveNamespaceQuota(ctx context.Context, instanceID string) (string, *models.ResourceQuotaConfig, bool, error) {
-	instance, err := m.instanceRepo.FindByID(instanceID)
+	instance, err := m.instanceRepo.FindByID(ctx, instanceID)
 	if err != nil {
 		return "", nil, false, fmt.Errorf("finding instance: %w", err)
 	}

@@ -84,7 +84,7 @@ func newAuthzFixture(t *testing.T, instStatus, callerID, callerRole string) *aut
 	// change ExpiresAt), its definition, one chart and one override of each kind.
 	inst := seedInstance(t, f.instRepo, authzInstanceID, "my-stack", "d1", authzOwnerID, instStatus)
 	inst.TTLMinutes = 60
-	require.NoError(t, f.instRepo.Update(inst))
+	require.NoError(t, f.instRepo.Update(context.Background(), inst))
 	seedDefinition(t, defRepo, "d1", "My Def", authzOwnerID)
 	require.NoError(t, ccRepo.Create(&models.ChartConfig{
 		ID:                authzChartID,
@@ -206,7 +206,7 @@ func newAuthzFixture(t *testing.T, instStatus, callerID, callerRole string) *aut
 func (f *authzFixture) assertNoSideEffects(t *testing.T, before *models.StackInstance) {
 	t.Helper()
 
-	after, err := f.instRepo.FindByID(authzInstanceID)
+	after, err := f.instRepo.FindByID(context.Background(), authzInstanceID)
 	require.NoError(t, err, "instance must not be deleted")
 	assert.Equal(t, before, after, "instance must not change (status, TTL, fields)")
 
@@ -308,7 +308,7 @@ func TestInstanceAuthorization_ProtectedEndpoints(t *testing.T) {
 			t.Parallel()
 
 			f := newAuthzFixture(t, tt.instStatus, tt.callerID, tt.callerRole)
-			before, err := f.instRepo.FindByID(authzInstanceID)
+			before, err := f.instRepo.FindByID(context.Background(), authzInstanceID)
 			require.NoError(t, err)
 
 			w := httptest.NewRecorder()

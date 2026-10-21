@@ -45,7 +45,7 @@ func newUniqueNamesFixture(t *testing.T, seed ...models.StackInstance) *uniqueNa
 		inst.Branch = "master"
 		inst.Status = models.StackStatusDraft
 		inst.CreatedAt, inst.UpdatedAt = now, now
-		require.NoError(t, f.instances.Create(&inst))
+		require.NoError(t, f.instances.Create(context.Background(), &inst))
 	}
 	return f
 }
@@ -353,13 +353,13 @@ func TestLogDuplicateInstanceNames(t *testing.T) {
 		models.StackInstance{ID: "a", Name: "demo", Namespace: "stack-demo-a", OwnerID: "uid-1", ClusterID: "c1"},
 		models.StackInstance{ID: "b", Name: "Demo", Namespace: "stack-demo-b", OwnerID: "uid-carol"},
 	)
-	dups, err := f.instances.DuplicateInstanceNames("c1")
+	dups, err := f.instances.DuplicateInstanceNames(context.Background(), "c1")
 	require.NoError(t, err)
 	assert.Equal(t, []models.DuplicateInstanceName{{ClusterID: "c1", Name: "demo", Count: 2}}, dups)
 	// The log helper must not panic on the result or on an error.
-	LogDuplicateInstanceNames(f.instances, "c1")
+	LogDuplicateInstanceNames(context.Background(), f.instances, "c1")
 	f.instances.SetError(assert.AnError)
-	LogDuplicateInstanceNames(f.instances, "c1")
+	LogDuplicateInstanceNames(context.Background(), f.instances, "c1")
 }
 
 // takenCloneNames returns instances of carol on c1 for every generated clone

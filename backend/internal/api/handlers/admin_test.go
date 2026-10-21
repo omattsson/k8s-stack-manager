@@ -145,7 +145,7 @@ func TestListOrphanedNamespaces(t *testing.T) {
 		k8sClient := k8s.NewClientFromInterface(clientset)
 		instanceRepo := NewMockStackInstanceRepository()
 		// Add an instance matching the first namespace.
-		_ = instanceRepo.Create(&models.StackInstance{
+		_ = instanceRepo.Create(context.Background(), &models.StackInstance{
 			ID:        "inst-1",
 			Name:      "myapp",
 			Namespace: "stack-myapp-alice",
@@ -486,7 +486,7 @@ func TestDeleteOrphanedNamespace(t *testing.T) {
 		clientset := fake.NewSimpleClientset()
 		k8sClient := k8s.NewClientFromInterface(clientset)
 		instanceRepo := NewMockStackInstanceRepository()
-		_ = instanceRepo.Create(&models.StackInstance{
+		_ = instanceRepo.Create(context.Background(), &models.StackInstance{
 			ID:        "inst-1",
 			Name:      "myapp",
 			Namespace: "stack-myapp-alice",

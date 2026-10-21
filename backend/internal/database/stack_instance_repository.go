@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"errors"
 	"time"
 
@@ -26,14 +27,14 @@ func NewGORMStackInstanceRepository(db *gorm.DB) *GORMStackInstanceRepository {
 }
 
 // Create inserts a new stack instance record.
-func (r *GORMStackInstanceRepository) Create(instance *models.StackInstance) error {
+func (r *GORMStackInstanceRepository) Create(ctx context.Context, instance *models.StackInstance) error {
 	if instance.ID == "" {
 		instance.ID = uuid.New().String()
 	}
 	now := time.Now().UTC()
 	instance.CreatedAt = now
 	instance.UpdatedAt = now
-	if err := r.db.Create(instance).Error; err != nil {
+	if err := r.db.WithContext(ctx).Create(instance).Error; err != nil {
 		if isDuplicateKeyError(err) {
 			return dberrors.NewDatabaseError("create", dberrors.ErrDuplicateKey)
 		}
@@ -43,9 +44,9 @@ func (r *GORMStackInstanceRepository) Create(instance *models.StackInstance) err
 }
 
 // FindByID returns a stack instance by its ID.
-func (r *GORMStackInstanceRepository) FindByID(id string) (*models.StackInstance, error) {
+func (r *GORMStackInstanceRepository) FindByID(ctx context.Context, id string) (*models.StackInstance, error) {
 	var instance models.StackInstance
-	if err := r.db.Where("id = ?", id).First(&instance).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&instance).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, dberrors.NewDatabaseError("find_by_id", dberrors.ErrNotFound)
 		}
@@ -55,9 +56,9 @@ func (r *GORMStackInstanceRepository) FindByID(id string) (*models.StackInstance
 }
 
 // FindByNamespace returns the stack instance occupying the given namespace.
-func (r *GORMStackInstanceRepository) FindByNamespace(namespace string) (*models.StackInstance, error) {
+func (r *GORMStackInstanceRepository) FindByNamespace(ctx context.Context, namespace string) (*models.StackInstance, error) {
 	var instance models.StackInstance
-	if err := r.db.Where("namespace = ?", namespace).First(&instance).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("namespace = ?", namespace).First(&instance).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, dberrors.NewDatabaseError("find_by_namespace", dberrors.ErrNotFound)
 		}
@@ -84,15 +85,18 @@ const expiryMatchTolerance = time.Second
 // before the expiry warning must not reset the mark. When Update changes
 // expires_at (deploy, extend, TTL change), it clears the mark in the same
 // transaction, so the new expiry time gets a new warning.
-func (r *GORMStackInstanceRepository) Update(instance *models.StackInstance) error {
+func (r *GORMStackInstanceRepository) Update(ctx context.Context, instance *models.StackInstance) error {
 	instance.UpdatedAt = time.Now().UTC()
-	err := r.db.Transaction(func(tx *gorm.DB) error {
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := clearExpiryWarningIfExpiryChanged(tx, instance); err != nil {
 			return err
 		}
 		return tx.Omit(columnExpiryWarnedAt, columnDeleteAfterClean).Save(instance).Error
 	})
 	if err != nil {
+		if ctx.Err() != nil {
+			return withContextErr(ctx, "update", err)
+		}
 		if isDuplicateKeyError(err) {
 			return dberrors.NewDatabaseError("update", dberrors.ErrDuplicateKey)
 		}
@@ -124,13 +128,13 @@ func clearExpiryWarningIfExpiryChanged(tx *gorm.DB, instance *models.StackInstan
 // models.ErrDeleteConflict. Without it the row must not have
 // delete_after_clean (a plain clean never overwrites a delete); else
 // models.ErrCleanConflict.
-func (r *GORMStackInstanceRepository) MarkCleanStart(id string, fromStatuses []string, deleteAfterClean bool) error {
+func (r *GORMStackInstanceRepository) MarkCleanStart(ctx context.Context, id string, fromStatuses []string, deleteAfterClean bool) error {
 	updates := map[string]any{
 		"status":        models.StackStatusCleaning,
 		"error_message": "",
 		"updated_at":    time.Now().UTC(),
 	}
-	q := r.db.Model(&models.StackInstance{}).Where("id = ? AND status IN ?", id, fromStatuses)
+	q := r.db.WithContext(ctx).Model(&models.StackInstance{}).Where("id = ? AND status IN ?", id, fromStatuses)
 	conflict := models.ErrDeleteConflict
 	if deleteAfterClean {
 		updates[columnDeleteAfterClean] = true
@@ -151,8 +155,8 @@ func (r *GORMStackInstanceRepository) MarkCleanStart(id string, fromStatuses []s
 // MarkNamespaceError implements models.InstanceErrorMarker: one conditional
 // update, so a deploy, stop or clean that started after the read of the
 // status watcher keeps its status.
-func (r *GORMStackInstanceRepository) MarkNamespaceError(id, message string, now time.Time) (bool, error) {
-	res := r.db.Model(&models.StackInstance{}).
+func (r *GORMStackInstanceRepository) MarkNamespaceError(ctx context.Context, id, message string, now time.Time) (bool, error) {
+	res := r.db.WithContext(ctx).Model(&models.StackInstance{}).
 		Where("id = ?", id).
 		Where("status IN ? OR (status = ? AND (post_deploy_hook_until IS NULL OR post_deploy_hook_until < ?))",
 			[]string{models.StackStatusRunning, models.StackStatusPartial}, models.StackStatusStabilizing, now.UTC()).
@@ -168,8 +172,8 @@ func (r *GORMStackInstanceRepository) MarkNamespaceError(id, message string, now
 }
 
 // ClearDeleteAfterClean clears delete_after_clean of the instance.
-func (r *GORMStackInstanceRepository) ClearDeleteAfterClean(id string) error {
-	if err := r.db.Model(&models.StackInstance{}).Where("id = ?", id).
+func (r *GORMStackInstanceRepository) ClearDeleteAfterClean(ctx context.Context, id string) error {
+	if err := r.db.WithContext(ctx).Model(&models.StackInstance{}).Where("id = ?", id).
 		UpdateColumn(columnDeleteAfterClean, false).Error; err != nil {
 		return dberrors.NewDatabaseError("clear_delete_after_clean", err)
 	}
@@ -180,9 +184,9 @@ func (r *GORMStackInstanceRepository) ClearDeleteAfterClean(id string) error {
 // warning and its expires_at still matches expiresAt. The conditional update
 // makes sure that only one caller gets true, also when two replicas run the
 // expiry warner at the same time.
-func (r *GORMStackInstanceRepository) MarkExpiryWarned(id string, expiresAt, warnedAt time.Time) (bool, error) {
+func (r *GORMStackInstanceRepository) MarkExpiryWarned(ctx context.Context, id string, expiresAt, warnedAt time.Time) (bool, error) {
 	exp := expiresAt.UTC()
-	res := r.db.Model(&models.StackInstance{}).
+	res := r.db.WithContext(ctx).Model(&models.StackInstance{}).
 		Where("id = ? AND expiry_warned_at IS NULL AND expires_at > ? AND expires_at < ?",
 			id, exp.Add(-expiryMatchTolerance), exp.Add(expiryMatchTolerance)).
 		UpdateColumn(columnExpiryWarnedAt, warnedAt.UTC())
@@ -193,8 +197,8 @@ func (r *GORMStackInstanceRepository) MarkExpiryWarned(id string, expiresAt, war
 }
 
 // Delete removes a stack instance by ID.
-func (r *GORMStackInstanceRepository) Delete(id string) error {
-	result := r.db.Where("id = ?", id).Delete(&models.StackInstance{})
+func (r *GORMStackInstanceRepository) Delete(ctx context.Context, id string) error {
+	result := r.db.WithContext(ctx).Where("id = ?", id).Delete(&models.StackInstance{})
 	if result.Error != nil {
 		return dberrors.NewDatabaseError("delete", result.Error)
 	}
@@ -205,9 +209,9 @@ func (r *GORMStackInstanceRepository) Delete(id string) error {
 }
 
 // List returns all stack instances.
-func (r *GORMStackInstanceRepository) List() ([]models.StackInstance, error) {
+func (r *GORMStackInstanceRepository) List(ctx context.Context) ([]models.StackInstance, error) {
 	var instances []models.StackInstance
-	if err := r.db.Find(&instances).Error; err != nil {
+	if err := r.db.WithContext(ctx).Find(&instances).Error; err != nil {
 		return nil, dberrors.NewDatabaseError("list", err)
 	}
 	return instances, nil
@@ -246,14 +250,14 @@ func applyInstanceFilter(q *gorm.DB, f models.StackInstanceFilter) *gorm.DB {
 // ListPaged returns the stack instances that match filter with limit/offset
 // pagination, and the total count of matching instances. It selects only
 // list-view columns, omitting large TEXT fields like error_message.
-func (r *GORMStackInstanceRepository) ListPaged(filter models.StackInstanceFilter, limit, offset int) ([]models.StackInstance, int, error) {
+func (r *GORMStackInstanceRepository) ListPaged(ctx context.Context, filter models.StackInstanceFilter, limit, offset int) ([]models.StackInstance, int, error) {
 	var total int64
-	if err := applyInstanceFilter(r.db.Model(&models.StackInstance{}), filter).Count(&total).Error; err != nil {
+	if err := applyInstanceFilter(r.db.WithContext(ctx).Model(&models.StackInstance{}), filter).Count(&total).Error; err != nil {
 		return nil, 0, dberrors.NewDatabaseError("count", err)
 	}
 
 	instances := []models.StackInstance{}
-	if err := applyInstanceFilter(r.db.Select(listColumns), filter).
+	if err := applyInstanceFilter(r.db.WithContext(ctx).Select(listColumns), filter).
 		Order("created_at DESC").Limit(limit).Offset(offset).Find(&instances).Error; err != nil {
 		return nil, 0, dberrors.NewDatabaseError("list_paged", err)
 	}
@@ -261,18 +265,18 @@ func (r *GORMStackInstanceRepository) ListPaged(filter models.StackInstanceFilte
 }
 
 // ListByOwner returns all stack instances owned by the given user.
-func (r *GORMStackInstanceRepository) ListByOwner(ownerID string) ([]models.StackInstance, error) {
+func (r *GORMStackInstanceRepository) ListByOwner(ctx context.Context, ownerID string) ([]models.StackInstance, error) {
 	var instances []models.StackInstance
-	if err := r.db.Where("owner_id = ?", ownerID).Find(&instances).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("owner_id = ?", ownerID).Find(&instances).Error; err != nil {
 		return nil, dberrors.NewDatabaseError("list_by_owner", err)
 	}
 	return instances, nil
 }
 
 // FindByName returns all stack instances with the given exact name.
-func (r *GORMStackInstanceRepository) FindByName(name string) ([]models.StackInstance, error) {
+func (r *GORMStackInstanceRepository) FindByName(ctx context.Context, name string) ([]models.StackInstance, error) {
 	var instances []models.StackInstance
-	if err := r.db.Select(listColumns).Where("name = ?", name).Find(&instances).Error; err != nil {
+	if err := r.db.WithContext(ctx).Select(listColumns).Where("name = ?", name).Find(&instances).Error; err != nil {
 		return nil, dberrors.NewDatabaseError("find_by_name", err)
 	}
 	return instances, nil
@@ -285,9 +289,9 @@ var _ models.InstanceNameLookup = (*GORMStackInstanceRepository)(nil)
 // It compares the names without case (LOWER on both sides, so the result does
 // not depend on the column collation). With
 // includeUnassigned it also returns the instances without a cluster.
-func (r *GORMStackInstanceRepository) FindByNameOnCluster(name, clusterID string, includeUnassigned bool) ([]models.StackInstance, error) {
+func (r *GORMStackInstanceRepository) FindByNameOnCluster(ctx context.Context, name, clusterID string, includeUnassigned bool) ([]models.StackInstance, error) {
 	var instances []models.StackInstance
-	q := r.db.Select(listColumns).Where("LOWER(name) = LOWER(?)", name)
+	q := r.db.WithContext(ctx).Select(listColumns).Where("LOWER(name) = LOWER(?)", name)
 	if includeUnassigned {
 		q = q.Where("(cluster_id = ? OR cluster_id = '' OR cluster_id IS NULL)", clusterID)
 	} else {
@@ -302,9 +306,9 @@ func (r *GORMStackInstanceRepository) FindByNameOnCluster(name, clusterID string
 // DuplicateInstanceNames returns the names that more than one instance uses on
 // the same cluster, compared without case. Instances without a cluster count
 // as defaultClusterID.
-func (r *GORMStackInstanceRepository) DuplicateInstanceNames(defaultClusterID string) ([]models.DuplicateInstanceName, error) {
+func (r *GORMStackInstanceRepository) DuplicateInstanceNames(ctx context.Context, defaultClusterID string) ([]models.DuplicateInstanceName, error) {
 	var rows []models.DuplicateInstanceName
-	err := r.db.Raw(`SELECT cid AS cluster_id, lname AS name, COUNT(*) AS count
+	err := r.db.WithContext(ctx).Raw(`SELECT cid AS cluster_id, lname AS name, COUNT(*) AS count
 		FROM (
 			SELECT CASE WHEN cluster_id IS NULL OR cluster_id = '' THEN ? ELSE cluster_id END AS cid,
 				LOWER(name) AS lname
@@ -320,18 +324,18 @@ func (r *GORMStackInstanceRepository) DuplicateInstanceNames(defaultClusterID st
 }
 
 // FindByCluster returns all stack instances targeting the given cluster.
-func (r *GORMStackInstanceRepository) FindByCluster(clusterID string) ([]models.StackInstance, error) {
+func (r *GORMStackInstanceRepository) FindByCluster(ctx context.Context, clusterID string) ([]models.StackInstance, error) {
 	var instances []models.StackInstance
-	if err := r.db.Where("cluster_id = ?", clusterID).Find(&instances).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("cluster_id = ?", clusterID).Find(&instances).Error; err != nil {
 		return nil, dberrors.NewDatabaseError("find_by_cluster", err)
 	}
 	return instances, nil
 }
 
 // CountByClusterAndOwner returns the number of instances for a cluster+owner combination.
-func (r *GORMStackInstanceRepository) CountByClusterAndOwner(clusterID, ownerID string) (int, error) {
+func (r *GORMStackInstanceRepository) CountByClusterAndOwner(ctx context.Context, clusterID, ownerID string) (int, error) {
 	var count int64
-	if err := r.db.Model(&models.StackInstance{}).
+	if err := r.db.WithContext(ctx).Model(&models.StackInstance{}).
 		Where("cluster_id = ? AND owner_id = ?", clusterID, ownerID).
 		Count(&count).Error; err != nil {
 		return 0, dberrors.NewDatabaseError("count_by_cluster_and_owner", err)
@@ -340,18 +344,18 @@ func (r *GORMStackInstanceRepository) CountByClusterAndOwner(clusterID, ownerID 
 }
 
 // CountAll returns the total number of stack instances.
-func (r *GORMStackInstanceRepository) CountAll() (int, error) {
+func (r *GORMStackInstanceRepository) CountAll(ctx context.Context) (int, error) {
 	var count int64
-	if err := r.db.Model(&models.StackInstance{}).Count(&count).Error; err != nil {
+	if err := r.db.WithContext(ctx).Model(&models.StackInstance{}).Count(&count).Error; err != nil {
 		return 0, dberrors.NewDatabaseError("count_all", err)
 	}
 	return int(count), nil
 }
 
 // CountByStatus returns the number of stack instances with the given status.
-func (r *GORMStackInstanceRepository) CountByStatus(status string) (int, error) {
+func (r *GORMStackInstanceRepository) CountByStatus(ctx context.Context, status string) (int, error) {
 	var count int64
-	if err := r.db.Model(&models.StackInstance{}).
+	if err := r.db.WithContext(ctx).Model(&models.StackInstance{}).
 		Where("status = ?", status).
 		Count(&count).Error; err != nil {
 		return 0, dberrors.NewDatabaseError("count_by_status", err)
@@ -362,12 +366,12 @@ func (r *GORMStackInstanceRepository) CountByStatus(status string) (int, error) 
 // CountByStatuses returns the number of stack instances whose status is any of
 // the given statuses, in a single aggregate query. Using one WHERE status IN
 // (...) query keeps the count consistent even if statuses change concurrently.
-func (r *GORMStackInstanceRepository) CountByStatuses(statuses []string) (int, error) {
+func (r *GORMStackInstanceRepository) CountByStatuses(ctx context.Context, statuses []string) (int, error) {
 	if len(statuses) == 0 {
 		return 0, nil
 	}
 	var count int64
-	if err := r.db.Model(&models.StackInstance{}).
+	if err := r.db.WithContext(ctx).Model(&models.StackInstance{}).
 		Where("status IN ?", statuses).
 		Count(&count).Error; err != nil {
 		return 0, dberrors.NewDatabaseError("count_by_statuses", err)
@@ -376,9 +380,9 @@ func (r *GORMStackInstanceRepository) CountByStatuses(statuses []string) (int, e
 }
 
 // ExistsByDefinitionAndStatus checks whether any instance exists for a given definition+status.
-func (r *GORMStackInstanceRepository) ExistsByDefinitionAndStatus(definitionID, status string) (bool, error) {
+func (r *GORMStackInstanceRepository) ExistsByDefinitionAndStatus(ctx context.Context, definitionID, status string) (bool, error) {
 	var count int64
-	if err := r.db.Model(&models.StackInstance{}).
+	if err := r.db.WithContext(ctx).Model(&models.StackInstance{}).
 		Where("stack_definition_id = ? AND status = ?", definitionID, status).
 		Count(&count).Error; err != nil {
 		return false, dberrors.NewDatabaseError("exists_by_definition_and_status", err)
@@ -387,10 +391,10 @@ func (r *GORMStackInstanceRepository) ExistsByDefinitionAndStatus(definitionID, 
 }
 
 // ListExpired returns running instances whose ExpiresAt is in the past.
-func (r *GORMStackInstanceRepository) ListExpired() ([]*models.StackInstance, error) {
+func (r *GORMStackInstanceRepository) ListExpired(ctx context.Context) ([]*models.StackInstance, error) {
 	var instances []*models.StackInstance
 	now := time.Now().UTC()
-	if err := r.db.Where("status IN ? AND expires_at IS NOT NULL AND expires_at < ?",
+	if err := r.db.WithContext(ctx).Where("status IN ? AND expires_at IS NOT NULL AND expires_at < ?",
 		[]string{models.StackStatusRunning, models.StackStatusPartial}, now).
 		Find(&instances).Error; err != nil {
 		return nil, dberrors.NewDatabaseError("list_expired", err)
@@ -401,11 +405,11 @@ func (r *GORMStackInstanceRepository) ListExpired() ([]*models.StackInstance, er
 // ListExpiringSoon returns running/partial instances whose ExpiresAt is within the given
 // threshold from now (i.e., will expire soon but haven't expired yet) and
 // that have no expiry warning yet (expiry_warned_at IS NULL).
-func (r *GORMStackInstanceRepository) ListExpiringSoon(threshold time.Duration) ([]*models.StackInstance, error) {
+func (r *GORMStackInstanceRepository) ListExpiringSoon(ctx context.Context, threshold time.Duration) ([]*models.StackInstance, error) {
 	now := time.Now().UTC()
 	deadline := now.Add(threshold)
 	var instances []*models.StackInstance
-	if err := r.db.Where("status IN ? AND expires_at IS NOT NULL AND expires_at > ? AND expires_at <= ? AND expiry_warned_at IS NULL",
+	if err := r.db.WithContext(ctx).Where("status IN ? AND expires_at IS NOT NULL AND expires_at > ? AND expires_at <= ? AND expiry_warned_at IS NULL",
 		[]string{models.StackStatusRunning, models.StackStatusPartial}, now, deadline).
 		Order("expires_at ASC").
 		Find(&instances).Error; err != nil {
@@ -416,9 +420,9 @@ func (r *GORMStackInstanceRepository) ListExpiringSoon(threshold time.Duration) 
 
 // ListByStatus returns instances with the given status, up to limit rows.
 // A limit <= 0 returns all matching rows.
-func (r *GORMStackInstanceRepository) ListByStatus(status string, limit int) ([]*models.StackInstance, error) {
+func (r *GORMStackInstanceRepository) ListByStatus(ctx context.Context, status string, limit int) ([]*models.StackInstance, error) {
 	var instances []*models.StackInstance
-	q := r.db.Where("status = ?", status).Order("updated_at DESC")
+	q := r.db.WithContext(ctx).Where("status = ?", status).Order("updated_at DESC")
 	if limit > 0 {
 		q = q.Limit(limit)
 	}
@@ -431,7 +435,7 @@ func (r *GORMStackInstanceRepository) ListByStatus(status string, limit int) ([]
 // CountByDefinitionIDs returns a map of definition ID to instance count for the
 // given definition IDs in a single GROUP BY query. IDs are processed in chunks
 // of 500 to stay within MySQL's IN clause limits.
-func (r *GORMStackInstanceRepository) CountByDefinitionIDs(definitionIDs []string) (map[string]int, error) {
+func (r *GORMStackInstanceRepository) CountByDefinitionIDs(ctx context.Context, definitionIDs []string) (map[string]int, error) {
 	if len(definitionIDs) == 0 {
 		return make(map[string]int), nil
 	}
@@ -449,7 +453,7 @@ func (r *GORMStackInstanceRepository) CountByDefinitionIDs(definitionIDs []strin
 			Count             int
 		}
 		var rows []countRow
-		if err := r.db.Model(&models.StackInstance{}).
+		if err := r.db.WithContext(ctx).Model(&models.StackInstance{}).
 			Select("stack_definition_id, COUNT(*) as count").
 			Where("stack_definition_id IN ?", chunk).
 			Group("stack_definition_id").
@@ -466,7 +470,7 @@ func (r *GORMStackInstanceRepository) CountByDefinitionIDs(definitionIDs []strin
 // CountByOwnerIDs returns a map of owner ID to instance count for the given
 // owner IDs in a single GROUP BY query. IDs are processed in chunks of 500
 // to stay within MySQL's IN clause limits.
-func (r *GORMStackInstanceRepository) CountByOwnerIDs(ownerIDs []string) (map[string]int, error) {
+func (r *GORMStackInstanceRepository) CountByOwnerIDs(ctx context.Context, ownerIDs []string) (map[string]int, error) {
 	if len(ownerIDs) == 0 {
 		return make(map[string]int), nil
 	}
@@ -484,7 +488,7 @@ func (r *GORMStackInstanceRepository) CountByOwnerIDs(ownerIDs []string) (map[st
 			Count   int
 		}
 		var rows []countRow
-		if err := r.db.Model(&models.StackInstance{}).
+		if err := r.db.WithContext(ctx).Model(&models.StackInstance{}).
 			Select("owner_id, COUNT(*) as count").
 			Where("owner_id IN ?", chunk).
 			Group("owner_id").
@@ -501,7 +505,7 @@ func (r *GORMStackInstanceRepository) CountByOwnerIDs(ownerIDs []string) (map[st
 // ListIDsByDefinitionIDs returns a map of definition ID to instance IDs,
 // selecting only the id and stack_definition_id columns for efficiency.
 // IDs are processed in chunks of 500 to stay within MySQL's IN clause limits.
-func (r *GORMStackInstanceRepository) ListIDsByDefinitionIDs(definitionIDs []string) (map[string][]string, error) {
+func (r *GORMStackInstanceRepository) ListIDsByDefinitionIDs(ctx context.Context, definitionIDs []string) (map[string][]string, error) {
 	if len(definitionIDs) == 0 {
 		return make(map[string][]string), nil
 	}
@@ -519,7 +523,7 @@ func (r *GORMStackInstanceRepository) ListIDsByDefinitionIDs(definitionIDs []str
 			StackDefinitionID string
 		}
 		var rows []idRow
-		if err := r.db.Model(&models.StackInstance{}).
+		if err := r.db.WithContext(ctx).Model(&models.StackInstance{}).
 			Select("id, stack_definition_id").
 			Where("stack_definition_id IN ?", chunk).
 			Find(&rows).Error; err != nil {
@@ -535,7 +539,7 @@ func (r *GORMStackInstanceRepository) ListIDsByDefinitionIDs(definitionIDs []str
 // ListIDsByOwnerIDs returns a map of owner ID to instance IDs, selecting only
 // the id and owner_id columns for efficiency. IDs are processed in chunks of
 // 500 to stay within MySQL's IN clause limits.
-func (r *GORMStackInstanceRepository) ListIDsByOwnerIDs(ownerIDs []string) (map[string][]string, error) {
+func (r *GORMStackInstanceRepository) ListIDsByOwnerIDs(ctx context.Context, ownerIDs []string) (map[string][]string, error) {
 	if len(ownerIDs) == 0 {
 		return make(map[string][]string), nil
 	}
@@ -553,7 +557,7 @@ func (r *GORMStackInstanceRepository) ListIDsByOwnerIDs(ownerIDs []string) (map[
 			OwnerID string
 		}
 		var rows []idRow
-		if err := r.db.Model(&models.StackInstance{}).
+		if err := r.db.WithContext(ctx).Model(&models.StackInstance{}).
 			Select("id, owner_id").
 			Where("owner_id IN ?", chunk).
 			Find(&rows).Error; err != nil {

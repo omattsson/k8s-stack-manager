@@ -5,10 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"backend/internal/models"
 	"backend/pkg/dberrors"
 )
+
+// ownedDefinitionCleanupTimeout bounds step 2 of
+// DeleteInstanceWithOwnedDefinition.
+const ownedDefinitionCleanupTimeout = 30 * time.Second
 
 // DeleteInstanceWithOwnedDefinition deletes a stack instance in two steps.
 //
@@ -21,13 +26,17 @@ import (
 //     nothing uses it any more (CleanupOwnedDefinition). This step is best
 //     effort: an error is logged and rolls back only the definition cleanup,
 //     never the instance delete.
-func DeleteInstanceWithOwnedDefinition(runner TxRunner, inst *models.StackInstance) error {
-	if err := runner.RunInTx(func(repos TxRepos) error {
-		return DeleteInstanceRecord(repos, inst)
+func DeleteInstanceWithOwnedDefinition(ctx context.Context, runner TxRunner, inst *models.StackInstance) error {
+	if err := runner.RunInTx(ctx, func(repos TxRepos) error {
+		return DeleteInstanceRecord(ctx, repos, inst)
 	}); err != nil {
 		return err
 	}
-	if err := cleanupOwnedDefinitionIfOwned(runner, inst); err != nil {
+	// The instance delete is committed: a cancel must not leave the owned
+	// definition behind. The timeout bounds the FOR UPDATE lock of the cleanup.
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), ownedDefinitionCleanupTimeout)
+	defer cancel()
+	if err := cleanupOwnedDefinitionIfOwned(cleanupCtx, runner, inst); err != nil {
 		slog.Warn("owned definition cleanup failed; the instance is deleted",
 			"instance_id", inst.ID, "definition_id", inst.StackDefinitionID, "error", err)
 	}
@@ -36,7 +45,7 @@ func DeleteInstanceWithOwnedDefinition(runner TxRunner, inst *models.StackInstan
 
 // cleanupOwnedDefinitionIfOwned runs CleanupOwnedDefinition only for a
 // definition with an owner instance, so other deletes take no row lock (#654).
-func cleanupOwnedDefinitionIfOwned(runner TxRunner, inst *models.StackInstance) error {
+func cleanupOwnedDefinitionIfOwned(ctx context.Context, runner TxRunner, inst *models.StackInstance) error {
 	if inst.StackDefinitionID == "" {
 		return nil
 	}
@@ -44,7 +53,7 @@ func cleanupOwnedDefinitionIfOwned(runner TxRunner, inst *models.StackInstance) 
 	// REPEATABLE READ snapshot, and its count could miss a concurrent clone.
 	// Only quick deploy sets OwnerInstanceID, at create: an empty owner stays empty.
 	owned := false
-	if err := runner.RunInTx(func(repos TxRepos) error {
+	if err := runner.RunInTx(ctx, func(repos TxRepos) error {
 		if repos.StackDefinition == nil {
 			return nil
 		}
@@ -60,8 +69,8 @@ func cleanupOwnedDefinitionIfOwned(runner TxRunner, inst *models.StackInstance) 
 	}); err != nil || !owned {
 		return err
 	}
-	return runner.RunInTx(func(repos TxRepos) error {
-		return CleanupOwnedDefinition(repos, inst)
+	return runner.RunInTx(ctx, func(repos TxRepos) error {
+		return CleanupOwnedDefinition(ctx, repos, inst)
 	})
 }
 
@@ -69,7 +78,7 @@ func cleanupOwnedDefinitionIfOwned(runner TxRunner, inst *models.StackInstance) 
 // its branch overrides, value overrides, quota override, followers and
 // action runs. Call it inside TxRunner.RunInTx so that all deletes are
 // atomic. Repositories that are not set in repos are skipped.
-func DeleteInstanceRecord(repos TxRepos, inst *models.StackInstance) error {
+func DeleteInstanceRecord(ctx context.Context, repos TxRepos, inst *models.StackInstance) error {
 	if repos.BranchOverride != nil {
 		if err := repos.BranchOverride.DeleteByInstance(inst.ID); err != nil {
 			return err
@@ -82,23 +91,23 @@ func DeleteInstanceRecord(repos TxRepos, inst *models.StackInstance) error {
 	}
 	if repos.InstanceQuotaOverride != nil {
 		// Delete returns not found when the instance has no override.
-		if err := repos.InstanceQuotaOverride.Delete(context.Background(), inst.ID); err != nil && !errors.Is(err, dberrors.ErrNotFound) {
+		if err := repos.InstanceQuotaOverride.Delete(ctx, inst.ID); err != nil && !errors.Is(err, dberrors.ErrNotFound) {
 			return err
 		}
 	}
-	if err := repos.StackInstance.Delete(inst.ID); err != nil {
+	if err := repos.StackInstance.Delete(ctx, inst.ID); err != nil {
 		return err
 	}
 	// Followers after the instance row: a concurrent Follow holds a shared
 	// lock on the row, so it either ends before this delete (and its row is
 	// removed here) or finds no instance (see InstanceFollowerRepository.Follow).
 	if repos.InstanceFollower != nil {
-		if err := repos.InstanceFollower.DeleteByInstance(context.Background(), inst.ID); err != nil {
+		if err := repos.InstanceFollower.DeleteByInstance(ctx, inst.ID); err != nil {
 			return err
 		}
 	}
 	if repos.ActionRun != nil {
-		if err := repos.ActionRun.DeleteByInstance(context.Background(), inst.ID); err != nil {
+		if err := repos.ActionRun.DeleteByInstance(ctx, inst.ID); err != nil {
 			return err
 		}
 	}
@@ -111,7 +120,7 @@ func DeleteInstanceRecord(repos TxRepos, inst *models.StackInstance) error {
 // or when its owner instance no longer exists (for example inst is a clone of
 // a deleted quick deploy instance). Call it after the instance is deleted, in
 // its own transaction. It returns nil when there is nothing to delete.
-func CleanupOwnedDefinition(repos TxRepos, inst *models.StackInstance) error {
+func CleanupOwnedDefinition(ctx context.Context, repos TxRepos, inst *models.StackInstance) error {
 	if repos.StackDefinition == nil || repos.StackInstance == nil || inst.StackDefinitionID == "" {
 		return nil
 	}
@@ -130,7 +139,7 @@ func CleanupOwnedDefinition(repos TxRepos, inst *models.StackInstance) error {
 	}
 	if def.OwnerInstanceID != inst.ID {
 		// Owned by another instance: delete only when that owner is gone.
-		_, ownerErr := repos.StackInstance.FindByID(def.OwnerInstanceID)
+		_, ownerErr := repos.StackInstance.FindByID(ctx, def.OwnerInstanceID)
 		if ownerErr == nil {
 			return nil
 		}
@@ -138,7 +147,7 @@ func CleanupOwnedDefinition(repos TxRepos, inst *models.StackInstance) error {
 			return fmt.Errorf("finding owner instance: %w", ownerErr)
 		}
 	}
-	counts, err := repos.StackInstance.CountByDefinitionIDs([]string{def.ID})
+	counts, err := repos.StackInstance.CountByDefinitionIDs(ctx, []string{def.ID})
 	if err != nil {
 		return fmt.Errorf("counting instances: %w", err)
 	}

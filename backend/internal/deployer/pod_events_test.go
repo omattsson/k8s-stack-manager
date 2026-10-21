@@ -316,7 +316,7 @@ func TestManager_Deploy_ReportsQuotaEvent(t *testing.T) {
 		Namespace: "stack-quota-event", OwnerID: "user-1", Branch: "main",
 		Status: models.StackStatusDraft,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	cs := fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: inst.Namespace}})
 	k8sClient := k8s.NewClientFromInterface(cs)
@@ -368,7 +368,7 @@ func TestManager_Deploy_ReportsQuotaEvent(t *testing.T) {
 	assert.True(t, <-streamedWhileHelmRuns, "the quota event must stream while Helm waits")
 	assert.Equal(t, 1, countContaining(deployLogLines(hub), "Pod event: FailedCreate job/sync"), "streamed once")
 
-	final, err := instanceRepo.FindByID(inst.ID)
+	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	require.NoError(t, err)
 	assert.Equal(t, models.StackStatusError, final.Status)
 	assert.Contains(t, final.ErrorMessage, "all charts failed to deploy: storefront")
@@ -391,7 +391,7 @@ func TestManager_Deploy_NoPodEvents_NoChange(t *testing.T) {
 		ID: "inst-no-events", StackDefinitionID: "def-1", Name: "no-events",
 		Namespace: "stack-no-events", OwnerID: "user-1", Status: models.StackStatusDraft,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	mgr := NewManager(ManagerConfig{
 		Registry:             &mockClusterResolver{helm: &mockHelmExecutor{}},
@@ -410,7 +410,7 @@ func TestManager_Deploy_NoPodEvents_NoChange(t *testing.T) {
 	require.NoError(t, err)
 	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
-	final, err := instanceRepo.FindByID(inst.ID)
+	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	require.NoError(t, err)
 	assert.Equal(t, models.StackStatusRunning, final.Status)
 	finalLog, err := logRepo.FindByID(context.Background(), logID)
@@ -430,7 +430,7 @@ func TestManager_Rollback_ReportsPodEvent(t *testing.T) {
 		ID: "inst-rb-event", StackDefinitionID: "def-1", Name: "rb-event",
 		Namespace: "stack-rb-event", OwnerID: "user-1", Status: models.StackStatusRunning,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	cs := fake.NewSimpleClientset(
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: inst.Namespace}},
@@ -468,7 +468,7 @@ func TestManager_Rollback_ReportsPodEvent(t *testing.T) {
 	require.NoError(t, err)
 	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
-	final, err := instanceRepo.FindByID(inst.ID)
+	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	require.NoError(t, err)
 	assert.Equal(t, models.StackStatusError, final.Status)
 	assert.Contains(t, final.ErrorMessage, "pod event: ErrImagePull pod/web-1 container app: manifest unknown")

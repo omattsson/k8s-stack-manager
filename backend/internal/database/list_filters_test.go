@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"testing"
 
 	"backend/internal/models"
@@ -23,7 +24,7 @@ func TestGORMStackInstanceRepository_ListPagedFilter(t *testing.T) {
 	for i := range seed {
 		seed[i].Namespace = "ns-" + seed[i].Name
 		seed[i].Branch = "main"
-		require.NoError(t, repo.Create(&seed[i]))
+		require.NoError(t, repo.Create(context.Background(), &seed[i]))
 	}
 
 	tests := []struct {
@@ -47,7 +48,7 @@ func TestGORMStackInstanceRepository_ListPagedFilter(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got, total, err := repo.ListPaged(tt.filter, tt.limit, tt.offset)
+			got, total, err := repo.ListPaged(context.Background(), tt.filter, tt.limit, tt.offset)
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantTotal, total)
 			names := make([]string, len(got))
@@ -60,11 +61,11 @@ func TestGORMStackInstanceRepository_ListPagedFilter(t *testing.T) {
 
 	t.Run("count matches the filter when the page is smaller", func(t *testing.T) {
 		t.Parallel()
-		page1, total, err := repo.ListPaged(models.StackInstanceFilter{Status: models.StackStatusRunning}, 2, 0)
+		page1, total, err := repo.ListPaged(context.Background(), models.StackInstanceFilter{Status: models.StackStatusRunning}, 2, 0)
 		require.NoError(t, err)
 		assert.Equal(t, 3, total)
 		assert.Len(t, page1, 2)
-		page2, total2, err := repo.ListPaged(models.StackInstanceFilter{Status: models.StackStatusRunning}, 2, 2)
+		page2, total2, err := repo.ListPaged(context.Background(), models.StackInstanceFilter{Status: models.StackStatusRunning}, 2, 2)
 		require.NoError(t, err)
 		assert.Equal(t, 3, total2)
 		require.Len(t, page2, 1)

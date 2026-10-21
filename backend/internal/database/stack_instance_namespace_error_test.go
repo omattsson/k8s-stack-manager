@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -41,13 +42,13 @@ func TestMarkNamespaceError(t *testing.T) {
 				Name: "ns-err", StackDefinitionID: "d1", Namespace: "stack-ns-err", OwnerID: "o1",
 				Branch: "main", Status: tt.status, PostDeployHookUntil: tt.hookUntil,
 			}
-			require.NoError(t, repo.Create(inst))
+			require.NoError(t, repo.Create(context.Background(), inst))
 
-			changed, err := repo.MarkNamespaceError(inst.ID, "namespace resources in error state", now)
+			changed, err := repo.MarkNamespaceError(context.Background(), inst.ID, "namespace resources in error state", now)
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantChanged, changed)
 
-			stored, err := repo.FindByID(inst.ID)
+			stored, err := repo.FindByID(context.Background(), inst.ID)
 			require.NoError(t, err)
 			if tt.wantChanged {
 				assert.Equal(t, models.StackStatusError, stored.Status)

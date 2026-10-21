@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -85,7 +86,7 @@ func seedInstance(t *testing.T, repo *MockStackInstanceRepository, id, name, def
 		CreatedAt:         time.Now().UTC(),
 		UpdatedAt:         time.Now().UTC(),
 	}
-	require.NoError(t, repo.Create(inst))
+	require.NoError(t, repo.Create(context.Background(), inst))
 	return inst
 }
 
@@ -575,7 +576,7 @@ func TestCreateInstanceNamespaceConflict(t *testing.T) {
 				Branch:            "master",
 				Status:            models.StackStatusRunning,
 			}
-			require.NoError(t, instRepo.Create(existing))
+			require.NoError(t, instRepo.Create(context.Background(), existing))
 
 			router := setupInstanceRouter(instRepo, NewMockValueOverrideRepository(), defRepo, NewMockChartConfigRepository(), NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(), "uid-1", "alice", "user")
 			w := httptest.NewRecorder()
@@ -598,7 +599,7 @@ func TestCloneInstanceNamespaceConflict(t *testing.T) {
 		t.Parallel()
 		instRepo := NewMockStackInstanceRepository()
 		seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusRunning)
-		require.NoError(t, instRepo.Create(&models.StackInstance{
+		require.NoError(t, instRepo.Create(context.Background(), &models.StackInstance{
 			ID: "i-taken", StackDefinitionID: "d1", Name: "taken",
 			Namespace: "stack-stack-a-copy-bob", OwnerID: "uid-other", Branch: "master",
 			Status: models.StackStatusRunning,
@@ -634,7 +635,7 @@ func TestCloneInstanceNamespaceConflict(t *testing.T) {
 			Branch:            "master",
 			Status:            models.StackStatusRunning,
 		}
-		require.NoError(t, instRepo.Create(taken))
+		require.NoError(t, instRepo.Create(context.Background(), taken))
 
 		router := setupInstanceRouter(instRepo, overrideRepo, NewMockStackDefinitionRepository(), NewMockChartConfigRepository(), NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(), "uid-2", "bob", "user")
 		w := httptest.NewRecorder()
@@ -844,7 +845,7 @@ func TestExtendTTL(t *testing.T) {
 			TTLMinutes:        60,
 			ExpiresAt:         &past,
 		}
-		require.NoError(t, instRepo.Create(inst))
+		require.NoError(t, instRepo.Create(context.Background(), inst))
 
 		router := setupInstanceRouterWithTTL(instRepo, defRepo, 0, "uid-1", "alice")
 
@@ -879,7 +880,7 @@ func TestExtendTTL(t *testing.T) {
 			TTLMinutes:        120,
 			ExpiresAt:         &past,
 		}
-		require.NoError(t, instRepo.Create(inst))
+		require.NoError(t, instRepo.Create(context.Background(), inst))
 
 		router := setupInstanceRouterWithTTL(instRepo, defRepo, 0, "uid-1", "alice")
 
@@ -910,7 +911,7 @@ func TestExtendTTL(t *testing.T) {
 			Status:            models.StackStatusRunning,
 			TTLMinutes:        0,
 		}
-		require.NoError(t, instRepo.Create(inst))
+		require.NoError(t, instRepo.Create(context.Background(), inst))
 
 		router := setupInstanceRouterWithTTL(instRepo, defRepo, 0, "uid-1", "alice")
 
@@ -952,7 +953,7 @@ func TestExtendTTL(t *testing.T) {
 			TTLMinutes:        60,
 			ExpiresAt:         &past,
 		}
-		require.NoError(t, instRepo.Create(inst))
+		require.NoError(t, instRepo.Create(context.Background(), inst))
 		instRepo.SetError(errors.New("db write failure"))
 
 		router := setupInstanceRouterWithTTL(instRepo, defRepo, 0, "uid-1", "alice")
@@ -1041,7 +1042,7 @@ func TestExtendTTL_MaxTTLExceeded(t *testing.T) {
 		TTLMinutes:        60,
 		ExpiresAt:         &past,
 	}
-	require.NoError(t, instRepo.Create(inst))
+	require.NoError(t, instRepo.Create(context.Background(), inst))
 
 	router := setupInstanceRouterWithTTL(instRepo, defRepo, 0, "uid-1", "alice")
 
@@ -1079,7 +1080,7 @@ func TestDeployPreview(t *testing.T) {
 		}
 		encoded, _ := json.Marshal(previousValues)
 		inst.LastDeployedValues = string(encoded)
-		require.NoError(t, instRepo.Update(inst))
+		require.NoError(t, instRepo.Update(context.Background(), inst))
 
 		// Charts with default values that differ from previously deployed.
 		require.NoError(t, ccRepo.Create(&models.ChartConfig{
@@ -1332,7 +1333,7 @@ func TestDeployPreview_SubstitutesImageTag(t *testing.T) {
 	seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
 	inst := seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusRunning)
 	inst.Branch = "feature/slashes-and-mixedCase" // forces SanitizeImageTag transform
-	require.NoError(t, instRepo.Update(inst))
+	require.NoError(t, instRepo.Update(context.Background(), inst))
 
 	require.NoError(t, ccRepo.Create(&models.ChartConfig{
 		ID:                "c1",

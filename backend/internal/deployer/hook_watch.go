@@ -23,10 +23,10 @@ type ownershipWatch struct {
 	lost   bool
 }
 
-// watchOwnership starts a goroutine that calls owned every interval until
-// ctx ends. When owned returns false, the goroutine keeps the status and
-// calls cancel. cancel must cancel ctx.
-func watchOwnership(ctx context.Context, cancel context.CancelFunc, interval time.Duration, owned func() (bool, string)) *ownershipWatch {
+// watchOwnership starts a goroutine that calls owned with ctx every interval
+// until ctx ends. When owned returns false, the goroutine keeps the status
+// and calls cancel. cancel must cancel ctx.
+func watchOwnership(ctx context.Context, cancel context.CancelFunc, interval time.Duration, owned func(context.Context) (bool, string)) *ownershipWatch {
 	w := &ownershipWatch{cancel: cancel}
 	w.wg.Add(1)
 	go func() {
@@ -38,7 +38,7 @@ func watchOwnership(ctx context.Context, cancel context.CancelFunc, interval tim
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if ok, current := owned(); !ok {
+				if ok, current := owned(ctx); !ok {
 					w.mu.Lock()
 					w.status = current
 					w.lost = true
@@ -68,8 +68,8 @@ func (w *ownershipWatch) stop() (string, bool) {
 // no newer deployment log exists. It also returns the current status. A read
 // error of the instance counts as owned (logged), so a short database outage
 // does not cancel the hook call.
-func (m *Manager) hookPhaseOwned(instanceID, logID string, okStatuses ...string) (bool, string) {
-	inst, err := m.instanceRepo.FindByID(instanceID)
+func (m *Manager) hookPhaseOwned(ctx context.Context, instanceID, logID string, okStatuses ...string) (bool, string) {
+	inst, err := m.instanceRepo.FindByID(ctx, instanceID)
 	if err != nil {
 		slog.Warn("hook watch: instance check failed, still waiting",
 			"instance_id", instanceID, "log_id", logID, "error", err)
@@ -85,7 +85,7 @@ func (m *Manager) hookPhaseOwned(instanceID, logID string, okStatuses ...string)
 	if !statusOK {
 		return false, inst.Status
 	}
-	if m.newerOperation(instanceID, logID) {
+	if m.newerOperation(ctx, instanceID, logID) {
 		return false, inst.Status
 	}
 	return true, inst.Status
@@ -117,8 +117,8 @@ func (m *Manager) firePreHook(event string, instance *models.StackInstance, depl
 	}
 	hookCtx, cancelHook := context.WithCancel(m.shutdownCtx)
 	defer cancelHook()
-	watch := watchOwnership(hookCtx, cancelHook, m.stabilizePollInterval, func() (bool, string) {
-		return m.hookPhaseOwned(instance.ID, deployLog.ID, models.StackStatusDeploying)
+	watch := watchOwnership(hookCtx, cancelHook, m.stabilizePollInterval, func(ctx context.Context) (bool, string) {
+		return m.hookPhaseOwned(ctx, instance.ID, deployLog.ID, models.StackStatusDeploying)
 	})
 	err := m.fireDeployHook(hookCtx, event, instance, deployLog.ID, deployLog.StartedAt, opts)
 	status, lost := watch.stop()

@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -368,48 +369,68 @@ func (m *Manager) previousRevisionBranch(ctx context.Context, instanceID string)
 // allLogActions are the actions of every deployment log.
 var allLogActions = []string{models.DeployActionDeploy, models.DeployActionStop, models.DeployActionClean, models.DeployActionRollback}
 
-// ownsInstance reports whether the operation of logID still owns the
+// ownership is the result of instanceOwnership.
+type ownership int
+
+const (
+	ownershipOwned ownership = iota
+	// ownershipLost: another operation took the instance.
+	ownershipLost
+	// ownershipUnknown: the instance could not be read.
+	ownershipUnknown
+)
+
+// instanceOwnership reports whether the operation of logID still owns the
 // instance: its log is the newest deployment log of the instance (no other
 // deploy, stop, clean or rollback started since) and the instance status is
-// one of okStatuses. It also returns the current status. When the log lookup
-// fails, only the status is checked.
-func (m *Manager) ownsInstance(instanceID, logID string, okStatuses ...string) (bool, string) {
-	inst, err := m.instanceRepo.FindByID(instanceID)
+// one of okStatuses. It also returns the instance (nil on a read error) and
+// the read error. When the log lookup fails, only the status is checked.
+func (m *Manager) instanceOwnership(ctx context.Context, instanceID, logID string, okStatuses ...string) (ownership, *models.StackInstance, error) {
+	inst, err := m.instanceRepo.FindByID(ctx, instanceID)
 	if err != nil {
+		return ownershipUnknown, nil, err
+	}
+	if !slices.Contains(okStatuses, inst.Status) || m.newerOperation(ctx, instanceID, logID) {
+		return ownershipLost, inst, nil
+	}
+	return ownershipOwned, inst, nil
+}
+
+// ownsInstance is instanceOwnership as a bool with the current status. A
+// read error counts as not owned (status "unknown").
+func (m *Manager) ownsInstance(ctx context.Context, instanceID, logID string, okStatuses ...string) (bool, string) {
+	state, inst, _ := m.instanceOwnership(ctx, instanceID, logID, okStatuses...)
+	if state == ownershipUnknown {
 		return false, "unknown"
 	}
-	statusOK := false
-	for _, st := range okStatuses {
-		if inst.Status == st {
-			statusOK = true
-			break
-		}
-	}
-	if !statusOK {
-		return false, inst.Status
-	}
-	if m.newerOperation(instanceID, logID) {
-		return false, inst.Status
-	}
-	return true, inst.Status
+	return state == ownershipOwned, inst.Status
+}
+
+// ownsAfterPreHook is ownsInstance after a pre-deploy or pre-rollback hook.
+// A failed read counts as lost, so a shutdown must not fail it.
+func (m *Manager) ownsAfterPreHook(instanceID, logID string) (bool, string) {
+	ctx, cancel := m.finalWriteCtx()
+	defer cancel()
+	return m.ownsInstance(ctx, instanceID, logID, models.StackStatusDeploying)
 }
 
 // newerOperation reports whether the instance has a deployment log that is
 // newer than logID (another operation started after it).
-func (m *Manager) newerOperation(instanceID, logID string) bool {
+func (m *Manager) newerOperation(ctx context.Context, instanceID, logID string) bool {
 	if m.logRepo == nil {
 		return false
 	}
-	logs, err := m.logRepo.ListLatestByActions(m.shutdownCtx, instanceID, allLogActions, 1)
+	logs, err := m.logRepo.ListLatestByActions(ctx, instanceID, allLogActions, 1)
 	return err == nil && len(logs) > 0 && logs[0].ID != logID
 }
 
 // fallbackLogUpdate writes the final state of a deployment log alone when
 // the finalize transaction failed, so the log does not stay "running". It
-// returns false when the log is no longer running (see writeFinal).
-func (m *Manager) fallbackLogUpdate(instanceID string, deployLog *models.DeploymentLog) bool {
+// returns false when the log is no longer running (see writeFinal). ctx is a
+// final-write context (finalWriteCtx).
+func (m *Manager) fallbackLogUpdate(ctx context.Context, instanceID string, deployLog *models.DeploymentLog) bool {
 	m.dropLiveOutput(deployLog.ID)
-	if err := m.logRepo.Update(m.shutdownCtx, deployLog); err != nil {
+	if err := m.logRepo.Update(ctx, deployLog); err != nil {
 		if errors.Is(err, models.ErrDeployLogNotRunning) {
 			warnLogNotRunning(deployLog)
 			return false
@@ -434,20 +455,21 @@ func warnLogNotRunning(deployLog *models.DeploymentLog) {
 // written, a warning is logged and writeFinal returns false. The caller then
 // skips the rest of its finalize work (status broadcast, hooks,
 // notifications): the recovery already did it. With a transaction runner
-// both writes run in one transaction.
-func (m *Manager) writeFinal(instance *models.StackInstance, deployLog *models.DeploymentLog, op string) bool {
+// both writes run in one transaction. ctx is a final-write context
+// (finalWriteCtx).
+func (m *Manager) writeFinal(ctx context.Context, instance *models.StackInstance, deployLog *models.DeploymentLog, op string) bool {
 	// The final write has the full output; the live output is not needed.
 	m.dropLiveOutput(deployLog.ID)
 	instanceID := deployLog.StackInstanceID
 	if instance == nil {
-		return m.fallbackLogUpdate(instanceID, deployLog)
+		return m.fallbackLogUpdate(ctx, instanceID, deployLog)
 	}
 	if m.txRunner != nil {
-		err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
-			if err := repos.DeploymentLog.Update(context.Background(), deployLog); err != nil {
+		err := m.txRunner.RunInTx(ctx, func(repos database.TxRepos) error {
+			if err := repos.DeploymentLog.Update(ctx, deployLog); err != nil {
 				return fmt.Errorf("updating deploy log: %w", err)
 			}
-			if err := repos.StackInstance.Update(instance); err != nil {
+			if err := repos.StackInstance.Update(ctx, instance); err != nil {
 				return fmt.Errorf("updating instance: %w", err)
 			}
 			return nil
@@ -461,12 +483,12 @@ func (m *Manager) writeFinal(instance *models.StackInstance, deployLog *models.D
 		}
 		slog.Error("failed to finalize "+op+" atomically",
 			"instance_id", instanceID, "error", err)
-		return m.fallbackLogUpdate(instanceID, deployLog)
+		return m.fallbackLogUpdate(ctx, instanceID, deployLog)
 	}
-	if !m.fallbackLogUpdate(instanceID, deployLog) {
+	if !m.fallbackLogUpdate(ctx, instanceID, deployLog) {
 		return false
 	}
-	if err := m.instanceRepo.Update(instance); err != nil {
+	if err := m.instanceRepo.Update(ctx, instance); err != nil {
 		slog.Error("failed to update instance after "+op,
 			"instance_id", instanceID, "deploy_log_id", deployLog.ID, "error", err)
 	}
@@ -499,16 +521,18 @@ func rollbackCancelReason(status string) string {
 func (m *Manager) finalizeRollbackCancelled(instanceID string, deployLog *models.DeploymentLog, output, reason string) {
 	defer m.logActions.Delete(deployLog.ID)
 	now := time.Now().UTC()
+	ctx, cancel := m.finalWriteCtx()
+	defer cancel()
 	slog.Warn("rollback cancelled", "instance_id", instanceID, "log_id", deployLog.ID, "reason", reason)
 	m.broadcastLog(instanceID, deployLog.ID, "WARNING: "+reason)
 	deployLog.Output = truncateString(output+"WARNING: "+reason+"\n", maxOutputLen)
 	deployLog.CompletedAt = &now
 	deployLog.Status = models.DeployLogError
 	deployLog.ErrorMessage = truncateString(reason, maxLogErrorLen)
-	if !m.writeFinal(nil, deployLog, "rollback") {
+	if !m.writeFinal(ctx, nil, deployLog, "rollback") {
 		return
 	}
-	instance, err := m.instanceRepo.FindByID(instanceID)
+	instance, err := m.instanceRepo.FindByID(ctx, instanceID)
 	if err != nil {
 		return
 	}
@@ -523,6 +547,8 @@ func (m *Manager) finalizeRollbackCancelled(instanceID string, deployLog *models
 func (m *Manager) finalizeRollbackRejected(job rollbackJob, output string, hookErr error) {
 	defer m.logActions.Delete(job.deployLog.ID)
 	now := time.Now().UTC()
+	ctx, cancel := m.finalWriteCtx()
+	defer cancel()
 	instanceID := job.instance.ID
 	deployLog := job.deployLog
 	reason := hooks.UserMessage(hookErr, hooks.EventPreRollback, "rollback")
@@ -534,11 +560,11 @@ func (m *Manager) finalizeRollbackRejected(job rollbackJob, output string, hookE
 	deployLog.Status = models.DeployLogError
 	deployLog.ErrorMessage = truncateString(reason, maxLogErrorLen)
 
-	restore, _ := m.ownsInstance(instanceID, deployLog.ID, models.StackStatusDeploying)
-	instance, err := m.instanceRepo.FindByID(instanceID)
+	restore, _ := m.ownsInstance(ctx, instanceID, deployLog.ID, models.StackStatusDeploying)
+	instance, err := m.instanceRepo.FindByID(ctx, instanceID)
 	if err != nil {
 		slog.Error("failed to find instance for rejected rollback", "instance_id", instanceID, "error", err)
-		m.fallbackLogUpdate(instanceID, deployLog)
+		m.fallbackLogUpdate(ctx, instanceID, deployLog)
 		return
 	}
 	if restore {
@@ -550,7 +576,7 @@ func (m *Manager) finalizeRollbackRejected(job rollbackJob, output string, hookE
 	if !restore {
 		restoreTarget = nil
 	}
-	if !m.writeFinal(restoreTarget, deployLog, "rejected rollback") {
+	if !m.writeFinal(ctx, restoreTarget, deployLog, "rejected rollback") {
 		return
 	}
 

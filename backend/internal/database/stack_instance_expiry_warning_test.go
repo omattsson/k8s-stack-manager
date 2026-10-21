@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -21,15 +22,15 @@ func createExpiringInstance(t *testing.T, repo *GORMStackInstanceRepository, nam
 		Name: name, StackDefinitionID: "d1", Namespace: "stack-" + name,
 		OwnerID: "o1", Branch: "main", Status: models.StackStatusRunning, ExpiresAt: &exp,
 	}
-	require.NoError(t, repo.Create(inst))
-	stored, err := repo.FindByID(inst.ID)
+	require.NoError(t, repo.Create(context.Background(), inst))
+	stored, err := repo.FindByID(context.Background(), inst.ID)
 	require.NoError(t, err)
 	return stored
 }
 
 func isWarned(t *testing.T, repo *GORMStackInstanceRepository, id string) bool {
 	t.Helper()
-	inst, err := repo.FindByID(id)
+	inst, err := repo.FindByID(context.Background(), id)
 	require.NoError(t, err)
 	return inst.ExpiryWarnedAt != nil
 }
@@ -70,12 +71,12 @@ func TestMarkExpiryWarned(t *testing.T) {
 			repo := setupStackInstanceRepo(t)
 			inst := createExpiringInstance(t, repo, "mark", 10*time.Minute)
 			if tt.premark {
-				ok, err := repo.MarkExpiryWarned(inst.ID, *inst.ExpiresAt, time.Now())
+				ok, err := repo.MarkExpiryWarned(context.Background(), inst.ID, *inst.ExpiresAt, time.Now())
 				require.NoError(t, err)
 				require.True(t, ok)
 			}
 
-			ok, err := repo.MarkExpiryWarned(inst.ID, tt.expiresAt(*inst.ExpiresAt), time.Now())
+			ok, err := repo.MarkExpiryWarned(context.Background(), inst.ID, tt.expiresAt(*inst.ExpiresAt), time.Now())
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, ok)
 			assert.Equal(t, tt.want || tt.premark, isWarned(t, repo, inst.ID))
@@ -94,7 +95,7 @@ func TestMarkExpiryWarned_ConcurrentCallersOneWins(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			ok, err := repo.MarkExpiryWarned(inst.ID, *inst.ExpiresAt, time.Now())
+			ok, err := repo.MarkExpiryWarned(context.Background(), inst.ID, *inst.ExpiresAt, time.Now())
 			assert.NoError(t, err)
 			if ok {
 				wins.Add(1)
@@ -112,11 +113,11 @@ func TestListExpiringSoon_SkipsWarnedInstances(t *testing.T) {
 	createExpiringInstance(t, repo, "not-warned", 10*time.Minute)
 	createExpiringInstance(t, repo, "later", 2*time.Hour)
 
-	ok, err := repo.MarkExpiryWarned(warned.ID, *warned.ExpiresAt, time.Now())
+	ok, err := repo.MarkExpiryWarned(context.Background(), warned.ID, *warned.ExpiresAt, time.Now())
 	require.NoError(t, err)
 	require.True(t, ok)
 
-	list, err := repo.ListExpiringSoon(30 * time.Minute)
+	list, err := repo.ListExpiringSoon(context.Background(), 30*time.Minute)
 	require.NoError(t, err)
 	require.Len(t, list, 1)
 	assert.Equal(t, "not-warned", list[0].Name)
@@ -174,16 +175,16 @@ func TestUpdate_ExpiryWarningMark(t *testing.T) {
 
 			// The copy was read before the warning (ExpiryWarnedAt is nil).
 			stale := *inst
-			ok, err := repo.MarkExpiryWarned(inst.ID, *inst.ExpiresAt, time.Now())
+			ok, err := repo.MarkExpiryWarned(context.Background(), inst.ID, *inst.ExpiresAt, time.Now())
 			require.NoError(t, err)
 			require.True(t, ok)
 
 			tt.change(&stale)
-			require.NoError(t, repo.Update(&stale))
+			require.NoError(t, repo.Update(context.Background(), &stale))
 			assert.Equal(t, tt.wantWarned, isWarned(t, repo, inst.ID))
 
 			// The other columns are written as before.
-			stored, err := repo.FindByID(inst.ID)
+			stored, err := repo.FindByID(context.Background(), inst.ID)
 			require.NoError(t, err)
 			assert.Equal(t, stale.Status, stored.Status)
 			if stale.ExpiresAt == nil {

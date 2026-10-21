@@ -74,8 +74,8 @@ type caseInsensitiveInstanceRepo struct {
 	*MockStackInstanceRepository
 }
 
-func (r caseInsensitiveInstanceRepo) FindByID(id string) (*models.StackInstance, error) {
-	return r.MockStackInstanceRepository.FindByID(strings.ToLower(id))
+func (r caseInsensitiveInstanceRepo) FindByID(ctx context.Context, id string) (*models.StackInstance, error) {
+	return r.MockStackInstanceRepository.FindByID(ctx, strings.ToLower(id))
 }
 
 // setupDeployLogHistoryRouter builds a router with the deploy log list,

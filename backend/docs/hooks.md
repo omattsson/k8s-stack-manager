@@ -314,6 +314,10 @@ the deploy waits for the subscriber:
    this recovery (no `deploy-finalized`). The subscriber can still run, because
    the backend does not call it again. Until the recovery, a stop also ends the
    state.
+7. When the core cannot read the stack at the start of the blocking phase (a
+   database error), it calls no blocking subscriber. The deploy ends with
+   status `error` and the message `The post-deploy steps did not run: the stack
+   could not be read. Deploy again.` `deploy-finalized` fires.
 
 The blocking wait does not hold a deploy concurrency slot
 (`MAX_CONCURRENT_DEPLOYS`). The envelope of a blocking call has the `charts`

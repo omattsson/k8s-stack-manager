@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -266,8 +267,8 @@ func TestCompareInstances(t *testing.T) {
 					Branch:            "master",
 					Status:            models.StackStatusRunning,
 				}
-				require.NoError(t, instRepo.Create(inst1))
-				require.NoError(t, instRepo.Create(inst2))
+				require.NoError(t, instRepo.Create(context.Background(), inst1))
+				require.NoError(t, instRepo.Create(context.Background(), inst2))
 				require.NoError(t, defRepo.Create(&models.StackDefinition{
 					ID:   "d1",
 					Name: "def-a",

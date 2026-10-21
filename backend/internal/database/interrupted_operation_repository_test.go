@@ -289,11 +289,11 @@ func TestGORMInterruptedOperationRepository_InterruptOperation(t *testing.T) {
 				ID: "inst-1", Name: "demo", Namespace: "stack-demo-alice", OwnerID: "u1",
 				StackDefinitionID: "d1", Status: tt.instanceStatus, PostDeployHookUntil: &marker,
 			}
-			require.NoError(t, instRepo.Create(inst))
+			require.NoError(t, instRepo.Create(context.Background(), inst))
 			// A clean of a delete was running: the recovery clears the mark.
 			require.NoError(t, db.Model(&models.StackInstance{}).Where("id = ?", inst.ID).
 				UpdateColumn("delete_after_clean", true).Error)
-			stored, err := instRepo.FindByID(inst.ID)
+			stored, err := instRepo.FindByID(context.Background(), inst.ID)
 			require.NoError(t, err)
 
 			require.NoError(t, db.Create(&models.DeploymentLog{
@@ -336,7 +336,7 @@ func TestGORMInterruptedOperationRepository_InterruptOperation(t *testing.T) {
 				require.NotNil(t, gotLog.CompletedAt)
 			}
 
-			after, err := instRepo.FindByID(inst.ID)
+			after, err := instRepo.FindByID(context.Background(), inst.ID)
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantInstance, after.Status)
 			if tt.wantResult.InstanceUpdated {

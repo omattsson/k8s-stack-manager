@@ -43,7 +43,7 @@ func TestManager_ApplyNamespaceQuotas_InvalidEffectiveQuota(t *testing.T) {
 			t.Parallel()
 			instanceRepo := newMockInstanceRepo()
 			inst := &models.StackInstance{ID: "inst-q", Name: "q", Namespace: "stack-q", ClusterID: "cluster-1", Status: models.StackStatusRunning}
-			require.NoError(t, instanceRepo.Create(inst))
+			require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 			mgr := NewManager(ManagerConfig{
 				Registry:          &mockClusterResolver{helm: &mockHelmExecutor{}},
@@ -76,7 +76,7 @@ func TestManager_Deploy_InvalidEffectiveQuotaFailsBeforeHelm(t *testing.T) {
 		ID: "inst-dq", StackDefinitionID: "def-1", Name: "dq", Namespace: "stack-dq",
 		OwnerID: "user-1", Branch: "main", ClusterID: "cluster-1", Status: models.StackStatusDraft,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	helmExec := &mockHelmExecutor{}
 	rec := newHookRecorder(t)
@@ -111,7 +111,7 @@ func TestManager_Deploy_InvalidEffectiveQuotaFailsBeforeHelm(t *testing.T) {
 	l, err := logRepo.FindByID(context.Background(), logID)
 	require.NoError(t, err)
 	assert.Equal(t, want, l.ErrorMessage)
-	final, err := instanceRepo.FindByID(inst.ID)
+	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	require.NoError(t, err)
 	assert.Equal(t, models.StackStatusError, final.Status)
 	assert.Equal(t, want, final.ErrorMessage)

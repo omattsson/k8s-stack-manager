@@ -81,7 +81,7 @@ func (r *SecretRefresher) run() {
 // called again after it returned (one call per leadership term). Do not
 // mix Run with Start and Stop on the same value.
 func (r *SecretRefresher) Run(ctx context.Context) {
-	r.refresh()
+	r.refresh(ctx)
 
 	ticker := time.NewTicker(r.interval)
 	defer ticker.Stop()
@@ -91,12 +91,13 @@ func (r *SecretRefresher) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			r.refresh()
+			r.refresh(ctx)
 		}
 	}
 }
 
-func (r *SecretRefresher) refresh() {
+// refresh runs one cycle. The instance queries run with ctx, the worker context.
+func (r *SecretRefresher) refresh(ctx context.Context) {
 	if r.registry == nil {
 		return
 	}
@@ -117,7 +118,7 @@ func (r *SecretRefresher) refresh() {
 			continue
 		}
 
-		refreshed, failed := r.refreshClusterSecrets(cl, regCfg)
+		refreshed, failed := r.refreshClusterSecrets(ctx, cl, regCfg)
 		totalRefreshed += refreshed
 		totalFailed += failed
 	}
@@ -142,8 +143,8 @@ func secretRefreshStatus(refreshed, failed int) string {
 
 const secretRefreshTimeout = 30 * time.Second
 
-func (r *SecretRefresher) refreshClusterSecrets(cl *models.Cluster, regCfg *models.RegistryConfig) (refreshed, failed int) {
-	instances, err := r.instanceRepo.FindByCluster(cl.ID)
+func (r *SecretRefresher) refreshClusterSecrets(ctx context.Context, cl *models.Cluster, regCfg *models.RegistryConfig) (refreshed, failed int) {
+	instances, err := r.instanceRepo.FindByCluster(ctx, cl.ID)
 	if err != nil {
 		slog.Error("secret refresher: failed to list instances",
 			"cluster_id", cl.ID, "error", err)

@@ -131,7 +131,7 @@ func TestManager_Deploy_FiresLifecycleHooks(t *testing.T) {
 		Branch:            "main",
 		Status:            models.StackStatusDraft,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	mgr := NewManager(ManagerConfig{
 		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
@@ -189,7 +189,7 @@ func TestManager_Deploy_PreDeployHookIncludesChartData(t *testing.T) {
 		Branch:            "feature/foo",
 		Status:            models.StackStatusDraft,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	mgr := NewManager(ManagerConfig{
 		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
@@ -273,7 +273,7 @@ func TestManager_Deploy_PreHookAbortFinalizesAsError(t *testing.T) {
 		Branch:            "main",
 		Status:            models.StackStatusDraft,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	mgr := NewManager(ManagerConfig{
 		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
@@ -302,7 +302,7 @@ func TestManager_Deploy_PreHookAbortFinalizesAsError(t *testing.T) {
 	}, 2*time.Second, 20*time.Millisecond, "deployment log should be finalized")
 
 	// Instance must be set to error status by finalizeDeploy.
-	stored, err := instanceRepo.FindByID(inst.ID)
+	stored, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	require.NoError(t, err)
 	assert.Equal(t, models.StackStatusError, stored.Status, "instance must be error when pre-deploy hook denies")
 	assert.Contains(t, stored.ErrorMessage, "pre-deploy hook")
@@ -379,7 +379,7 @@ func TestManager_Deploy_PreHookReasonInLogOutput(t *testing.T) {
 				ID: "inst-reason", StackDefinitionID: "def-1", Name: "reason",
 				Namespace: "stack-reason-bob", OwnerID: "user-2", Branch: "main", Status: models.StackStatusDraft,
 			}
-			require.NoError(t, instanceRepo.Create(inst))
+			require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 			mgr := NewManager(ManagerConfig{
 				Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
@@ -422,7 +422,7 @@ func TestManager_Deploy_PreHookReasonInLogOutput(t *testing.T) {
 				}
 			}
 
-			stored, err := instanceRepo.FindByID(inst.ID)
+			stored, err := instanceRepo.FindByID(context.Background(), inst.ID)
 			require.NoError(t, err)
 			assert.Equal(t, models.StackStatusError, stored.Status)
 			assert.Equal(t, tt.wantReason, stored.ErrorMessage)
@@ -450,7 +450,7 @@ func TestManager_Deploy_NoDispatcherIsNoOp(t *testing.T) {
 		Branch:            "main",
 		Status:            models.StackStatusDraft,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	mgr := NewManager(ManagerConfig{
 		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
@@ -491,17 +491,17 @@ func TestManager_Deploy_StatusChangedDuringPreDeployHookSkipsInstall(t *testing.
 		Branch:            "feature/foo",
 		Status:            models.StackStatusDraft,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	// While the pre-deploy hook runs, a stop moves the instance to stopped.
 	rec.onEvent[hooks.EventPreDeploy] = func() {
-		current, err := instanceRepo.FindByID(inst.ID)
+		current, err := instanceRepo.FindByID(context.Background(), inst.ID)
 		if err != nil {
 			t.Errorf("find instance: %v", err)
 			return
 		}
 		current.Status = models.StackStatusStopped
-		if err := instanceRepo.Update(current); err != nil {
+		if err := instanceRepo.Update(context.Background(), current); err != nil {
 			t.Errorf("update instance: %v", err)
 		}
 	}
@@ -537,7 +537,7 @@ func TestManager_Deploy_StatusChangedDuringPreDeployHookSkipsInstall(t *testing.
 	helmExec.mu.Unlock()
 	assert.Zero(t, installs, "no chart may be installed after the status changed")
 
-	stored, err := instanceRepo.FindByID(inst.ID)
+	stored, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	require.NoError(t, err)
 	assert.Equal(t, models.StackStatusStopped, stored.Status, "the status set by the stop must stay")
 

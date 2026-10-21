@@ -30,7 +30,7 @@ func TestManager_Deploy_ChartSourceNotAllowed(t *testing.T) {
 		Branch:            "main",
 		Status:            models.StackStatusDraft,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	mgr := NewManager(ManagerConfig{
 		Registry:      &mockClusterResolver{helm: helm, noK8sClient: true},
@@ -56,7 +56,7 @@ func TestManager_Deploy_ChartSourceNotAllowed(t *testing.T) {
 	helm.mu.Unlock()
 	assert.Zero(t, calls, "a chart outside the allowlist must not be installed")
 
-	final, err := instanceRepo.FindByID(inst.ID)
+	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	require.NoError(t, err)
 	assert.Equal(t, models.StackStatusError, final.Status)
 	finalLog, err := logRepo.FindByID(context.Background(), logID)

@@ -217,7 +217,7 @@ func TestGetEffectiveQuota(t *testing.T) {
 			instRepo := NewMockStackInstanceRepository()
 			inst := seedInstance(t, instRepo, "inst-1", "my-stack", "def-1", ownerID, models.StackStatusRunning)
 			inst.ClusterID = tt.instCluster
-			require.NoError(t, instRepo.Update(inst))
+			require.NoError(t, instRepo.Update(context.Background(), inst))
 
 			overrideRepo := NewMockInstanceQuotaOverrideRepository()
 			if tt.override != nil {
@@ -311,7 +311,7 @@ func TestGetEffectiveQuota_RepositoryErrors(t *testing.T) {
 			instRepo := NewMockStackInstanceRepository()
 			inst := seedInstance(t, instRepo, "inst-1", "my-stack", "def-1", "uid-1", models.StackStatusRunning)
 			inst.ClusterID = tt.instCluster
-			require.NoError(t, instRepo.Update(inst))
+			require.NoError(t, instRepo.Update(context.Background(), inst))
 			overrideRepo := NewMockInstanceQuotaOverrideRepository()
 			quotaRepo := NewMockResourceQuotaRepository()
 			if tt.failOverride {

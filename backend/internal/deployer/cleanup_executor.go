@@ -114,24 +114,27 @@ func (e *CleanupExecutor) DeleteInstance(ctx context.Context, inst *models.Stack
 		return nil
 	}
 
+	// The end of the job must not stop the delete or its side effects
+	// (afterDelete). WithoutCancel keeps the trigger.
+	dctx := context.WithoutCancel(ctx)
 	// The delete removes the follower rows: read the followers first, so
 	// that they get the "instance.deleted" notification.
 	var followerIDs []string
-	if e.manager != nil {
-		followerIDs = e.manager.followerIDs(inst.ID)
+	if e.manager != nil && e.manager.notifier != nil {
+		followerIDs = e.manager.notifier.FollowerIDs(dctx, inst.ID)
 	}
 	// With a transaction runner, delete the branch overrides and the quick
 	// deploy definition owned by the instance in the same transaction.
 	var err error
 	if e.manager != nil && e.manager.txRunner != nil {
-		err = database.DeleteInstanceWithOwnedDefinition(e.manager.txRunner, inst)
+		err = database.DeleteInstanceWithOwnedDefinition(dctx, e.manager.txRunner, inst)
 	} else {
-		err = e.instanceRepo.Delete(inst.ID)
+		err = e.instanceRepo.Delete(dctx, inst.ID)
 	}
 	if err != nil {
 		return err
 	}
-	e.afterDelete(ctx, inst, followerIDs)
+	e.afterDelete(dctx, inst, followerIDs)
 	return nil
 }
 

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -704,23 +705,43 @@ type cleanupMockInstanceRepo struct {
 	instances []models.StackInstance
 }
 
-func (r *cleanupMockInstanceRepo) Create(_ *models.StackInstance) error { return nil }
-func (r *cleanupMockInstanceRepo) FindByID(id string) (*models.StackInstance, error) {
+func (r *cleanupMockInstanceRepo) Create(ctx context.Context, _ *models.StackInstance) error {
+	return ctxDone(ctx, "create")
+}
+func (r *cleanupMockInstanceRepo) FindByID(ctx context.Context, id string) (*models.StackInstance, error) {
+	if err := ctxDone(ctx, "find_by_id"); err != nil {
+		return nil, err
+	}
 	return nil, errors.New("not found")
 }
-func (r *cleanupMockInstanceRepo) FindByNamespace(_ string) (*models.StackInstance, error) {
+func (r *cleanupMockInstanceRepo) FindByNamespace(ctx context.Context, _ string) (*models.StackInstance, error) {
+	if err := ctxDone(ctx, "find_by_namespace"); err != nil {
+		return nil, err
+	}
 	return nil, errors.New("not found")
 }
-func (r *cleanupMockInstanceRepo) Update(_ *models.StackInstance) error  { return nil }
-func (r *cleanupMockInstanceRepo) Delete(_ string) error                 { return nil }
-func (r *cleanupMockInstanceRepo) List() ([]models.StackInstance, error) { return r.instances, nil }
-func (r *cleanupMockInstanceRepo) ListByOwner(_ string) ([]models.StackInstance, error) {
-	return nil, nil
+func (r *cleanupMockInstanceRepo) Update(ctx context.Context, _ *models.StackInstance) error {
+	return ctxDone(ctx, "update")
 }
-func (r *cleanupMockInstanceRepo) FindByName(_ string) ([]models.StackInstance, error) {
-	return nil, nil
+func (r *cleanupMockInstanceRepo) Delete(ctx context.Context, _ string) error {
+	return ctxDone(ctx, "delete")
 }
-func (r *cleanupMockInstanceRepo) FindByCluster(id string) ([]models.StackInstance, error) {
+func (r *cleanupMockInstanceRepo) List(ctx context.Context) ([]models.StackInstance, error) {
+	if err := ctxDone(ctx, "list"); err != nil {
+		return nil, err
+	}
+	return r.instances, nil
+}
+func (r *cleanupMockInstanceRepo) ListByOwner(ctx context.Context, _ string) ([]models.StackInstance, error) {
+	return nil, ctxDone(ctx, "list_by_owner")
+}
+func (r *cleanupMockInstanceRepo) FindByName(ctx context.Context, _ string) ([]models.StackInstance, error) {
+	return nil, ctxDone(ctx, "find_by_name")
+}
+func (r *cleanupMockInstanceRepo) FindByCluster(ctx context.Context, id string) ([]models.StackInstance, error) {
+	if err := ctxDone(ctx, "find_by_cluster"); err != nil {
+		return nil, err
+	}
 	var result []models.StackInstance
 	for _, inst := range r.instances {
 		if inst.ClusterID == id {
@@ -729,7 +750,10 @@ func (r *cleanupMockInstanceRepo) FindByCluster(id string) ([]models.StackInstan
 	}
 	return result, nil
 }
-func (r *cleanupMockInstanceRepo) CountByClusterAndOwner(clusterID, ownerID string) (int, error) {
+func (r *cleanupMockInstanceRepo) CountByClusterAndOwner(ctx context.Context, clusterID, ownerID string) (int, error) {
+	if err := ctxDone(ctx, "count_by_cluster_and_owner"); err != nil {
+		return 0, err
+	}
 	count := 0
 	for _, inst := range r.instances {
 		if inst.ClusterID == clusterID && inst.OwnerID == ownerID {
@@ -738,35 +762,47 @@ func (r *cleanupMockInstanceRepo) CountByClusterAndOwner(clusterID, ownerID stri
 	}
 	return count, nil
 }
-func (r *cleanupMockInstanceRepo) ListPaged(_ models.StackInstanceFilter, limit, offset int) ([]models.StackInstance, int, error) {
+func (r *cleanupMockInstanceRepo) ListPaged(ctx context.Context, _ models.StackInstanceFilter, limit, offset int) ([]models.StackInstance, int, error) {
+	if err := ctxDone(ctx, "list_paged"); err != nil {
+		return nil, 0, err
+	}
 	return r.instances, len(r.instances), nil
 }
-func (r *cleanupMockInstanceRepo) CountAll() (int, error)              { return len(r.instances), nil }
-func (r *cleanupMockInstanceRepo) CountByStatus(_ string) (int, error) { return 0, nil }
-func (r *cleanupMockInstanceRepo) ExistsByDefinitionAndStatus(_, _ string) (bool, error) {
-	return false, nil
+func (r *cleanupMockInstanceRepo) CountAll(ctx context.Context) (int, error) {
+	if err := ctxDone(ctx, "count_all"); err != nil {
+		return 0, err
+	}
+	return len(r.instances), nil
 }
-func (r *cleanupMockInstanceRepo) CountByDefinitionIDs(_ []string) (map[string]int, error) {
-	return nil, nil
+func (r *cleanupMockInstanceRepo) CountByStatus(ctx context.Context, _ string) (int, error) {
+	return 0, ctxDone(ctx, "count_by_status")
 }
-func (r *cleanupMockInstanceRepo) CountByOwnerIDs(_ []string) (map[string]int, error) {
-	return nil, nil
+func (r *cleanupMockInstanceRepo) ExistsByDefinitionAndStatus(ctx context.Context, _, _ string) (bool, error) {
+	return false, ctxDone(ctx, "exists_by_definition_and_status")
 }
-func (r *cleanupMockInstanceRepo) ListIDsByDefinitionIDs(_ []string) (map[string][]string, error) {
-	return nil, nil
+func (r *cleanupMockInstanceRepo) CountByDefinitionIDs(ctx context.Context, _ []string) (map[string]int, error) {
+	return nil, ctxDone(ctx, "count_by_definition_ids")
 }
-func (r *cleanupMockInstanceRepo) ListIDsByOwnerIDs(_ []string) (map[string][]string, error) {
-	return nil, nil
+func (r *cleanupMockInstanceRepo) CountByOwnerIDs(ctx context.Context, _ []string) (map[string]int, error) {
+	return nil, ctxDone(ctx, "count_by_owner_ids")
 }
-func (r *cleanupMockInstanceRepo) ListExpired() ([]*models.StackInstance, error) { return nil, nil }
-func (r *cleanupMockInstanceRepo) ListExpiringSoon(_ time.Duration) ([]*models.StackInstance, error) {
-	return nil, nil
+func (r *cleanupMockInstanceRepo) ListIDsByDefinitionIDs(ctx context.Context, _ []string) (map[string][]string, error) {
+	return nil, ctxDone(ctx, "list_ids_by_definition_ids")
 }
-func (*cleanupMockInstanceRepo) MarkExpiryWarned(_ string, _, _ time.Time) (bool, error) {
-	return false, nil
+func (r *cleanupMockInstanceRepo) ListIDsByOwnerIDs(ctx context.Context, _ []string) (map[string][]string, error) {
+	return nil, ctxDone(ctx, "list_ids_by_owner_ids")
 }
-func (r *cleanupMockInstanceRepo) ListByStatus(_ string, _ int) ([]*models.StackInstance, error) {
-	return nil, nil
+func (r *cleanupMockInstanceRepo) ListExpired(ctx context.Context) ([]*models.StackInstance, error) {
+	return nil, ctxDone(ctx, "list_expired")
+}
+func (r *cleanupMockInstanceRepo) ListExpiringSoon(ctx context.Context, _ time.Duration) ([]*models.StackInstance, error) {
+	return nil, ctxDone(ctx, "list_expiring_soon")
+}
+func (*cleanupMockInstanceRepo) MarkExpiryWarned(ctx context.Context, _ string, _, _ time.Time) (bool, error) {
+	return false, ctxDone(ctx, "mark_expiry_warned")
+}
+func (r *cleanupMockInstanceRepo) ListByStatus(ctx context.Context, _ string, _ int) ([]*models.StackInstance, error) {
+	return nil, ctxDone(ctx, "list_by_status")
 }
 
 // cleanupMockAuditRepo implements models.AuditLogRepository for handler tests.
@@ -789,7 +825,9 @@ func (r *cleanupMockAuditRepo) List(_ models.AuditLogFilters) (*models.AuditLogR
 	}, nil
 }
 
-func (*cleanupMockInstanceRepo) CountByStatuses(statuses []string) (int, error) { return 0, nil }
+func (*cleanupMockInstanceRepo) CountByStatuses(ctx context.Context, statuses []string) (int, error) {
+	return 0, ctxDone(ctx, "count_by_statuses")
+}
 
 // countingPolicyRepo counts ListEnabled calls: the scheduler calls it on
 // every Reload.

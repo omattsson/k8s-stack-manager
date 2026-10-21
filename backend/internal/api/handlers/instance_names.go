@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -51,7 +52,7 @@ func (g instanceNameGuard) defaultClusterID() string {
 // nameHolder returns an instance other than excludeID that uses name on
 // clusterID, or nil. An empty clusterID means the default cluster. On the
 // default cluster, the instances without a cluster count too.
-func (g instanceNameGuard) nameHolder(name, clusterID, excludeID string) (*models.StackInstance, error) {
+func (g instanceNameGuard) nameHolder(ctx context.Context, name, clusterID, excludeID string) (*models.StackInstance, error) {
 	def := g.defaultClusterID()
 	if clusterID == "" {
 		clusterID = def
@@ -60,7 +61,7 @@ func (g instanceNameGuard) nameHolder(name, clusterID, excludeID string) (*model
 	if !ok {
 		return nil, errNoInstanceNameLookup
 	}
-	list, err := lookup.FindByNameOnCluster(name, clusterID, clusterID == def)
+	list, err := lookup.FindByNameOnCluster(ctx, name, clusterID, clusterID == def)
 	if err != nil {
 		return nil, err
 	}
@@ -79,8 +80,12 @@ func (g instanceNameGuard) nameHolder(name, clusterID, excludeID string) (*model
 // username of the new instance (its namespace is stack-<name>-<owner>); a
 // rename keeps the namespace and passes "".
 func (g instanceNameGuard) check(c *gin.Context, name, clusterID, excludeID, owner string) bool {
-	holder, err := g.nameHolder(name, clusterID, excludeID)
+	ctx := c.Request.Context()
+	holder, err := g.nameHolder(ctx, name, clusterID, excludeID)
 	if err != nil {
+		if respondCancelled(c, err) {
+			return true
+		}
 		slog.Error("Failed to check instance name uniqueness",
 			"name", name,
 			logKeyClusterID, clusterID,
@@ -95,8 +100,8 @@ func (g instanceNameGuard) check(c *gin.Context, name, clusterID, excludeID, own
 	c.JSON(http.StatusConflict, NamespaceConflictResponse{
 		Error: msgInstanceNameExists,
 		Message: fmt.Sprintf("A stack named %q already exists on this cluster (owner: %s)",
-			holder.Name, resolveOwnerName(c.Request.Context(), g.userRepo, holder.OwnerID)),
-		Suggestions: g.freeSuggestions(name, clusterID, owner),
+			holder.Name, resolveOwnerName(ctx, g.userRepo, holder.OwnerID)),
+		Suggestions: g.freeSuggestions(ctx, name, clusterID, owner),
 	})
 	return true
 }
@@ -105,14 +110,14 @@ func (g instanceNameGuard) check(c *gin.Context, name, clusterID, excludeID, own
 // that no instance uses on clusterID and, when owner is set, whose namespace
 // stack-<name>-<owner> is free (namespaces are global, not per cluster). A
 // lookup error drops the suggestion.
-func (g instanceNameGuard) freeSuggestions(name, clusterID, owner string) []string {
+func (g instanceNameGuard) freeSuggestions(ctx context.Context, name, clusterID, owner string) []string {
 	out := make([]string, 0, 3)
 	for _, s := range generateNameSuggestions(name) {
-		if holder, err := g.nameHolder(s, clusterID, ""); err != nil || holder != nil {
+		if holder, err := g.nameHolder(ctx, s, clusterID, ""); err != nil || holder != nil {
 			continue
 		}
 		if owner != "" {
-			if _, err := g.instanceRepo.FindByNamespace(buildNamespace(s, owner)); !errors.Is(err, dberrors.ErrNotFound) {
+			if _, err := g.instanceRepo.FindByNamespace(ctx, buildNamespace(s, owner)); !errors.Is(err, dberrors.ErrNotFound) {
 				continue
 			}
 		}
@@ -125,8 +130,8 @@ func (g instanceNameGuard) freeSuggestions(name, clusterID, owner string) []stri
 // instance uses on the same cluster. UNIQUE_INSTANCE_NAMES refuses new
 // duplicates but keeps the existing ones. defaultClusterID is the cluster of
 // the instances without a cluster ("" when unknown).
-func LogDuplicateInstanceNames(repo models.InstanceNameLookup, defaultClusterID string) {
-	dups, err := repo.DuplicateInstanceNames(defaultClusterID)
+func LogDuplicateInstanceNames(ctx context.Context, repo models.InstanceNameLookup, defaultClusterID string) {
+	dups, err := repo.DuplicateInstanceNames(ctx, defaultClusterID)
 	if err != nil {
 		slog.Warn("UNIQUE_INSTANCE_NAMES: failed to list the existing duplicate instance names", "error", err)
 		return

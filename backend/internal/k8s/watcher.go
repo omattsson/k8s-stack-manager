@@ -137,7 +137,7 @@ func (w *Watcher) clearStatuses() {
 
 // poll checks the status of all active instances.
 func (w *Watcher) poll(ctx context.Context) {
-	instances, err := w.instanceRepo.List()
+	instances, err := w.instanceRepo.List(ctx)
 	if err != nil {
 		slog.Error("Failed to list stack instances", "error", err)
 		return
@@ -190,7 +190,7 @@ func (w *Watcher) poll(ctx context.Context) {
 		changed := prev == nil || prev.Status != nsStatus.Status || statusDetailsChanged(prev, nsStatus)
 		if changed {
 			w.broadcast(inst.ID, nsStatus)
-			if !w.handleStatusTransition(inst, nsStatus) {
+			if !w.handleStatusTransition(ctx, inst, nsStatus) {
 				// Skipped during blocking post-deploy hooks: do not store the
 				// status, so a later poll applies the error when the marker
 				// has expired and the status is still the same.
@@ -334,8 +334,9 @@ func countReadyReplicas(ns *NamespaceStatus) int32 {
 // handleStatusTransition updates the instance status in the repository when
 // the Kubernetes namespace status degrades. It returns false when it skipped
 // an error because a deploy runs or blocking post-deploy hooks run (the caller
-// then does not store the status), else true.
-func (w *Watcher) handleStatusTransition(inst *models.StackInstance, nsStatus *NamespaceStatus) bool {
+// then does not store the status), else true. The writes run with ctx, the
+// context of the poll.
+func (w *Watcher) handleStatusTransition(ctx context.Context, inst *models.StackInstance, nsStatus *NamespaceStatus) bool {
 	switch nsStatus.Status {
 	case StatusError:
 		if inst.Status == models.StackStatusDeploying {
@@ -364,7 +365,7 @@ func (w *Watcher) handleStatusTransition(inst *models.StackInstance, nsStatus *N
 			if marker, ok := w.instanceRepo.(models.InstanceErrorMarker); ok {
 				// The status read at the start of the poll can be old: a deploy
 				// can have started since. Write only when the status allows it.
-				changed, err := marker.MarkNamespaceError(inst.ID, msg, w.clock())
+				changed, err := marker.MarkNamespaceError(ctx, inst.ID, msg, w.clock())
 				if err != nil {
 					slog.Error("Failed to update instance status",
 						"instance_id", inst.ID,
@@ -382,7 +383,7 @@ func (w *Watcher) handleStatusTransition(inst *models.StackInstance, nsStatus *N
 			}
 			inst.Status = models.StackStatusError
 			inst.ErrorMessage = msg
-			if err := w.instanceRepo.Update(inst); err != nil {
+			if err := w.instanceRepo.Update(ctx, inst); err != nil {
 				slog.Error("Failed to update instance status",
 					"instance_id", inst.ID,
 					"error", err,

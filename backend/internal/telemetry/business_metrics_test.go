@@ -19,13 +19,19 @@ import (
 
 type fakeInstanceRepo struct {
 	models.StackInstanceRepository
-	total    int
-	byStatus map[string]int
+	countAllCtx   context.Context // context of the last CountAll call
+	byStatusesCtx context.Context // context of the last CountByStatuses call
+	byStatus      map[string]int
+	total         int
 }
 
-func (f *fakeInstanceRepo) CountAll() (int, error) { return f.total, nil }
+func (f *fakeInstanceRepo) CountAll(ctx context.Context) (int, error) {
+	f.countAllCtx = ctx
+	return f.total, nil
+}
 
-func (f *fakeInstanceRepo) CountByStatuses(statuses []string) (int, error) {
+func (f *fakeInstanceRepo) CountByStatuses(ctx context.Context, statuses []string) (int, error) {
+	f.byStatusesCtx = ctx
 	sum := 0
 	for _, s := range statuses {
 		sum += f.byStatus[s]
@@ -124,7 +130,7 @@ func TestStartBusinessMetrics_ObservesGauges(t *testing.T) {
 type collectCtxKey struct{}
 
 // TestStartBusinessMetrics_UserCountUsesCallbackContext checks that the user
-// count runs with the context of the metrics collection (#656).
+// and instance counts run with the context of the metrics collection (#656).
 func TestStartBusinessMetrics_UserCountUsesCallbackContext(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
@@ -136,11 +142,16 @@ func TestStartBusinessMetrics_UserCountUsesCallbackContext(t *testing.T) {
 	})
 
 	userRepo := &fakeUserRepo{count: 1}
-	require.NoError(t, StartBusinessMetrics(&fakeInstanceRepo{}, userRepo, &fakeTemplateRepo{}, &fakeClusterRepo{}))
+	instanceRepo := &fakeInstanceRepo{}
+	require.NoError(t, StartBusinessMetrics(instanceRepo, userRepo, &fakeTemplateRepo{}, &fakeClusterRepo{}))
 
 	var rm metricdata.ResourceMetrics
 	require.NoError(t, reader.Collect(context.WithValue(context.Background(), collectCtxKey{}, "scrape"), &rm))
 
 	require.NotNil(t, userRepo.countCtx)
 	assert.Equal(t, "scrape", userRepo.countCtx.Value(collectCtxKey{}))
+	require.NotNil(t, instanceRepo.countAllCtx)
+	assert.Equal(t, "scrape", instanceRepo.countAllCtx.Value(collectCtxKey{}))
+	require.NotNil(t, instanceRepo.byStatusesCtx)
+	assert.Equal(t, "scrape", instanceRepo.byStatusesCtx.Value(collectCtxKey{}))
 }

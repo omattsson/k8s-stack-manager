@@ -107,6 +107,10 @@ func (h *ClusterHandler) WithInstanceQuotaOverrides(repo models.InstanceQuotaOve
 // maxQuotaConflictNames caps the instance names listed in a quota conflict error.
 const maxQuotaConflictNames = 10
 
+// quotaPropagationTimeout bounds the background quota write to the stack
+// namespaces after a cluster quota save.
+const quotaPropagationTimeout = 2 * time.Minute
+
 // checkOverrideConflicts validates the new cluster quota merged with the
 // quota override of every instance on the cluster (and, for the default
 // cluster, of every instance without a cluster). It returns a non-empty,
@@ -116,7 +120,7 @@ func (h *ClusterHandler) checkOverrideConflicts(ctx context.Context, cl *models.
 	if h.quotaOverrideRepo == nil || h.instanceRepo == nil {
 		return "", nil
 	}
-	instances, err := h.clusterInstances(cl)
+	instances, err := h.clusterInstances(ctx, cl)
 	if err != nil {
 		return "", err
 	}
@@ -168,13 +172,13 @@ func (h *ClusterHandler) checkOverrideConflicts(ctx context.Context, cl *models.
 
 // clusterInstances returns the instances on the cluster and, for the default
 // cluster, the instances without a cluster.
-func (h *ClusterHandler) clusterInstances(cl *models.Cluster) ([]models.StackInstance, error) {
-	instances, err := h.instanceRepo.FindByCluster(cl.ID)
+func (h *ClusterHandler) clusterInstances(ctx context.Context, cl *models.Cluster) ([]models.StackInstance, error) {
+	instances, err := h.instanceRepo.FindByCluster(ctx, cl.ID)
 	if err != nil {
 		return nil, fmt.Errorf("list cluster instances: %w", err)
 	}
 	if cl.IsDefault {
-		unassigned, err := h.instanceRepo.FindByCluster("")
+		unassigned, err := h.instanceRepo.FindByCluster(ctx, "")
 		if err != nil {
 			return nil, fmt.Errorf("list instances without cluster: %w", err)
 		}
@@ -506,8 +510,11 @@ func (h *ClusterHandler) DeleteCluster(c *gin.Context) {
 	}
 
 	// Check for instances using this cluster.
-	instances, err := h.instanceRepo.FindByCluster(id)
+	instances, err := h.instanceRepo.FindByCluster(c.Request.Context(), id)
 	if err != nil {
+		if respondCancelled(c, err) {
+			return
+		}
 		slog.Error("Failed to check cluster instances", logKeyClusterID, id, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
@@ -907,6 +914,9 @@ func (h *ClusterHandler) UpdateQuotas(c *gin.Context) {
 	// Reject a quota that breaks an existing instance quota override.
 	conflict, err := h.checkOverrideConflicts(c.Request.Context(), cl, config)
 	if err != nil {
+		if respondCancelled(c, err) {
+			return
+		}
 		slog.Error("Failed to check instance quota overrides", logKeyClusterID, id, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
@@ -947,7 +957,8 @@ func (h *ClusterHandler) UpdateQuotas(c *gin.Context) {
 // not undone. Runs in a background goroutine so the API response is not
 // delayed. Errors are logged but do not affect the response.
 func (h *ClusterHandler) propagateQuotasToNamespaces(cl *models.Cluster) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	// Its own context: it runs after the response, so never the request context.
+	ctx, cancel := context.WithTimeout(context.Background(), quotaPropagationTimeout)
 	defer cancel()
 	clusterID := cl.ID
 
@@ -959,7 +970,7 @@ func (h *ClusterHandler) propagateQuotasToNamespaces(cl *models.Cluster) {
 
 	// Without the instance list a namespace of an instance with an
 	// override would get the plain cluster quota.
-	instanceIDs, err := h.instanceNamespaces(cl)
+	instanceIDs, err := h.instanceNamespaces(ctx, cl)
 	if err != nil {
 		slog.Error("Failed to list instances for quota propagation", logKeyClusterID, clusterID, "error", err)
 		return
@@ -990,12 +1001,12 @@ func (h *ClusterHandler) propagateQuotasToNamespaces(cl *models.Cluster) {
 
 // instanceNamespaces maps the namespace of each instance on the cluster to
 // the instance ID. It is empty without an instance repository.
-func (h *ClusterHandler) instanceNamespaces(cl *models.Cluster) (map[string]string, error) {
+func (h *ClusterHandler) instanceNamespaces(ctx context.Context, cl *models.Cluster) (map[string]string, error) {
 	result := map[string]string{}
 	if h.instanceRepo == nil {
 		return result, nil
 	}
-	instances, err := h.clusterInstances(cl)
+	instances, err := h.clusterInstances(ctx, cl)
 	if err != nil {
 		return nil, err
 	}

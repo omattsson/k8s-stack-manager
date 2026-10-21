@@ -111,7 +111,7 @@ func (m *QuotaMonitor) Run(ctx context.Context) {
 
 	slog.Info("Quota monitor started", "interval", m.interval, "threshold", m.threshold)
 
-	m.check()
+	m.check(ctx)
 
 	for {
 		select {
@@ -119,12 +119,13 @@ func (m *QuotaMonitor) Run(ctx context.Context) {
 			slog.Info("Quota monitor stopped")
 			return
 		case <-ticker.C:
-			m.check()
+			m.check(ctx)
 		}
 	}
 }
 
-func (m *QuotaMonitor) check() {
+// check runs one cycle. The instance queries run with ctx, the worker context.
+func (m *QuotaMonitor) check(ctx context.Context) {
 	if m.quotaRepo == nil || m.notifier == nil {
 		return
 	}
@@ -139,7 +140,7 @@ func (m *QuotaMonitor) check() {
 
 	for i := range clusters {
 		cl := &clusters[i]
-		m.checkCluster(cl)
+		m.checkCluster(ctx, cl)
 	}
 }
 
@@ -154,13 +155,13 @@ func (m *QuotaMonitor) pruneCooldowns() {
 	}
 }
 
-func (m *QuotaMonitor) checkCluster(cl *models.Cluster) {
-	quotaCfg, err := m.quotaRepo.GetByClusterID(context.Background(), cl.ID)
+func (m *QuotaMonitor) checkCluster(ctx context.Context, cl *models.Cluster) {
+	quotaCfg, err := m.quotaRepo.GetByClusterID(ctx, cl.ID)
 	if err != nil || quotaCfg == nil {
 		return
 	}
 
-	instances, err := m.instanceRepo.FindByCluster(cl.ID)
+	instances, err := m.instanceRepo.FindByCluster(ctx, cl.ID)
 	if err != nil {
 		slog.Error("quota monitor: failed to list instances", "cluster_id", cl.ID, "error", err)
 		return

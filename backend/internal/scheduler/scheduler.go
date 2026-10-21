@@ -463,14 +463,14 @@ func (s *Scheduler) executePolicyWithOptions(parent context.Context, policy *mod
 	// Get instances for target cluster(s).
 	var instances []models.StackInstance
 	if policy.ClusterID == "all" {
-		instances, err = s.instanceRepo.List()
+		instances, err = s.instanceRepo.List(ctx)
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
 			return nil, fmt.Errorf("listing instances: %w", err)
 		}
 	} else {
-		instances, err = s.instanceRepo.FindByCluster(policy.ClusterID)
+		instances, err = s.instanceRepo.FindByCluster(ctx, policy.ClusterID)
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())

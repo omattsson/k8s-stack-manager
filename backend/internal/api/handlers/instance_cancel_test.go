@@ -34,9 +34,10 @@ func captureDefaultLog(t *testing.T) *bytes.Buffer {
 }
 
 // valuesCancelRouter returns a router with the routes that build Helm values
-// (export, deploy preview, compare, deploy, bulk deploy) over env. mgr may be
-// nil.
-func valuesCancelRouter(t *testing.T, env *lifecycleEnv, mgr *deployer.Manager) *gin.Engine {
+// (export, deploy preview, compare, deploy, bulk deploy) over env. The
+// handler reads the instances through inst (a hook over env.inst). mgr may
+// be nil.
+func valuesCancelRouter(t *testing.T, env *lifecycleEnv, inst *hookInstanceRepo, mgr *deployer.Manager) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -49,7 +50,7 @@ func valuesCancelRouter(t *testing.T, env *lifecycleEnv, mgr *deployer.Manager) 
 	users := NewMockUserRepository()
 	seedUser(t, users, "uid-1", "alice", "secret-pass", "user")
 	h, err := NewInstanceHandlerWithDeployer(
-		env.inst, env.ov, env.bo, env.def, env.cc,
+		inst, env.ov, env.bo, env.def, env.cc,
 		NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
 		helm.NewValuesGenerator(), users,
 		mgr, nil, nil, env.logs, nil, 0,
@@ -80,23 +81,21 @@ func seedValuesCancelEnv(t *testing.T, env *lifecycleEnv) {
 	seedDefinition(t, env.def, "d1", "def-1", "uid-1")
 	require.NoError(t, env.cc.Create(&models.ChartConfig{ID: "cc1", StackDefinitionID: "d1", ChartName: "web", DefaultValues: "owner: \"{{.Owner}}\"\n"}))
 	for _, id := range []string{"i1", "i2"} {
-		require.NoError(t, env.inst.Create(&models.StackInstance{
+		require.NoError(t, env.inst.Create(context.Background(), &models.StackInstance{
 			ID: id, StackDefinitionID: "d1", Name: "zz-" + id, Namespace: "stack-zz-" + id + "-alice",
 			OwnerID: "uid-1", Branch: "master", Status: models.StackStatusDraft, TTLMinutes: 60,
 		}))
 	}
 }
 
-func cancelRequest(t *testing.T, method, path, body string, cancelled bool) *http.Request {
+// valuesCancelRequest returns a request to path over inst. When cancelled,
+// the request is cancelled after instance read number reads, so the values
+// build sees the cancel.
+func valuesCancelRequest(t *testing.T, inst *hookInstanceRepo, method, path, body string, cancelled bool, reads int32) *http.Request {
 	t.Helper()
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
+	req, cancel := liveRequest(t, method, path, body)
 	if cancelled {
-		cancel()
-	}
-	req := httptest.NewRequest(method, path, bytes.NewBufferString(body)).WithContext(ctx)
-	if body != "" {
-		req.Header.Set("Content-Type", "application/json")
+		inst.setHook(cancelAt("after:FindByID", reads, cancel))
 	}
 	return req
 }
@@ -109,13 +108,14 @@ func TestInstanceValuesReads_CancelledRequest(t *testing.T) {
 	logBuf := captureDefaultLog(t)
 
 	tests := []struct {
-		name string
-		path string
+		name  string
+		path  string
+		reads int32 // instance reads before the values build
 	}{
-		{name: "export chart values", path: "/api/v1/stack-instances/i1/values/cc1"},
-		{name: "export all values", path: "/api/v1/stack-instances/i1/values"},
-		{name: "deploy preview", path: "/api/v1/stack-instances/i1/deploy-preview"},
-		{name: "compare", path: "/api/v1/stack-instances/compare?left=i1&right=i2"},
+		{name: "export chart values", path: "/api/v1/stack-instances/i1/values/cc1", reads: 1},
+		{name: "export all values", path: "/api/v1/stack-instances/i1/values", reads: 1},
+		{name: "deploy preview", path: "/api/v1/stack-instances/i1/deploy-preview", reads: 1},
+		{name: "compare", path: "/api/v1/stack-instances/compare?left=i1&right=i2", reads: 2},
 	}
 
 	for _, tt := range tests {
@@ -129,8 +129,11 @@ func TestInstanceValuesReads_CancelledRequest(t *testing.T) {
 				seedValuesCancelEnv(t, env)
 				logBuf.Reset()
 
+				inst := &hookInstanceRepo{MockStackInstanceRepository: env.inst}
 				w := httptest.NewRecorder()
-				valuesCancelRouter(t, env, nil).ServeHTTP(w, cancelRequest(t, http.MethodGet, tt.path, "", cancelled))
+				req := valuesCancelRequest(t, inst, http.MethodGet, tt.path, "", cancelled, tt.reads)
+				valuesCancelRouter(t, env, inst, nil).ServeHTTP(w, req)
+				assert.Equal(t, cancelled, req.Context().Err() != nil)
 
 				if cancelled {
 					assert.Equal(t, statusClientClosedRequest, w.Code, w.Body.String())
@@ -174,8 +177,11 @@ func TestDeployInstance_CancelledRequest(t *testing.T) {
 			t.Cleanup(mgr.Shutdown)
 			logBuf.Reset()
 
+			inst := &hookInstanceRepo{MockStackInstanceRepository: env.inst}
 			w := httptest.NewRecorder()
-			valuesCancelRouter(t, env, mgr).ServeHTTP(w, cancelRequest(t, http.MethodPost, tt.path, tt.body, tt.cancelled))
+			req := valuesCancelRequest(t, inst, http.MethodPost, tt.path, tt.body, tt.cancelled, 1)
+			valuesCancelRouter(t, env, inst, mgr).ServeHTTP(w, req)
+			assert.Equal(t, tt.cancelled, req.Context().Err() != nil)
 
 			require.Equal(t, tt.wantStatus, w.Code, w.Body.String())
 			if tt.bulk {
@@ -191,7 +197,7 @@ func TestDeployInstance_CancelledRequest(t *testing.T) {
 			}
 			mgr.Shutdown()
 
-			got, err := env.inst.FindByID("i1")
+			got, err := env.inst.FindByID(context.Background(), "i1")
 			require.NoError(t, err)
 			logs, err := env.logs.ListByInstance(context.Background(), "i1")
 			require.NoError(t, err)
@@ -229,22 +235,19 @@ func (n *ctxNotifier) NotifyInstance(ctx context.Context, _ models.NotificationT
 func (n *ctxNotifier) FollowerIDs(context.Context, string) []string { return nil }
 
 // TestDeleteInstance_CancelledRequestAfterDelete checks that a client that
-// left does not cancel post-instance-delete, delete-completed and the
-// instance.deleted notification after the row delete, and that they keep
-// the user trigger (#656). With a cancelled request the pre-instance-delete
-// call cannot reach the subscriber (failure_policy ignore).
+// left at the row delete does not cancel the delete, post-instance-delete,
+// delete-completed and the instance.deleted notification, and that they keep
+// the user trigger (#656).
 func TestDeleteInstance_CancelledRequestAfterDelete(t *testing.T) {
 	t.Parallel()
 
+	wantEvents := []string{hooks.EventPreInstanceDelete, hooks.EventPostInstanceDelete, hooks.EventDeleteCompleted}
 	tests := []struct {
-		name       string
-		cancelled  bool
-		wantEvents []string
+		name      string
+		cancelled bool
 	}{
-		{name: "live request",
-			wantEvents: []string{hooks.EventPreInstanceDelete, hooks.EventPostInstanceDelete, hooks.EventDeleteCompleted}},
-		{name: "cancelled request", cancelled: true,
-			wantEvents: []string{hooks.EventPostInstanceDelete, hooks.EventDeleteCompleted}},
+		{name: "live request"},
+		{name: "request cancelled at the row delete", cancelled: true},
 	}
 
 	for _, tt := range tests {
@@ -260,8 +263,8 @@ func TestDeleteInstance_CancelledRequestAfterDelete(t *testing.T) {
 			}}}, rec.server.Client())
 			require.NoError(t, err)
 
-			instRepo := NewMockStackInstanceRepository()
-			seedInstance(t, instRepo, "i-1", "to-delete", "d1", "uid-1", models.StackStatusDraft)
+			instRepo := newHookInstanceRepo()
+			seedInstance(t, instRepo.MockStackInstanceRepository, "i-1", "to-delete", "d1", "uid-1", models.StackStatusDraft)
 			overrideRepo := NewMockValueOverrideRepository()
 			boRepo := NewMockChartBranchOverrideRepository()
 			h := NewInstanceHandler(instRepo, overrideRepo, boRepo, NewMockStackDefinitionRepository(),
@@ -281,14 +284,19 @@ func TestDeleteInstance_CancelledRequestAfterDelete(t *testing.T) {
 			})
 			r.DELETE("/api/v1/stack-instances/:id", h.DeleteInstance)
 
+			req, cancel := liveRequest(t, http.MethodDelete, "/api/v1/stack-instances/i-1", "")
+			if tt.cancelled {
+				instRepo.setHook(cancelAt("before:Delete", 1, cancel))
+			}
 			w := httptest.NewRecorder()
-			r.ServeHTTP(w, cancelRequest(t, http.MethodDelete, "/api/v1/stack-instances/i-1", "", tt.cancelled))
+			r.ServeHTTP(w, req)
 
 			require.Equal(t, http.StatusNoContent, w.Code, w.Body.String())
-			_, findErr := instRepo.FindByID("i-1")
+			assert.Equal(t, tt.cancelled, req.Context().Err() != nil)
+			_, findErr := instRepo.FindByID(context.Background(), "i-1")
 			require.Error(t, findErr, "the instance is deleted")
 			want := hooks.Trigger{Type: hooks.TriggerUser, ID: "uid-1", Name: "alice"}
-			assert.Equal(t, tt.wantEvents, rec.names())
+			assert.Equal(t, wantEvents, rec.names())
 			rec.mu.Lock()
 			for _, e := range rec.events {
 				if assert.NotNil(t, e.envelope.Trigger, e.event) {

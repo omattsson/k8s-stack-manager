@@ -35,7 +35,10 @@ type txRunnerWithBranchOverride struct {
 	boRepo       models.ChartBranchOverrideRepository
 }
 
-func (m *txRunnerWithBranchOverride) RunInTx(fn func(repos database.TxRepos) error) error {
+func (m *txRunnerWithBranchOverride) RunInTx(ctx context.Context, fn func(repos database.TxRepos) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	return fn(database.TxRepos{
 		StackInstance:  m.instanceRepo,
 		DeploymentLog:  m.logRepo,
@@ -142,7 +145,7 @@ func seedInstance(t *testing.T, repo *mockInstanceRepo, id, name, ownerID string
 		Branch:            "main",
 		Status:            models.StackStatusDraft,
 	}
-	require.NoError(t, repo.Create(inst))
+	require.NoError(t, repo.Create(context.Background(), inst))
 	return inst
 }
 
@@ -211,7 +214,7 @@ func TestNotification_StopCompleted(t *testing.T) {
 
 	inst := seedInstance(t, instanceRepo, "inst-stop", "stop-stack", "user-10")
 	inst.Status = models.StackStatusRunning
-	require.NoError(t, instanceRepo.Update(inst))
+	require.NoError(t, instanceRepo.Update(context.Background(), inst))
 
 	_, err := mgr.StopWithCharts(context.Background(), inst, []ChartDeployInfo{})
 	require.NoError(t, err)
@@ -230,7 +233,7 @@ func TestNotification_CleanCompleted(t *testing.T) {
 
 	inst := seedInstance(t, instanceRepo, "inst-clean", "clean-stack", "user-20")
 	inst.Status = models.StackStatusRunning
-	require.NoError(t, instanceRepo.Update(inst))
+	require.NoError(t, instanceRepo.Update(context.Background(), inst))
 
 	_, err := mgr.Clean(context.Background(), inst, []models.ChartConfig{})
 	require.NoError(t, err)
@@ -265,7 +268,7 @@ func TestNotification_DeleteAfterClean(t *testing.T) {
 
 	inst := seedInstance(t, instanceRepo, "inst-del", "del-stack", "user-30")
 	inst.Status = models.StackStatusRunning
-	require.NoError(t, instanceRepo.Update(inst))
+	require.NoError(t, instanceRepo.Update(context.Background(), inst))
 
 	_, err := mgr.CleanForDelete(context.Background(), inst, []models.ChartConfig{})
 	require.NoError(t, err)
@@ -286,7 +289,7 @@ func TestNotification_RollbackCompleted(t *testing.T) {
 
 	inst := seedInstance(t, instanceRepo, "inst-rb", "rb-stack", "user-40")
 	inst.Status = models.StackStatusRunning
-	require.NoError(t, instanceRepo.Update(inst))
+	require.NoError(t, instanceRepo.Update(context.Background(), inst))
 
 	_, err := mgr.Rollback(context.Background(), RollbackRequest{
 		Instance: inst,
@@ -321,7 +324,7 @@ func TestNotification_RollbackError(t *testing.T) {
 
 	inst := seedInstance(t, instanceRepo, "inst-rb-err", "rb-err-stack", "user-41")
 	inst.Status = models.StackStatusRunning
-	require.NoError(t, instanceRepo.Update(inst))
+	require.NoError(t, instanceRepo.Update(context.Background(), inst))
 
 	_, err := mgr.Rollback(context.Background(), RollbackRequest{
 		Instance: inst,

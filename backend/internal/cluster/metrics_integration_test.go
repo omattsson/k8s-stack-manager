@@ -177,7 +177,7 @@ func TestSecretRefresher_CycleMetrics(t *testing.T) {
 			Registry:     &Registry{},
 		})
 
-		r.refresh()
+		r.refresh(context.Background())
 
 		assert.Equal(t, int64(1), secretRefreshCount(t, reader, "success"))
 		assert.Equal(t, int64(0), secretRefreshCount(t, reader, "failure"))
@@ -194,7 +194,7 @@ func TestSecretRefresher_CycleMetrics(t *testing.T) {
 			Registry:     &Registry{},
 		})
 
-		r.refresh()
+		r.refresh(context.Background())
 
 		assert.Equal(t, int64(1), secretRefreshCount(t, reader, "failure"))
 		assert.Equal(t, int64(0), secretRefreshCount(t, reader, "success"))

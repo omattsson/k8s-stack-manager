@@ -130,15 +130,21 @@ func (h *AnalyticsHandler) GetOverview(c *gin.Context) {
 		return
 	}
 
-	totalInstances, err := h.instanceRepo.CountAll()
+	totalInstances, err := h.instanceRepo.CountAll(c.Request.Context())
 	if err != nil {
+		if respondCancelled(c, err) {
+			return
+		}
 		slog.Error("analytics: failed to count instances", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
-	runningInstances, err := h.instanceRepo.CountByStatus(models.StackStatusRunning)
+	runningInstances, err := h.instanceRepo.CountByStatus(c.Request.Context(), models.StackStatusRunning)
 	if err != nil {
+		if respondCancelled(c, err) {
+			return
+		}
 		slog.Error("analytics: failed to count running instances", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
@@ -203,6 +209,9 @@ func (h *AnalyticsHandler) GetTemplateStats(c *gin.Context) {
 
 	result, err := h.computeTemplateStats(c.Request.Context(), templates, templateIDs)
 	if err != nil {
+		if respondCancelled(c, err) {
+			return
+		}
 		slog.Error("analytics: failed to compute template stats", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
@@ -238,6 +247,9 @@ func (h *AnalyticsHandler) GetUserStats(c *gin.Context) {
 
 	result, err := h.computeUserStats(c.Request.Context(), users, ownerIDs)
 	if err != nil {
+		if respondCancelled(c, err) {
+			return
+		}
 		slog.Error("analytics: failed to compute user stats", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
@@ -275,12 +287,12 @@ func (h *AnalyticsHandler) computeTemplateStatsOptimized(ctx context.Context, te
 		allDefIDs = append(allDefIDs, ids...)
 	}
 
-	instanceCountsByDef, err := h.instanceRepo.CountByDefinitionIDs(allDefIDs)
+	instanceCountsByDef, err := h.instanceRepo.CountByDefinitionIDs(ctx, allDefIDs)
 	if err != nil {
 		return nil, err
 	}
 
-	instanceIDsByDef, err := h.instanceRepo.ListIDsByDefinitionIDs(allDefIDs)
+	instanceIDsByDef, err := h.instanceRepo.ListIDsByDefinitionIDs(ctx, allDefIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -347,7 +359,7 @@ func (h *AnalyticsHandler) computeUserStats(ctx context.Context, users []models.
 // after an instance is deleted and a deploy on another user's instance counts
 // for the user who started it.
 func (h *AnalyticsHandler) computeUserStatsOptimized(ctx context.Context, users []models.User, ownerIDs []string) ([]UserStats, error) {
-	instanceCountsByOwner, err := h.instanceRepo.CountByOwnerIDs(ownerIDs)
+	instanceCountsByOwner, err := h.instanceRepo.CountByOwnerIDs(ctx, ownerIDs)
 	if err != nil {
 		return nil, err
 	}

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -246,12 +247,12 @@ func (e *ttlTestEnv) seed(t *testing.T, id, status string, ttl int, expiresAt *t
 	inst := seedInstance(t, e.instRep, id, "stack-"+id, "d1", "uid-1", status)
 	inst.TTLMinutes = ttl
 	inst.ExpiresAt = expiresAt
-	require.NoError(t, e.instRep.Update(inst))
+	require.NoError(t, e.instRep.Update(context.Background(), inst))
 }
 
 func (e *ttlTestEnv) get(t *testing.T, id string) *models.StackInstance {
 	t.Helper()
-	inst, err := e.instRep.FindByID(id)
+	inst, err := e.instRep.FindByID(context.Background(), id)
 	require.NoError(t, err)
 	return inst
 }

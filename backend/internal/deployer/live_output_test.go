@@ -125,7 +125,7 @@ func TestLiveOutput(t *testing.T) {
 		mgr.broadcastLog("inst-1", "log-1", "line")
 		require.True(t, mgr.hasLiveOutput("log-1"))
 		final := &models.DeploymentLog{ID: "log-1", StackInstanceID: "inst-1", Status: models.DeployLogSuccess, Output: "full output\n"}
-		assert.True(t, mgr.writeFinal(nil, final, "deploy"))
+		assert.True(t, mgr.writeFinal(context.Background(), nil, final, "deploy"))
 
 		assert.False(t, mgr.hasLiveOutput("log-1"))
 		assert.Eventually(t, func() bool { return !mgr.liveOutputFlushing() }, wait, tick)

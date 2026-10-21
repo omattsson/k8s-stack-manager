@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 
@@ -86,14 +87,15 @@ func (h *InstanceHandler) setFollow(c *gin.Context, follow bool) {
 
 	// Every authenticated user can view an instance, so the view rule is
 	// only "the instance exists".
-	inst, err := h.instanceRepo.FindByID(id)
+	inst, err := h.instanceRepo.FindByID(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
-	ctx := c.Request.Context()
+	// A client that leaves must not cancel the write and then skip the audit entry (#656).
+	ctx := context.WithoutCancel(c.Request.Context())
 	if follow {
 		err = h.followerRepo.Follow(ctx, userID, inst.ID)
 	} else {
