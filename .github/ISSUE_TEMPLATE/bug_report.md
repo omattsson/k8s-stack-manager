@@ -25,8 +25,8 @@ assignees: ""
 <!-- Add screenshots or backend logs that help to explain the problem. Remove secrets and tokens first. -->
 
 ## Environment
-- **Application version**: [for example 0.12.0 (see the Helm chart appVersion or the image tag)]
-- **Deployment**: [for example Helm chart 0.10.0, or Docker Compose]
+- **Application version**: [for example 0.13.0 (see the Helm chart appVersion or the image tag)]
+- **Deployment**: [for example Helm chart 0.11.0, or Docker Compose]
 - **Kubernetes version**: [for example 1.31]
 - **OS**: [for example macOS 14.1, Windows 11]
 - **Browser**: [for example Chrome 123, Safari 17.1]
