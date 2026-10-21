@@ -11,17 +11,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type touchCtxKey struct{}
+
 // touchRecordingRepo records TouchFamily calls.
 type touchRecordingRepo struct {
 	stubRefreshTokenRepo
+	ctx    context.Context
 	family string
 	at     time.Time
 }
 
-func (r *touchRecordingRepo) TouchFamily(_ context.Context, familyID string, at time.Time) error {
+func (r *touchRecordingRepo) TouchFamily(ctx context.Context, familyID string, at time.Time) error {
+	r.ctx = ctx
 	r.family = familyID
 	r.at = at
-	return nil
+	return ctx.Err()
 }
 
 func TestSessionActivityFunc(t *testing.T) {
@@ -47,10 +51,17 @@ func TestSessionActivityFunc(t *testing.T) {
 			}
 			require.NotNil(t, fn)
 			at := time.Now().UTC()
-			require.NoError(t, fn(context.Background(), "fam-1", at))
+			// The middleware passes a detached context with its own deadline
+			// (middleware.sessionActivityTracker.touch); the hook keeps it.
+			ctx, cancel := context.WithTimeout(context.WithValue(context.Background(), touchCtxKey{}, "touch"), time.Minute)
+			defer cancel()
+			require.NoError(t, fn(ctx, "fam-1", at))
 			rec := tt.repo.(*touchRecordingRepo)
 			assert.Equal(t, "fam-1", rec.family)
 			assert.True(t, rec.at.Equal(at))
+			assert.Equal(t, "touch", rec.ctx.Value(touchCtxKey{}), "the hook passes its context to TouchFamily")
+			_, hasDeadline := rec.ctx.Deadline()
+			assert.True(t, hasDeadline, "the activity deadline reaches the query")
 		})
 	}
 }

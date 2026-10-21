@@ -55,35 +55,37 @@ func (t *RefreshToken) SessionStart() time.Time {
 }
 
 // RefreshTokenRepository defines data access operations for refresh tokens.
+// Every method runs its queries with ctx (#656).
 type RefreshTokenRepository interface {
-	Create(token *RefreshToken) error
-	FindByTokenHash(hash string) (*RefreshToken, error)
-	RevokeByID(id string) error
+	Create(ctx context.Context, token *RefreshToken) error
+	FindByTokenHash(ctx context.Context, hash string) (*RefreshToken, error)
+	RevokeByID(ctx context.Context, id string) error
 	// MarkRotatedIfActive revokes the token and sets RotatedAt, but only when
 	// the token is still active. It returns the number of rows changed (0 when
 	// another request already consumed or revoked the token).
-	MarkRotatedIfActive(id string, rotatedAt time.Time) (int64, error)
+	MarkRotatedIfActive(ctx context.Context, id string, rotatedAt time.Time) (int64, error)
 	// RevokeFamily revokes all active tokens of a session family (including a
 	// legacy token whose own ID is the family ID).
-	RevokeFamily(familyID string) error
+	RevokeFamily(ctx context.Context, familyID string) error
 	// CountActiveInFamily counts the tokens of a family that are not revoked
 	// and not expired.
-	CountActiveInFamily(familyID string) (int64, error)
+	CountActiveInFamily(ctx context.Context, familyID string) (int64, error)
 	// TouchFamily sets LastActivity to at for the active tokens of a family.
-	// It never moves LastActivity backwards. ctx bounds the database call.
+	// It never moves LastActivity backwards.
 	TouchFamily(ctx context.Context, familyID string, at time.Time) error
-	RevokeAllForUser(userID string) error
-	RevokeAllForUserExcept(userID string, excludeID string) error
+	RevokeAllForUser(ctx context.Context, userID string) error
+	RevokeAllForUserExcept(ctx context.Context, userID string, excludeID string) error
 	// RevokeOldestForUser revokes the active tokens of the user except the
 	// keep newest ones (by CreatedAt) and the token excludeID (empty: none).
 	// It never revokes a token that is newer than the kept ones, so a login
 	// that runs at the same time keeps its new session. It returns the
 	// number of revoked tokens.
-	RevokeOldestForUser(userID string, keep int, excludeID string) (int64, error)
-	DeleteExpired() (int64, error)
-	CountActiveForUser(userID string) (int64, error)
-	// WithTx executes fn within a database transaction. The repository passed
-	// to fn shares the same transaction; if fn returns an error the transaction
-	// is rolled back.
-	WithTx(fn func(txRepo RefreshTokenRepository) error) error
+	RevokeOldestForUser(ctx context.Context, userID string, keep int, excludeID string) (int64, error)
+	DeleteExpired(ctx context.Context) (int64, error)
+	CountActiveForUser(ctx context.Context, userID string) (int64, error)
+	// WithTx executes fn within a database transaction that runs with ctx.
+	// The repository passed to fn shares the same transaction; if fn returns
+	// an error the transaction is rolled back. When ctx ends, the transaction
+	// commits nothing and the error matches the context error.
+	WithTx(ctx context.Context, fn func(txRepo RefreshTokenRepository) error) error
 }

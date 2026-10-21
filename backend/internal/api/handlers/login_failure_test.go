@@ -148,7 +148,7 @@ func TestLogin_FailureReasonLogged(t *testing.T) {
 			name: "session revoked before the response", username: "alice", reason: loginReasonSessionRevoked, useRefresh: true,
 			setup: func(t *testing.T, repo *scriptedUserRepo, _ *AuthHandler, refresh *MockRefreshTokenRepository) {
 				seedUser(t, repo.MockUserRepository, "uid-1", "alice", loginFailurePassword, "admin")
-				refresh.countHook = func(int) { _ = refresh.RevokeAllForUser("uid-1") }
+				refresh.countHook = func(int) { _ = refresh.RevokeAllForUser(context.Background(), "uid-1") }
 			},
 			wantCode: http.StatusUnauthorized, wantBody: `{"error":"Session revoked"}`, wantLevel: "WARN",
 		},

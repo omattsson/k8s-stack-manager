@@ -45,6 +45,22 @@ type MockRefreshTokenRepository struct {
 	// transaction reads anything. Tests use it to commit a concurrent write
 	// (for example TouchFamily) between a handler read and its transaction.
 	txHook func()
+	// callHook, when set, runs at the start of each method call (also inside
+	// WithTx) with the method name and ctx, before the context check. Tests
+	// use it to cancel the request context at a given step (#656).
+	callHook func(method string, ctx context.Context)
+}
+
+// enter runs callHook and returns the error of a done ctx, as the GORM
+// repository does (WithContext).
+func (m *MockRefreshTokenRepository) enter(ctx context.Context, method string) error {
+	m.mu.RLock()
+	hook := m.callHook
+	m.mu.RUnlock()
+	if hook != nil {
+		hook(method, ctx)
+	}
+	return ctxDone(ctx, method)
 }
 
 func NewMockRefreshTokenRepository() *MockRefreshTokenRepository {
@@ -54,7 +70,10 @@ func NewMockRefreshTokenRepository() *MockRefreshTokenRepository {
 	}
 }
 
-func (m *MockRefreshTokenRepository) Create(token *models.RefreshToken) error {
+func (m *MockRefreshTokenRepository) Create(ctx context.Context, token *models.RefreshToken) error {
+	if err := m.enter(ctx, "Create"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.createErr != nil {
@@ -65,7 +84,10 @@ func (m *MockRefreshTokenRepository) Create(token *models.RefreshToken) error {
 	return nil
 }
 
-func (m *MockRefreshTokenRepository) FindByTokenHash(hash string) (*models.RefreshToken, error) {
+func (m *MockRefreshTokenRepository) FindByTokenHash(ctx context.Context, hash string) (*models.RefreshToken, error) {
+	if err := m.enter(ctx, "FindByTokenHash"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.findErr != nil {
@@ -79,7 +101,10 @@ func (m *MockRefreshTokenRepository) FindByTokenHash(hash string) (*models.Refre
 	return &cp, nil
 }
 
-func (m *MockRefreshTokenRepository) RevokeByID(id string) error {
+func (m *MockRefreshTokenRepository) RevokeByID(ctx context.Context, id string) error {
+	if err := m.enter(ctx, "RevokeByID"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.revokeErr != nil {
@@ -91,7 +116,10 @@ func (m *MockRefreshTokenRepository) RevokeByID(id string) error {
 	return nil
 }
 
-func (m *MockRefreshTokenRepository) MarkRotatedIfActive(id string, rotatedAt time.Time) (int64, error) {
+func (m *MockRefreshTokenRepository) MarkRotatedIfActive(ctx context.Context, id string, rotatedAt time.Time) (int64, error) {
+	if err := m.enter(ctx, "MarkRotatedIfActive"); err != nil {
+		return 0, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.revokeErr != nil {
@@ -106,7 +134,10 @@ func (m *MockRefreshTokenRepository) MarkRotatedIfActive(id string, rotatedAt ti
 	return 0, nil
 }
 
-func (m *MockRefreshTokenRepository) RevokeFamily(familyID string) error {
+func (m *MockRefreshTokenRepository) RevokeFamily(ctx context.Context, familyID string) error {
+	if err := m.enter(ctx, "RevokeFamily"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.revokeAllErr != nil {
@@ -120,7 +151,10 @@ func (m *MockRefreshTokenRepository) RevokeFamily(familyID string) error {
 	return nil
 }
 
-func (m *MockRefreshTokenRepository) CountActiveInFamily(familyID string) (int64, error) {
+func (m *MockRefreshTokenRepository) CountActiveInFamily(ctx context.Context, familyID string) (int64, error) {
+	if err := m.enter(ctx, "CountActiveInFamily"); err != nil {
+		return 0, err
+	}
 	m.mu.Lock()
 	m.countCalls++
 	call, hook := m.countCalls, m.countHook
@@ -144,7 +178,10 @@ func (m *MockRefreshTokenRepository) CountActiveInFamily(familyID string) (int64
 	return count, nil
 }
 
-func (m *MockRefreshTokenRepository) TouchFamily(_ context.Context, familyID string, at time.Time) error {
+func (m *MockRefreshTokenRepository) TouchFamily(ctx context.Context, familyID string, at time.Time) error {
+	if err := m.enter(ctx, "TouchFamily"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, t := range m.tokens {
@@ -155,7 +192,10 @@ func (m *MockRefreshTokenRepository) TouchFamily(_ context.Context, familyID str
 	return nil
 }
 
-func (m *MockRefreshTokenRepository) RevokeAllForUser(userID string) error {
+func (m *MockRefreshTokenRepository) RevokeAllForUser(ctx context.Context, userID string) error {
+	if err := m.enter(ctx, "RevokeAllForUser"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.revokeAllErr != nil {
@@ -169,7 +209,10 @@ func (m *MockRefreshTokenRepository) RevokeAllForUser(userID string) error {
 	return nil
 }
 
-func (m *MockRefreshTokenRepository) RevokeAllForUserExcept(userID string, excludeID string) error {
+func (m *MockRefreshTokenRepository) RevokeAllForUserExcept(ctx context.Context, userID string, excludeID string) error {
+	if err := m.enter(ctx, "RevokeAllForUserExcept"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.revokeAllErr != nil {
@@ -183,7 +226,10 @@ func (m *MockRefreshTokenRepository) RevokeAllForUserExcept(userID string, exclu
 	return nil
 }
 
-func (m *MockRefreshTokenRepository) RevokeOldestForUser(userID string, keep int, excludeID string) (int64, error) {
+func (m *MockRefreshTokenRepository) RevokeOldestForUser(ctx context.Context, userID string, keep int, excludeID string) (int64, error) {
+	if err := m.enter(ctx, "RevokeOldestForUser"); err != nil {
+		return 0, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.revokeAllErr != nil {
@@ -213,7 +259,10 @@ func (m *MockRefreshTokenRepository) RevokeOldestForUser(userID string, keep int
 	return n, nil
 }
 
-func (m *MockRefreshTokenRepository) DeleteExpired() (int64, error) {
+func (m *MockRefreshTokenRepository) DeleteExpired(ctx context.Context) (int64, error) {
+	if err := m.enter(ctx, "DeleteExpired"); err != nil {
+		return 0, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.deleteErr != nil {
@@ -231,7 +280,10 @@ func (m *MockRefreshTokenRepository) DeleteExpired() (int64, error) {
 	return count, nil
 }
 
-func (m *MockRefreshTokenRepository) CountActiveForUser(userID string) (int64, error) {
+func (m *MockRefreshTokenRepository) CountActiveForUser(ctx context.Context, userID string) (int64, error) {
+	if err := m.enter(ctx, "CountActiveForUser"); err != nil {
+		return 0, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	var count int64
@@ -247,11 +299,15 @@ func (m *MockRefreshTokenRepository) CountActiveForUser(userID string) (int64, e
 // WithTx emulates a serialisable transaction: transactions run one at a time
 // on a copy of the data, and the copy replaces the data only when fn succeeds.
 // Readers outside the transaction never see uncommitted writes, the same as
-// with a real database (needed by the concurrent-refresh tests).
-func (m *MockRefreshTokenRepository) WithTx(fn func(models.RefreshTokenRepository) error) error {
+// with a real database (needed by the concurrent-refresh tests). A ctx that
+// is done at the begin or at the commit commits nothing, as with database/sql.
+func (m *MockRefreshTokenRepository) WithTx(ctx context.Context, fn func(models.RefreshTokenRepository) error) error {
 	m.txMu.Lock()
 	defer m.txMu.Unlock()
 
+	if err := m.enter(ctx, "WithTx"); err != nil {
+		return err
+	}
 	if m.txHook != nil {
 		m.txHook()
 	}
@@ -265,6 +321,7 @@ func (m *MockRefreshTokenRepository) WithTx(fn func(models.RefreshTokenRepositor
 		revokeErr:    m.revokeErr,
 		revokeAllErr: m.revokeAllErr,
 		deleteErr:    m.deleteErr,
+		callHook:     m.callHook,
 	}
 	for id, tok := range m.tokens {
 		cp := *tok
@@ -276,12 +333,22 @@ func (m *MockRefreshTokenRepository) WithTx(fn func(models.RefreshTokenRepositor
 	if err := fn(staged); err != nil {
 		return err
 	}
+	if err := ctxDone(ctx, "WithTx commit"); err != nil {
+		return err
+	}
 
 	m.mu.Lock()
 	m.tokens = staged.tokens
 	m.byHash = staged.byHash
 	m.mu.Unlock()
 	return nil
+}
+
+// setCallHook sets callHook (see the field).
+func (m *MockRefreshTokenRepository) setCallHook(fn func(method string, ctx context.Context)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.callHook = fn
 }
 
 func (m *MockRefreshTokenRepository) SetCreateError(err error) {
@@ -386,7 +453,7 @@ func TestLoginSetsRefreshCookie(t *testing.T) {
 
 	// Verify a token was stored in the repository.
 	var storedCount int64
-	storedCount, err := refreshRepo.CountActiveForUser("uid-1")
+	storedCount, err := refreshRepo.CountActiveForUser(context.Background(), "uid-1")
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), storedCount)
 }
@@ -410,7 +477,7 @@ func TestRefresh(t *testing.T) {
 				raw := "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
 				hash := hashRefreshToken(raw)
 				now := time.Now()
-				_ = rr.Create(&models.RefreshToken{
+				_ = rr.Create(context.Background(), &models.RefreshToken{
 					ID:           "rt-1",
 					UserID:       "uid-1",
 					TokenHash:    hash,
@@ -452,7 +519,7 @@ func TestRefresh(t *testing.T) {
 				raw := "revoked0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
 				hash := hashRefreshToken(raw)
 				now := time.Now()
-				_ = rr.Create(&models.RefreshToken{
+				_ = rr.Create(context.Background(), &models.RefreshToken{
 					ID:           "rt-revoked",
 					UserID:       "uid-1",
 					TokenHash:    hash,
@@ -472,7 +539,7 @@ func TestRefresh(t *testing.T) {
 				raw := "expired00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
 				hash := hashRefreshToken(raw)
 				now := time.Now()
-				_ = rr.Create(&models.RefreshToken{
+				_ = rr.Create(context.Background(), &models.RefreshToken{
 					ID:           "rt-expired",
 					UserID:       "uid-1",
 					TokenHash:    hash,
@@ -491,7 +558,7 @@ func TestRefresh(t *testing.T) {
 				raw := "idletimeout0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
 				hash := hashRefreshToken(raw)
 				now := time.Now()
-				_ = rr.Create(&models.RefreshToken{
+				_ = rr.Create(context.Background(), &models.RefreshToken{
 					ID:           "rt-idle",
 					UserID:       "uid-1",
 					TokenHash:    hash,
@@ -512,7 +579,7 @@ func TestRefresh(t *testing.T) {
 				raw := "disabled0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
 				hash := hashRefreshToken(raw)
 				now := time.Now()
-				_ = rr.Create(&models.RefreshToken{
+				_ = rr.Create(context.Background(), &models.RefreshToken{
 					ID:           "rt-disabled",
 					UserID:       "uid-dis",
 					TokenHash:    hash,
@@ -610,7 +677,7 @@ func TestLogout(t *testing.T) {
 	raw := "logout000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
 	hash := hashRefreshToken(raw)
 	now := time.Now()
-	_ = refreshRepo.Create(&models.RefreshToken{
+	_ = refreshRepo.Create(context.Background(), &models.RefreshToken{
 		ID:           "rt-logout",
 		UserID:       "uid-1",
 		TokenHash:    hash,
@@ -663,7 +730,7 @@ func TestLogoutAll(t *testing.T) {
 		"logoutall_token1_0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
 		"logoutall_token2_0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
 	} {
-		_ = refreshRepo.Create(&models.RefreshToken{
+		_ = refreshRepo.Create(context.Background(), &models.RefreshToken{
 			ID:           "rt-all-" + string(rune('0'+i)),
 			UserID:       "uid-1",
 			TokenHash:    hashRefreshToken(raw),
@@ -759,7 +826,7 @@ func TestCleanupExpiredTokens(t *testing.T) {
 				}
 				// Seed expired tokens.
 				for i := 0; i < tt.seedExpired; i++ {
-					_ = refreshRepo.Create(&models.RefreshToken{
+					_ = refreshRepo.Create(context.Background(), &models.RefreshToken{
 						ID:        fmt.Sprintf("rt-expired-%d", i),
 						UserID:    "uid-1",
 						TokenHash: fmt.Sprintf("hash-expired-%d", i),
@@ -771,7 +838,7 @@ func TestCleanupExpiredTokens(t *testing.T) {
 			}
 
 			// Should not panic regardless of configuration.
-			h.CleanupExpiredTokens()
+			h.CleanupExpiredTokens(context.Background())
 
 			if tt.hasRepo && tt.deleteErr == nil && tt.seedExpired > 0 {
 				// Verify tokens were actually removed from the store.
@@ -862,7 +929,7 @@ func TestLogout_BlocklistsAccessToken(t *testing.T) {
 				raw := "logoutblock00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
 				hash := hashRefreshToken(raw)
 				now := time.Now()
-				_ = refreshRepo.Create(&models.RefreshToken{
+				_ = refreshRepo.Create(context.Background(), &models.RefreshToken{
 					ID:           "rt-block-test",
 					UserID:       "uid-1",
 					TokenHash:    hash,
@@ -1063,7 +1130,7 @@ func TestLogoutAll_BlocklistsAccessToken(t *testing.T) {
 				}
 				// Seed a token for the user so RevokeAllForUser has something to do.
 				now := time.Now()
-				_ = refreshRepo.Create(&models.RefreshToken{
+				_ = refreshRepo.Create(context.Background(), &models.RefreshToken{
 					ID:           "rt-logoutall-test",
 					UserID:       "uid-1",
 					TokenHash:    "somehash",
@@ -1181,7 +1248,7 @@ func TestIssueRefreshToken_MaxTokensEnforcement(t *testing.T) {
 
 			now := time.Now()
 			seed := func(id string, createdAt time.Time, revoked bool) {
-				require.NoError(t, refreshRepo.Create(&models.RefreshToken{
+				require.NoError(t, refreshRepo.Create(context.Background(), &models.RefreshToken{
 					ID:           id,
 					UserID:       "uid-1",
 					TokenHash:    "hash-" + id,
@@ -1205,7 +1272,7 @@ func TestIssueRefreshToken_MaxTokensEnforcement(t *testing.T) {
 			c.Request, _ = http.NewRequest(http.MethodPost, "/", nil)
 			c.Request.Header.Set("User-Agent", "test-agent")
 
-			rawToken, _, err := h.issueRefreshTokenWith(c, refreshRepo, "uid-1", newRefreshSession(), tt.excludeTokenID)
+			rawToken, _, err := h.issueRefreshTokenWith(context.Background(), c, refreshRepo, "uid-1", newRefreshSession(), tt.excludeTokenID)
 			require.NoError(t, err)
 			assert.NotEmpty(t, rawToken, "should return a raw token")
 
@@ -1256,7 +1323,7 @@ func TestLogin_ConcurrentLoginAtTokenLimitKeepsNewSession(t *testing.T) {
 	now := time.Now()
 	for i := 0; i < 2; i++ {
 		id := fmt.Sprintf("rt-old-%d", i)
-		require.NoError(t, refreshRepo.Create(&models.RefreshToken{
+		require.NoError(t, refreshRepo.Create(context.Background(), &models.RefreshToken{
 			ID: id, UserID: "uid-1", FamilyID: id, TokenHash: "hash-" + id,
 			ExpiresAt: now.Add(time.Hour), LastActivity: now.Add(-time.Hour), CreatedAt: now.Add(-time.Hour + time.Duration(i)*time.Minute),
 		}))
@@ -1273,7 +1340,7 @@ func TestLogin_ConcurrentLoginAtTokenLimitKeepsNewSession(t *testing.T) {
 		c, _ := gin.CreateTestContext(w)
 		c.Request, _ = http.NewRequest(http.MethodPost, "/", nil)
 		time.Sleep(time.Millisecond) // a later CreatedAt than the first login
-		_, _, concurrentErr = h.issueRefreshTokenWith(c, refreshRepo, "uid-1", newRefreshSession(), "")
+		_, _, concurrentErr = h.issueRefreshTokenWith(context.Background(), c, refreshRepo, "uid-1", newRefreshSession(), "")
 	}
 
 	gin.SetMode(gin.TestMode)
@@ -1287,7 +1354,7 @@ func TestLogin_ConcurrentLoginAtTokenLimitKeepsNewSession(t *testing.T) {
 	require.NoError(t, concurrentErr)
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 	assert.Contains(t, w.Body.String(), `"token"`)
-	active, err := refreshRepo.CountActiveForUser("uid-1")
+	active, err := refreshRepo.CountActiveForUser(context.Background(), "uid-1")
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), active, "both new sessions and the newer old one stay")
 	refreshRepo.mu.RLock()

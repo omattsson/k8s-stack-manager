@@ -91,7 +91,7 @@ func TestLogin_DisabledDuringIssue(t *testing.T) {
 			r.ServeHTTP(w, req)
 
 			require.Equal(t, tt.wantStatus, w.Code, w.Body.String())
-			active, err := refreshRepo.CountActiveForUser("uid-1")
+			active, err := refreshRepo.CountActiveForUser(context.Background(), "uid-1")
 			require.NoError(t, err)
 
 			if tt.wantStatus == http.StatusOK {
@@ -149,7 +149,7 @@ func TestRefresh_DisabledDuringIssue(t *testing.T) {
 	if c := refreshCookieFrom(w); c != nil {
 		assert.Empty(t, c.Value, "refresh cookie must be cleared, not set")
 	}
-	active, err := refreshRepo.CountActiveForUser("uid-1")
+	active, err := refreshRepo.CountActiveForUser(context.Background(), "uid-1")
 	require.NoError(t, err)
 	assert.Zero(t, active, "rotated refresh token must be revoked")
 }

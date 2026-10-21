@@ -51,7 +51,7 @@ func newRevokeFixture(t *testing.T) *revokeFixture {
 		{ID: "rt-target-2", UserID: revokeTargetID, TokenHash: "h2", ExpiresAt: exp},
 		{ID: "rt-other-1", UserID: revokeOtherID, TokenHash: "h3", ExpiresAt: exp},
 	} {
-		require.NoError(t, f.refreshRepo.Create(rt))
+		require.NoError(t, f.refreshRepo.Create(context.Background(), rt))
 	}
 	for _, k := range []*models.APIKey{
 		{ID: "key-target-1", UserID: revokeTargetID, Name: "ci", Prefix: "aaaaaaaaaaaaaaaa"},

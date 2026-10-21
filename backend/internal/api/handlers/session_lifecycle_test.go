@@ -150,7 +150,7 @@ func (e *sessionTestEnv) claimsOf(t *testing.T, w *httptest.ResponseRecorder) *m
 
 func (e *sessionTestEnv) tokenByRaw(t *testing.T, raw string) models.RefreshToken {
 	t.Helper()
-	rt, err := e.refresh.FindByTokenHash(hashRefreshToken(raw))
+	rt, err := e.refresh.FindByTokenHash(context.Background(), hashRefreshToken(raw))
 	require.NoError(t, err)
 	return *rt
 }
@@ -192,7 +192,7 @@ func (e *sessionTestEnv) seedToken(t *testing.T, id string, mutate func(*models.
 	if mutate != nil {
 		mutate(rt)
 	}
-	require.NoError(t, e.refresh.Create(rt))
+	require.NoError(t, e.refresh.Create(context.Background(), rt))
 	return raw
 }
 
@@ -348,7 +348,7 @@ func TestRefresh_TwoTabsSameCookieSequential(t *testing.T) {
 	assert.Nil(t, findRefreshCookie(second), "second tab must not get a Set-Cookie")
 	assert.Equal(t, family, env.claimsOf(t, second).SessionID)
 
-	active, err := env.refresh.CountActiveInFamily(family)
+	active, err := env.refresh.CountActiveInFamily(context.Background(), family)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), active, "family must not be revoked")
 
@@ -399,7 +399,7 @@ func TestRefresh_ConcurrentSameCookie(t *testing.T) {
 			}
 			assert.Equal(t, 1, rotated, "exactly one response sets the new refresh cookie")
 
-			active, err := env.refresh.CountActiveInFamily(family)
+			active, err := env.refresh.CountActiveInFamily(context.Background(), family)
 			require.NoError(t, err)
 			assert.Equal(t, int64(1), active, "family must stay active")
 		})
@@ -756,7 +756,7 @@ func TestOIDCCallback_SessionClaims(t *testing.T) {
 
 	cookie := findRefreshCookie(w)
 	require.NotNil(t, cookie)
-	stored, err := refreshRepo.FindByTokenHash(hashRefreshToken(cookie.Value))
+	stored, err := refreshRepo.FindByTokenHash(context.Background(), hashRefreshToken(cookie.Value))
 	require.NoError(t, err)
 	assert.Equal(t, stored.FamilyID, loginClaims.SessionID)
 	assert.Equal(t, "oidc", loginClaims.AuthProvider)
@@ -832,7 +832,7 @@ func (e *sessionTestEnv) revokeAllBeforeCount(callNo int) {
 	e.refresh.countCalls = 0
 	e.refresh.countHook = func(call int) {
 		if call == callNo {
-			_ = e.refresh.RevokeAllForUser("uid-1")
+			_ = e.refresh.RevokeAllForUser(context.Background(), "uid-1")
 		}
 	}
 }
@@ -999,7 +999,7 @@ func TestSessionRecheck_RepositoryError(t *testing.T) {
 		require.NotNil(t, cookie)
 		assert.Less(t, cookie.MaxAge, 0, "only the clearing cookie")
 		assert.Len(t, w.Result().Cookies(), 1)
-		active, _ := env.refresh.CountActiveForUser("uid-1")
+		active, _ := env.refresh.CountActiveForUser(context.Background(), "uid-1")
 		assert.Equal(t, int64(0), active, "the new family must be revoked")
 		assert.Equal(t, int64(1), authStatusCount(t, reader, "auth.login.total",
 			map[string]string{"method": "local", "status": "failure"}))
@@ -1129,7 +1129,7 @@ func TestCarryLatestActivity(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			repo := NewMockRefreshTokenRepository()
-			require.NoError(t, repo.Create(&models.RefreshToken{
+			require.NoError(t, repo.Create(context.Background(), &models.RefreshToken{
 				ID: "rt-1", FamilyID: "fam-1", TokenHash: "hash-1", LastActivity: tt.stored,
 			}))
 			if tt.findErr != nil {
@@ -1137,7 +1137,7 @@ func TestCarryLatestActivity(t *testing.T) {
 			}
 
 			sess := refreshSession{familyID: "fam-1", startedAt: base.Add(-time.Hour), lastActivity: tt.read}
-			got, err := carryLatestActivity(repo, "hash-1", sess)
+			got, err := carryLatestActivity(context.Background(), repo, "hash-1", sess)
 			if tt.wantErr {
 				require.Error(t, err)
 				return

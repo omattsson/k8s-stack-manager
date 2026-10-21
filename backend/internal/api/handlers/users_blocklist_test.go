@@ -105,7 +105,7 @@ func TestDisableUser_BlocklistCalled(t *testing.T) {
 				TokenHash: "somehash",
 				ExpiresAt: time.Now().Add(7 * 24 * time.Hour),
 			}
-			require.NoError(t, refreshRepo.Create(rt))
+			require.NoError(t, refreshRepo.Create(context.Background(), rt))
 
 			var refreshArg *MockRefreshTokenRepository
 			if tt.withRefreshRepo {

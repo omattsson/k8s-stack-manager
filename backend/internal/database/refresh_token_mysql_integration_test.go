@@ -78,12 +78,12 @@ func TestDatabaseRefreshTokenSessionFamily(t *testing.T) {
 
 	repo := NewGORMRefreshTokenRepository(db.DB)
 	now := time.Now().UTC().Truncate(time.Second)
-	require.NoError(t, repo.Create(&models.RefreshToken{
+	require.NoError(t, repo.Create(context.Background(), &models.RefreshToken{
 		ID: "succ-1", UserID: "u1", FamilyID: "legacy-1", TokenHash: "hash-succ",
 		ExpiresAt: now.Add(time.Hour), LastActivity: now.Add(-time.Hour), CreatedAt: now, SessionStartedAt: created,
 	}))
 
-	affected, err := repo.MarkRotatedIfActive("legacy-1", now)
+	affected, err := repo.MarkRotatedIfActive(context.Background(), "legacy-1", now)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), affected)
 	require.NoError(t, db.DB.Where("id = ?", "legacy-1").First(&legacy).Error)
@@ -94,12 +94,12 @@ func TestDatabaseRefreshTokenSessionFamily(t *testing.T) {
 	require.NoError(t, db.DB.Where("id = ?", "succ-1").First(&succ).Error)
 	assert.WithinDuration(t, now, succ.LastActivity, time.Second)
 
-	count, err := repo.CountActiveInFamily("legacy-1")
+	count, err := repo.CountActiveInFamily(context.Background(), "legacy-1")
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), count)
 
-	require.NoError(t, repo.RevokeFamily("legacy-1"))
-	count, err = repo.CountActiveInFamily("legacy-1")
+	require.NoError(t, repo.RevokeFamily(context.Background(), "legacy-1"))
+	count, err = repo.CountActiveInFamily(context.Background(), "legacy-1")
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), count)
 
@@ -132,7 +132,7 @@ func TestDatabaseRefreshTokenRotationSeesConcurrentTouch(t *testing.T) {
 	readActivity := now.Add(-10 * time.Minute)
 	touchedAt := now.Add(-time.Second)
 	repo := NewGORMRefreshTokenRepository(db.DB)
-	require.NoError(t, repo.Create(&models.RefreshToken{
+	require.NoError(t, repo.Create(context.Background(), &models.RefreshToken{
 		ID: "old-1", UserID: "u1", FamilyID: "fam-race", TokenHash: "hash-old",
 		ExpiresAt: now.Add(time.Hour), LastActivity: readActivity, CreatedAt: now.Add(-time.Hour), SessionStartedAt: now.Add(-time.Hour),
 	}))
@@ -150,13 +150,13 @@ func TestDatabaseRefreshTokenRotationSeesConcurrentTouch(t *testing.T) {
 	done := make(chan result, 1)
 	go func() {
 		var res result
-		res.err = repo.WithTx(func(txRepo models.RefreshTokenRepository) error {
-			affected, err := txRepo.MarkRotatedIfActive("old-1", now) // waits for the touch
+		res.err = repo.WithTx(context.Background(), func(txRepo models.RefreshTokenRepository) error {
+			affected, err := txRepo.MarkRotatedIfActive(context.Background(), "old-1", now) // waits for the touch
 			if err != nil {
 				return err
 			}
 			res.affected = affected
-			current, err := txRepo.FindByTokenHash("hash-old")
+			current, err := txRepo.FindByTokenHash(context.Background(), "hash-old")
 			if err != nil {
 				return err
 			}

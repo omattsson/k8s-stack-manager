@@ -377,7 +377,7 @@ func TestLogin_CancelledRequest(t *testing.T) {
 			assert.Equal(t, statusClientClosedRequest, w.Code, w.Body.String())
 			assert.NotContains(t, w.Body.String(), `"token"`)
 			assert.NotContains(t, logBuf.String(), "Login failed")
-			active, err := refreshRepo.CountActiveForUser("uid-1")
+			active, err := refreshRepo.CountActiveForUser(context.Background(), "uid-1")
 			require.NoError(t, err)
 			assert.Zero(t, active, "no refresh token stored")
 			if tt.cancelAt == 0 {
@@ -445,12 +445,12 @@ func TestRefresh_CancelledRequest(t *testing.T) {
 			if c := refreshCookieFrom(w); c != nil {
 				assert.Empty(t, c.Value, "no new refresh token leaves the server")
 			}
-			active, err := refreshRepo.CountActiveForUser("uid-1")
+			active, err := refreshRepo.CountActiveForUser(context.Background(), "uid-1")
 			require.NoError(t, err)
 			// The other session stays; after a rotation the rotated session
 			// has its (unsent) successor.
 			assert.Equal(t, int64(2), active, "the other sessions are not revoked")
-			stored, err := refreshRepo.FindByTokenHash(hashRefreshToken(cookie.Value))
+			stored, err := refreshRepo.FindByTokenHash(context.Background(), hashRefreshToken(cookie.Value))
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantRotated, stored.Revoked)
 		})

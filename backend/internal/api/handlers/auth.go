@@ -314,15 +314,18 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	// Issue refresh token if repository is configured.
 	if h.refreshTokenRepo != nil {
-		rawRefresh, refreshExpiry, err := h.issueRefreshTokenWith(c, h.refreshTokenRepo, user.ID, sess, "")
+		// Detached from the first write on: a client that leaves must not skip
+		// the token cap, the session re-check or the abandon revoke (#656).
+		writeCtx := context.WithoutCancel(ctx)
+		rawRefresh, refreshExpiry, err := h.issueRefreshTokenWith(writeCtx, c, h.refreshTokenRepo, user.ID, sess, "")
 		if err != nil {
 			slog.Error("Failed to issue refresh token", "user_id", user.ID, "error", err)
 			// Continue without refresh token — access token still works.
 		} else {
 			// Close the revoke race: a revoke-all between the issue and here
 			// must not leave a working session.
-			if err := recheckSessionActive(h.refreshTokenRepo, sess.familyID); err != nil {
-				abandonSession(h.refreshTokenRepo, sess.familyID)
+			if err := recheckSessionActive(writeCtx, h.refreshTokenRepo, sess.familyID); err != nil {
+				abandonSession(writeCtx, h.refreshTokenRepo, sess.familyID)
 				h.clearRefreshCookie(c)
 				if errors.Is(err, errSessionRevoked) {
 					fail(loginFailure{reason: loginReasonSessionRevoked, status: "revoked", httpCode: http.StatusUnauthorized, userID: user.ID}, "Session revoked")
@@ -521,15 +524,22 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		return
 	}
 
+	// The reads that decide the request use the request context: a client
+	// that leaves gets 499 and nothing changes. Every write uses writeCtx, so
+	// a client that leaves cannot skip a revoke or half-finish a rotation
+	// (#656).
+	reqCtx := c.Request.Context()
+	writeCtx := context.WithoutCancel(reqCtx)
+
 	tokenHash := hashRefreshToken(rawToken)
-	stored, ok := h.findRefreshToken(c, tokenHash)
+	stored, ok := h.findRefreshToken(reqCtx, c, tokenHash)
 	if !ok {
 		return
 	}
 
 	now := time.Now().UTC()
 	if stored.Revoked {
-		h.refreshConsumedToken(c, stored, now)
+		h.refreshConsumedToken(reqCtx, c, stored, now)
 		return
 	}
 
@@ -543,7 +553,9 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	// Absolute session lifetime: the user must log in again (an SSO login
 	// syncs the role from the identity provider).
 	if h.sessionExpired(stored, now) {
-		_ = h.refreshTokenRepo.RevokeFamily(stored.SessionFamily())
+		if err := h.refreshTokenRepo.RevokeFamily(writeCtx, stored.SessionFamily()); err != nil {
+			slog.Error("Failed to revoke expired refresh session", "user_id", stored.UserID, "error", err)
+		}
 		h.clearRefreshCookie(c)
 		middleware.RecordRefresh("expired")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Session expired"})
@@ -554,7 +566,9 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	// (session activity hook in the JWT middleware), so this is the time
 	// since the last request, not since the last refresh.
 	if now.Sub(stored.LastActivity) > h.cfg.SessionIdleTimeout {
-		_ = h.refreshTokenRepo.RevokeByID(stored.ID)
+		if err := h.refreshTokenRepo.RevokeByID(writeCtx, stored.ID); err != nil {
+			slog.Error("Failed to revoke idle refresh token", "user_id", stored.UserID, "error", err)
+		}
 		h.clearRefreshCookie(c)
 		middleware.RecordRefresh("expired")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Session idle timeout exceeded"})
@@ -562,7 +576,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	}
 
 	// Look up user to get current role/username.
-	user, err := h.userRepo.FindByID(c.Request.Context(), stored.UserID)
+	user, err := h.userRepo.FindByID(reqCtx, stored.UserID)
 	if err != nil {
 		if respondCancelled(c, err) {
 			return
@@ -580,7 +594,9 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	}
 
 	if user.Disabled {
-		_ = h.refreshTokenRepo.RevokeAllForUser(stored.UserID)
+		if err := h.refreshTokenRepo.RevokeAllForUser(writeCtx, stored.UserID); err != nil {
+			slog.Error("Failed to revoke refresh tokens of disabled user", "user_id", stored.UserID, "error", err)
+		}
 		h.clearRefreshCookie(c)
 		middleware.RecordRefresh("disabled")
 		c.JSON(http.StatusForbidden, gin.H{"error": "Account disabled"})
@@ -594,8 +610,8 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	sess := continuedSession(stored)
 	var newRawToken string
 	var newExpiresAt time.Time
-	err = h.refreshTokenRepo.WithTx(func(txRepo models.RefreshTokenRepository) error {
-		affected, err := txRepo.MarkRotatedIfActive(stored.ID, now)
+	err = h.refreshTokenRepo.WithTx(writeCtx, func(txRepo models.RefreshTokenRepository) error {
+		affected, err := txRepo.MarkRotatedIfActive(writeCtx, stored.ID, now)
 		if err != nil {
 			return err
 		}
@@ -607,22 +623,22 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		// Read the old row again (after MarkRotatedIfActive, so the row lock
 		// is held and the read sees the latest activity) and carry the later
 		// time forward. Never use now: a refresh is not activity.
-		txSess, carryErr := carryLatestActivity(txRepo, tokenHash, sess)
+		txSess, carryErr := carryLatestActivity(writeCtx, txRepo, tokenHash, sess)
 		if carryErr != nil {
 			return carryErr
 		}
 		var issueErr error
-		newRawToken, newExpiresAt, issueErr = h.issueRefreshTokenWith(c, txRepo, user.ID, txSess, stored.ID)
+		newRawToken, newExpiresAt, issueErr = h.issueRefreshTokenWith(writeCtx, c, txRepo, user.ID, txSess, stored.ID)
 		return issueErr
 	})
 	if errors.Is(err, errRefreshTokenConsumed) {
 		// Another request consumed the token after our read. Re-read it so a
 		// concurrent rotation gets the grace path and a revocation does not.
-		latest, ok := h.findRefreshToken(c, tokenHash)
+		latest, ok := h.findRefreshToken(writeCtx, c, tokenHash)
 		if !ok {
 			return
 		}
-		h.refreshConsumedToken(c, latest, now)
+		h.refreshConsumedToken(writeCtx, c, latest, now)
 		return
 	}
 	if err != nil {
@@ -641,14 +657,15 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	}
 
 	// Close the disable race (same as login): re-read the user after signing.
-	// On rejection revoke the rotated refresh token too.
-	if err := recheckUserActive(c.Request.Context(), h.userRepo, user.ID); err != nil {
-		h.rejectRefreshAfterRecheck(c, user.ID, err)
+	// On rejection revoke the rotated refresh token too. The re-read keeps the
+	// request context: a client that left gets 499 and no revoke-all.
+	if err := recheckUserActive(reqCtx, h.userRepo, user.ID); err != nil {
+		h.rejectRefreshAfterRecheck(writeCtx, c, user.ID, err)
 		return
 	}
 	// Close the revoke race: a logout-all or admin revoke that ran after the
 	// rotation committed has revoked the new token; do not hand out a token.
-	if err := recheckSessionActive(h.refreshTokenRepo, sess.familyID); err != nil {
+	if err := recheckSessionActive(writeCtx, h.refreshTokenRepo, sess.familyID); err != nil {
 		h.rejectRefreshAfterSessionCheck(c, user.ID, sess.familyID, true, err)
 		return
 	}
@@ -662,13 +679,16 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	c.JSON(http.StatusOK, RefreshResponse{Token: accessToken})
 }
 
-// findRefreshToken looks up a refresh token by hash. On failure it writes the
-// response (401 for an unknown token, 500 for a repository error) and returns
-// false.
-func (h *AuthHandler) findRefreshToken(c *gin.Context, tokenHash string) (*models.RefreshToken, bool) {
-	stored, err := h.refreshTokenRepo.FindByTokenHash(tokenHash)
+// findRefreshToken looks up a refresh token by hash with ctx. On failure it
+// writes the response (401 for an unknown token, 499 for a cancelled ctx, 500
+// for a repository error) and returns false.
+func (h *AuthHandler) findRefreshToken(ctx context.Context, c *gin.Context, tokenHash string) (*models.RefreshToken, bool) {
+	stored, err := h.refreshTokenRepo.FindByTokenHash(ctx, tokenHash)
 	if err == nil {
 		return stored, true
+	}
+	if respondCancelled(c, err) {
+		return nil, false
 	}
 	if isNotFoundError(err) {
 		h.clearRefreshCookie(c)
@@ -696,10 +716,14 @@ func (h *AuthHandler) findRefreshToken(c *gin.Context, tokenHash string) (*model
 // user: the replayed token can only belong to this family, and revoking the
 // other devices of the user adds no protection (refresh token rotation family
 // revocation, OAuth 2.0 Security BCP).
-func (h *AuthHandler) refreshConsumedToken(c *gin.Context, stored *models.RefreshToken, now time.Time) {
+//
+// readCtx bounds the grace reads. The family revoke always uses a detached
+// context: a client that leaves must never skip the revoke of a replayed
+// family (#656).
+func (h *AuthHandler) refreshConsumedToken(readCtx context.Context, c *gin.Context, stored *models.RefreshToken, now time.Time) {
 	family := stored.SessionFamily()
 	if h.withinReuseGrace(stored, now) {
-		user, err := h.userRepo.FindByID(c.Request.Context(), stored.UserID)
+		user, err := h.userRepo.FindByID(readCtx, stored.UserID)
 		if err != nil && respondCancelled(c, err) {
 			return
 		}
@@ -710,22 +734,25 @@ func (h *AuthHandler) refreshConsumedToken(c *gin.Context, stored *models.Refres
 			return
 		}
 		if err == nil && !user.Disabled {
-			active, countErr := h.refreshTokenRepo.CountActiveInFamily(family)
+			active, countErr := h.refreshTokenRepo.CountActiveInFamily(readCtx, family)
 			if countErr != nil {
+				if respondCancelled(c, countErr) {
+					return
+				}
 				slog.Error("Failed to check refresh token family", "user_id", stored.UserID, "error", countErr)
 				middleware.RecordRefresh("failure")
 				c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 				return
 			}
 			if active > 0 {
-				h.respondGraceRefresh(c, user, family)
+				h.respondGraceRefresh(readCtx, c, user, family)
 				return
 			}
 		}
 	}
 
 	slog.Warn("Refresh token reuse detected; revoking session", "user_id", stored.UserID, "token_id", stored.ID)
-	if err := h.refreshTokenRepo.RevokeFamily(family); err != nil {
+	if err := h.refreshTokenRepo.RevokeFamily(context.WithoutCancel(c.Request.Context()), family); err != nil {
 		slog.Error("Failed to revoke refresh token family", "user_id", stored.UserID, "error", err)
 	}
 	h.clearRefreshCookie(c)
@@ -747,8 +774,10 @@ func (h *AuthHandler) withinReuseGrace(stored *models.RefreshToken, now time.Tim
 }
 
 // respondGraceRefresh answers a refresh in the reuse grace window with a new
-// access token only. It does not touch the refresh cookie.
-func (h *AuthHandler) respondGraceRefresh(c *gin.Context, user *models.User, sessionID string) {
+// access token only. It does not touch the refresh cookie. readCtx bounds the
+// session re-check. The user re-check keeps the request context on purpose: a
+// cancel gives 499 and never revokes all sessions.
+func (h *AuthHandler) respondGraceRefresh(readCtx context.Context, c *gin.Context, user *models.User, sessionID string) {
 	accessToken, err := h.sessionAccessToken(user, sessionID)
 	if err != nil {
 		slog.Error("Failed to generate access token during refresh", "error", err)
@@ -757,10 +786,10 @@ func (h *AuthHandler) respondGraceRefresh(c *gin.Context, user *models.User, ses
 		return
 	}
 	if err := recheckUserActive(c.Request.Context(), h.userRepo, user.ID); err != nil {
-		h.rejectRefreshAfterRecheck(c, user.ID, err)
+		h.rejectRefreshAfterRecheck(context.WithoutCancel(c.Request.Context()), c, user.ID, err)
 		return
 	}
-	if err := recheckSessionActive(h.refreshTokenRepo, sessionID); err != nil {
+	if err := recheckSessionActive(readCtx, h.refreshTokenRepo, sessionID); err != nil {
 		h.rejectRefreshAfterSessionCheck(c, user.ID, sessionID, false, err)
 		return
 	}
@@ -775,8 +804,8 @@ var errSessionRevoked = errors.New("session_revoked")
 // recheckSessionActive runs after an access token is signed and confirms that
 // the session family still has an active refresh token. Callers fail closed on
 // every non-nil result.
-func recheckSessionActive(repo models.RefreshTokenRepository, familyID string) error {
-	active, err := repo.CountActiveInFamily(familyID)
+func recheckSessionActive(ctx context.Context, repo models.RefreshTokenRepository, familyID string) error {
+	active, err := repo.CountActiveInFamily(ctx, familyID)
 	if err != nil {
 		return err
 	}
@@ -788,8 +817,8 @@ func recheckSessionActive(repo models.RefreshTokenRepository, familyID string) e
 
 // abandonSession revokes a session family that a login created but did not
 // hand out (best effort; the error is only logged).
-func abandonSession(repo models.RefreshTokenRepository, familyID string) {
-	if err := repo.RevokeFamily(familyID); err != nil {
+func abandonSession(ctx context.Context, repo models.RefreshTokenRepository, familyID string) {
+	if err := repo.RevokeFamily(ctx, familyID); err != nil {
 		slog.Error("Failed to revoke abandoned session", "family_id", familyID, "error", err)
 	}
 }
@@ -800,6 +829,9 @@ func abandonSession(repo models.RefreshTokenRepository, familyID string) {
 // whether the rotation transaction already committed (the client then never
 // receives the new refresh token).
 func (h *AuthHandler) rejectRefreshAfterSessionCheck(c *gin.Context, userID, familyID string, rotated bool, err error) {
+	if respondCancelled(c, err) {
+		return
+	}
 	h.clearRefreshCookie(c)
 	if errors.Is(err, errSessionRevoked) {
 		middleware.RecordRefresh("revoked")
@@ -817,14 +849,17 @@ func (h *AuthHandler) rejectRefreshAfterSessionCheck(c *gin.Context, userID, fam
 }
 
 // rejectRefreshAfterRecheck ends a refresh whose user re-check failed: it
-// revokes all refresh tokens of the user and clears the cookie. A cancelled
-// request gives 499 and revokes nothing: the token never leaves the server,
-// and a client that left is no reason to end the other sessions (#656).
-func (h *AuthHandler) rejectRefreshAfterRecheck(c *gin.Context, userID string, err error) {
+// revokes all refresh tokens of the user with writeCtx (detached) and clears
+// the cookie. A cancelled request gives 499 and revokes nothing: the token
+// never leaves the server, and a client that left is no reason to end the
+// other sessions (#656).
+func (h *AuthHandler) rejectRefreshAfterRecheck(writeCtx context.Context, c *gin.Context, userID string, err error) {
 	if respondCancelled(c, err) {
 		return
 	}
-	_ = h.refreshTokenRepo.RevokeAllForUser(userID)
+	if revokeErr := h.refreshTokenRepo.RevokeAllForUser(writeCtx, userID); revokeErr != nil {
+		slog.Error("Failed to revoke refresh tokens after user re-check", "user_id", userID, "error", revokeErr)
+	}
 	h.clearRefreshCookie(c)
 	switch {
 	case errors.Is(err, errAccountDisabled):
@@ -883,6 +918,9 @@ func authProviderOf(user *models.User) string {
 // @Failure     401 {object} map[string]string
 // @Router      /api/v1/auth/logout [post]
 func (h *AuthHandler) Logout(c *gin.Context) {
+	// Detached: a client that leaves is still logged out (#656).
+	ctx := context.WithoutCancel(c.Request.Context())
+
 	// Best-effort blocklist of the access token and close of the sockets
 	// opened with it. The route is public (no auth middleware) so we parse
 	// the Authorization header ourselves.
@@ -895,7 +933,7 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 						if claims.ExpiresAt != nil {
 							expiry = claims.ExpiresAt.Time
 						}
-						if blockErr := h.sessionStore.BlockToken(c.Request.Context(), claims.ID, expiry); blockErr != nil {
+						if blockErr := h.sessionStore.BlockToken(ctx, claims.ID, expiry); blockErr != nil {
 							slog.Error("Failed to blocklist token on logout", "jti", claims.ID, "error", blockErr)
 						}
 					}
@@ -911,8 +949,14 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	if h.refreshTokenRepo != nil {
 		if rawToken, err := c.Cookie(refreshTokenCookieName); err == nil && rawToken != "" {
 			tokenHash := hashRefreshToken(rawToken)
-			if stored, err := h.refreshTokenRepo.FindByTokenHash(tokenHash); err == nil {
-				_ = h.refreshTokenRepo.RevokeByID(stored.ID)
+			stored, err := h.refreshTokenRepo.FindByTokenHash(ctx, tokenHash)
+			switch {
+			case err == nil:
+				if revokeErr := h.refreshTokenRepo.RevokeByID(ctx, stored.ID); revokeErr != nil {
+					slog.Error("Failed to revoke refresh token on logout", "user_id", stored.UserID, "error", revokeErr)
+				}
+			case !isNotFoundError(err):
+				slog.Error("Failed to look up refresh token on logout", "error", err)
 			}
 		}
 	}
@@ -938,6 +982,9 @@ func (h *AuthHandler) LogoutAll(c *gin.Context) {
 		return
 	}
 
+	// Detached: a client that leaves is still logged out everywhere (#656).
+	ctx := context.WithoutCancel(c.Request.Context())
+
 	// Blocklist the current access token.
 	if h.sessionStore != nil {
 		jti := middleware.GetJTIFromContext(c)
@@ -946,7 +993,7 @@ func (h *AuthHandler) LogoutAll(c *gin.Context) {
 			if !ok {
 				expiry = time.Now().Add(h.cfg.AccessTokenExpiration)
 			}
-			if blockErr := h.sessionStore.BlockToken(c.Request.Context(), jti, expiry); blockErr != nil {
+			if blockErr := h.sessionStore.BlockToken(ctx, jti, expiry); blockErr != nil {
 				slog.Error("Failed to blocklist token on logout-all", "jti", jti, "error", blockErr)
 			}
 		}
@@ -961,7 +1008,7 @@ func (h *AuthHandler) LogoutAll(c *gin.Context) {
 	}
 
 	if h.refreshTokenRepo != nil {
-		if err := h.refreshTokenRepo.RevokeAllForUser(userID); err != nil {
+		if err := h.refreshTokenRepo.RevokeAllForUser(ctx, userID); err != nil {
 			slog.Error("Failed to revoke all refresh tokens", "user_id", userID, "error", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 			return
@@ -972,14 +1019,18 @@ func (h *AuthHandler) LogoutAll(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Logged out from all sessions"})
 }
 
-// CleanupExpiredTokens deletes expired refresh tokens from the store.
-// Intended to be called periodically (e.g., by a background goroutine).
-func (h *AuthHandler) CleanupExpiredTokens() {
+// CleanupExpiredTokens deletes expired refresh tokens from the store. The
+// leader worker refresh-token-cleanup calls it with its own context.
+func (h *AuthHandler) CleanupExpiredTokens(ctx context.Context) {
 	if h.refreshTokenRepo == nil {
 		return
 	}
-	deleted, err := h.refreshTokenRepo.DeleteExpired()
+	deleted, err := h.refreshTokenRepo.DeleteExpired(ctx)
 	if err != nil {
+		if ctx.Err() != nil {
+			// The leader term ended: the next term cleans up.
+			return
+		}
 		slog.Error("Failed to clean up expired refresh tokens", "error", err)
 		return
 	}
@@ -1018,8 +1069,8 @@ func continuedSession(rt *models.RefreshToken) refreshSession {
 // with tokenHash. The rotation calls it inside its transaction, after it has
 // marked the token rotated, so a concurrent TouchFamily on the old row is not
 // lost.
-func carryLatestActivity(repo models.RefreshTokenRepository, tokenHash string, sess refreshSession) (refreshSession, error) {
-	current, err := repo.FindByTokenHash(tokenHash)
+func carryLatestActivity(ctx context.Context, repo models.RefreshTokenRepository, tokenHash string, sess refreshSession) (refreshSession, error) {
+	current, err := repo.FindByTokenHash(ctx, tokenHash)
 	if err != nil {
 		return sess, err
 	}
@@ -1043,15 +1094,16 @@ func sessionDeadline(cfg *config.AuthConfig, start time.Time) time.Time {
 // Returns the raw token and its expiry so the caller can set the cookie after a
 // transaction commits. excludeTokenID is the token being consumed (rotation)
 // and is skipped when the max token limit is enforced; pass "" at login.
-func (h *AuthHandler) issueRefreshTokenWith(c *gin.Context, repo models.RefreshTokenRepository, userID string, sess refreshSession, excludeTokenID string) (string, time.Time, error) {
-	return createRefreshToken(c, repo, h.cfg, userID, sess, excludeTokenID)
+func (h *AuthHandler) issueRefreshTokenWith(ctx context.Context, c *gin.Context, repo models.RefreshTokenRepository, userID string, sess refreshSession, excludeTokenID string) (string, time.Time, error) {
+	return createRefreshToken(ctx, c, repo, h.cfg, userID, sess, excludeTokenID)
 }
 
 // createRefreshToken stores a new refresh token of the session and returns the
 // raw token and its expiry. The expiry is the earlier of now +
 // RefreshTokenExpiration and the session deadline, so rotation never extends
-// a session. Shared by local login, refresh and OIDC login.
-func createRefreshToken(c *gin.Context, repo models.RefreshTokenRepository, cfg *config.AuthConfig, userID string, sess refreshSession, excludeTokenID string) (string, time.Time, error) {
+// a session. Shared by local login, refresh and OIDC login. ctx bounds the
+// queries; c gives only the user agent and the client IP.
+func createRefreshToken(ctx context.Context, c *gin.Context, repo models.RefreshTokenRepository, cfg *config.AuthConfig, userID string, sess refreshSession, excludeTokenID string) (string, time.Time, error) {
 	// Keep the user within MaxRefreshTokensPerUser: revoke the oldest active
 	// tokens so that the new one fits, but never the newest ones. Revoking all
 	// of them (the old rule) also revoked the session of a login of the same
@@ -1060,12 +1112,12 @@ func createRefreshToken(c *gin.Context, repo models.RefreshTokenRepository, cfg 
 	// already revoked the consumed token, so it is not active here; excluding
 	// it is defense in depth, so the cap never revokes the token in use.
 	if cfg.MaxRefreshTokensPerUser > 0 {
-		activeCount, err := repo.CountActiveForUser(userID)
+		activeCount, err := repo.CountActiveForUser(ctx, userID)
 		if err != nil {
 			return "", time.Time{}, err
 		}
 		if int(activeCount) >= cfg.MaxRefreshTokensPerUser {
-			if _, err := repo.RevokeOldestForUser(userID, cfg.MaxRefreshTokensPerUser-1, excludeTokenID); err != nil {
+			if _, err := repo.RevokeOldestForUser(ctx, userID, cfg.MaxRefreshTokensPerUser-1, excludeTokenID); err != nil {
 				return "", time.Time{}, err
 			}
 		}
@@ -1111,7 +1163,7 @@ func createRefreshToken(c *gin.Context, repo models.RefreshTokenRepository, cfg 
 		IPAddress:        c.ClientIP(),
 	}
 
-	if err := repo.Create(rt); err != nil {
+	if err := repo.Create(ctx, rt); err != nil {
 		return "", time.Time{}, err
 	}
 
