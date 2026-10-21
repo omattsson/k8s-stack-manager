@@ -1120,6 +1120,10 @@ func (d *Database) AutoMigrate() error {
 	// Migration 62: drop the redundant notifications.is_read index (#648).
 	migrator.AddMigration(dropNotificationIsReadIndexMigration())
 
+	// Migration 63: notifications (user_id, created_at DESC) index for the
+	// notification list (#654).
+	migrator.AddMigration(notificationListIndexMigration())
+
 	// Migration 64: notification trigger columns (#652).
 	migrator.AddMigration(notificationTriggerMigration())
 

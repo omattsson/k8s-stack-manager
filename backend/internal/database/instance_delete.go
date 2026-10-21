@@ -16,23 +16,53 @@ import (
 //     value overrides, quota override, followers and action runs
 //     (DeleteInstanceRecord). An error here is returned and nothing is
 //     deleted.
-//  2. After that commit, a second transaction deletes the quick deploy
-//     definition of the instance when nothing uses it any more
-//     (CleanupOwnedDefinition). This step is best effort: an error is logged
-//     and rolls back only the definition cleanup, never the instance delete.
+//  2. After that commit, when the definition has an owner instance, a second
+//     transaction deletes the quick deploy definition of the instance when
+//     nothing uses it any more (CleanupOwnedDefinition). This step is best
+//     effort: an error is logged and rolls back only the definition cleanup,
+//     never the instance delete.
 func DeleteInstanceWithOwnedDefinition(runner TxRunner, inst *models.StackInstance) error {
 	if err := runner.RunInTx(func(repos TxRepos) error {
 		return DeleteInstanceRecord(repos, inst)
 	}); err != nil {
 		return err
 	}
-	if err := runner.RunInTx(func(repos TxRepos) error {
-		return CleanupOwnedDefinition(repos, inst)
-	}); err != nil {
+	if err := cleanupOwnedDefinitionIfOwned(runner, inst); err != nil {
 		slog.Warn("owned definition cleanup failed; the instance is deleted",
 			"instance_id", inst.ID, "definition_id", inst.StackDefinitionID, "error", err)
 	}
 	return nil
+}
+
+// cleanupOwnedDefinitionIfOwned runs CleanupOwnedDefinition only for a
+// definition with an owner instance, so other deletes take no row lock (#654).
+func cleanupOwnedDefinitionIfOwned(runner TxRunner, inst *models.StackInstance) error {
+	if inst.StackDefinitionID == "" {
+		return nil
+	}
+	// Own transaction: a plain read before the lock in the cleanup would fix the
+	// REPEATABLE READ snapshot, and its count could miss a concurrent clone.
+	// Only quick deploy sets OwnerInstanceID, at create: an empty owner stays empty.
+	owned := false
+	if err := runner.RunInTx(func(repos TxRepos) error {
+		if repos.StackDefinition == nil {
+			return nil
+		}
+		def, err := repos.StackDefinition.FindByID(inst.StackDefinitionID)
+		if errors.Is(err, dberrors.ErrNotFound) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("finding definition: %w", err)
+		}
+		owned = def.OwnerInstanceID != ""
+		return nil
+	}); err != nil || !owned {
+		return err
+	}
+	return runner.RunInTx(func(repos TxRepos) error {
+		return CleanupOwnedDefinition(repos, inst)
+	})
 }
 
 // DeleteInstanceRecord deletes the database record of a stack instance with
