@@ -36,7 +36,9 @@ CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
 FROM nginxinc/nginx-unprivileged:alpine AS production
 # Temporarily switch to root to upgrade OS packages, then back to unprivileged
 USER root
-RUN apk upgrade --no-cache
+# 20261020-r0 or later distrusts the compromised eMudhra intermediate CAs (#667).
+RUN apk upgrade --no-cache \
+    && apk add --no-cache 'ca-certificates>=20261020-r0' 'ca-certificates-bundle>=20261020-r0'
 USER nginx
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
