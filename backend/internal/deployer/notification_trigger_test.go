@@ -141,7 +141,7 @@ func TestNotification_TriggerPerOperation(t *testing.T) {
 
 			inst := seedInstance(t, instanceRepo, "inst-trig", "web", "owner-1")
 			inst.Status = models.StackStatusRunning
-			require.NoError(t, instanceRepo.Update(inst))
+			require.NoError(t, instanceRepo.Update(context.Background(), inst))
 
 			ctx := context.Background()
 			if tt.trigger != nil {

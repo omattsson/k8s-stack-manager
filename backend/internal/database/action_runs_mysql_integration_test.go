@@ -176,15 +176,15 @@ func TestDatabaseMySQL_ActionRuns(t *testing.T) {
 	t.Run("instance delete removes the runs in the transaction", func(t *testing.T) {
 		instances := NewGORMStackInstanceRepository(db)
 		for _, id := range []string{"inst-del", "inst-keep"} {
-			require.NoError(t, instances.Create(&models.StackInstance{ID: id, Name: id, Namespace: "stack-" + id, OwnerID: "owner", StackDefinitionID: "d1", Status: models.StackStatusDraft}))
+			require.NoError(t, instances.Create(context.Background(), &models.StackInstance{ID: id, Name: id, Namespace: "stack-" + id, OwnerID: "owner", StackDefinitionID: "d1", Status: models.StackStatusDraft}))
 			for i := 0; i < 3; i++ {
 				require.NoError(t, repo.Create(ctx, &models.ActionRun{InstanceID: id, Action: "seed", UserID: "u1", StatusCode: 200}))
 			}
 		}
-		inst, err := instances.FindByID("inst-del")
+		inst, err := instances.FindByID(context.Background(), "inst-del")
 		require.NoError(t, err)
-		require.NoError(t, NewGORMTxRunner(db).RunInTx(func(repos TxRepos) error {
-			return DeleteInstanceRecord(repos, inst)
+		require.NoError(t, NewGORMTxRunner(db).RunInTx(context.Background(), func(repos TxRepos) error {
+			return DeleteInstanceRecord(context.Background(), repos, inst)
 		}))
 
 		runs, _, err := repo.ListByInstance(ctx, "inst-del", "", 10)

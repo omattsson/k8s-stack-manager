@@ -74,7 +74,7 @@ func newNameTestRepos(t *testing.T) nameTestRepos {
 func seedFilterInstance(t *testing.T, repo *MockStackInstanceRepository, id, defID, ownerID, clusterID, status string, age time.Duration) {
 	t.Helper()
 	created := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC).Add(-age)
-	require.NoError(t, repo.Create(&models.StackInstance{
+	require.NoError(t, repo.Create(context.Background(), &models.StackInstance{
 		ID:                id,
 		Name:              id,
 		StackDefinitionID: defID,

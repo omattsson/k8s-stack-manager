@@ -403,7 +403,7 @@ func TestDeleteCluster(t *testing.T) {
 		seedCluster(clusterRepo, "cl-1", "prod")
 
 		// Add an instance referencing this cluster.
-		_ = instanceRepo.Create(&models.StackInstance{
+		_ = instanceRepo.Create(context.Background(), &models.StackInstance{
 			ID:        "inst-1",
 			Name:      "myapp",
 			ClusterID: "cl-1",

@@ -301,7 +301,8 @@ func (h *TemplateHandler) CreateTemplate(c *gin.Context) {
 	}
 
 	var published *models.TemplateVersion
-	txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
+	// Detached: a committed write must answer success, so its audit entry follows (#656).
+	txErr := h.txRunner.RunInTx(context.WithoutCancel(c.Request.Context()), func(repos database.TxRepos) error {
 		if err := repos.StackTemplate.Create(&tmpl); err != nil {
 			return err
 		}
@@ -714,7 +715,8 @@ func (h *TemplateHandler) publishWorkingCopy(ctx context.Context, templateID, ve
 		published *models.TemplateVersion
 		created   bool
 	)
-	err := h.txRunner.RunInTx(func(repos database.TxRepos) error {
+	// See CreateTemplate for the detached context.
+	err := h.txRunner.RunInTx(context.WithoutCancel(ctx), func(repos database.TxRepos) error {
 		locked, err := repos.StackTemplate.FindByIDForUpdate(templateID)
 		if err != nil {
 			return err
@@ -948,7 +950,8 @@ func (h *TemplateHandler) InstantiateTemplate(c *gin.Context) {
 	}
 
 	var chartConfigs []models.ChartConfig
-	txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
+	// See CreateTemplate for the detached context.
+	txErr := h.txRunner.RunInTx(context.WithoutCancel(c.Request.Context()), func(repos database.TxRepos) error {
 		if err := repos.StackDefinition.Create(def); err != nil {
 			return err
 		}
@@ -1088,7 +1091,8 @@ func (h *TemplateHandler) CloneTemplate(c *gin.Context) {
 		})
 	}
 
-	txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
+	// See CreateTemplate for the detached context.
+	txErr := h.txRunner.RunInTx(context.WithoutCancel(c.Request.Context()), func(repos database.TxRepos) error {
 		if err := repos.StackTemplate.Create(clone); err != nil {
 			return err
 		}

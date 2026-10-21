@@ -222,7 +222,7 @@ func TestDashboard_ExpiringSoon(t *testing.T) {
 	deployLogRepo := &dashboardMockDeployLogRepo{}
 
 	expiresAt := time.Now().Add(30 * time.Minute)
-	_ = instanceRepo.Create(&models.StackInstance{
+	_ = instanceRepo.Create(context.Background(), &models.StackInstance{
 		ID:         "i1",
 		Name:       "expiring-stack",
 		Namespace:  "ns-1",
@@ -254,7 +254,7 @@ func TestDashboard_FailingInstances(t *testing.T) {
 	instanceRepo := NewMockStackInstanceRepository()
 	deployLogRepo := &dashboardMockDeployLogRepo{}
 
-	_ = instanceRepo.Create(&models.StackInstance{
+	_ = instanceRepo.Create(context.Background(), &models.StackInstance{
 		ID:           "i1",
 		Name:         "broken-stack",
 		Namespace:    "ns-1",

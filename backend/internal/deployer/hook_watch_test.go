@@ -34,13 +34,13 @@ const hookWaitLimit = 10 * time.Second
 // of that action.
 func takeInstance(t *testing.T, instanceRepo *mockInstanceRepo, logRepo *mockDeployLogRepo, instanceID, status, action string) {
 	t.Helper()
-	cur, err := instanceRepo.FindByID(instanceID)
+	cur, err := instanceRepo.FindByID(context.Background(), instanceID)
 	if err != nil {
 		t.Errorf("find instance: %v", err)
 		return
 	}
 	cur.Status = status
-	if err := instanceRepo.Update(cur); err != nil {
+	if err := instanceRepo.Update(context.Background(), cur); err != nil {
 		t.Errorf("update instance: %v", err)
 		return
 	}
@@ -217,7 +217,7 @@ func TestManager_Deploy_PreDeployHookWatch(t *testing.T) {
 			for _, notWant := range tt.wantNotOutput {
 				assert.NotContains(t, deployLog.Output, notWant)
 			}
-			stored, err := instanceRepo.FindByID(inst.ID)
+			stored, err := instanceRepo.FindByID(context.Background(), inst.ID)
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantStatus, stored.Status)
 			helmExec.mu.Lock()
@@ -279,7 +279,7 @@ func TestRollback_PreRollbackHookWatch(t *testing.T) {
 			instanceRepo := newMockInstanceRepo()
 			logRepo := newMockDeployLogRepo()
 			inst := &models.StackInstance{ID: "inst-pre-rollback-watch", Name: "pre-rollback-watch", Namespace: "stack-pre-rollback-watch", OwnerID: "owner-1", Branch: "main", Status: models.StackStatusRunning}
-			require.NoError(t, instanceRepo.Create(inst))
+			require.NoError(t, instanceRepo.Create(context.Background(), inst))
 			cancelled := make(chan struct{})
 			var elapsed atomic.Int64
 			srv.handlers["gate"] = gateHandler(t, tt, instanceRepo, logRepo, inst.ID, cancelled, &elapsed)
@@ -334,7 +334,7 @@ func TestRollback_PreRollbackHookWatch(t *testing.T) {
 			}
 			// finalizeRollbackRejected writes the status after the log.
 			require.Eventually(t, func() bool {
-				got, err := instanceRepo.FindByID(inst.ID)
+				got, err := instanceRepo.FindByID(context.Background(), inst.ID)
 				return err == nil && got.Status == tt.wantStatus
 			}, 5*time.Second, 10*time.Millisecond, "instance status must be %s", tt.wantStatus)
 			helmMu.Lock()
@@ -393,13 +393,15 @@ func TestManager_Deploy_PreDeployHookShutdown(t *testing.T) {
 	assert.Equal(t, models.DeployLogError, deployLog.Status)
 	assert.Contains(t, deployLog.Output, `ERROR: pre-deploy hook "gate" failed`)
 	assert.NotContains(t, deployLog.Output, "deploy cancelled")
-	stored, err := instanceRepo.FindByID(inst.ID)
+	stored, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	require.NoError(t, err)
 	assert.Equal(t, models.StackStatusError, stored.Status)
 	helmExec.mu.Lock()
 	assert.Empty(t, helmExec.installCalls)
 	helmExec.mu.Unlock()
 }
+
+type watchCtxKey struct{}
 
 func TestWatchOwnership(t *testing.T) {
 	t.Parallel()
@@ -417,11 +419,15 @@ func TestWatchOwnership(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(context.WithValue(context.Background(), watchCtxKey{}, "watch"))
 			defer cancel()
 			var checks atomic.Int32
-			w := watchOwnership(ctx, cancel, time.Millisecond, func() (bool, string) {
+			var otherCtx atomic.Bool
+			w := watchOwnership(ctx, cancel, time.Millisecond, func(c context.Context) (bool, string) {
 				checks.Add(1)
+				if c.Value(watchCtxKey{}) != "watch" {
+					otherCtx.Store(true)
+				}
 				if tt.owned {
 					return true, models.StackStatusDeploying
 				}
@@ -438,6 +444,7 @@ func TestWatchOwnership(t *testing.T) {
 				assert.NoError(t, ctx.Err(), "an owned instance must not cancel the context")
 			}
 			status, lost := w.stop()
+			assert.False(t, otherCtx.Load(), "owned gets the context of the watch (#656)")
 			assert.Equal(t, tt.wantLost, lost)
 			assert.Equal(t, tt.wantStatus, status)
 			assert.Error(t, ctx.Err(), "stop cancels the context")

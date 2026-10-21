@@ -342,14 +342,20 @@ func ensureDefaultCluster(clusterRepo models.ClusterRepository, instanceRepo mod
 	// Backfill: persist the new default cluster ID onto any existing
 	// StackInstance records that have an empty ClusterID, so they won't
 	// implicitly follow whatever happens to be the default later.
-	backfillInstanceClusterIDs(instanceRepo, defaultCluster.ID)
+	backfillCtx, cancelBackfill := context.WithTimeout(context.Background(), instanceBackfillTimeout)
+	backfillInstanceClusterIDs(backfillCtx, instanceRepo, defaultCluster.ID)
+	cancelBackfill()
 }
+
+// instanceBackfillTimeout bounds the startup backfill of the default cluster
+// ID (#656).
+const instanceBackfillTimeout = 2 * time.Minute
 
 // backfillInstanceClusterIDs sets the given clusterID on all stack instances
 // that currently have an empty ClusterID. It lists all instances and filters
 // in-memory so that migration is straightforward.
-func backfillInstanceClusterIDs(instanceRepo models.StackInstanceRepository, clusterID string) {
-	instances, err := instanceRepo.List()
+func backfillInstanceClusterIDs(ctx context.Context, instanceRepo models.StackInstanceRepository, clusterID string) {
+	instances, err := instanceRepo.List(ctx)
 	if err != nil {
 		slog.Warn("Failed to list instances for cluster ID backfill", "error", err)
 		return
@@ -363,7 +369,12 @@ func backfillInstanceClusterIDs(instanceRepo models.StackInstanceRepository, clu
 		}
 
 		inst.ClusterID = clusterID
-		if updateErr := instanceRepo.Update(inst); updateErr != nil {
+		if updateErr := instanceRepo.Update(ctx, inst); updateErr != nil {
+			if ctx.Err() != nil {
+				// Every later update fails too: log once.
+				slog.Error("Cluster ID backfill stopped", "error", updateErr)
+				break
+			}
 			slog.Error("Failed to backfill cluster ID on instance",
 				"instance_id", inst.ID,
 				"error", updateErr,

@@ -169,33 +169,33 @@ func TestMySQLIntegration_StackInstanceRepository(t *testing.T) {
 	}
 
 	// Create
-	err := repo.Create(instance)
+	err := repo.Create(context.Background(), instance)
 	require.NoError(t, err)
 	assert.NotEmpty(t, instance.ID)
 
 	// FindByID
-	found, err := repo.FindByID(instance.ID)
+	found, err := repo.FindByID(context.Background(), instance.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "test-instance", found.Name)
 
 	// FindByNamespace
-	found, err = repo.FindByNamespace("stack-test-instance-user1")
+	found, err = repo.FindByNamespace(context.Background(), "stack-test-instance-user1")
 	require.NoError(t, err)
 	assert.Equal(t, instance.ID, found.ID)
 
 	// ListPaged
-	instances, total, err := repo.ListPaged(models.StackInstanceFilter{}, 10, 0)
+	instances, total, err := repo.ListPaged(context.Background(), models.StackInstanceFilter{}, 10, 0)
 	require.NoError(t, err)
 	assert.Equal(t, 1, total)
 	assert.Len(t, instances, 1)
 
 	// FindByCluster
-	instances, err = repo.FindByCluster("cluster1")
+	instances, err = repo.FindByCluster(context.Background(), "cluster1")
 	require.NoError(t, err)
 	assert.Len(t, instances, 1)
 
 	// CountByClusterAndOwner
-	count, err := repo.CountByClusterAndOwner("cluster1", "user1")
+	count, err := repo.CountByClusterAndOwner(context.Background(), "cluster1", "user1")
 	require.NoError(t, err)
 	assert.Equal(t, 1, count)
 
@@ -207,25 +207,25 @@ func TestMySQLIntegration_StackInstanceRepository(t *testing.T) {
 		OwnerID:           "user2",
 		Status:            "pending",
 	}
-	require.NoError(t, repo.Create(second))
-	instances, err = repo.FindByNameOnCluster("TEST-instance", "cluster1", true)
+	require.NoError(t, repo.Create(context.Background(), second))
+	instances, err = repo.FindByNameOnCluster(context.Background(), "TEST-instance", "cluster1", true)
 	require.NoError(t, err)
 	assert.Len(t, instances, 2)
-	instances, err = repo.FindByNameOnCluster("test-instance", "cluster1", false)
+	instances, err = repo.FindByNameOnCluster(context.Background(), "test-instance", "cluster1", false)
 	require.NoError(t, err)
 	assert.Len(t, instances, 1)
-	dups, err := repo.DuplicateInstanceNames("cluster1")
+	dups, err := repo.DuplicateInstanceNames(context.Background(), "cluster1")
 	require.NoError(t, err)
 	assert.Equal(t, []models.DuplicateInstanceName{{ClusterID: "cluster1", Name: "test-instance", Count: 2}}, dups)
-	require.NoError(t, repo.Delete(second.ID))
+	require.NoError(t, repo.Delete(context.Background(), second.ID))
 
 	// Update
 	instance.Status = "running"
-	err = repo.Update(instance)
+	err = repo.Update(context.Background(), instance)
 	require.NoError(t, err)
 
 	// Delete
-	err = repo.Delete(instance.ID)
+	err = repo.Delete(context.Background(), instance.ID)
 	require.NoError(t, err)
 }
 

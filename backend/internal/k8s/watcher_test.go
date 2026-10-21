@@ -33,7 +33,10 @@ func newMockInstanceRepo() *mockInstanceRepo {
 	return &mockInstanceRepo{instances: make(map[string]*models.StackInstance)}
 }
 
-func (m *mockInstanceRepo) Create(inst *models.StackInstance) error {
+func (m *mockInstanceRepo) Create(ctx context.Context, inst *models.StackInstance) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	cp := *inst
@@ -41,7 +44,10 @@ func (m *mockInstanceRepo) Create(inst *models.StackInstance) error {
 	return nil
 }
 
-func (m *mockInstanceRepo) FindByID(id string) (*models.StackInstance, error) {
+func (m *mockInstanceRepo) FindByID(ctx context.Context, id string) (*models.StackInstance, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	inst, ok := m.instances[id]
@@ -52,7 +58,10 @@ func (m *mockInstanceRepo) FindByID(id string) (*models.StackInstance, error) {
 	return &cp, nil
 }
 
-func (m *mockInstanceRepo) Update(inst *models.StackInstance) error {
+func (m *mockInstanceRepo) Update(ctx context.Context, inst *models.StackInstance) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.updateErr != nil {
@@ -63,14 +72,20 @@ func (m *mockInstanceRepo) Update(inst *models.StackInstance) error {
 	return nil
 }
 
-func (m *mockInstanceRepo) Delete(id string) error {
+func (m *mockInstanceRepo) Delete(ctx context.Context, id string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.instances, id)
 	return nil
 }
 
-func (m *mockInstanceRepo) List() ([]models.StackInstance, error) {
+func (m *mockInstanceRepo) List(ctx context.Context) ([]models.StackInstance, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.listErr != nil {
@@ -83,7 +98,10 @@ func (m *mockInstanceRepo) List() ([]models.StackInstance, error) {
 	return out, nil
 }
 
-func (m *mockInstanceRepo) FindByNamespace(namespace string) (*models.StackInstance, error) {
+func (m *mockInstanceRepo) FindByNamespace(ctx context.Context, namespace string) (*models.StackInstance, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, inst := range m.instances {
@@ -95,11 +113,17 @@ func (m *mockInstanceRepo) FindByNamespace(namespace string) (*models.StackInsta
 	return nil, errors.New("not found")
 }
 
-func (m *mockInstanceRepo) ListByOwner(_ string) ([]models.StackInstance, error) {
-	return m.List()
+func (m *mockInstanceRepo) ListByOwner(ctx context.Context, _ string) ([]models.StackInstance, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return m.List(ctx)
 }
 
-func (m *mockInstanceRepo) FindByCluster(clusterID string) ([]models.StackInstance, error) {
+func (m *mockInstanceRepo) FindByCluster(ctx context.Context, clusterID string) ([]models.StackInstance, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.listErr != nil {
@@ -114,7 +138,10 @@ func (m *mockInstanceRepo) FindByCluster(clusterID string) ([]models.StackInstan
 	return out, nil
 }
 
-func (m *mockInstanceRepo) CountByClusterAndOwner(clusterID, ownerID string) (int, error) {
+func (m *mockInstanceRepo) CountByClusterAndOwner(ctx context.Context, clusterID, ownerID string) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	count := 0
@@ -126,35 +153,45 @@ func (m *mockInstanceRepo) CountByClusterAndOwner(clusterID, ownerID string) (in
 	return count, nil
 }
 
-func (m *mockInstanceRepo) ListPaged(_ models.StackInstanceFilter, _, _ int) ([]models.StackInstance, int, error) {
-	return nil, 0, nil
+func (m *mockInstanceRepo) ListPaged(ctx context.Context, _ models.StackInstanceFilter, _, _ int) ([]models.StackInstance, int, error) {
+	return nil, 0, ctx.Err()
 }
-func (m *mockInstanceRepo) CountAll() (int, error)                                  { return 0, nil }
-func (m *mockInstanceRepo) CountByStatus(_ string) (int, error)                     { return 0, nil }
-func (m *mockInstanceRepo) ExistsByDefinitionAndStatus(_, _ string) (bool, error)   { return false, nil }
-func (m *mockInstanceRepo) CountByDefinitionIDs(_ []string) (map[string]int, error) { return nil, nil }
-func (m *mockInstanceRepo) CountByOwnerIDs(_ []string) (map[string]int, error)      { return nil, nil }
-func (m *mockInstanceRepo) ListIDsByDefinitionIDs(_ []string) (map[string][]string, error) {
-	return nil, nil
+func (m *mockInstanceRepo) CountAll(ctx context.Context) (int, error) { return 0, ctx.Err() }
+func (m *mockInstanceRepo) CountByStatus(ctx context.Context, _ string) (int, error) {
+	return 0, ctx.Err()
 }
-func (m *mockInstanceRepo) ListIDsByOwnerIDs(_ []string) (map[string][]string, error) {
-	return nil, nil
+func (m *mockInstanceRepo) ExistsByDefinitionAndStatus(ctx context.Context, _, _ string) (bool, error) {
+	return false, ctx.Err()
+}
+func (m *mockInstanceRepo) CountByDefinitionIDs(ctx context.Context, _ []string) (map[string]int, error) {
+	return nil, ctx.Err()
+}
+func (m *mockInstanceRepo) CountByOwnerIDs(ctx context.Context, _ []string) (map[string]int, error) {
+	return nil, ctx.Err()
+}
+func (m *mockInstanceRepo) ListIDsByDefinitionIDs(ctx context.Context, _ []string) (map[string][]string, error) {
+	return nil, ctx.Err()
+}
+func (m *mockInstanceRepo) ListIDsByOwnerIDs(ctx context.Context, _ []string) (map[string][]string, error) {
+	return nil, ctx.Err()
 }
 
-func (m *mockInstanceRepo) FindByName(_ string) ([]models.StackInstance, error) { return nil, nil }
-
-func (m *mockInstanceRepo) ListExpired() ([]*models.StackInstance, error) {
-	return nil, nil
+func (m *mockInstanceRepo) FindByName(ctx context.Context, _ string) ([]models.StackInstance, error) {
+	return nil, ctx.Err()
 }
 
-func (m *mockInstanceRepo) ListExpiringSoon(_ time.Duration) ([]*models.StackInstance, error) {
-	return nil, nil
+func (m *mockInstanceRepo) ListExpired(ctx context.Context) ([]*models.StackInstance, error) {
+	return nil, ctx.Err()
 }
-func (*mockInstanceRepo) MarkExpiryWarned(_ string, _, _ time.Time) (bool, error) {
-	return false, nil
+
+func (m *mockInstanceRepo) ListExpiringSoon(ctx context.Context, _ time.Duration) ([]*models.StackInstance, error) {
+	return nil, ctx.Err()
 }
-func (m *mockInstanceRepo) ListByStatus(_ string, _ int) ([]*models.StackInstance, error) {
-	return nil, nil
+func (*mockInstanceRepo) MarkExpiryWarned(ctx context.Context, _ string, _, _ time.Time) (bool, error) {
+	return false, ctx.Err()
+}
+func (m *mockInstanceRepo) ListByStatus(ctx context.Context, _ string, _ int) ([]*models.StackInstance, error) {
+	return nil, ctx.Err()
 }
 
 func (m *mockInstanceRepo) getStatus(id string) string {
@@ -325,7 +362,7 @@ func TestWatcherGetStatus_ReturnsCachedStatus(t *testing.T) {
 		Namespace: ns,
 		Status:    models.StackStatusRunning,
 	}
-	require.NoError(t, repo.Create(inst))
+	require.NoError(t, repo.Create(context.Background(), inst))
 
 	w := NewWatcher(&mockClientProvider{client: client}, repo, nil, 100*time.Millisecond)
 
@@ -353,7 +390,7 @@ func TestWatcherPoll_SkipsNonActiveInstances(t *testing.T) {
 
 	// Create instances with non-active statuses — they should be skipped.
 	for _, s := range []string{models.StackStatusDraft, models.StackStatusStopped, models.StackStatusError} {
-		require.NoError(t, repo.Create(&models.StackInstance{
+		require.NoError(t, repo.Create(context.Background(), &models.StackInstance{
 			ID:        "inst-" + s,
 			Namespace: "ns-" + s,
 			Status:    s,
@@ -381,7 +418,7 @@ func TestWatcherPoll_SkipsEmptyNamespace(t *testing.T) {
 	client := NewClientFromInterface(cs)
 	repo := newMockInstanceRepo()
 
-	require.NoError(t, repo.Create(&models.StackInstance{
+	require.NoError(t, repo.Create(context.Background(), &models.StackInstance{
 		ID:        "inst-empty-ns",
 		Namespace: "", // Empty namespace should be skipped.
 		Status:    models.StackStatusRunning,
@@ -430,12 +467,12 @@ func TestWatcherPoll_MonitorsRunningAndDeployingInstances(t *testing.T) {
 	client := NewClientFromInterface(cs)
 	repo := newMockInstanceRepo()
 
-	require.NoError(t, repo.Create(&models.StackInstance{
+	require.NoError(t, repo.Create(context.Background(), &models.StackInstance{
 		ID:        "inst-running",
 		Namespace: ns1,
 		Status:    models.StackStatusRunning,
 	}))
-	require.NoError(t, repo.Create(&models.StackInstance{
+	require.NoError(t, repo.Create(context.Background(), &models.StackInstance{
 		ID:        "inst-deploying",
 		Namespace: ns2,
 		Status:    models.StackStatusDeploying,
@@ -468,7 +505,7 @@ func TestWatcherBroadcast_SendsMessageOnStatusChange(t *testing.T) {
 	repo := newMockInstanceRepo()
 	hub := &mockBroadcaster{}
 
-	require.NoError(t, repo.Create(&models.StackInstance{
+	require.NoError(t, repo.Create(context.Background(), &models.StackInstance{
 		ID:        "inst-bcast",
 		Namespace: ns,
 		Status:    models.StackStatusRunning,
@@ -509,7 +546,7 @@ func TestWatcherBroadcast_NilHub(t *testing.T) {
 	client := NewClientFromInterface(cs)
 	repo := newMockInstanceRepo()
 
-	require.NoError(t, repo.Create(&models.StackInstance{
+	require.NoError(t, repo.Create(context.Background(), &models.StackInstance{
 		ID:        "inst-nil-hub",
 		Namespace: ns,
 		Status:    models.StackStatusRunning,
@@ -540,7 +577,7 @@ func TestWatcherBroadcast_NoDuplicateOnSameStatus(t *testing.T) {
 	repo := newMockInstanceRepo()
 	hub := &mockBroadcaster{}
 
-	require.NoError(t, repo.Create(&models.StackInstance{
+	require.NoError(t, repo.Create(context.Background(), &models.StackInstance{
 		ID:        "inst-nodup",
 		Namespace: ns,
 		Status:    models.StackStatusRunning,
@@ -585,7 +622,7 @@ func TestWatcherHandleStatusTransition_ErrorStatus(t *testing.T) {
 	repo := newMockInstanceRepo()
 	hub := &mockBroadcaster{}
 
-	require.NoError(t, repo.Create(&models.StackInstance{
+	require.NoError(t, repo.Create(context.Background(), &models.StackInstance{
 		ID:        "inst-error",
 		Namespace: ns,
 		Status:    models.StackStatusRunning,
@@ -637,7 +674,7 @@ func TestWatcherHandleStatusTransition_DegradedDoesNotChangeRepoStatus(t *testin
 	client := NewClientFromInterface(cs)
 	repo := newMockInstanceRepo()
 
-	require.NoError(t, repo.Create(&models.StackInstance{
+	require.NoError(t, repo.Create(context.Background(), &models.StackInstance{
 		ID:        "inst-degraded",
 		Namespace: ns,
 		Status:    models.StackStatusRunning,
@@ -688,7 +725,7 @@ func TestWatcherHandleStatusTransition_ErrorAlreadyInErrorState(t *testing.T) {
 
 	// Instance is already in error state — handleStatusTransition should not
 	// attempt another update.
-	require.NoError(t, repo.Create(&models.StackInstance{
+	require.NoError(t, repo.Create(context.Background(), &models.StackInstance{
 		ID:           "inst-already-error",
 		Namespace:    ns,
 		Status:       models.StackStatusError,
@@ -699,7 +736,7 @@ func TestWatcherHandleStatusTransition_ErrorAlreadyInErrorState(t *testing.T) {
 	// (it monitors running, partial, deploying and stabilizing instances).
 	// Use running to make it get polled. A deploying instance keeps its
 	// status (TestWatcherHandleStatusTransition_DeployingKeepsStatus).
-	require.NoError(t, repo.Update(&models.StackInstance{
+	require.NoError(t, repo.Update(context.Background(), &models.StackInstance{
 		ID:           "inst-already-error",
 		Namespace:    ns,
 		Status:       models.StackStatusRunning,
@@ -743,7 +780,7 @@ func TestWatcherHandleStatusTransition_UpdateError(t *testing.T) {
 	client := NewClientFromInterface(cs)
 	repo := newMockInstanceRepo()
 
-	require.NoError(t, repo.Create(&models.StackInstance{
+	require.NoError(t, repo.Create(context.Background(), &models.StackInstance{
 		ID:        "inst-update-err",
 		Namespace: ns,
 		Status:    models.StackStatusRunning,
@@ -773,7 +810,7 @@ func TestWatcherPoll_NamespaceNotFound(t *testing.T) {
 	repo := newMockInstanceRepo()
 	hub := &mockBroadcaster{}
 
-	require.NoError(t, repo.Create(&models.StackInstance{
+	require.NoError(t, repo.Create(context.Background(), &models.StackInstance{
 		ID:        "inst-ns-gone",
 		Namespace: "gone-ns",
 		Status:    models.StackStatusRunning,
@@ -823,14 +860,16 @@ func TestWatcherContextCancellation(t *testing.T) {
 	}
 }
 
-func (*mockInstanceRepo) CountByStatuses(statuses []string) (int, error) { return 0, nil }
+func (*mockInstanceRepo) CountByStatuses(ctx context.Context, statuses []string) (int, error) {
+	return 0, ctx.Err()
+}
 
 func TestWatcherRun_RestartsAndClearsCacheOnStop(t *testing.T) {
 	t.Parallel()
 
 	cs := fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "ns-1"}})
 	repo := newMockInstanceRepo()
-	require.NoError(t, repo.Create(&models.StackInstance{
+	require.NoError(t, repo.Create(context.Background(), &models.StackInstance{
 		ID: "inst-1", Name: "one", Namespace: "ns-1", Status: models.StackStatusRunning,
 	}))
 	w := NewWatcher(&mockClientProvider{client: NewClientFromInterface(cs)}, repo, nil, time.Hour)
@@ -880,10 +919,10 @@ func TestWatcherHandleStatusTransition_BlockingPostDeploy(t *testing.T) {
 			t.Parallel()
 			repo := newMockInstanceRepo()
 			inst := &models.StackInstance{ID: "inst-blocking", Namespace: "ns", Status: tt.status, PostDeployHookUntil: tt.until}
-			require.NoError(t, repo.Create(inst))
+			require.NoError(t, repo.Create(context.Background(), inst))
 			w := NewWatcher(&mockClientProvider{}, repo, &mockBroadcaster{}, time.Second)
 
-			w.handleStatusTransition(inst, &NamespaceStatus{Status: StatusError})
+			w.handleStatusTransition(context.Background(), inst, &NamespaceStatus{Status: StatusError})
 
 			assert.Equal(t, tt.expect, repo.getStatus("inst-blocking"))
 		})
@@ -909,10 +948,10 @@ func TestWatcherHandleStatusTransition_DeployingKeepsStatus(t *testing.T) {
 			t.Parallel()
 			repo := newMockInstanceRepo()
 			inst := &models.StackInstance{ID: "inst-deploying", Namespace: "ns", Status: tt.status}
-			require.NoError(t, repo.Create(inst))
+			require.NoError(t, repo.Create(context.Background(), inst))
 			w := NewWatcher(&mockClientProvider{}, repo, &mockBroadcaster{}, time.Second)
 
-			stored := w.handleStatusTransition(inst, &NamespaceStatus{Status: StatusError})
+			stored := w.handleStatusTransition(context.Background(), inst, &NamespaceStatus{Status: StatusError})
 
 			assert.Equal(t, tt.wantStored, stored)
 			assert.Equal(t, tt.expect, repo.getStatus("inst-deploying"))
@@ -927,7 +966,10 @@ type markerInstanceRepo struct {
 	*mockInstanceRepo
 }
 
-func (m *markerInstanceRepo) MarkNamespaceError(id, message string, now time.Time) (bool, error) {
+func (m *markerInstanceRepo) MarkNamespaceError(ctx context.Context, id, message string, now time.Time) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	inst, ok := m.instances[id]
@@ -963,11 +1005,11 @@ func TestWatcherHandleStatusTransition_ConditionalWrite(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			repo := &markerInstanceRepo{newMockInstanceRepo()}
-			require.NoError(t, repo.Create(&models.StackInstance{ID: "inst-cas", Namespace: "ns", Status: tt.storeStatus}))
+			require.NoError(t, repo.Create(context.Background(), &models.StackInstance{ID: "inst-cas", Namespace: "ns", Status: tt.storeStatus}))
 			w := NewWatcher(&mockClientProvider{}, repo, &mockBroadcaster{}, time.Second)
 
 			read := &models.StackInstance{ID: "inst-cas", Namespace: "ns", Status: tt.readStatus}
-			stored := w.handleStatusTransition(read, &NamespaceStatus{Status: StatusError})
+			stored := w.handleStatusTransition(context.Background(), read, &NamespaceStatus{Status: StatusError})
 
 			assert.Equal(t, tt.wantStored, stored)
 			assert.Equal(t, tt.expect, repo.getStatus("inst-cas"))
@@ -990,7 +1032,7 @@ func TestWatcherPoll_AppliesErrorAfterMarkerExpires(t *testing.T) {
 	repo := newMockInstanceRepo()
 	start := time.Now()
 	until := start.Add(time.Minute)
-	require.NoError(t, repo.Create(&models.StackInstance{
+	require.NoError(t, repo.Create(context.Background(), &models.StackInstance{
 		ID: "inst-blocking", Namespace: ns, Status: models.StackStatusStabilizing, PostDeployHookUntil: &until,
 	}))
 	w := NewWatcher(&mockClientProvider{client: NewClientFromInterface(cs)}, repo, &mockBroadcaster{}, time.Second)

@@ -102,7 +102,7 @@ func TestDatabaseInterruptedOperations(t *testing.T) {
 	ops := NewGORMInterruptedOperationRepository(db)
 	marker := now.Add(time.Hour)
 	for _, id := range []string{"inst-ok", "inst-conflict"} {
-		require.NoError(t, instRepo.Create(&models.StackInstance{
+		require.NoError(t, instRepo.Create(context.Background(), &models.StackInstance{
 			ID: id, Name: id, Namespace: "stack-" + id, OwnerID: "u1", StackDefinitionID: "d1",
 			Status: models.StackStatusStabilizing, PostDeployHookUntil: &marker,
 		}))
@@ -139,7 +139,7 @@ func TestDatabaseInterruptedOperations(t *testing.T) {
 	assert.Contains(t, explain[0]["possible_keys"], deployLogStatusStartedIndexName)
 
 	// The updated_at value read from MySQL matches the column (DATETIME(3)).
-	inst, err := instRepo.FindByID("inst-ok")
+	inst, err := instRepo.FindByID(context.Background(), "inst-ok")
 	require.NoError(t, err)
 	msg := models.InterruptedOperationMessage(models.DeployActionDeploy)
 	res, err := ops.InterruptOperation(ctx, models.InterruptRequest{
@@ -149,7 +149,7 @@ func TestDatabaseInterruptedOperations(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, models.InterruptResult{LogClosed: true, InstanceUpdated: true}, res)
-	inst, err = instRepo.FindByID("inst-ok")
+	inst, err = instRepo.FindByID(context.Background(), "inst-ok")
 	require.NoError(t, err)
 	assert.Equal(t, models.StackStatusError, inst.Status)
 	assert.Equal(t, msg, inst.ErrorMessage)
@@ -170,11 +170,11 @@ func TestDatabaseInterruptedOperations(t *testing.T) {
 
 	// Conflict: another process updated the instance after the read. The
 	// transaction rolls back, also the log update.
-	stale, err := instRepo.FindByID("inst-conflict")
+	stale, err := instRepo.FindByID(context.Background(), "inst-conflict")
 	require.NoError(t, err)
 	time.Sleep(5 * time.Millisecond)
 	changed := *stale
-	require.NoError(t, instRepo.Update(&changed))
+	require.NoError(t, instRepo.Update(context.Background(), &changed))
 	_, err = ops.InterruptOperation(ctx, models.InterruptRequest{
 		LogID: "log-conflict", LogStartedAt: started.Add(time.Second), InstanceID: stale.ID,
 		InstanceStatus: stale.Status, InstanceUpdatedAt: stale.UpdatedAt, Message: msg, Now: now,
@@ -184,7 +184,7 @@ func TestDatabaseInterruptedOperations(t *testing.T) {
 	var conflictLog models.DeploymentLog
 	require.NoError(t, db.First(&conflictLog, "id = ?", "log-conflict").Error)
 	assert.Equal(t, models.DeployLogRunning, conflictLog.Status, "the log update rolled back")
-	after, err := instRepo.FindByID("inst-conflict")
+	after, err := instRepo.FindByID(context.Background(), "inst-conflict")
 	require.NoError(t, err)
 	assert.Equal(t, models.StackStatusStabilizing, after.Status)
 

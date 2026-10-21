@@ -172,7 +172,7 @@ func TestNotification_DeploySuccessCarriesSiteURL(t *testing.T) {
 				ID: "inst-site", StackDefinitionID: "def-1", Name: "web", Namespace: siteTestNamespace,
 				OwnerID: "owner-1", Branch: "main", ClusterID: "cluster-1", Status: models.StackStatusDraft,
 			}
-			require.NoError(t, instanceRepo.Create(inst))
+			require.NoError(t, instanceRepo.Create(context.Background(), inst))
 			mgr := NewManager(ManagerConfig{
 				Registry:              &mockClusterResolver{helm: &mockHelmExecutor{}, k8sClient: siteClient(tt.failStatus)},
 				InstanceRepo:          instanceRepo,
@@ -244,7 +244,7 @@ func TestFinalize_SiteURLOnlyOnSuccess(t *testing.T) {
 			mgr, instanceRepo, logRepo := newNotificationTestManager(notif)
 			inst := seedInstance(t, instanceRepo, "inst-fin", "web", "owner-1")
 			inst.Status = models.StackStatusDeploying
-			require.NoError(t, instanceRepo.Update(inst))
+			require.NoError(t, instanceRepo.Update(context.Background(), inst))
 			log := &models.DeploymentLog{
 				ID: "log-fin", StackInstanceID: inst.ID, Action: models.DeployActionDeploy,
 				Status: models.DeployLogRunning, StartedAt: time.Now().UTC(),

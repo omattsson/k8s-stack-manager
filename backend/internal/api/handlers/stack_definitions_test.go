@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -485,7 +487,7 @@ func TestDeleteDefinition(t *testing.T) {
 		instanceRepo := NewMockStackInstanceRepository()
 		seedDefinition(t, defRepo, "d1", "My Stack", "uid-1")
 		// Stopped instance — should not block deletion.
-		require.NoError(t, instanceRepo.Create(&models.StackInstance{
+		require.NoError(t, instanceRepo.Create(context.Background(), &models.StackInstance{
 			ID:                "i1",
 			StackDefinitionID: "d1",
 			Name:              "stopped-instance",
@@ -506,7 +508,7 @@ func TestDeleteDefinition(t *testing.T) {
 		defRepo := NewMockStackDefinitionRepository()
 		instanceRepo := NewMockStackInstanceRepository()
 		seedDefinition(t, defRepo, "d1", "My Stack", "uid-1")
-		require.NoError(t, instanceRepo.Create(&models.StackInstance{
+		require.NoError(t, instanceRepo.Create(context.Background(), &models.StackInstance{
 			ID:                "i1",
 			StackDefinitionID: "d1",
 			Name:              "running-instance",
@@ -527,7 +529,7 @@ func TestDeleteDefinition(t *testing.T) {
 		defRepo := NewMockStackDefinitionRepository()
 		instanceRepo := NewMockStackInstanceRepository()
 		seedDefinition(t, defRepo, "d1", "My Stack", "uid-1")
-		require.NoError(t, instanceRepo.Create(&models.StackInstance{
+		require.NoError(t, instanceRepo.Create(context.Background(), &models.StackInstance{
 			ID:                "i1",
 			StackDefinitionID: "d1",
 			Name:              "deploying-instance",
@@ -552,6 +554,49 @@ func TestDeleteDefinition(t *testing.T) {
 		router.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
+}
+
+// TestDeleteDefinition_InstanceCheckFails checks that a failed
+// running-instance check stops the delete: 500 for a database error, 499
+// for a cancelled request (#656).
+func TestDeleteDefinition_InstanceCheckFails(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantBody   string
+	}{
+		{name: "database error", err: errors.New("connection reset"),
+			wantStatus: http.StatusInternalServerError, wantBody: msgInternalServerError},
+		{name: "connection failed", err: database.NewDatabaseError("exists_by_definition_and_status", database.ErrConnectionFailed),
+			wantStatus: http.StatusInternalServerError, wantBody: msgInternalServerError},
+		{name: "deadline exceeded", err: database.NewDatabaseError("exists_by_definition_and_status", context.DeadlineExceeded),
+			wantStatus: http.StatusInternalServerError, wantBody: msgInternalServerError},
+		{name: "request cancelled", err: database.NewDatabaseError("exists_by_definition_and_status", context.Canceled),
+			wantStatus: statusClientClosedRequest, wantBody: msgClientClosedRequest},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			defRepo := NewMockStackDefinitionRepository()
+			instanceRepo := NewMockStackInstanceRepository()
+			seedDefinition(t, defRepo, "d1", "My Stack", "uid-1")
+			instanceRepo.SetError(tt.err)
+
+			router := setupDefinitionRouter(defRepo, NewMockChartConfigRepository(), instanceRepo, "uid-1", "user")
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodDelete, "/api/v1/stack-definitions/d1", nil)
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.wantStatus, w.Code)
+			assert.JSONEq(t, fmt.Sprintf(`{"error":%q}`, tt.wantBody), w.Body.String())
+			_, err := defRepo.FindByID("d1")
+			assert.NoError(t, err, "the definition is kept")
+		})
+	}
 }
 
 // ---- ExportDefinition ----

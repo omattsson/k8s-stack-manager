@@ -77,7 +77,7 @@ func TestQuotaMonitor_SkipsWhenNilQuotaRepo(t *testing.T) {
 		Notifier:     &mockQuotaNotifier{},
 	})
 	// quotaRepo is nil — check() should return without panic.
-	m.check()
+	m.check(context.Background())
 }
 
 func TestQuotaMonitor_SkipsWhenNilNotifier(t *testing.T) {
@@ -89,7 +89,7 @@ func TestQuotaMonitor_SkipsWhenNilNotifier(t *testing.T) {
 		QuotaRepo:    &mockQuotaRepo{configs: make(map[string]*models.ResourceQuotaConfig)},
 	})
 	// notifier is nil — check() should return without panic.
-	m.check()
+	m.check(context.Background())
 }
 
 func TestQuotaMonitor_PruneCooldowns(t *testing.T) {

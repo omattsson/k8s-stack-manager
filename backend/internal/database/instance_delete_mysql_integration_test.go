@@ -3,6 +3,7 @@
 package database
 
 import (
+	"context"
 	"log/slog"
 	"strings"
 	"testing"
@@ -35,11 +36,11 @@ func TestDatabaseMySQL_CleanupOwnedDefinitionLock(t *testing.T) {
 			defRepo := NewGORMStackDefinitionRepository(db)
 			require.NoError(t, defRepo.Create(&models.StackDefinition{ID: "d1", Name: "qd", OwnerID: "u1", OwnerInstanceID: tt.owner}))
 			inst := &models.StackInstance{ID: "i1", StackDefinitionID: "d1", Name: "qd", Namespace: "stack-qd-u1", OwnerID: "u1", Status: models.StackStatusDraft}
-			require.NoError(t, NewGORMStackInstanceRepository(db).Create(inst))
+			require.NoError(t, NewGORMStackInstanceRepository(db).Create(context.Background(), inst))
 
 			log, h := newRecordingLogger(slog.LevelDebug)
 			runner := NewGORMTxRunner(db.Session(&gorm.Session{Logger: newSlogGormLogger(log, true)}))
-			require.NoError(t, DeleteInstanceWithOwnedDefinition(runner, inst))
+			require.NoError(t, DeleteInstanceWithOwnedDefinition(context.Background(), runner, inst))
 
 			locks := 0
 			for _, r := range h.all() {

@@ -72,7 +72,7 @@ func TestManager_CleanForDelete(t *testing.T) {
 			inst := seedInstance(t, instanceRepo, "inst-cfd", "cfd", "owner-1")
 			inst.Status = tt.status
 			inst.DeleteAfterClean = tt.staleMark
-			require.NoError(t, instanceRepo.Update(inst))
+			require.NoError(t, instanceRepo.Update(context.Background(), inst))
 
 			var logID string
 			var err error
@@ -88,7 +88,7 @@ func TestManager_CleanForDelete(t *testing.T) {
 				}
 				require.ErrorIs(t, err, wantErr)
 				assert.Empty(t, logID)
-				got, findErr := instanceRepo.FindByID(inst.ID)
+				got, findErr := instanceRepo.FindByID(context.Background(), inst.ID)
 				require.NoError(t, findErr)
 				assert.Equal(t, tt.status, got.Status, "a conflict changes nothing")
 				logRepo.mu.RLock()
@@ -101,7 +101,7 @@ func TestManager_CleanForDelete(t *testing.T) {
 
 			if tt.wantDeleted {
 				require.Eventually(t, func() bool {
-					_, findErr := instanceRepo.FindByID(inst.ID)
+					_, findErr := instanceRepo.FindByID(context.Background(), inst.ID)
 					return findErr != nil
 				}, 5*time.Second, 10*time.Millisecond)
 				require.Eventually(t, func() bool {
@@ -117,7 +117,7 @@ func TestManager_CleanForDelete(t *testing.T) {
 
 			waitForTerminalStatus(t, instanceRepo, inst.ID)
 			mgr.Shutdown()
-			got, findErr := instanceRepo.FindByID(inst.ID)
+			got, findErr := instanceRepo.FindByID(context.Background(), inst.ID)
 			require.NoError(t, findErr, "the instance must stay")
 			assert.Equal(t, tt.wantStatus, got.Status)
 			assert.False(t, got.DeleteAfterClean, "the delete mark must be cleared")
@@ -138,7 +138,7 @@ func TestManager_CleanForDelete_Concurrent(t *testing.T) {
 
 	inst := seedInstance(t, instanceRepo, "inst-cfd-conc", "cfd-conc", "owner-1")
 	inst.Status = models.StackStatusRunning
-	require.NoError(t, instanceRepo.Update(inst))
+	require.NoError(t, instanceRepo.Update(context.Background(), inst))
 
 	const callers = 5
 	errs := make([]error, callers)
@@ -163,7 +163,7 @@ func TestManager_CleanForDelete_Concurrent(t *testing.T) {
 	}
 	assert.Equal(t, 1, started)
 	require.Eventually(t, func() bool {
-		_, err := instanceRepo.FindByID(inst.ID)
+		_, err := instanceRepo.FindByID(context.Background(), inst.ID)
 		return err != nil
 	}, 5*time.Second, 10*time.Millisecond)
 }
@@ -180,7 +180,7 @@ func TestManager_CleanVersusDelete_Concurrent(t *testing.T) {
 
 		inst := seedInstance(t, instanceRepo, "inst-cvd", "cvd", "owner-1")
 		inst.Status = models.StackStatusStopped
-		require.NoError(t, instanceRepo.Update(inst))
+		require.NoError(t, instanceRepo.Update(context.Background(), inst))
 
 		var wg sync.WaitGroup
 		var cleanErr, deleteErr error
@@ -205,13 +205,13 @@ func TestManager_CleanVersusDelete_Concurrent(t *testing.T) {
 		if cleanErr != nil {
 			require.ErrorIs(t, cleanErr, models.ErrCleanConflict)
 			require.Eventually(t, func() bool {
-				_, err := instanceRepo.FindByID(inst.ID)
+				_, err := instanceRepo.FindByID(context.Background(), inst.ID)
 				return err != nil
 			}, 5*time.Second, 5*time.Millisecond, "the delete that won deletes the row")
 		} else {
 			require.ErrorIs(t, deleteErr, models.ErrDeleteConflict)
 			waitForTerminalStatus(t, instanceRepo, inst.ID)
-			got, err := instanceRepo.FindByID(inst.ID)
+			got, err := instanceRepo.FindByID(context.Background(), inst.ID)
 			require.NoError(t, err, "the clean that won keeps the row")
 			assert.Equal(t, models.StackStatusDraft, got.Status)
 		}

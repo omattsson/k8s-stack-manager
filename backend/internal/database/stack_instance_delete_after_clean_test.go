@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"testing"
 
 	"backend/internal/models"
@@ -47,10 +48,10 @@ func TestMarkCleanStart(t *testing.T) {
 				Name: "del", StackDefinitionID: "d1", Namespace: "stack-del", OwnerID: "o1",
 				Branch: "main", Status: tt.status, ErrorMessage: "old error",
 			}
-			require.NoError(t, repo.Create(inst))
+			require.NoError(t, repo.Create(context.Background(), inst))
 
-			err := repo.MarkCleanStart(inst.ID, models.CleanStatuses, true)
-			stored, findErr := repo.FindByID(inst.ID)
+			err := repo.MarkCleanStart(context.Background(), inst.ID, models.CleanStatuses, true)
+			stored, findErr := repo.FindByID(context.Background(), inst.ID)
 			require.NoError(t, findErr)
 			if tt.wantErr != nil {
 				require.ErrorIs(t, err, tt.wantErr)
@@ -64,32 +65,32 @@ func TestMarkCleanStart(t *testing.T) {
 			assert.Empty(t, stored.ErrorMessage)
 
 			// A second delete loses.
-			require.ErrorIs(t, repo.MarkCleanStart(inst.ID, models.CleanStatuses, true), models.ErrDeleteConflict)
+			require.ErrorIs(t, repo.MarkCleanStart(context.Background(), inst.ID, models.CleanStatuses, true), models.ErrDeleteConflict)
 
 			// Update does not write the mark (a stale copy cannot clear it).
 			stale := *stored
 			stale.DeleteAfterClean = false
-			require.NoError(t, repo.Update(&stale))
-			stored, findErr = repo.FindByID(inst.ID)
+			require.NoError(t, repo.Update(context.Background(), &stale))
+			stored, findErr = repo.FindByID(context.Background(), inst.ID)
 			require.NoError(t, findErr)
 			assert.True(t, stored.DeleteAfterClean, "Update must not clear the mark")
 
 			// A plain clean does not overwrite the delete mark, also when
 			// the status allows a clean.
-			require.NoError(t, repo.Update(&models.StackInstance{
+			require.NoError(t, repo.Update(context.Background(), &models.StackInstance{
 				ID: stored.ID, Name: stored.Name, StackDefinitionID: stored.StackDefinitionID, Namespace: stored.Namespace,
 				OwnerID: stored.OwnerID, Branch: stored.Branch, Status: models.StackStatusStopped, CreatedAt: stored.CreatedAt,
 			}))
-			require.ErrorIs(t, repo.MarkCleanStart(inst.ID, models.CleanStatuses, false), models.ErrCleanConflict)
+			require.ErrorIs(t, repo.MarkCleanStart(context.Background(), inst.ID, models.CleanStatuses, false), models.ErrCleanConflict)
 
-			require.NoError(t, repo.ClearDeleteAfterClean(inst.ID))
-			stored, findErr = repo.FindByID(inst.ID)
+			require.NoError(t, repo.ClearDeleteAfterClean(context.Background(), inst.ID))
+			stored, findErr = repo.FindByID(context.Background(), inst.ID)
 			require.NoError(t, findErr)
 			assert.False(t, stored.DeleteAfterClean)
 
 			// Without the mark the plain clean starts and leaves the mark off.
-			require.NoError(t, repo.MarkCleanStart(inst.ID, models.CleanStatuses, false))
-			stored, findErr = repo.FindByID(inst.ID)
+			require.NoError(t, repo.MarkCleanStart(context.Background(), inst.ID, models.CleanStatuses, false))
+			stored, findErr = repo.FindByID(context.Background(), inst.ID)
 			require.NoError(t, findErr)
 			assert.Equal(t, models.StackStatusCleaning, stored.Status)
 			assert.False(t, stored.DeleteAfterClean)

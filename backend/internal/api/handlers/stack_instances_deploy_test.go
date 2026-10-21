@@ -983,7 +983,7 @@ func TestGetInstancePods(t *testing.T) {
 		instRepo := NewMockStackInstanceRepository()
 		inst := seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusRunning)
 		inst.ClusterID = "nonexistent-cluster"
-		require.NoError(t, instRepo.Update(inst))
+		require.NoError(t, instRepo.Update(context.Background(), inst))
 
 		// Use NewRegistry with an empty cluster repo so GetClients returns ErrNotFound.
 		registry := cluster.NewRegistry(cluster.RegistryOptions{

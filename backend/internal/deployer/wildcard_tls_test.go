@@ -58,7 +58,7 @@ func TestManager_Deploy_ReplicatesWildcardTLS(t *testing.T) {
 			Branch:            "main",
 			Status:            models.StackStatusDraft,
 		}
-		require.NoError(t, instanceRepo.Create(inst))
+		require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 		mgr := NewManager(ManagerConfig{
 			Registry: &mockClusterResolver{
@@ -129,7 +129,7 @@ func TestManager_Deploy_ReplicatesWildcardTLS(t *testing.T) {
 			Branch:            "main",
 			Status:            models.StackStatusDraft,
 		}
-		require.NoError(t, instanceRepo.Create(inst))
+		require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 		mgr := NewManager(ManagerConfig{
 			Registry: &mockClusterResolver{
@@ -155,11 +155,11 @@ func TestManager_Deploy_ReplicatesWildcardTLS(t *testing.T) {
 		// Wait for async completion by observing the instance transition out
 		// of the deploying state. Slow CI nodes otherwise flake on a fixed sleep.
 		require.Eventually(t, func() bool {
-			cur, findErr := instanceRepo.FindByID(inst.ID)
+			cur, findErr := instanceRepo.FindByID(context.Background(), inst.ID)
 			return findErr == nil && cur.Status != models.StackStatusDeploying
 		}, 3*time.Second, 20*time.Millisecond, "deploy goroutine never finalized")
 
-		final, err := instanceRepo.FindByID(inst.ID)
+		final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 		require.NoError(t, err)
 		assert.Equal(t, models.StackStatusRunning, final.Status,
 			"missing wildcard source is non-fatal; deploy should still succeed")
@@ -188,7 +188,7 @@ func TestManager_Deploy_ReplicatesWildcardTLS(t *testing.T) {
 			Branch:            "main",
 			Status:            models.StackStatusDraft,
 		}
-		require.NoError(t, instanceRepo.Create(inst))
+		require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 		mgr := NewManager(ManagerConfig{
 			Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
@@ -208,11 +208,11 @@ func TestManager_Deploy_ReplicatesWildcardTLS(t *testing.T) {
 		require.NoError(t, err)
 
 		require.Eventually(t, func() bool {
-			cur, findErr := instanceRepo.FindByID(inst.ID)
+			cur, findErr := instanceRepo.FindByID(context.Background(), inst.ID)
 			return findErr == nil && cur.Status != models.StackStatusDeploying
 		}, 3*time.Second, 20*time.Millisecond, "deploy goroutine never finalized")
 
-		final, err := instanceRepo.FindByID(inst.ID)
+		final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 		require.NoError(t, err)
 		assert.Equal(t, models.StackStatusRunning, final.Status)
 	})
@@ -232,7 +232,7 @@ func TestManager_Deploy_ReplicatesWildcardTLS(t *testing.T) {
 			Branch:            "main",
 			Status:            models.StackStatusDraft,
 		}
-		require.NoError(t, instanceRepo.Create(inst))
+		require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 		mgr := NewManager(ManagerConfig{
 			Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
@@ -253,11 +253,11 @@ func TestManager_Deploy_ReplicatesWildcardTLS(t *testing.T) {
 		require.NoError(t, err)
 
 		require.Eventually(t, func() bool {
-			cur, findErr := instanceRepo.FindByID(inst.ID)
+			cur, findErr := instanceRepo.FindByID(context.Background(), inst.ID)
 			return findErr == nil && cur.Status != models.StackStatusDeploying
 		}, 3*time.Second, 20*time.Millisecond, "deploy goroutine never finalized")
 
-		final, err := instanceRepo.FindByID(inst.ID)
+		final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 		require.NoError(t, err)
 		assert.Equal(t, models.StackStatusRunning, final.Status,
 			"partial config is non-fatal; replication is simply skipped")

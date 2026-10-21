@@ -21,20 +21,38 @@ type mockInstanceRepo struct {
 	instances []models.StackInstance
 }
 
-func (m *mockInstanceRepo) Create(_ *models.StackInstance) error { return nil }
-func (m *mockInstanceRepo) FindByID(_ string) (*models.StackInstance, error) {
+func (m *mockInstanceRepo) Create(ctx context.Context, _ *models.StackInstance) error {
+	return ctx.Err()
+}
+func (m *mockInstanceRepo) FindByID(ctx context.Context, _ string) (*models.StackInstance, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return nil, fmt.Errorf("not found")
 }
-func (m *mockInstanceRepo) FindByNamespace(_ string) (*models.StackInstance, error) { return nil, nil }
-func (m *mockInstanceRepo) Update(_ *models.StackInstance) error                    { return nil }
-func (m *mockInstanceRepo) Delete(_ string) error                                   { return nil }
-func (m *mockInstanceRepo) List() ([]models.StackInstance, error)                   { return nil, nil }
-func (m *mockInstanceRepo) ListPaged(_ models.StackInstanceFilter, _, _ int) ([]models.StackInstance, int, error) {
-	return nil, 0, nil
+func (m *mockInstanceRepo) FindByNamespace(ctx context.Context, _ string) (*models.StackInstance, error) {
+	return nil, ctx.Err()
 }
-func (m *mockInstanceRepo) ListByOwner(_ string) ([]models.StackInstance, error) { return nil, nil }
-func (m *mockInstanceRepo) FindByName(_ string) ([]models.StackInstance, error)  { return nil, nil }
-func (m *mockInstanceRepo) FindByCluster(clusterID string) ([]models.StackInstance, error) {
+func (m *mockInstanceRepo) Update(ctx context.Context, _ *models.StackInstance) error {
+	return ctx.Err()
+}
+func (m *mockInstanceRepo) Delete(ctx context.Context, _ string) error { return ctx.Err() }
+func (m *mockInstanceRepo) List(ctx context.Context) ([]models.StackInstance, error) {
+	return nil, ctx.Err()
+}
+func (m *mockInstanceRepo) ListPaged(ctx context.Context, _ models.StackInstanceFilter, _, _ int) ([]models.StackInstance, int, error) {
+	return nil, 0, ctx.Err()
+}
+func (m *mockInstanceRepo) ListByOwner(ctx context.Context, _ string) ([]models.StackInstance, error) {
+	return nil, ctx.Err()
+}
+func (m *mockInstanceRepo) FindByName(ctx context.Context, _ string) ([]models.StackInstance, error) {
+	return nil, ctx.Err()
+}
+func (m *mockInstanceRepo) FindByCluster(ctx context.Context, clusterID string) ([]models.StackInstance, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	var result []models.StackInstance
 	for _, inst := range m.instances {
 		if inst.ClusterID == clusterID {
@@ -43,27 +61,39 @@ func (m *mockInstanceRepo) FindByCluster(clusterID string) ([]models.StackInstan
 	}
 	return result, nil
 }
-func (m *mockInstanceRepo) CountByClusterAndOwner(_, _ string) (int, error)         { return 0, nil }
-func (m *mockInstanceRepo) CountAll() (int, error)                                  { return 0, nil }
-func (m *mockInstanceRepo) CountByStatus(_ string) (int, error)                     { return 0, nil }
-func (m *mockInstanceRepo) CountByDefinitionIDs(_ []string) (map[string]int, error) { return nil, nil }
-func (m *mockInstanceRepo) CountByOwnerIDs(_ []string) (map[string]int, error)      { return nil, nil }
-func (m *mockInstanceRepo) ListIDsByDefinitionIDs(_ []string) (map[string][]string, error) {
-	return nil, nil
+func (m *mockInstanceRepo) CountByClusterAndOwner(ctx context.Context, _, _ string) (int, error) {
+	return 0, ctx.Err()
 }
-func (m *mockInstanceRepo) ListIDsByOwnerIDs(_ []string) (map[string][]string, error) {
-	return nil, nil
+func (m *mockInstanceRepo) CountAll(ctx context.Context) (int, error) { return 0, ctx.Err() }
+func (m *mockInstanceRepo) CountByStatus(ctx context.Context, _ string) (int, error) {
+	return 0, ctx.Err()
 }
-func (m *mockInstanceRepo) ExistsByDefinitionAndStatus(_, _ string) (bool, error) { return false, nil }
-func (m *mockInstanceRepo) ListExpired() ([]*models.StackInstance, error)         { return nil, nil }
-func (m *mockInstanceRepo) ListExpiringSoon(_ time.Duration) ([]*models.StackInstance, error) {
-	return nil, nil
+func (m *mockInstanceRepo) CountByDefinitionIDs(ctx context.Context, _ []string) (map[string]int, error) {
+	return nil, ctx.Err()
 }
-func (*mockInstanceRepo) MarkExpiryWarned(_ string, _, _ time.Time) (bool, error) {
-	return false, nil
+func (m *mockInstanceRepo) CountByOwnerIDs(ctx context.Context, _ []string) (map[string]int, error) {
+	return nil, ctx.Err()
 }
-func (m *mockInstanceRepo) ListByStatus(_ string, _ int) ([]*models.StackInstance, error) {
-	return nil, nil
+func (m *mockInstanceRepo) ListIDsByDefinitionIDs(ctx context.Context, _ []string) (map[string][]string, error) {
+	return nil, ctx.Err()
+}
+func (m *mockInstanceRepo) ListIDsByOwnerIDs(ctx context.Context, _ []string) (map[string][]string, error) {
+	return nil, ctx.Err()
+}
+func (m *mockInstanceRepo) ExistsByDefinitionAndStatus(ctx context.Context, _, _ string) (bool, error) {
+	return false, ctx.Err()
+}
+func (m *mockInstanceRepo) ListExpired(ctx context.Context) ([]*models.StackInstance, error) {
+	return nil, ctx.Err()
+}
+func (m *mockInstanceRepo) ListExpiringSoon(ctx context.Context, _ time.Duration) ([]*models.StackInstance, error) {
+	return nil, ctx.Err()
+}
+func (*mockInstanceRepo) MarkExpiryWarned(ctx context.Context, _ string, _, _ time.Time) (bool, error) {
+	return false, ctx.Err()
+}
+func (m *mockInstanceRepo) ListByStatus(ctx context.Context, _ string, _ int) ([]*models.StackInstance, error) {
+	return nil, ctx.Err()
 }
 
 func TestSecretRefresher_RefreshesRunningInstances(t *testing.T) {
@@ -104,7 +134,7 @@ func TestSecretRefresher_RefreshesRunningInstances(t *testing.T) {
 		Interval:     100 * time.Millisecond,
 	})
 
-	refresher.refresh()
+	refresher.refresh(context.Background())
 
 	got, err := cs.CoreV1().Secrets("stack-ns-1").Get(context.Background(), "acr-pull-secret", metav1.GetOptions{})
 	require.NoError(t, err)
@@ -148,7 +178,7 @@ func TestSecretRefresher_SkipsClusterWithoutRegistry(t *testing.T) {
 		Registry:     registry,
 	})
 
-	refresher.refresh()
+	refresher.refresh(context.Background())
 
 	secrets, err := cs.CoreV1().Secrets("stack-ns-1").List(context.Background(), metav1.ListOptions{})
 	assert.NoError(t, err)
@@ -188,7 +218,7 @@ func TestSecretRefresher_DefaultSecretName(t *testing.T) {
 		Registry:     registry,
 	})
 
-	refresher.refresh()
+	refresher.refresh(context.Background())
 
 	got, err := cs.CoreV1().Secrets("stack-ns-1").Get(context.Background(), "registry-pull-secret", metav1.GetOptions{})
 	require.NoError(t, err)
@@ -211,4 +241,6 @@ func TestSecretRefresher_StartStop(t *testing.T) {
 	refresher.Stop() // safe to call twice
 }
 
-func (*mockInstanceRepo) CountByStatuses(statuses []string) (int, error) { return 0, nil }
+func (*mockInstanceRepo) CountByStatuses(ctx context.Context, statuses []string) (int, error) {
+	return 0, ctx.Err()
+}

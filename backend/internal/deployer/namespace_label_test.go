@@ -67,7 +67,7 @@ func TestDeploy_LabelsNamespaceWithoutOptionalFeatures(t *testing.T) {
 				Branch:            "main",
 				Status:            models.StackStatusDraft,
 			}
-			require.NoError(t, instanceRepo.Create(inst))
+			require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 			mgr := NewManager(ManagerConfig{
 				Registry: &mockClusterResolver{
@@ -90,7 +90,7 @@ func TestDeploy_LabelsNamespaceWithoutOptionalFeatures(t *testing.T) {
 			require.NoError(t, err)
 
 			require.Eventually(t, func() bool {
-				updated, _ := instanceRepo.FindByID(inst.ID)
+				updated, _ := instanceRepo.FindByID(context.Background(), inst.ID)
 				return updated != nil && updated.Status != models.StackStatusDeploying
 			}, 3*time.Second, 20*time.Millisecond)
 

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -390,7 +391,7 @@ func TestInstanceHandler_GetRecentInstances(t *testing.T) {
 			router, repo := setupRecentInstancesRouter()
 
 			for _, inst := range tt.instances {
-				_ = repo.Create(inst)
+				_ = repo.Create(context.Background(), inst)
 			}
 
 			w := httptest.NewRecorder()

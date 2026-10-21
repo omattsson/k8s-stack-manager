@@ -62,7 +62,7 @@ func TestSecretMonitor_SkipsWhenNilNotifier(t *testing.T) {
 		InstanceRepo: &mockInstanceRepo{},
 	})
 	// notifier is nil — scan() should return without panic.
-	m.scan()
+	m.scan(context.Background())
 }
 
 func TestSecretMonitor_PruneWarned(t *testing.T) {

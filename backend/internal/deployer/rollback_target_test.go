@@ -89,7 +89,7 @@ func TestRollback_ToTarget(t *testing.T) {
 				OwnerID: "user-1", Branch: "main", Status: models.StackStatusRunning,
 				LastDeployedValues: string(running),
 			}
-			require.NoError(t, instanceRepo.Create(inst))
+			require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 			var mu sync.Mutex
 			installed := map[string]InstallRequest{}
@@ -135,7 +135,7 @@ func TestRollback_ToTarget(t *testing.T) {
 			assert.Equal(t, "dep-a", rbLog.TargetLogID)
 			assert.Equal(t, "release-1", rbLog.Branch)
 
-			final, err := instanceRepo.FindByID(inst.ID)
+			final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantStatus, final.Status)
 
@@ -175,7 +175,7 @@ func TestRollback_OneRevisionRecordsRunningValues(t *testing.T) {
 		OwnerID: "user-1", Branch: "main", Status: models.StackStatusRunning,
 		LastDeployedValues: `{"web":"replicas: 3\n"}`,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	var rolledBack []int
 	var mu sync.Mutex
@@ -204,7 +204,7 @@ func TestRollback_OneRevisionRecordsRunningValues(t *testing.T) {
 	assert.Equal(t, models.DeployLogSuccess, rbLog.Status)
 	assert.Equal(t, "main", rbLog.Branch)
 
-	final, err := instanceRepo.FindByID(inst.ID)
+	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"web":"replicas: 2\n"}`, final.LastDeployedValues, "deploy preview must compare against the running values")
 	mu.Lock()
@@ -220,7 +220,7 @@ func TestStoppedAt_SetOnStopClearedOnDeploy(t *testing.T) {
 		ID: "inst-st", StackDefinitionID: "def-1", Name: "st", Namespace: "stack-st-alice",
 		OwnerID: "user-1", Branch: "feature", Status: models.StackStatusRunning,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 	mgr := newRollbackTestManager(instanceRepo, logRepo, &mockHelmExecutor{})
 	charts := []ChartDeployInfo{{ChartConfig: models.ChartConfig{ChartName: "web", ChartVersion: "1.2.3"}}}
 
@@ -228,7 +228,7 @@ func TestStoppedAt_SetOnStopClearedOnDeploy(t *testing.T) {
 	require.NoError(t, err)
 	waitForLogDone(t, logRepo, stopLog)
 	waitForTerminalStatus(t, instanceRepo, inst.ID)
-	stopped, err := instanceRepo.FindByID(inst.ID)
+	stopped, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	require.NoError(t, err)
 	require.Equal(t, models.StackStatusStopped, stopped.Status)
 	require.NotNil(t, stopped.StoppedAt)
@@ -239,7 +239,7 @@ func TestStoppedAt_SetOnStopClearedOnDeploy(t *testing.T) {
 	depLog := waitForLogDone(t, logRepo, deployLogID)
 	assert.Equal(t, "feature", depLog.Branch)
 	assert.JSONEq(t, `{"web":"1.2.3"}`, depLog.ChartVersions)
-	deployed, err := instanceRepo.FindByID(inst.ID)
+	deployed, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	require.NoError(t, err)
 	assert.Nil(t, deployed.StoppedAt)
 }
@@ -253,14 +253,14 @@ func TestCleanedAt_ClearedOnDeploy(t *testing.T) {
 		ID: "inst-cl", StackDefinitionID: "def-1", Name: "cl", Namespace: "stack-cl-alice",
 		OwnerID: "user-1", Branch: "feature", Status: models.StackStatusDraft, CleanedAt: &cleanedAt,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 	mgr := newRollbackTestManager(instanceRepo, logRepo, &mockHelmExecutor{})
 	charts := []ChartDeployInfo{{ChartConfig: models.ChartConfig{ChartName: "web", ChartVersion: "1.2.3"}}}
 
 	deployLogID, err := mgr.Deploy(context.Background(), DeployRequest{Instance: inst, Charts: charts})
 	require.NoError(t, err)
 	waitForLogDone(t, logRepo, deployLogID)
-	deployed, err := instanceRepo.FindByID(inst.ID)
+	deployed, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	require.NoError(t, err)
 	assert.Nil(t, deployed.CleanedAt, "a deploy ends the cleaned period (cleanup condition cleaned_days)")
 }
@@ -331,7 +331,7 @@ func TestRollback_PreRollbackHookPayload(t *testing.T) {
 			instanceRepo := newMockInstanceRepo()
 			logRepo := newMockDeployLogRepo()
 			inst := &models.StackInstance{ID: "inst-hk", Name: "hk", Namespace: "stack-hk-alice", OwnerID: "u", Branch: "main", Status: models.StackStatusRunning}
-			require.NoError(t, instanceRepo.Create(inst))
+			require.NoError(t, instanceRepo.Create(context.Background(), inst))
 			mgr := NewManager(ManagerConfig{
 				Registry:      &mockClusterResolver{helm: &mockHelmExecutor{}},
 				InstanceRepo:  instanceRepo,
@@ -383,14 +383,14 @@ func TestFinalizeRollback_ConcurrentStopKeepsStatus(t *testing.T) {
 	stoppedAt := time.Now().UTC().Add(-time.Minute)
 	inst := &models.StackInstance{ID: "inst-cc", Name: "cc", Namespace: "stack-cc-a", OwnerID: "u",
 		Status: models.StackStatusStopped, StoppedAt: &stoppedAt, LastDeployedValues: `{"web":"a: 1"}`}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 	log := &models.DeploymentLog{ID: "rb-1", StackInstanceID: inst.ID, Action: models.DeployActionRollback, Status: models.DeployLogRunning}
 	require.NoError(t, logRepo.Create(context.Background(), log))
 	mgr := newRollbackTestManager(instanceRepo, logRepo, &mockHelmExecutor{})
 
 	mgr.finalizeRollback(inst.ID, log, "output", nil, map[string]string{"web": "a: 2"}, "")
 
-	final, err := instanceRepo.FindByID(inst.ID)
+	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	require.NoError(t, err)
 	assert.Equal(t, models.StackStatusStopped, final.Status, "a stop that finished meanwhile is not overwritten")
 	require.NotNil(t, final.StoppedAt)
@@ -408,7 +408,7 @@ func TestRollback_ReadinessGating(t *testing.T) {
 	instanceRepo := newMockInstanceRepo()
 	logRepo := newMockDeployLogRepo()
 	inst := &models.StackInstance{ID: "inst-rd", Name: "rd", Namespace: "stack-rd-a", OwnerID: "u", Branch: "main", Status: models.StackStatusRunning}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 	mgr := NewManager(ManagerConfig{
 		Registry:              &mockClusterResolver{helm: &mockHelmExecutor{}},
 		InstanceRepo:          instanceRepo,
@@ -427,7 +427,7 @@ func TestRollback_ReadinessGating(t *testing.T) {
 	require.NoError(t, err)
 	rbLog := waitForLogDone(t, logRepo, logID)
 	assert.Equal(t, models.DeployLogSuccess, rbLog.Status)
-	final, err := instanceRepo.FindByID(inst.ID)
+	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	require.NoError(t, err)
 	assert.Equal(t, models.StackStatusRunning, final.Status, "after the readiness wait the instance is running")
 }
@@ -472,7 +472,7 @@ func TestRollback_StreamingPreRollbackGate(t *testing.T) {
 			logRepo := newMockDeployLogRepo()
 			inst := &models.StackInstance{ID: "inst-gate", Name: "gate", Namespace: "stack-gate-a", OwnerID: "u",
 				Branch: "main", Status: models.StackStatusPartial, ErrorMessage: "partial deploy — failed charts: db"}
-			require.NoError(t, instanceRepo.Create(inst))
+			require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 			var mu sync.Mutex
 			installs := 0
@@ -504,7 +504,7 @@ func TestRollback_StreamingPreRollbackGate(t *testing.T) {
 			assert.Contains(t, rbLog.Output, "checking image web:main")
 			assert.Contains(t, rbLog.Output, "image found")
 			require.Eventually(t, func() bool {
-				got, err := instanceRepo.FindByID(inst.ID)
+				got, err := instanceRepo.FindByID(context.Background(), inst.ID)
 				return err == nil && got.Status == tt.wantInstance
 			}, 5*time.Second, 10*time.Millisecond)
 
@@ -514,7 +514,7 @@ func TestRollback_StreamingPreRollbackGate(t *testing.T) {
 			if tt.wantErrorMsg != "" {
 				assert.Contains(t, rbLog.ErrorMessage, tt.wantErrorMsg)
 				assert.Contains(t, rbLog.Output, tt.wantErrorMsg)
-				got, err := instanceRepo.FindByID(inst.ID)
+				got, err := instanceRepo.FindByID(context.Background(), inst.ID)
 				require.NoError(t, err)
 				assert.Equal(t, "partial deploy — failed charts: db", got.ErrorMessage, "the previous error message is restored")
 			}
@@ -546,7 +546,7 @@ func TestRollback_LongPreRollbackOutputIsCapped(t *testing.T) {
 	instanceRepo := newMockInstanceRepo()
 	logRepo := newMockDeployLogRepo()
 	inst := &models.StackInstance{ID: "inst-long", Name: "long", Namespace: "stack-long-a", OwnerID: "u", Branch: "main", Status: models.StackStatusRunning}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 	mgr := NewManager(ManagerConfig{
 		Registry:      &mockClusterResolver{helm: &mockHelmExecutor{}},
 		InstanceRepo:  instanceRepo,
@@ -583,7 +583,7 @@ func TestRollback_PreviousRevisionUsesPreviousDeployBranch(t *testing.T) {
 	instanceRepo := newMockInstanceRepo()
 	logRepo := newMockDeployLogRepo()
 	inst := &models.StackInstance{ID: "inst-prev", Name: "prev", Namespace: "stack-prev-a", OwnerID: "u", Branch: "feature/New", Status: models.StackStatusRunning}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 	base := time.Now().UTC().Add(-time.Hour)
 	for i, l := range []models.DeploymentLog{
 		{ID: "d1", Action: models.DeployActionDeploy, Status: models.DeployLogSuccess, Branch: "release/Old"},
@@ -626,7 +626,7 @@ func TestRollback_PreviousRevisionPartialFailureRecordsValues(t *testing.T) {
 	logRepo := newMockDeployLogRepo()
 	inst := &models.StackInstance{ID: "inst-pf", Name: "pf", Namespace: "stack-pf-a", OwnerID: "u", Branch: "main",
 		Status: models.StackStatusRunning, LastDeployedValues: `{"web":"v: 2\n","db":"v: 2\n"}`}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 	helm := &mockHelmExecutor{
 		historyFunc: func(_ context.Context, _ string, _ string, _ int) ([]ReleaseRevision, error) {
 			return []ReleaseRevision{{Revision: 1}, {Revision: 2}}, nil
@@ -654,7 +654,7 @@ func TestRollback_PreviousRevisionPartialFailureRecordsValues(t *testing.T) {
 	assert.Equal(t, models.DeployLogError, rbLog.Status)
 	assert.Empty(t, rbLog.ValuesSnapshot)
 
-	final, err := instanceRepo.FindByID(inst.ID)
+	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	require.NoError(t, err)
 	assert.Equal(t, models.StackStatusError, final.Status)
 	assert.JSONEq(t, `{"web":"v: 1\n","db":"v: 2\n"}`, final.LastDeployedValues, "the rolled back chart is recorded, the failed one keeps its values")
@@ -699,7 +699,7 @@ func TestRollback_PreviousRevisionAfterPendingRecovery(t *testing.T) {
 	instanceRepo := newMockInstanceRepo()
 	logRepo := newMockDeployLogRepo()
 	inst := &models.StackInstance{ID: "inst-pend", Name: "pend", Namespace: "stack-pend-a", OwnerID: "u", Branch: "main", Status: models.StackStatusRunning}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	var mu sync.Mutex
 	pendingRemoved := false
@@ -764,7 +764,7 @@ func TestRollback_NewerOperationDuringHookWins(t *testing.T) {
 			instanceRepo := newMockInstanceRepo()
 			logRepo := newMockDeployLogRepo()
 			inst := &models.StackInstance{ID: "inst-race", Name: "race", Namespace: "stack-race-a", OwnerID: "u", Branch: "main", Status: models.StackStatusRunning}
-			require.NoError(t, instanceRepo.Create(inst))
+			require.NoError(t, instanceRepo.Create(context.Background(), inst))
 			gate, started, release := blockingGate(t, final)
 			var mu sync.Mutex
 			touched := 0
@@ -792,10 +792,10 @@ func TestRollback_NewerOperationDuringHookWins(t *testing.T) {
 			<-started
 
 			// While the hook waits: a stop and a new deploy start (newer logs).
-			current, err := instanceRepo.FindByID(inst.ID)
+			current, err := instanceRepo.FindByID(context.Background(), inst.ID)
 			require.NoError(t, err)
 			current.Status = models.StackStatusDeploying
-			require.NoError(t, instanceRepo.Update(current))
+			require.NoError(t, instanceRepo.Update(context.Background(), current))
 			require.NoError(t, logRepo.Create(context.Background(), &models.DeploymentLog{
 				ID: "new-deploy", StackInstanceID: inst.ID, Action: models.DeployActionDeploy,
 				Status: models.DeployLogRunning, StartedAt: time.Now().UTC().Add(time.Second),
@@ -804,7 +804,7 @@ func TestRollback_NewerOperationDuringHookWins(t *testing.T) {
 
 			rbLog := waitForLogDone(t, logRepo, logID)
 			assert.Equal(t, models.DeployLogError, rbLog.Status)
-			got, err := instanceRepo.FindByID(inst.ID)
+			got, err := instanceRepo.FindByID(context.Background(), inst.ID)
 			require.NoError(t, err)
 			assert.Equal(t, models.StackStatusDeploying, got.Status, "the newer deploy keeps its status")
 			mu.Lock()
@@ -832,7 +832,7 @@ func TestRollback_RejectedReasonIsSafe(t *testing.T) {
 	instanceRepo := newMockInstanceRepo()
 	logRepo := newMockDeployLogRepo()
 	inst := &models.StackInstance{ID: "inst-safe", Name: "safe", Namespace: "stack-safe-a", OwnerID: "u", Status: models.StackStatusRunning}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 	mgr := NewManager(ManagerConfig{
 		Registry:      &mockClusterResolver{helm: &mockHelmExecutor{}},
 		InstanceRepo:  instanceRepo,
@@ -851,7 +851,7 @@ func TestRollback_RejectedReasonIsSafe(t *testing.T) {
 	assert.NotContains(t, rbLog.Output, "token=secret")
 	assert.NotContains(t, rbLog.Output, srv.URL)
 	require.Eventually(t, func() bool {
-		got, err := instanceRepo.FindByID(inst.ID)
+		got, err := instanceRepo.FindByID(context.Background(), inst.ID)
 		return err == nil && got.Status == models.StackStatusRunning
 	}, 5*time.Second, 10*time.Millisecond)
 }

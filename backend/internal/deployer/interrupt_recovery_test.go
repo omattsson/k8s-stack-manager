@@ -337,7 +337,7 @@ func TestInterruptRecovery_RunOnce(t *testing.T) {
 				ID: "inst-1", Name: "demo", OwnerID: "owner-1", StackDefinitionID: "def-1",
 				Status: tt.instanceStatus, UpdatedAt: now.Add(-time.Hour), PostDeployHookUntil: &marker,
 			}
-			require.NoError(t, instances.Create(inst))
+			require.NoError(t, instances.Create(context.Background(), inst))
 			deadline := now.Add(-tt.overdue)
 			opLog := &models.DeploymentLog{
 				ID: "log-1", StackInstanceID: inst.ID, Action: tt.action, Status: models.DeployLogRunning,
@@ -368,11 +368,11 @@ func TestInterruptRecovery_RunOnce(t *testing.T) {
 			}
 			if tt.concurrent {
 				ops.beforeInterrupt = func() {
-					cur, err := instances.FindByID(inst.ID)
+					cur, err := instances.FindByID(context.Background(), inst.ID)
 					require.NoError(t, err)
 					cur.Status = models.StackStatusStopping
 					cur.UpdatedAt = now
-					require.NoError(t, instances.Update(cur))
+					require.NoError(t, instances.Update(context.Background(), cur))
 				}
 			}
 			hub := &mockBroadcaster{}
@@ -389,7 +389,7 @@ func TestInterruptRecovery_RunOnce(t *testing.T) {
 			closed := rec.RunOnce(context.Background())
 			assert.Equal(t, tt.wantClosed, closed)
 
-			stored, err := instances.FindByID(inst.ID)
+			stored, err := instances.FindByID(context.Background(), inst.ID)
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantStatus, stored.Status)
 			gotLog, err := logs.FindByID(context.Background(), "log-1")
@@ -455,7 +455,7 @@ func TestInterruptRecovery_LeaderElectionDisabled(t *testing.T) {
 		{"inst-old", "log-old", oldProcess},
 		{"inst-new", "log-new", newProcess},
 	} {
-		require.NoError(t, instances.Create(&models.StackInstance{ID: s.inst, Name: s.inst, OwnerID: "u1", Status: models.StackStatusDeploying}))
+		require.NoError(t, instances.Create(context.Background(), &models.StackInstance{ID: s.inst, Name: s.inst, OwnerID: "u1", Status: models.StackStatusDeploying}))
 		deadline := now.Add(-time.Minute)
 		require.NoError(t, logs.Create(context.Background(), &models.DeploymentLog{
 			ID: s.log, StackInstanceID: s.inst, Action: models.DeployActionDeploy,
@@ -481,13 +481,13 @@ func TestInterruptRecovery_LeaderElectionDisabled(t *testing.T) {
 	done := make(chan struct{})
 	go func() { defer close(done); rec.Run(ctx) }()
 	require.Eventually(t, func() bool {
-		inst, err := instances.FindByID("inst-old")
+		inst, err := instances.FindByID(context.Background(), "inst-old")
 		return err == nil && inst.Status == models.StackStatusError
 	}, 2*time.Second, 10*time.Millisecond, "the term start check ends the old deploy")
 	cancel()
 	<-done
 
-	own, err := instances.FindByID("inst-new")
+	own, err := instances.FindByID(context.Background(), "inst-new")
 	require.NoError(t, err)
 	assert.Equal(t, models.StackStatusDeploying, own.Status, "the own deploy is untouched")
 	heartbeats.mu.Lock()
@@ -539,7 +539,7 @@ func TestManager_DeployLogsCarryReplicaID(t *testing.T) {
 	require.NotNil(t, deployLog.DeadlineAt, "the deploy log has a deadline")
 	assert.True(t, deployLog.DeadlineAt.After(deployLog.StartedAt.Add(DeadlineMargin)))
 
-	cur, err := instanceRepo.FindByID(inst.ID)
+	cur, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	require.NoError(t, err)
 	stopID, err := mgr.StopWithCharts(context.Background(), cur, nil)
 	require.NoError(t, err)
@@ -605,7 +605,7 @@ func TestManager_LateFinalizeAfterRecovery(t *testing.T) {
 			case models.DeployActionClean:
 				// A clean needs an instance with cluster resources.
 				inst.Status = models.StackStatusRunning
-				require.NoError(t, instanceRepo.Update(inst))
+				require.NoError(t, instanceRepo.Update(context.Background(), inst))
 				logID, err = mgr.Clean(context.Background(), inst, []models.ChartConfig{{ChartName: "app"}})
 			}
 			require.NoError(t, err)
@@ -618,11 +618,11 @@ func TestManager_LateFinalizeAfterRecovery(t *testing.T) {
 			l.Status = models.DeployLogError
 			l.ErrorMessage = msg
 			logRepo.mu.Unlock()
-			cur, err := instanceRepo.FindByID(inst.ID)
+			cur, err := instanceRepo.FindByID(context.Background(), inst.ID)
 			require.NoError(t, err)
 			cur.Status = models.StackStatusError
 			cur.ErrorMessage = msg
-			require.NoError(t, instanceRepo.Update(cur))
+			require.NoError(t, instanceRepo.Update(context.Background(), cur))
 
 			close(release)
 			mgr.Shutdown() // waits for the goroutine
@@ -632,7 +632,7 @@ func TestManager_LateFinalizeAfterRecovery(t *testing.T) {
 			assert.Equal(t, models.DeployLogError, gotLog.Status)
 			assert.Equal(t, msg, gotLog.ErrorMessage, "the recovered log is not overwritten")
 			assert.Empty(t, gotLog.Output, "the late output is not written")
-			stored, err := instanceRepo.FindByID(inst.ID)
+			stored, err := instanceRepo.FindByID(context.Background(), inst.ID)
 			require.NoError(t, err)
 			assert.Equal(t, models.StackStatusError, stored.Status)
 			assert.Equal(t, msg, stored.ErrorMessage, "the instance keeps the recovered error")
@@ -739,7 +739,7 @@ func TestManager_QueuedOperationCancelledAfterRecovery(t *testing.T) {
 				logID, err = mgr.StopWithCharts(context.Background(), queued, charts)
 			case models.DeployActionClean:
 				queued.Status = models.StackStatusRunning
-				require.NoError(t, instanceRepo.Update(queued))
+				require.NoError(t, instanceRepo.Update(context.Background(), queued))
 				logID, err = mgr.CleanForDelete(context.Background(), queued, []models.ChartConfig{{ChartName: "app"}})
 			}
 			require.NoError(t, err)
@@ -751,7 +751,7 @@ func TestManager_QueuedOperationCancelledAfterRecovery(t *testing.T) {
 			logRepo.items[logID].Status = models.DeployLogError
 			logRepo.items[logID].ErrorMessage = msg
 			logRepo.mu.Unlock()
-			before, err := instanceRepo.FindByID(queued.ID)
+			before, err := instanceRepo.FindByID(context.Background(), queued.ID)
 			require.NoError(t, err)
 
 			close(release)
@@ -768,7 +768,7 @@ func TestManager_QueuedOperationCancelledAfterRecovery(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, models.DeployLogError, gotLog.Status)
 			assert.Equal(t, msg, gotLog.ErrorMessage)
-			stored, err := instanceRepo.FindByID(queued.ID)
+			stored, err := instanceRepo.FindByID(context.Background(), queued.ID)
 			require.NoError(t, err, "the instance is not deleted after a cancelled clean")
 			assert.Equal(t, before.Status, stored.Status, "no instance write from the cancelled operation")
 			assert.Equal(t, before.ErrorMessage, stored.ErrorMessage)

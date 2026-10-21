@@ -377,7 +377,10 @@ func newMockInstanceRepo() *mockInstanceRepo {
 	return &mockInstanceRepo{items: make(map[string]*models.StackInstance)}
 }
 
-func (m *mockInstanceRepo) Create(inst *models.StackInstance) error {
+func (m *mockInstanceRepo) Create(ctx context.Context, inst *models.StackInstance) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	cp := *inst
@@ -385,7 +388,10 @@ func (m *mockInstanceRepo) Create(inst *models.StackInstance) error {
 	return nil
 }
 
-func (m *mockInstanceRepo) FindByID(id string) (*models.StackInstance, error) {
+func (m *mockInstanceRepo) FindByID(ctx context.Context, id string) (*models.StackInstance, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	inst, ok := m.items[id]
@@ -396,7 +402,10 @@ func (m *mockInstanceRepo) FindByID(id string) (*models.StackInstance, error) {
 	return &cp, nil
 }
 
-func (m *mockInstanceRepo) Update(inst *models.StackInstance) error {
+func (m *mockInstanceRepo) Update(ctx context.Context, inst *models.StackInstance) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -407,14 +416,20 @@ func (m *mockInstanceRepo) Update(inst *models.StackInstance) error {
 	return nil
 }
 
-func (m *mockInstanceRepo) Delete(id string) error {
+func (m *mockInstanceRepo) Delete(ctx context.Context, id string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.items, id)
 	return nil
 }
 
-func (m *mockInstanceRepo) List() ([]models.StackInstance, error) {
+func (m *mockInstanceRepo) List(ctx context.Context) ([]models.StackInstance, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -427,7 +442,10 @@ func (m *mockInstanceRepo) List() ([]models.StackInstance, error) {
 	return out, nil
 }
 
-func (m *mockInstanceRepo) FindByNamespace(namespace string) (*models.StackInstance, error) {
+func (m *mockInstanceRepo) FindByNamespace(ctx context.Context, namespace string) (*models.StackInstance, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, inst := range m.items {
@@ -439,11 +457,14 @@ func (m *mockInstanceRepo) FindByNamespace(namespace string) (*models.StackInsta
 	return nil, errors.New("not found")
 }
 
-func (m *mockInstanceRepo) ListByOwner(_ string) ([]models.StackInstance, error) {
-	return m.List()
+func (m *mockInstanceRepo) ListByOwner(ctx context.Context, _ string) ([]models.StackInstance, error) {
+	return m.List(ctx)
 }
 
-func (m *mockInstanceRepo) FindByCluster(clusterID string) ([]models.StackInstance, error) {
+func (m *mockInstanceRepo) FindByCluster(ctx context.Context, clusterID string) ([]models.StackInstance, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	var out []models.StackInstance
@@ -455,39 +476,49 @@ func (m *mockInstanceRepo) FindByCluster(clusterID string) ([]models.StackInstan
 	return out, nil
 }
 
-func (m *mockInstanceRepo) CountByClusterAndOwner(_, _ string) (int, error) {
-	return 0, nil
+func (m *mockInstanceRepo) CountByClusterAndOwner(ctx context.Context, _, _ string) (int, error) {
+	return 0, ctx.Err()
 }
 
-func (m *mockInstanceRepo) ListPaged(_ models.StackInstanceFilter, _, _ int) ([]models.StackInstance, int, error) {
-	return nil, 0, nil
+func (m *mockInstanceRepo) ListPaged(ctx context.Context, _ models.StackInstanceFilter, _, _ int) ([]models.StackInstance, int, error) {
+	return nil, 0, ctx.Err()
 }
-func (m *mockInstanceRepo) CountAll() (int, error)                                  { return 0, nil }
-func (m *mockInstanceRepo) CountByStatus(_ string) (int, error)                     { return 0, nil }
-func (m *mockInstanceRepo) ExistsByDefinitionAndStatus(_, _ string) (bool, error)   { return false, nil }
-func (m *mockInstanceRepo) CountByDefinitionIDs(_ []string) (map[string]int, error) { return nil, nil }
-func (m *mockInstanceRepo) CountByOwnerIDs(_ []string) (map[string]int, error)      { return nil, nil }
-func (m *mockInstanceRepo) ListIDsByDefinitionIDs(_ []string) (map[string][]string, error) {
-	return nil, nil
+func (m *mockInstanceRepo) CountAll(ctx context.Context) (int, error) { return 0, ctx.Err() }
+func (m *mockInstanceRepo) CountByStatus(ctx context.Context, _ string) (int, error) {
+	return 0, ctx.Err()
 }
-func (m *mockInstanceRepo) ListIDsByOwnerIDs(_ []string) (map[string][]string, error) {
-	return nil, nil
+func (m *mockInstanceRepo) ExistsByDefinitionAndStatus(ctx context.Context, _, _ string) (bool, error) {
+	return false, ctx.Err()
+}
+func (m *mockInstanceRepo) CountByDefinitionIDs(ctx context.Context, _ []string) (map[string]int, error) {
+	return nil, ctx.Err()
+}
+func (m *mockInstanceRepo) CountByOwnerIDs(ctx context.Context, _ []string) (map[string]int, error) {
+	return nil, ctx.Err()
+}
+func (m *mockInstanceRepo) ListIDsByDefinitionIDs(ctx context.Context, _ []string) (map[string][]string, error) {
+	return nil, ctx.Err()
+}
+func (m *mockInstanceRepo) ListIDsByOwnerIDs(ctx context.Context, _ []string) (map[string][]string, error) {
+	return nil, ctx.Err()
 }
 
-func (m *mockInstanceRepo) FindByName(_ string) ([]models.StackInstance, error) { return nil, nil }
-
-func (m *mockInstanceRepo) ListExpired() ([]*models.StackInstance, error) {
-	return nil, nil
+func (m *mockInstanceRepo) FindByName(ctx context.Context, _ string) ([]models.StackInstance, error) {
+	return nil, ctx.Err()
 }
 
-func (m *mockInstanceRepo) ListExpiringSoon(_ time.Duration) ([]*models.StackInstance, error) {
-	return nil, nil
+func (m *mockInstanceRepo) ListExpired(ctx context.Context) ([]*models.StackInstance, error) {
+	return nil, ctx.Err()
 }
-func (*mockInstanceRepo) MarkExpiryWarned(_ string, _, _ time.Time) (bool, error) {
-	return false, nil
+
+func (m *mockInstanceRepo) ListExpiringSoon(ctx context.Context, _ time.Duration) ([]*models.StackInstance, error) {
+	return nil, ctx.Err()
 }
-func (m *mockInstanceRepo) ListByStatus(_ string, _ int) ([]*models.StackInstance, error) {
-	return nil, nil
+func (*mockInstanceRepo) MarkExpiryWarned(ctx context.Context, _ string, _, _ time.Time) (bool, error) {
+	return false, ctx.Err()
+}
+func (m *mockInstanceRepo) ListByStatus(ctx context.Context, _ string, _ int) ([]*models.StackInstance, error) {
+	return nil, ctx.Err()
 }
 
 // ---- extractAPIServerURL tests ----
@@ -802,16 +833,16 @@ func TestBackfillInstanceClusterIDs(t *testing.T) {
 			t.Parallel()
 			repo := newMockInstanceRepo()
 			for _, inst := range tt.instances {
-				require.NoError(t, repo.Create(inst))
+				require.NoError(t, repo.Create(context.Background(), inst))
 			}
 
-			backfillInstanceClusterIDs(repo, tt.clusterID)
+			backfillInstanceClusterIDs(context.Background(), repo, tt.clusterID)
 
 			// Verify results.
 			backfilled := 0
 			untouched := 0
 			for _, inst := range tt.instances {
-				updated, err := repo.FindByID(inst.ID)
+				updated, err := repo.FindByID(context.Background(), inst.ID)
 				require.NoError(t, err)
 				if inst.ClusterID == "" {
 					// Was originally empty, should now have the new cluster ID.
@@ -837,7 +868,7 @@ func TestBackfillInstanceClusterIDs_ListError(t *testing.T) {
 
 	// Should not panic on list error.
 	assert.NotPanics(t, func() {
-		backfillInstanceClusterIDs(repo, "some-cluster-id")
+		backfillInstanceClusterIDs(context.Background(), repo, "some-cluster-id")
 	})
 }
 
@@ -845,14 +876,14 @@ func TestBackfillInstanceClusterIDs_UpdateError(t *testing.T) {
 	t.Parallel()
 
 	repo := newMockInstanceRepo()
-	require.NoError(t, repo.Create(&models.StackInstance{ID: "inst-1", Name: "a", ClusterID: ""}))
+	require.NoError(t, repo.Create(context.Background(), &models.StackInstance{ID: "inst-1", Name: "a", ClusterID: ""}))
 
 	// Set error after creation so list succeeds but update fails.
 	repo.err = fmt.Errorf("update failed")
 
 	// Should not panic on update error (best-effort).
 	assert.NotPanics(t, func() {
-		backfillInstanceClusterIDs(repo, "some-cluster-id")
+		backfillInstanceClusterIDs(context.Background(), repo, "some-cluster-id")
 	})
 }
 
@@ -1011,7 +1042,9 @@ func TestMust_NoError(t *testing.T) {
 	})
 }
 
-func (*mockInstanceRepo) CountByStatuses(statuses []string) (int, error) { return 0, nil }
+func (*mockInstanceRepo) CountByStatuses(ctx context.Context, statuses []string) (int, error) {
+	return 0, ctx.Err()
+}
 
 func (*mockClusterRepo) CountAll() (int, error) { return 0, nil }
 

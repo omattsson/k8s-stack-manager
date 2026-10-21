@@ -61,7 +61,7 @@ func NewBranchOverrideHandler(
 func (h *BranchOverrideHandler) ListBranchOverrides(c *gin.Context) {
 	instanceID := c.Param("id")
 
-	inst, err := h.instanceRepo.FindByID(instanceID)
+	inst, err := h.instanceRepo.FindByID(c.Request.Context(), instanceID)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		if status == http.StatusInternalServerError {
@@ -108,7 +108,7 @@ func (h *BranchOverrideHandler) GetBranchOverride(c *gin.Context) {
 	instanceID := c.Param("id")
 	chartID := c.Param("chartId")
 
-	inst, err := h.instanceRepo.FindByID(instanceID)
+	inst, err := h.instanceRepo.FindByID(c.Request.Context(), instanceID)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		if status == http.StatusInternalServerError {
@@ -171,7 +171,7 @@ func (h *BranchOverrideHandler) SetBranchOverride(c *gin.Context) {
 	instanceID := c.Param("id")
 	chartID := c.Param("chartId")
 
-	inst, err := h.instanceRepo.FindByID(instanceID)
+	inst, err := h.instanceRepo.FindByID(c.Request.Context(), instanceID)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		if status == http.StatusInternalServerError {
@@ -250,7 +250,7 @@ func (h *BranchOverrideHandler) DeleteBranchOverride(c *gin.Context) {
 	instanceID := c.Param("id")
 	chartID := c.Param("chartId")
 
-	inst, err := h.instanceRepo.FindByID(instanceID)
+	inst, err := h.instanceRepo.FindByID(c.Request.Context(), instanceID)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		if status == http.StatusInternalServerError {

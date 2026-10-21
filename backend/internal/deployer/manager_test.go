@@ -34,7 +34,10 @@ func newMockInstanceRepo() *mockInstanceRepo {
 	return &mockInstanceRepo{items: make(map[string]*models.StackInstance)}
 }
 
-func (m *mockInstanceRepo) Create(inst *models.StackInstance) error {
+func (m *mockInstanceRepo) Create(ctx context.Context, inst *models.StackInstance) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -45,7 +48,10 @@ func (m *mockInstanceRepo) Create(inst *models.StackInstance) error {
 	return nil
 }
 
-func (m *mockInstanceRepo) FindByID(id string) (*models.StackInstance, error) {
+func (m *mockInstanceRepo) FindByID(ctx context.Context, id string) (*models.StackInstance, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -59,7 +65,10 @@ func (m *mockInstanceRepo) FindByID(id string) (*models.StackInstance, error) {
 	return &cp, nil
 }
 
-func (m *mockInstanceRepo) Update(inst *models.StackInstance) error {
+func (m *mockInstanceRepo) Update(ctx context.Context, inst *models.StackInstance) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -72,7 +81,10 @@ func (m *mockInstanceRepo) Update(inst *models.StackInstance) error {
 
 // MarkCleanStart implements models.CleanStartMarker with the same
 // conditional semantics as the GORM repository.
-func (m *mockInstanceRepo) MarkCleanStart(id string, fromStatuses []string, deleteAfterClean bool) error {
+func (m *mockInstanceRepo) MarkCleanStart(ctx context.Context, id string, fromStatuses []string, deleteAfterClean bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -100,7 +112,10 @@ func (m *mockInstanceRepo) MarkCleanStart(id string, fromStatuses []string, dele
 }
 
 // ClearDeleteAfterClean implements models.CleanStartMarker.
-func (m *mockInstanceRepo) ClearDeleteAfterClean(id string) error {
+func (m *mockInstanceRepo) ClearDeleteAfterClean(ctx context.Context, id string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if inst, ok := m.items[id]; ok {
@@ -109,14 +124,20 @@ func (m *mockInstanceRepo) ClearDeleteAfterClean(id string) error {
 	return nil
 }
 
-func (m *mockInstanceRepo) Delete(id string) error {
+func (m *mockInstanceRepo) Delete(ctx context.Context, id string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.items, id)
 	return nil
 }
 
-func (m *mockInstanceRepo) List() ([]models.StackInstance, error) {
+func (m *mockInstanceRepo) List(ctx context.Context) ([]models.StackInstance, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -129,7 +150,10 @@ func (m *mockInstanceRepo) List() ([]models.StackInstance, error) {
 	return out, nil
 }
 
-func (m *mockInstanceRepo) FindByNamespace(namespace string) (*models.StackInstance, error) {
+func (m *mockInstanceRepo) FindByNamespace(ctx context.Context, namespace string) (*models.StackInstance, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, inst := range m.items {
@@ -141,11 +165,17 @@ func (m *mockInstanceRepo) FindByNamespace(namespace string) (*models.StackInsta
 	return nil, errors.New("not found")
 }
 
-func (m *mockInstanceRepo) ListByOwner(_ string) ([]models.StackInstance, error) {
-	return m.List()
+func (m *mockInstanceRepo) ListByOwner(ctx context.Context, _ string) ([]models.StackInstance, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return m.List(ctx)
 }
 
-func (m *mockInstanceRepo) FindByCluster(clusterID string) ([]models.StackInstance, error) {
+func (m *mockInstanceRepo) FindByCluster(ctx context.Context, clusterID string) ([]models.StackInstance, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -160,7 +190,10 @@ func (m *mockInstanceRepo) FindByCluster(clusterID string) ([]models.StackInstan
 	return out, nil
 }
 
-func (m *mockInstanceRepo) CountByClusterAndOwner(clusterID, ownerID string) (int, error) {
+func (m *mockInstanceRepo) CountByClusterAndOwner(ctx context.Context, clusterID, ownerID string) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -175,35 +208,45 @@ func (m *mockInstanceRepo) CountByClusterAndOwner(clusterID, ownerID string) (in
 	return count, nil
 }
 
-func (m *mockInstanceRepo) ListPaged(_ models.StackInstanceFilter, _, _ int) ([]models.StackInstance, int, error) {
-	return nil, 0, nil
+func (m *mockInstanceRepo) ListPaged(ctx context.Context, _ models.StackInstanceFilter, _, _ int) ([]models.StackInstance, int, error) {
+	return nil, 0, ctx.Err()
 }
-func (m *mockInstanceRepo) CountAll() (int, error)                                  { return 0, nil }
-func (m *mockInstanceRepo) CountByStatus(_ string) (int, error)                     { return 0, nil }
-func (m *mockInstanceRepo) ExistsByDefinitionAndStatus(_, _ string) (bool, error)   { return false, nil }
-func (m *mockInstanceRepo) CountByDefinitionIDs(_ []string) (map[string]int, error) { return nil, nil }
-func (m *mockInstanceRepo) CountByOwnerIDs(_ []string) (map[string]int, error)      { return nil, nil }
-func (m *mockInstanceRepo) ListIDsByDefinitionIDs(_ []string) (map[string][]string, error) {
-	return nil, nil
+func (m *mockInstanceRepo) CountAll(ctx context.Context) (int, error) { return 0, ctx.Err() }
+func (m *mockInstanceRepo) CountByStatus(ctx context.Context, _ string) (int, error) {
+	return 0, ctx.Err()
 }
-func (m *mockInstanceRepo) ListIDsByOwnerIDs(_ []string) (map[string][]string, error) {
-	return nil, nil
+func (m *mockInstanceRepo) ExistsByDefinitionAndStatus(ctx context.Context, _, _ string) (bool, error) {
+	return false, ctx.Err()
+}
+func (m *mockInstanceRepo) CountByDefinitionIDs(ctx context.Context, _ []string) (map[string]int, error) {
+	return nil, ctx.Err()
+}
+func (m *mockInstanceRepo) CountByOwnerIDs(ctx context.Context, _ []string) (map[string]int, error) {
+	return nil, ctx.Err()
+}
+func (m *mockInstanceRepo) ListIDsByDefinitionIDs(ctx context.Context, _ []string) (map[string][]string, error) {
+	return nil, ctx.Err()
+}
+func (m *mockInstanceRepo) ListIDsByOwnerIDs(ctx context.Context, _ []string) (map[string][]string, error) {
+	return nil, ctx.Err()
 }
 
-func (m *mockInstanceRepo) FindByName(_ string) ([]models.StackInstance, error) { return nil, nil }
-
-func (m *mockInstanceRepo) ListExpired() ([]*models.StackInstance, error) {
-	return nil, nil
+func (m *mockInstanceRepo) FindByName(ctx context.Context, _ string) ([]models.StackInstance, error) {
+	return nil, ctx.Err()
 }
 
-func (m *mockInstanceRepo) ListExpiringSoon(_ time.Duration) ([]*models.StackInstance, error) {
-	return nil, nil
+func (m *mockInstanceRepo) ListExpired(ctx context.Context) ([]*models.StackInstance, error) {
+	return nil, ctx.Err()
 }
-func (*mockInstanceRepo) MarkExpiryWarned(_ string, _, _ time.Time) (bool, error) {
-	return false, nil
+
+func (m *mockInstanceRepo) ListExpiringSoon(ctx context.Context, _ time.Duration) ([]*models.StackInstance, error) {
+	return nil, ctx.Err()
 }
-func (m *mockInstanceRepo) ListByStatus(_ string, _ int) ([]*models.StackInstance, error) {
-	return nil, nil
+func (*mockInstanceRepo) MarkExpiryWarned(ctx context.Context, _ string, _, _ time.Time) (bool, error) {
+	return false, ctx.Err()
+}
+func (m *mockInstanceRepo) ListByStatus(ctx context.Context, _ string, _ int) ([]*models.StackInstance, error) {
+	return nil, ctx.Err()
 }
 
 func (m *mockInstanceRepo) setError(err error) {
@@ -249,7 +292,11 @@ func (m *mockDeployLogRepo) FindByID(_ context.Context, id string) (*models.Depl
 	return &cp, nil
 }
 
-func (m *mockDeployLogRepo) Update(_ context.Context, log *models.DeploymentLog) error {
+func (m *mockDeployLogRepo) Update(ctx context.Context, log *models.DeploymentLog) error {
+	// A final write with a done context is lost, as with the GORM repository.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -402,7 +449,10 @@ type mockTxRunner struct {
 	logRepo      models.DeploymentLogRepository
 }
 
-func (m *mockTxRunner) RunInTx(fn func(repos database.TxRepos) error) error {
+func (m *mockTxRunner) RunInTx(ctx context.Context, fn func(repos database.TxRepos) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	return fn(database.TxRepos{
 		StackInstance: m.instanceRepo,
 		DeploymentLog: m.logRepo,
@@ -452,7 +502,7 @@ func waitForTerminalStatus(t *testing.T, repo *mockInstanceRepo, instanceID stri
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		inst, err := repo.FindByID(instanceID)
+		inst, err := repo.FindByID(context.Background(), instanceID)
 		if err == nil {
 			switch inst.Status {
 			case models.StackStatusQueued, models.StackStatusDeploying,
@@ -571,7 +621,7 @@ func TestManager_Deploy_CreatesLogAndUpdatesStatus(t *testing.T) {
 		Branch:            "main",
 		Status:            models.StackStatusDraft,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	mgr := NewManager(ManagerConfig{
 		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
@@ -602,7 +652,7 @@ func TestManager_Deploy_CreatesLogAndUpdatesStatus(t *testing.T) {
 	assert.Equal(t, "user-2", log.UserID, "the log records who started the deploy")
 
 	// Verify instance status was updated to deploying.
-	updated, err := instanceRepo.FindByID(inst.ID)
+	updated, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.StackStatusDeploying, updated.Status)
 
@@ -610,7 +660,7 @@ func TestManager_Deploy_CreatesLogAndUpdatesStatus(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	// Verify final status after async completion.
-	final, err := instanceRepo.FindByID(inst.ID)
+	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.StackStatusRunning, final.Status)
 
@@ -640,7 +690,7 @@ func TestManager_Deploy_WithCharts_Fails(t *testing.T) {
 		Branch:            "main",
 		Status:            models.StackStatusDraft,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	// Use a nonexistent binary so helm install fails.
 	mgr := NewManager(ManagerConfig{
@@ -675,7 +725,7 @@ func TestManager_Deploy_WithCharts_Fails(t *testing.T) {
 	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// Verify instance status is error.
-	final, err := instanceRepo.FindByID(inst.ID)
+	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.StackStatusError, final.Status)
 	assert.NotEmpty(t, final.ErrorMessage)
@@ -700,7 +750,7 @@ func TestManager_Stop_CreatesLogAndUpdatesStatus(t *testing.T) {
 		Namespace: "stack-test-user",
 		Status:    models.StackStatusRunning,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	mgr := NewManager(ManagerConfig{
 		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
@@ -727,7 +777,7 @@ func TestManager_Stop_CreatesLogAndUpdatesStatus(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	// Verify final status (StopWithCharts without charts finalizes to stopped).
-	final, err := instanceRepo.FindByID(inst.ID)
+	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.StackStatusStopped, final.Status)
 }
@@ -745,7 +795,7 @@ func TestManager_StopWithCharts_NoCharts(t *testing.T) {
 		Namespace: "stack-test-user",
 		Status:    models.StackStatusRunning,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	mgr := NewManager(ManagerConfig{
 		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
@@ -764,7 +814,7 @@ func TestManager_StopWithCharts_NoCharts(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	// Verify instance is stopped.
-	final, err := instanceRepo.FindByID(inst.ID)
+	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.StackStatusStopped, final.Status)
 }
@@ -781,7 +831,7 @@ func TestManager_Deploy_LogRepoError(t *testing.T) {
 		Name:   "test",
 		Status: models.StackStatusDraft,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	mgr := NewManager(ManagerConfig{
 		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
@@ -813,7 +863,7 @@ func TestManager_Deploy_InstanceRepoUpdateError(t *testing.T) {
 		Name:   "test",
 		Status: models.StackStatusDraft,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	// Set error after creation so log creation succeeds but instance update fails.
 	instanceRepo.setError(errors.New("update fail"))
@@ -849,7 +899,7 @@ func TestManager_Stop_LogRepoError(t *testing.T) {
 		Name:   "test",
 		Status: models.StackStatusRunning,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	mgr := NewManager(ManagerConfig{
 		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
@@ -876,7 +926,7 @@ func TestManager_Deploy_NilHub(t *testing.T) {
 		Name:   "test",
 		Status: models.StackStatusDraft,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	// Hub is nil — should not panic.
 	mgr := NewManager(ManagerConfig{
@@ -900,7 +950,7 @@ func TestManager_Deploy_NilHub(t *testing.T) {
 	// Wait for async completion — verify no panic.
 	time.Sleep(200 * time.Millisecond)
 
-	final, err := instanceRepo.FindByID(inst.ID)
+	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.StackStatusRunning, final.Status)
 }
@@ -917,7 +967,7 @@ func TestManager_Deploy_ChartsSortedByDeployOrder(t *testing.T) {
 		Namespace: "stack-sort-test",
 		Status:    models.StackStatusDraft,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	// Use nonexistent binary — first chart will fail, but we can
 	// verify from the log output which chart was attempted first.
@@ -978,7 +1028,7 @@ func TestManager_StopWithCharts_ExecutesUninstall(t *testing.T) {
 		Namespace: "stack-stop-charts",
 		Status:    models.StackStatusRunning,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	// Use a nonexistent binary — uninstall will fail, but we exercise the full path.
 	mgr := NewManager(ManagerConfig{
@@ -1015,7 +1065,7 @@ func TestManager_StopWithCharts_ExecutesUninstall(t *testing.T) {
 	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// Verify final status is error (because helm binary is nonexistent).
-	final, err := instanceRepo.FindByID(inst.ID)
+	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.StackStatusError, final.Status)
 	assert.NotEmpty(t, final.ErrorMessage)
@@ -1044,7 +1094,7 @@ func TestManager_StopWithCharts_Success_NoCharts(t *testing.T) {
 		Namespace: "stack-stop-ok",
 		Status:    models.StackStatusRunning,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	mgr := NewManager(ManagerConfig{
 		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
@@ -1063,7 +1113,7 @@ func TestManager_StopWithCharts_Success_NoCharts(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	// No charts to uninstall means success.
-	final, err := instanceRepo.FindByID(inst.ID)
+	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.StackStatusStopped, final.Status)
 	assert.Empty(t, final.ErrorMessage)
@@ -1087,7 +1137,7 @@ func TestManager_FinalizeStop_Success(t *testing.T) {
 		Namespace: "stack-fin-ok",
 		Status:    models.StackStatusStopping,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	deployLog := &models.DeploymentLog{
 		ID:              "log-fin-ok",
@@ -1110,7 +1160,7 @@ func TestManager_FinalizeStop_Success(t *testing.T) {
 	// Call finalizeStop directly for the success path.
 	mgr.finalizeStop(inst.ID, deployLog, "all charts uninstalled", nil)
 
-	final, err := instanceRepo.FindByID(inst.ID)
+	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.StackStatusStopped, final.Status)
 	assert.Empty(t, final.ErrorMessage)
@@ -1138,7 +1188,7 @@ func TestManager_FinalizeStop_Error(t *testing.T) {
 		Namespace: "stack-fin-err",
 		Status:    models.StackStatusStopping,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	deployLog := &models.DeploymentLog{
 		ID:              "log-fin-err",
@@ -1161,7 +1211,7 @@ func TestManager_FinalizeStop_Error(t *testing.T) {
 	stopErr := fmt.Errorf("uninstalling chart %q: helm command failed: exit status 1", "nginx")
 	mgr.finalizeStop(inst.ID, deployLog, "partial output", stopErr)
 
-	final, err := instanceRepo.FindByID(inst.ID)
+	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.StackStatusError, final.Status)
 	// Error message is sanitized — no raw Helm output.
@@ -1324,7 +1374,7 @@ func TestManager_StopWithCharts_ReversesDeployOrder(t *testing.T) {
 		Namespace: "stack-reverse-order",
 		Status:    models.StackStatusRunning,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	// Use nonexistent binary so we can check which chart fails first.
 	mgr := NewManager(ManagerConfig{
@@ -1382,7 +1432,7 @@ func TestManager_Stop_InstanceRepoUpdateError(t *testing.T) {
 		Name:   "test",
 		Status: models.StackStatusRunning,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	// Set error after creation so log creation succeeds but instance update fails.
 	instanceRepo.setError(errors.New("update fail"))
@@ -1413,7 +1463,7 @@ func TestManager_StopWithCharts_LogRepoError(t *testing.T) {
 		Name:   "test",
 		Status: models.StackStatusRunning,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	mgr := NewManager(ManagerConfig{
 		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
@@ -1440,7 +1490,7 @@ func TestManager_StopWithCharts_InstanceUpdateError(t *testing.T) {
 		Name:   "test",
 		Status: models.StackStatusRunning,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	instanceRepo.setError(errors.New("update fail"))
 
@@ -1555,7 +1605,7 @@ func TestManager_FinalizeDeploy_OutputTruncation(t *testing.T) {
 		Namespace: "stack-trunc",
 		Status:    models.StackStatusDeploying,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	deployLog := &models.DeploymentLog{
 		ID:              "log-trunc",
@@ -1696,7 +1746,7 @@ func TestManager_Deploy_PartialDeploy_KeepsSuccessfulCharts(t *testing.T) {
 		Branch:            "main",
 		Status:            models.StackStatusDraft,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	helmMock := &mockHelmExecutor{
 		installFunc: func(_ context.Context, req InstallRequest) (string, error) {
@@ -1733,7 +1783,7 @@ func TestManager_Deploy_PartialDeploy_KeepsSuccessfulCharts(t *testing.T) {
 	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// chart-c failed, chart-a and chart-b succeeded → partial status.
-	final, err := instanceRepo.FindByID(inst.ID)
+	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.StackStatusPartial, final.Status)
 	assert.Contains(t, final.ErrorMessage, "chart-c")
@@ -1766,7 +1816,7 @@ func TestManager_Deploy_PartialSuccess_ContinuesOnFailure(t *testing.T) {
 		Branch:            "main",
 		Status:            models.StackStatusDraft,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	helmMock := &mockHelmExecutor{
 		installFunc: func(_ context.Context, req InstallRequest) (string, error) {
@@ -1803,7 +1853,7 @@ func TestManager_Deploy_PartialSuccess_ContinuesOnFailure(t *testing.T) {
 	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// Partial deploy: chart-b failed but chart-a and chart-c succeeded.
-	final, err := instanceRepo.FindByID(inst.ID)
+	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.StackStatusPartial, final.Status)
 	assert.Contains(t, final.ErrorMessage, "chart-b")
@@ -1835,7 +1885,7 @@ func TestManager_Clean_Success(t *testing.T) {
 		Namespace: "stack-clean-test",
 		Status:    models.StackStatusRunning,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	helmMock := &mockHelmExecutor{}
 
@@ -1870,7 +1920,7 @@ func TestManager_Clean_Success(t *testing.T) {
 	assert.Equal(t, models.DeployLogRunning, log.Status)
 
 	// Verify instance status was updated to cleaning.
-	updated, err := instanceRepo.FindByID(inst.ID)
+	updated, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.StackStatusCleaning, updated.Status)
 
@@ -1878,7 +1928,7 @@ func TestManager_Clean_Success(t *testing.T) {
 	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// Verify final status is draft.
-	final, err := instanceRepo.FindByID(inst.ID)
+	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.StackStatusDraft, final.Status)
 	assert.Empty(t, final.ErrorMessage)
@@ -1917,7 +1967,7 @@ func TestManager_Clean_Success_NoK8sClient(t *testing.T) {
 		Namespace: "stack-clean-nok8s",
 		Status:    models.StackStatusStopped,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	helmMock := &mockHelmExecutor{}
 
@@ -1942,7 +1992,7 @@ func TestManager_Clean_Success_NoK8sClient(t *testing.T) {
 	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// Verify final status is draft (namespace delete skipped).
-	final, err := instanceRepo.FindByID(inst.ID)
+	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.StackStatusDraft, final.Status)
 	assert.Empty(t, final.ErrorMessage)
@@ -1972,7 +2022,7 @@ func TestManager_Clean_HelmFails(t *testing.T) {
 		Namespace: "stack-clean-fail",
 		Status:    models.StackStatusError,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	helmMock := &mockHelmExecutor{
 		uninstallFunc: func(_ context.Context, _ UninstallRequest) (string, error) {
@@ -2002,7 +2052,7 @@ func TestManager_Clean_HelmFails(t *testing.T) {
 
 	// Best-effort: uninstall failures are warnings, not errors.
 	// With no K8s client, namespace deletion is skipped, so the clean succeeds.
-	final, err := instanceRepo.FindByID(inst.ID)
+	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.StackStatusDraft, final.Status)
 	assert.Empty(t, final.ErrorMessage)
@@ -2034,7 +2084,7 @@ func TestManager_Clean_ReleasesAlreadyGone(t *testing.T) {
 		Namespace: "stack-clean-stopped",
 		Status:    models.StackStatusStopped,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	// Helm returns the "release: not found" message that the real CLI produces.
 	helmMock := &mockHelmExecutor{
@@ -2072,7 +2122,7 @@ func TestManager_Clean_ReleasesAlreadyGone(t *testing.T) {
 	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// Should succeed — "not found" releases are treated as already removed.
-	final, err := instanceRepo.FindByID(inst.ID)
+	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.StackStatusDraft, final.Status)
 	assert.Empty(t, final.ErrorMessage)
@@ -2100,7 +2150,7 @@ func TestManager_Deploy_AllChartsFail(t *testing.T) {
 		Branch:            "main",
 		Status:            models.StackStatusDraft,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	helmMock := &mockHelmExecutor{
 		installFunc: func(_ context.Context, _ InstallRequest) (string, error) {
@@ -2133,7 +2183,7 @@ func TestManager_Deploy_AllChartsFail(t *testing.T) {
 	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// All charts failed → full error status.
-	final, err := instanceRepo.FindByID(inst.ID)
+	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.StackStatusError, final.Status)
 	assert.Contains(t, final.ErrorMessage, "chart-a")
@@ -2352,7 +2402,7 @@ func TestManager_ApplyNamespaceQuotas_SkipsWhenEmpty(t *testing.T) {
 		ClusterID: "cluster-1",
 		Status:    models.StackStatusRunning,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	mgr := NewManager(ManagerConfig{
 		Registry:      &mockClusterResolver{helm: &mockHelmExecutor{}},
@@ -2397,7 +2447,7 @@ func TestManager_ApplyNamespaceQuotas_ResolveClusterError(t *testing.T) {
 		ClusterID: "bad-cluster",
 		Status:    models.StackStatusRunning,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	mgr := NewManager(ManagerConfig{
 		Registry: &mockClusterResolver{
@@ -2427,7 +2477,7 @@ func TestManager_ApplyNamespaceQuotas_FallsBackOnQuotaRepoError(t *testing.T) {
 		ClusterID: "cluster-1",
 		Status:    models.StackStatusRunning,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	// When quota repo errors, it falls back to empty config (skips)
 	mgr := NewManager(ManagerConfig{
@@ -2455,7 +2505,7 @@ func TestManager_ApplyNamespaceQuotas_WithOverride(t *testing.T) {
 		ClusterID: "cluster-1",
 		Status:    models.StackStatusRunning,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	fakeCS := fake.NewSimpleClientset(&corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{Name: inst.Namespace},
@@ -2499,7 +2549,7 @@ func TestManager_ApplyNamespaceQuotas_K8sClientError(t *testing.T) {
 		ClusterID: "cluster-1",
 		Status:    models.StackStatusRunning,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	mgr := NewManager(ManagerConfig{
 		Registry: &mockClusterResolver{
@@ -2533,7 +2583,7 @@ func TestManager_ApplyNamespaceQuotas_OverrideRepoError_UsesClusterDefaults(t *t
 		ClusterID: "cluster-1",
 		Status:    models.StackStatusRunning,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	fakeCS := fake.NewSimpleClientset(&corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{Name: inst.Namespace},
@@ -2601,7 +2651,7 @@ func TestManager_FinalizeClean_Success(t *testing.T) {
 		Namespace: "stack-fin-clean-ok",
 		Status:    models.StackStatusCleaning,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	deployLog := &models.DeploymentLog{
 		ID:              "log-fin-clean-ok",
@@ -2623,7 +2673,7 @@ func TestManager_FinalizeClean_Success(t *testing.T) {
 
 	mgr.finalizeClean(inst.ID, deployLog, "namespace deleted", nil)
 
-	final, err := instanceRepo.FindByID(inst.ID)
+	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.StackStatusDraft, final.Status)
 	assert.Empty(t, final.ErrorMessage)
@@ -2652,7 +2702,7 @@ func TestManager_FinalizeClean_Error(t *testing.T) {
 		Namespace: "stack-fin-clean-err",
 		Status:    models.StackStatusCleaning,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	deployLog := &models.DeploymentLog{
 		ID:              "log-fin-clean-err",
@@ -2675,7 +2725,7 @@ func TestManager_FinalizeClean_Error(t *testing.T) {
 	cleanErr := fmt.Errorf("deleting namespace %q: context deadline exceeded", "stack-fin-clean-err")
 	mgr.finalizeClean(inst.ID, deployLog, "partial output", cleanErr)
 
-	final, err := instanceRepo.FindByID(inst.ID)
+	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.StackStatusError, final.Status)
 	assert.Equal(t, `deleting namespace "stack-fin-clean-err": operation failed`, final.ErrorMessage)
@@ -2708,7 +2758,7 @@ func TestManager_ExecuteDeploy_OCIChartRef(t *testing.T) {
 		Branch:            "main",
 		Status:            models.StackStatusDraft,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	helmMock := &mockHelmExecutor{}
 
@@ -2775,7 +2825,7 @@ func TestManager_ExecuteDeploy_HTTPRepoRef(t *testing.T) {
 		Branch:            "main",
 		Status:            models.StackStatusDraft,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	helmMock := &mockHelmExecutor{}
 
@@ -2837,7 +2887,7 @@ func TestManager_ExecuteDeploy_ValuesFileWritten(t *testing.T) {
 		Branch:            "main",
 		Status:            models.StackStatusDraft,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	helmMock := &mockHelmExecutor{}
 
@@ -3076,7 +3126,7 @@ func TestManager_FinalizeDeploy_LastDeployedValues(t *testing.T) {
 		Namespace: "stack-ldv",
 		Status:    models.StackStatusDeploying,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	deployLog := &models.DeploymentLog{
 		ID:              "log-ldv",
@@ -3099,7 +3149,7 @@ func TestManager_FinalizeDeploy_LastDeployedValues(t *testing.T) {
 	lastValues := `{"mychart":"key: value\n"}`
 	mgr.finalizeDeploy(inst.ID, deployLog, "deploy output", nil, false, lastValues, "")
 
-	updated, err := instanceRepo.FindByID(inst.ID)
+	updated, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	require.NoError(t, err)
 	assert.Equal(t, lastValues, updated.LastDeployedValues)
 	assert.Equal(t, models.StackStatusRunning, updated.Status)
@@ -3117,7 +3167,7 @@ func TestManager_FinalizeDeploy_LastDeployedValuesNotSetOnError(t *testing.T) {
 		Namespace: "stack-ldv-err",
 		Status:    models.StackStatusDeploying,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	deployLog := &models.DeploymentLog{
 		ID:              "log-ldv-err",
@@ -3140,7 +3190,7 @@ func TestManager_FinalizeDeploy_LastDeployedValuesNotSetOnError(t *testing.T) {
 	lastValues := `{"mychart":"key: value\n"}`
 	mgr.finalizeDeploy(inst.ID, deployLog, "deploy output", fmt.Errorf("helm install failed"), false, lastValues, "")
 
-	updated, err := instanceRepo.FindByID(inst.ID)
+	updated, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	require.NoError(t, err)
 	assert.Empty(t, updated.LastDeployedValues)
 	assert.Equal(t, models.StackStatusError, updated.Status)
@@ -3267,7 +3317,7 @@ func TestManager_Deploy_StreamingBroadcastsPerLine(t *testing.T) {
 		Branch:            "main",
 		Status:            models.StackStatusDraft,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	helmMock := &streamingMockHelmExecutor{
 		mockHelmExecutor: &mockHelmExecutor{
@@ -3307,7 +3357,7 @@ func TestManager_Deploy_StreamingBroadcastsPerLine(t *testing.T) {
 	assert.True(t, helmMock.wasLineHandlerSet(), "WithLineHandler should have been called")
 
 	// Verify instance completed successfully.
-	final, err := instanceRepo.FindByID(inst.ID)
+	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	require.NoError(t, err)
 	assert.Equal(t, models.StackStatusRunning, final.Status)
 
@@ -3349,7 +3399,7 @@ func TestManager_Deploy_NonStreamingBroadcastsPerChart(t *testing.T) {
 		Branch:            "main",
 		Status:            models.StackStatusDraft,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	// Regular mockHelmExecutor does NOT implement StreamingHelmExecutor.
 	helmMock := &mockHelmExecutor{
@@ -3384,7 +3434,7 @@ func TestManager_Deploy_NonStreamingBroadcastsPerChart(t *testing.T) {
 	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// Verify instance completed successfully.
-	final, err := instanceRepo.FindByID(inst.ID)
+	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	require.NoError(t, err)
 	assert.Equal(t, models.StackStatusRunning, final.Status)
 
@@ -3424,7 +3474,7 @@ func TestManager_StopWithCharts_StreamingSupport(t *testing.T) {
 		Namespace: "stack-stream-stop",
 		Status:    models.StackStatusRunning,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	helmMock := &streamingMockHelmExecutor{
 		mockHelmExecutor: &mockHelmExecutor{
@@ -3459,7 +3509,7 @@ func TestManager_StopWithCharts_StreamingSupport(t *testing.T) {
 	assert.True(t, helmMock.wasLineHandlerSet(), "WithLineHandler should have been called for stop")
 
 	// Verify instance completed successfully.
-	final, err := instanceRepo.FindByID(inst.ID)
+	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	require.NoError(t, err)
 	assert.Equal(t, models.StackStatusStopped, final.Status)
 
@@ -3491,7 +3541,7 @@ func TestManager_StopWithCharts_NonStreamingBroadcastsPerChart(t *testing.T) {
 		Namespace: "stack-nonstream-stop",
 		Status:    models.StackStatusRunning,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	// Regular mockHelmExecutor — no StreamingHelmExecutor.
 	helmMock := &mockHelmExecutor{
@@ -3522,7 +3572,7 @@ func TestManager_StopWithCharts_NonStreamingBroadcastsPerChart(t *testing.T) {
 	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// Verify instance completed successfully.
-	final, err := instanceRepo.FindByID(inst.ID)
+	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	require.NoError(t, err)
 	assert.Equal(t, models.StackStatusStopped, final.Status)
 
@@ -3559,7 +3609,7 @@ func TestManager_Clean_StreamingSupport(t *testing.T) {
 		Namespace: "stack-stream-clean",
 		Status:    models.StackStatusStopped,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	helmMock := &streamingMockHelmExecutor{
 		mockHelmExecutor: &mockHelmExecutor{
@@ -3593,7 +3643,7 @@ func TestManager_Clean_StreamingSupport(t *testing.T) {
 	assert.True(t, helmMock.wasLineHandlerSet(), "WithLineHandler should have been called for clean")
 
 	// Verify instance returned to draft status.
-	final, err := instanceRepo.FindByID(inst.ID)
+	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	require.NoError(t, err)
 	assert.Equal(t, models.StackStatusDraft, final.Status)
 
@@ -3624,7 +3674,7 @@ func TestManager_Deploy_StreamingPartialFailure_StillBroadcastsLines(t *testing.
 		Branch:            "main",
 		Status:            models.StackStatusDraft,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	helmMock := &streamingMockHelmExecutor{
 		mockHelmExecutor: &mockHelmExecutor{
@@ -3663,7 +3713,7 @@ func TestManager_Deploy_StreamingPartialFailure_StillBroadcastsLines(t *testing.
 	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// good-chart succeeded, failing-chart failed → partial status.
-	final, err := instanceRepo.FindByID(inst.ID)
+	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	require.NoError(t, err)
 	assert.Equal(t, models.StackStatusPartial, final.Status)
 
@@ -3695,7 +3745,7 @@ func TestManager_Rollback_StreamingSupport(t *testing.T) {
 		Branch:            "main",
 		Status:            models.StackStatusRunning,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	helmMock := &streamingMockHelmExecutor{
 		mockHelmExecutor: &mockHelmExecutor{
@@ -3733,7 +3783,7 @@ func TestManager_Rollback_StreamingSupport(t *testing.T) {
 
 	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
-	final, err := instanceRepo.FindByID(inst.ID)
+	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	require.NoError(t, err)
 	assert.Equal(t, models.StackStatusRunning, final.Status)
 
@@ -3766,7 +3816,7 @@ func TestDeploy_RejectsTerminatingNamespace(t *testing.T) {
 		Branch:            "main",
 		Status:            models.StackStatusDraft,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	fakeCS := fake.NewSimpleClientset(&corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{Name: "stack-terminating"},
@@ -3807,7 +3857,7 @@ func TestDeploy_AllowsActiveNamespace(t *testing.T) {
 		Branch:            "main",
 		Status:            models.StackStatusDraft,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	fakeCS := fake.NewSimpleClientset(&corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{Name: "stack-active"},
@@ -3848,7 +3898,7 @@ func TestDeploy_AllowsNonExistentNamespace(t *testing.T) {
 		Branch:            "main",
 		Status:            models.StackStatusDraft,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	// Empty clientset — namespace doesn't exist yet.
 	k8sClient := k8s.NewClientFromInterface(fake.NewSimpleClientset())
@@ -3889,7 +3939,7 @@ func TestAwaitReadiness_HealthyImmediately(t *testing.T) {
 		Branch:            "main",
 		Status:            models.StackStatusDraft,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	// Namespace exists with no pods/deployments → healthy immediately.
 	fakeCS := fake.NewSimpleClientset(&corev1.Namespace{
@@ -3919,7 +3969,7 @@ func TestAwaitReadiness_HealthyImmediately(t *testing.T) {
 
 	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
-	final, err := instanceRepo.FindByID(inst.ID)
+	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	require.NoError(t, err)
 	assert.Equal(t, models.StackStatusRunning, final.Status)
 
@@ -3951,7 +4001,7 @@ func TestAwaitReadiness_Timeout(t *testing.T) {
 		Branch:            "main",
 		Status:            models.StackStatusDraft,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	// Namespace with a pending pod → never becomes healthy.
 	fakeCS := fake.NewSimpleClientset(
@@ -3990,7 +4040,7 @@ func TestAwaitReadiness_Timeout(t *testing.T) {
 	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// Deploy still succeeds (readiness timeout is a warning, not a failure).
-	final, err := instanceRepo.FindByID(inst.ID)
+	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	require.NoError(t, err)
 	assert.Equal(t, models.StackStatusRunning, final.Status)
 
@@ -4022,7 +4072,7 @@ func TestAwaitReadiness_Disabled_WhenTimeoutZero(t *testing.T) {
 		Branch:            "main",
 		Status:            models.StackStatusDraft,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	mgr := NewManager(ManagerConfig{
 		Registry:              &mockClusterResolver{helm: &mockHelmExecutor{}},
@@ -4045,7 +4095,7 @@ func TestAwaitReadiness_Disabled_WhenTimeoutZero(t *testing.T) {
 
 	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
-	final, err := instanceRepo.FindByID(inst.ID)
+	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	require.NoError(t, err)
 	assert.Equal(t, models.StackStatusRunning, final.Status)
 
@@ -4072,7 +4122,7 @@ func TestFinalizeDeploy_ReadinessWarning_AttachesHookMetadata(t *testing.T) {
 		Branch:            "main",
 		Status:            models.StackStatusDeploying,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	deployLog := &models.DeploymentLog{
 		ID:              "log-rw",
@@ -4095,7 +4145,7 @@ func TestFinalizeDeploy_ReadinessWarning_AttachesHookMetadata(t *testing.T) {
 	// Call finalizeDeploy with a readinessWarning — deploy succeeds but with metadata.
 	mgr.finalizeDeploy(inst.ID, deployLog, "deploy output", nil, false, "", "readiness timeout after 5m0s")
 
-	updated, err := instanceRepo.FindByID(inst.ID)
+	updated, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	require.NoError(t, err)
 	assert.Equal(t, models.StackStatusRunning, updated.Status)
 
@@ -4107,7 +4157,9 @@ func TestFinalizeDeploy_ReadinessWarning_AttachesHookMetadata(t *testing.T) {
 // Verify that streamingMockHelmExecutor satisfies StreamingHelmExecutor at compile time.
 var _ StreamingHelmExecutor = (*streamingMockHelmExecutor)(nil)
 
-func (*mockInstanceRepo) CountByStatuses(statuses []string) (int, error) { return 0, nil }
+func (*mockInstanceRepo) CountByStatuses(ctx context.Context, statuses []string) (int, error) {
+	return 0, ctx.Err()
+}
 
 func TestUninstallWaitTimeout(t *testing.T) {
 	t.Parallel()

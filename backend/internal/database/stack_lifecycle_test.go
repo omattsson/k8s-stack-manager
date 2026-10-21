@@ -52,17 +52,17 @@ func TestStackLifecycleColumnsMigration(t *testing.T) {
 	assert.True(t, m.HasColumn(&models.DeploymentLog{}, "Branch"))
 
 	repo := NewGORMStackInstanceRepository(db)
-	withLog, err := repo.FindByID("stopped-with-log")
+	withLog, err := repo.FindByID(context.Background(), "stopped-with-log")
 	require.NoError(t, err)
 	require.NotNil(t, withLog.StoppedAt)
 	assert.True(t, withLog.StoppedAt.Equal(stopLogDone), "backfill uses the last successful stop log: %s", withLog.StoppedAt)
 
-	noLog, err := repo.FindByID("stopped-no-log")
+	noLog, err := repo.FindByID(context.Background(), "stopped-no-log")
 	require.NoError(t, err)
 	require.NotNil(t, noLog.StoppedAt)
 	assert.True(t, noLog.StoppedAt.Equal(updated), "backfill falls back to updated_at")
 
-	running, err := repo.FindByID("running")
+	running, err := repo.FindByID(context.Background(), "running")
 	require.NoError(t, err)
 	assert.Nil(t, running.StoppedAt)
 }
@@ -100,7 +100,7 @@ func TestDeleteInstanceWithOwnedDefinition(t *testing.T) {
 			require.NoError(t, defRepo.Create(&models.StackDefinition{ID: "d1", Name: "qd", OwnerID: "u1", OwnerInstanceID: tt.owner}))
 			require.NoError(t, ccRepo.Create(&models.ChartConfig{ID: "c1", StackDefinitionID: "d1", ChartName: "web"}))
 			inst := &models.StackInstance{ID: "i1", StackDefinitionID: "d1", Name: "qd", Namespace: "stack-qd-u1", OwnerID: "u1", Status: models.StackStatusDraft}
-			require.NoError(t, instRepo.Create(inst))
+			require.NoError(t, instRepo.Create(context.Background(), inst))
 			require.NoError(t, boRepo.Set(&models.ChartBranchOverride{ID: "b1", StackInstanceID: "i1", ChartConfigID: "c1", Branch: "x"}))
 			require.NoError(t, ovRepo.Create(&models.ValueOverride{ID: "v1", StackInstanceID: "i1", ChartConfigID: "c1", Values: "a: 1"}))
 			require.NoError(t, quotaRepo.Upsert(ctx, &models.InstanceQuotaOverride{StackInstanceID: "i1", CPULimit: "1"}))
@@ -110,15 +110,15 @@ func TestDeleteInstanceWithOwnedDefinition(t *testing.T) {
 			require.NoError(t, runRepo.Create(ctx, &models.ActionRun{InstanceID: "i1", Action: "seed", UserID: "u2", StatusCode: 200}))
 			require.NoError(t, runRepo.Create(ctx, &models.ActionRun{InstanceID: "i-keep", Action: "seed", UserID: "u2", StatusCode: 200}))
 			if tt.otherInst {
-				require.NoError(t, instRepo.Create(&models.StackInstance{ID: "i2", StackDefinitionID: "d1", Name: "qd2", Namespace: "stack-qd2-u1", OwnerID: "u1", Status: models.StackStatusDraft}))
+				require.NoError(t, instRepo.Create(context.Background(), &models.StackInstance{ID: "i2", StackDefinitionID: "d1", Name: "qd2", Namespace: "stack-qd2-u1", OwnerID: "u1", Status: models.StackStatusDraft}))
 			}
 			if tt.ownerAlive {
-				require.NoError(t, instRepo.Create(&models.StackInstance{ID: "i-owner", StackDefinitionID: "d-other", Name: "own", Namespace: "stack-own-u1", OwnerID: "u1", Status: models.StackStatusDraft}))
+				require.NoError(t, instRepo.Create(context.Background(), &models.StackInstance{ID: "i-owner", StackDefinitionID: "d-other", Name: "own", Namespace: "stack-own-u1", OwnerID: "u1", Status: models.StackStatusDraft}))
 			}
 
-			require.NoError(t, DeleteInstanceWithOwnedDefinition(runner, inst))
+			require.NoError(t, DeleteInstanceWithOwnedDefinition(context.Background(), runner, inst))
 
-			_, err := instRepo.FindByID("i1")
+			_, err := instRepo.FindByID(context.Background(), "i1")
 			assert.Error(t, err, "instance is deleted")
 			bos, err := boRepo.List("i1")
 			require.NoError(t, err)
@@ -154,12 +154,12 @@ type failingTxRunner struct {
 	calls int
 }
 
-func (f *failingTxRunner) RunInTx(fn func(repos TxRepos) error) error {
+func (f *failingTxRunner) RunInTx(ctx context.Context, fn func(repos TxRepos) error) error {
 	f.calls++
 	if f.calls > 1 {
 		return assert.AnError
 	}
-	return f.inner.RunInTx(fn)
+	return f.inner.RunInTx(ctx, fn)
 }
 
 func TestDeleteInstanceWithOwnedDefinition_CleanupErrorKeepsDelete(t *testing.T) {
@@ -169,12 +169,12 @@ func TestDeleteInstanceWithOwnedDefinition_CleanupErrorKeepsDelete(t *testing.T)
 	defRepo := NewGORMStackDefinitionRepository(db)
 	require.NoError(t, defRepo.Create(&models.StackDefinition{ID: "d1", Name: "qd", OwnerID: "u1", OwnerInstanceID: "i1"}))
 	inst := &models.StackInstance{ID: "i1", StackDefinitionID: "d1", Name: "qd", Namespace: "stack-qd-u1", OwnerID: "u1", Status: models.StackStatusDraft}
-	require.NoError(t, instRepo.Create(inst))
+	require.NoError(t, instRepo.Create(context.Background(), inst))
 
 	runner := &failingTxRunner{inner: NewGORMTxRunner(db)}
-	require.NoError(t, DeleteInstanceWithOwnedDefinition(runner, inst))
+	require.NoError(t, DeleteInstanceWithOwnedDefinition(context.Background(), runner, inst))
 	assert.Equal(t, 2, runner.calls)
-	_, err := instRepo.FindByID("i1")
+	_, err := instRepo.FindByID(context.Background(), "i1")
 	assert.Error(t, err, "instance stays deleted")
 	_, err = defRepo.FindByID("d1")
 	assert.NoError(t, err, "definition cleanup failed and is left for a later delete")
@@ -184,7 +184,7 @@ func TestInstanceQuotaOverrideInTxRepos(t *testing.T) {
 	t.Parallel()
 	db := setupTestDBWithAllTables(t)
 	runner := NewGORMTxRunner(db)
-	require.NoError(t, runner.RunInTx(func(repos TxRepos) error {
+	require.NoError(t, runner.RunInTx(context.Background(), func(repos TxRepos) error {
 		require.NotNil(t, repos.InstanceQuotaOverride)
 		return repos.InstanceQuotaOverride.Upsert(context.Background(), &models.InstanceQuotaOverride{StackInstanceID: "i1", CPULimit: "1"})
 	}))

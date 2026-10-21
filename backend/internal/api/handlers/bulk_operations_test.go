@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -370,7 +371,7 @@ func TestBulkDeploy_RestartsTTL(t *testing.T) {
 			inst := seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusStopped)
 			inst.TTLMinutes = tt.ttlMinutes
 			inst.ExpiresAt = tt.expiresAt
-			require.NoError(t, instRepo.Update(inst))
+			require.NoError(t, instRepo.Update(context.Background(), inst))
 			seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
 			require.NoError(t, ccRepo.Create(&models.ChartConfig{
 				ID: "c1", StackDefinitionID: "d1", ChartName: "nginx", RepositoryURL: "oci://example.com/charts/nginx", DeployOrder: 1,
@@ -387,7 +388,7 @@ func TestBulkDeploy_RestartsTTL(t *testing.T) {
 			router.ServeHTTP(w, req)
 
 			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-			got, err := instRepo.FindByID("i1")
+			got, err := instRepo.FindByID(context.Background(), "i1")
 			require.NoError(t, err)
 			tt.check(t, got.ExpiresAt)
 		})
@@ -621,9 +622,9 @@ func TestBulkDelete(t *testing.T) {
 				// A draft has nothing to clean: no clean log.
 				assert.Empty(t, resp.Results[0].LogID)
 				// Verify instances are actually deleted.
-				_, err := instRepo.FindByID("i1")
+				_, err := instRepo.FindByID(context.Background(), "i1")
 				assert.Error(t, err)
-				_, err = instRepo.FindByID("i2")
+				_, err = instRepo.FindByID(context.Background(), "i2")
 				assert.Error(t, err)
 			},
 		},
@@ -646,7 +647,7 @@ func TestBulkDelete(t *testing.T) {
 				assert.NotEmpty(t, resp.Results[0].LogID, "the result must carry the clean log")
 				// The deploy manager deletes the row when the clean completes.
 				assert.Eventually(t, func() bool {
-					_, err := instRepo.FindByID("i1")
+					_, err := instRepo.FindByID(context.Background(), "i1")
 					return err != nil
 				}, 5*time.Second, 20*time.Millisecond)
 			},
@@ -673,7 +674,7 @@ func TestBulkDelete(t *testing.T) {
 				}
 				assert.Eventually(t, func() bool {
 					for _, id := range []string{"i1", "i2", "i3"} {
-						if _, err := instRepo.FindByID(id); err == nil {
+						if _, err := instRepo.FindByID(context.Background(), id); err == nil {
 							return false
 						}
 					}
@@ -699,7 +700,7 @@ func TestBulkDelete(t *testing.T) {
 				assert.Equal(t, 1, resp.Failed)
 				assert.Equal(t, "error", resp.Results[0].Status)
 				assert.Equal(t, "Cannot delete: instance is currently deploying", resp.Results[0].Error)
-				inst, err := instRepo.FindByID("i1")
+				inst, err := instRepo.FindByID(context.Background(), "i1")
 				require.NoError(t, err, "an instance in progress must stay")
 				assert.Equal(t, models.StackStatusDeploying, inst.Status)
 			},
@@ -718,7 +719,7 @@ func TestBulkDelete(t *testing.T) {
 				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 				assert.Equal(t, 1, resp.Failed)
 				assert.Equal(t, msgDeployerNotConfigured, resp.Results[0].Error)
-				_, err := instRepo.FindByID("i1")
+				_, err := instRepo.FindByID(context.Background(), "i1")
 				assert.NoError(t, err, "the instance with cluster resources must stay")
 			},
 		},
@@ -737,7 +738,7 @@ func TestBulkDelete(t *testing.T) {
 				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 				assert.Equal(t, 1, resp.Failed)
 				assert.Equal(t, "Stack definition not found", resp.Results[0].Error)
-				_, err := instRepo.FindByID("i1")
+				_, err := instRepo.FindByID(context.Background(), "i1")
 				assert.NoError(t, err)
 			},
 		},
@@ -771,7 +772,7 @@ func TestBulkDelete(t *testing.T) {
 				assert.Equal(t, 1, resp.Failed)
 				assert.Equal(t, "forbidden", resp.Results[0].Error)
 				// Instance should still exist.
-				_, err := instRepo.FindByID("i1")
+				_, err := instRepo.FindByID(context.Background(), "i1")
 				assert.NoError(t, err)
 			},
 		},
@@ -905,7 +906,7 @@ func TestBulkDelete_ConcurrentDeletes(t *testing.T) {
 	}
 	assert.Equal(t, 1, succeeded, "exactly one delete starts the clean: %+v", results)
 	assert.Eventually(t, func() bool {
-		_, err := instRepo.FindByID("i1")
+		_, err := instRepo.FindByID(context.Background(), "i1")
 		return err != nil
 	}, 5*time.Second, 20*time.Millisecond)
 }
@@ -961,6 +962,59 @@ func TestBulkOperationInvalidJSON(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// TestBulkOperation_LookupError checks the result error of a failed instance
+// lookup: "not found" only for a missing instance, "request cancelled" for a
+// cancelled request, and a generic "lookup failed" for a database error.
+func TestBulkOperation_LookupError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		fetchErr  error
+		cancelled bool
+		want      string
+	}{
+		{name: "missing instance", want: "not found"},
+		{name: "database error", fetchErr: errors.New("connection reset"), want: "lookup failed"},
+		{name: "connection failed", fetchErr: database.NewDatabaseError("find_by_id", database.ErrConnectionFailed), want: "lookup failed"},
+		{name: "request cancelled", cancelled: true, want: "request cancelled"},
+	}
+	for _, tt := range tests {
+		tt := tt
+		for _, op := range []string{"deploy", "stop", "clean", "delete"} {
+			op := op
+			t.Run(tt.name+"/"+op, func(t *testing.T) {
+				t.Parallel()
+				instRepo := NewMockStackInstanceRepository()
+				if tt.fetchErr != nil {
+					seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusRunning)
+					instRepo.SetFetchError(tt.fetchErr)
+				}
+				router := setupBulkRouter(t, instRepo, NewMockValueOverrideRepository(), NewMockStackDefinitionRepository(),
+					NewMockChartConfigRepository(), NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
+					nil, nil, "uid-1", "testuser", "admin")
+				path := "/api/v1/stack-instances/bulk/" + op
+				body := `{"instance_ids":["i1"]}`
+				req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				if tt.cancelled {
+					req = cancelledRequest(t, http.MethodPost, path, body)
+				}
+				w := httptest.NewRecorder()
+				router.ServeHTTP(w, req)
+
+				require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+				var resp BulkOperationResponse
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+				require.Len(t, resp.Results, 1)
+				assert.Equal(t, 1, resp.Failed)
+				assert.Equal(t, "error", resp.Results[0].Status)
+				assert.Equal(t, tt.want, resp.Results[0].Error)
+			})
+		}
+	}
 }
 
 // Verify that instance_name is populated in results even on operation error.
@@ -1073,7 +1127,7 @@ func TestBulkDelete_WithBranchOverrides(t *testing.T) {
 		assert.Equal(t, 0, resp.Failed)
 
 		// Instance should be deleted.
-		_, err := instRepo.FindByID("i1")
+		_, err := instRepo.FindByID(context.Background(), "i1")
 		assert.Error(t, err)
 
 		// Branch overrides for the instance should also be gone.
@@ -1105,7 +1159,7 @@ func TestBulkDelete_WithBranchOverrides(t *testing.T) {
 		assert.Equal(t, 1, resp.Failed)
 
 		// Instance should still exist since branch override delete failed.
-		_, err := instRepo.FindByID("i1")
+		_, err := instRepo.FindByID(context.Background(), "i1")
 		assert.NoError(t, err)
 	})
 }

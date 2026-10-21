@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -317,8 +318,11 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 	}
 
 	// Check namespace uniqueness.
-	existingInst, nsErr := h.instanceRepo.FindByNamespace(inst.Namespace)
+	existingInst, nsErr := h.instanceRepo.FindByNamespace(c.Request.Context(), inst.Namespace)
 	if nsErr != nil && !errors.Is(nsErr, dberrors.ErrNotFound) {
+		if respondCancelled(c, nsErr) {
+			return
+		}
 		slog.Error("Failed to check namespace uniqueness",
 			"namespace", inst.Namespace,
 			"error", nsErr,
@@ -330,7 +334,7 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 	if existingInst != nil {
 		suggestions := generateNameSuggestions(inst.Name)
 		if h.uniqueNames {
-			suggestions = guard.freeSuggestions(inst.Name, inst.ClusterID, username)
+			suggestions = guard.freeSuggestions(c.Request.Context(), inst.Name, inst.ClusterID, username)
 		}
 		c.JSON(http.StatusConflict, NamespaceConflictResponse{
 			Error:       "namespace already exists",
@@ -360,8 +364,10 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 	}
 	def.Name = defName
 
-	// Persist definition + chart configs + instance.
-	txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
+	// Persist definition + chart configs + instance. From here on a client
+	// that leaves must not stop the create, the deploy or the audit entry.
+	wctx := writeCtx(c)
+	txErr := h.txRunner.RunInTx(wctx, func(repos database.TxRepos) error {
 		if err := repos.StackDefinition.Create(def); err != nil {
 			return err
 		}
@@ -370,7 +376,7 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 				return err
 			}
 		}
-		return repos.StackInstance.Create(inst)
+		return repos.StackInstance.Create(wctx, inst)
 	})
 	if txErr != nil {
 		slog.Error("Quick deploy transaction failed", "error", txErr)
@@ -379,7 +385,7 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 		return
 	}
 
-	notifyInstanceCreated(hookTriggerCtx(c), h.notifier, inst)
+	notifyInstanceCreated(wctx, h.notifier, inst)
 
 	// Open dashboards reload their list (the deploy below also sends
 	// deployment.status, which they treat the same way).
@@ -406,7 +412,7 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 	}
 
 	// 5. Trigger deploy.
-	logID, deployErr := h.triggerDeploy(c, inst, def, chartConfigs, username)
+	logID, deployErr := h.triggerDeploy(wctx, c, inst, def, chartConfigs, username)
 
 	if deployErr != nil {
 		slog.Error("Quick deploy failed during deployment phase",
@@ -415,7 +421,7 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 		)
 		inst.Status = models.StackStatusError
 		inst.ErrorMessage = "Deployment failed"
-		_ = h.instanceRepo.Update(inst)
+		_ = h.instanceRepo.Update(wctx, inst)
 	}
 
 	// 6. Audit log.
@@ -444,8 +450,10 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 // triggerDeploy generates values with the shared values pipeline
 // (valuesBuilder, as DeployInstance) and starts the deployment. Any lookup
 // error (shared values, value or branch overrides, locked values) fails the
-// quick deploy; the caller then marks the instance as error.
+// quick deploy; the caller then marks the instance as error. ctx is the
+// write context of the caller: the instance exists already.
 func (h *QuickDeployHandler) triggerDeploy(
+	ctx context.Context,
 	c *gin.Context,
 	inst *models.StackInstance,
 	def *models.StackDefinition,
@@ -460,7 +468,7 @@ func (h *QuickDeployHandler) triggerDeploy(
 		return "", fmt.Errorf("no charts configured for this stack definition")
 	}
 
-	valuesMap, branchMap, err := h.values().build(c.Request.Context(), inst, def, chartConfigs, ownerName)
+	valuesMap, branchMap, err := h.values().build(ctx, inst, def, chartConfigs, ownerName)
 	if err != nil {
 		return "", fmt.Errorf("build chart values: %w", err)
 	}
@@ -489,7 +497,7 @@ func (h *QuickDeployHandler) triggerDeploy(
 		UserID:             middleware.GetUserIDFromContext(c),
 	}
 
-	return h.deployManager.Deploy(hookTriggerCtx(c), req)
+	return h.deployManager.Deploy(ctx, req)
 }
 
 // values returns the values pipeline over the handler's repositories.

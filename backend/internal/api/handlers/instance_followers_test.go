@@ -247,7 +247,7 @@ func TestInstanceHandler_UpdateAndExtend_KeepFollowState(t *testing.T) {
 			instRepo := NewMockStackInstanceRepository()
 			inst := seedInstance(t, instRepo, "i1", "shared-stack", "d1", "owner", models.StackStatusRunning)
 			inst.TTLMinutes = 60
-			require.NoError(t, instRepo.Update(inst))
+			require.NoError(t, instRepo.Update(context.Background(), inst))
 			followers := NewMockInstanceFollowerRepository()
 			require.NoError(t, followers.Follow(context.Background(), "viewer", "i1"))
 			require.NoError(t, followers.Follow(context.Background(), "owner", "i1"))

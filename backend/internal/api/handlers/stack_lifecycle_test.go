@@ -188,7 +188,7 @@ func TestExtendTTL_Semantics(t *testing.T) {
 				exp := time.Now().UTC().Add(*tt.expiresIn)
 				inst.ExpiresAt = &exp
 			}
-			require.NoError(t, env.inst.Create(inst))
+			require.NoError(t, env.inst.Create(context.Background(), inst))
 
 			w := serve(env.router(t, nil, "uid-1", "alice", "user"), http.MethodPost, "/api/v1/stack-instances/i1/extend", tt.body)
 			require.Equal(t, tt.wantStatus, w.Code, w.Body.String())
@@ -236,7 +236,7 @@ func TestInstanceNameRule(t *testing.T) {
 			t.Parallel()
 			env := newLifecycleEnv()
 			seedDefinition(t, env.def, "d1", "def-1", "uid-1")
-			require.NoError(t, env.inst.Create(&models.StackInstance{
+			require.NoError(t, env.inst.Create(context.Background(), &models.StackInstance{
 				ID: "legacy", StackDefinitionID: "d1", Name: "Legacy (Copy)", Namespace: "stack-legacy-copy-alice",
 				OwnerID: "uid-1", Branch: "master", Status: models.StackStatusDraft,
 			}))
@@ -270,7 +270,7 @@ func TestCloneInstance_CopiesSettings(t *testing.T) {
 			t.Parallel()
 			env := newLifecycleEnv()
 			exp := time.Now().UTC().Add(time.Hour)
-			require.NoError(t, env.inst.Create(&models.StackInstance{
+			require.NoError(t, env.inst.Create(context.Background(), &models.StackInstance{
 				ID: "src", StackDefinitionID: "d1", Name: tt.sourceName, Namespace: "stack-src-alice",
 				OwnerID: "uid-1", Branch: "feature-x", ClusterID: "cluster-a", Status: models.StackStatusRunning,
 				TTLMinutes: 240, ExpiresAt: &exp,
@@ -334,7 +334,7 @@ func TestCloneInstance_QuotaOverrideCopyRule(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			env := newLifecycleEnv()
-			require.NoError(t, env.inst.Create(&models.StackInstance{
+			require.NoError(t, env.inst.Create(context.Background(), &models.StackInstance{
 				ID: "src", StackDefinitionID: "d1", Name: "zz-life", Namespace: "stack-zz-life-alice",
 				OwnerID: "uid-1", Branch: "master", Status: models.StackStatusRunning,
 			}))
@@ -395,7 +395,7 @@ func TestCloneInstance_QuotaOverrideClusterCap(t *testing.T) {
 			if tt.quotaErr != nil {
 				env.clusterQuota.SetError(tt.quotaErr)
 			}
-			require.NoError(t, env.inst.Create(&models.StackInstance{
+			require.NoError(t, env.inst.Create(context.Background(), &models.StackInstance{
 				ID: "src", StackDefinitionID: "d1", Name: "zz-life", Namespace: "stack-zz-life-alice",
 				OwnerID: "uid-1", Branch: "master", Status: models.StackStatusRunning, ClusterID: "cl-1",
 			}))
@@ -453,7 +453,7 @@ func seedRollbackInstance(t *testing.T, env *lifecycleEnv) {
 	t.Helper()
 	seedDefinition(t, env.def, "d1", "def-1", "uid-1")
 	require.NoError(t, env.cc.Create(&models.ChartConfig{ID: "cc1", StackDefinitionID: "d1", ChartName: "web", DefaultValues: "replicas: 1\n"}))
-	require.NoError(t, env.inst.Create(&models.StackInstance{
+	require.NoError(t, env.inst.Create(context.Background(), &models.StackInstance{
 		ID: "i1", StackDefinitionID: "d1", Name: "zz-life", Namespace: "stack-zz-life-alice",
 		OwnerID: "uid-1", Branch: "master", Status: models.StackStatusRunning,
 	}))
@@ -563,10 +563,10 @@ func TestValuesDrift_PreviewAndGet(t *testing.T) {
 			t.Parallel()
 			env := newLifecycleEnv()
 			seedRollbackInstance(t, env)
-			inst, err := env.inst.FindByID("i1")
+			inst, err := env.inst.FindByID(context.Background(), "i1")
 			require.NoError(t, err)
 			inst.LastDeployedValues = tt.running
-			require.NoError(t, env.inst.Update(inst))
+			require.NoError(t, env.inst.Update(context.Background(), inst))
 			seedLog(t, env, models.DeploymentLog{ID: "old", StackInstanceID: "i1", Action: models.DeployActionDeploy, Status: models.DeployLogSuccess, StartedAt: time.Now().Add(-2 * time.Hour)})
 			if tt.latestAction == models.DeployActionStop {
 				// A stop or clean log after the rollback is ignored.
@@ -786,12 +786,12 @@ func TestDeployInstance_RedeployKeepsLaterExpiry(t *testing.T) {
 	t.Parallel()
 	env := newLifecycleEnv()
 	seedRollbackInstance(t, env)
-	inst, err := env.inst.FindByID("i1")
+	inst, err := env.inst.FindByID(context.Background(), "i1")
 	require.NoError(t, err)
 	extended := time.Now().UTC().Add(48 * time.Hour)
 	inst.TTLMinutes = 240
 	inst.ExpiresAt = &extended
-	require.NoError(t, env.inst.Update(inst))
+	require.NoError(t, env.inst.Update(context.Background(), inst))
 
 	mgr := newTestManager(env.inst, env.logs)
 	w := serve(env.router(t, mgr, "uid-1", "alice", "user"), http.MethodPost, "/api/v1/stack-instances/i1/deploy", "")
@@ -804,7 +804,7 @@ func TestDeployInstance_RedeployKeepsLaterExpiry(t *testing.T) {
 	}, 5*time.Second, 10*time.Millisecond)
 	mgr.Shutdown()
 
-	got, err := env.inst.FindByID("i1")
+	got, err := env.inst.FindByID(context.Background(), "i1")
 	require.NoError(t, err)
 	require.NotNil(t, got.ExpiresAt)
 	assert.True(t, got.ExpiresAt.Equal(extended), "a redeploy never makes the expiry earlier")

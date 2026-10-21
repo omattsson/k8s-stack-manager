@@ -152,7 +152,7 @@ func (r *InterruptRecovery) recover(ctx context.Context, now time.Time) int {
 
 // interrupt ends one operation. It reports whether it closed the log.
 func (r *InterruptRecovery) interrupt(ctx context.Context, l models.DeploymentLog, now time.Time) bool {
-	inst, err := r.cfg.Instances.FindByID(l.StackInstanceID)
+	inst, err := r.cfg.Instances.FindByID(ctx, l.StackInstanceID)
 	if err != nil && !errors.Is(err, dberrors.ErrNotFound) {
 		slog.Error("Interrupted operation check: reading the instance failed",
 			"instance_id", l.StackInstanceID, "deploy_log_id", l.ID, "error", err)

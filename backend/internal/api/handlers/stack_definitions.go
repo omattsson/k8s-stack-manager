@@ -411,8 +411,17 @@ func (h *DefinitionHandler) DeleteDefinition(c *gin.Context) {
 	// instead of loading all instances (avoids full-table scan).
 	if h.instanceRepo != nil {
 		for _, status := range []string{models.StackStatusRunning, models.StackStatusDeploying} {
-			exists, err := h.instanceRepo.ExistsByDefinitionAndStatus(id, status)
-			if err == nil && exists {
+			exists, err := h.instanceRepo.ExistsByDefinitionAndStatus(c.Request.Context(), id, status)
+			// A failed check must not let the delete through.
+			if err != nil {
+				if respondCancelled(c, err) {
+					return
+				}
+				slog.Error("Failed to check the instances of the definition", "definition_id", id, "error", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+				return
+			}
+			if exists {
 				c.JSON(http.StatusConflict, gin.H{"error": "Cannot delete definition: running instances exist"})
 				return
 			}
@@ -612,7 +621,8 @@ func (h *DefinitionHandler) ImportDefinition(c *gin.Context) {
 	}
 
 	var createdCharts []models.ChartConfig
-	txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
+	// Detached: a committed import must answer 201, so its audit entry follows (#656).
+	txErr := h.txRunner.RunInTx(context.WithoutCancel(c.Request.Context()), func(repos database.TxRepos) error {
 		if err := repos.StackDefinition.Create(&def); err != nil {
 			return err
 		}

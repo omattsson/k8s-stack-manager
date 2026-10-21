@@ -12,6 +12,7 @@ import (
 	"backend/internal/api/middleware"
 	"backend/internal/deployer"
 	"backend/internal/models"
+	"backend/pkg/dberrors"
 
 	"github.com/gin-gonic/gin"
 )
@@ -39,6 +40,22 @@ type BulkOperationResponse struct {
 	Succeeded int                       `json:"succeeded"`
 	Failed    int                       `json:"failed"`
 	Results   []BulkOperationResultItem `json:"results"`
+}
+
+// bulkLookupFailed is the result error of an instance lookup that failed
+// for another reason than not found or a cancelled request.
+const bulkLookupFailed = "lookup failed"
+
+// bulkLookupError returns the result error of a failed instance lookup.
+func bulkLookupError(err error) string {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "request cancelled"
+	case errors.Is(err, dberrors.ErrNotFound):
+		return "not found"
+	default:
+		return bulkLookupFailed
+	}
 }
 
 // bulkOperationFunc is the signature for a function that operates on a single instance.
@@ -73,10 +90,13 @@ func (h *InstanceHandler) executeBulkOperation(c *gin.Context, opName string, op
 		result := BulkOperationResultItem{InstanceID: id}
 
 		// Fetch instance.
-		inst, err := h.instanceRepo.FindByID(id)
+		inst, err := h.instanceRepo.FindByID(c.Request.Context(), id)
 		if err != nil {
 			result.Status = "error"
-			result.Error = "not found"
+			result.Error = bulkLookupError(err)
+			if result.Error == bulkLookupFailed {
+				slog.Error("bulk "+opName+": instance lookup failed", "instance_id", id, "error", err)
+			}
 			resp.Failed++
 			resp.Results = append(resp.Results, result)
 			continue
@@ -196,9 +216,10 @@ func (h *InstanceHandler) BulkDeploy(c *gin.Context) {
 		// Restart the TTL clock like DeployInstance (never earlier). Without
 		// it, a bulk deploy of an expired instance kept the old expiry and the
 		// TTL reaper stopped the instance right after the deploy.
+		wctx := writeCtx(c)
 		if inst.TTLMinutes > 0 {
 			inst.ExpiresAt = deployExpiry(inst.ExpiresAt, inst.TTLMinutes, h.maxTTL(), time.Now().UTC())
-			_ = h.instanceRepo.Update(inst)
+			_ = h.instanceRepo.Update(wctx, inst)
 		}
 
 		req := deployer.DeployRequest{
@@ -209,7 +230,7 @@ func (h *InstanceHandler) BulkDeploy(c *gin.Context) {
 			UserID:             middleware.GetUserIDFromContext(c),
 		}
 
-		logID, err := h.deployManager.Deploy(hookTriggerCtx(c), req)
+		logID, err := h.deployManager.Deploy(wctx, req)
 		if err != nil {
 			return "", fmt.Errorf("failed to start deployment")
 		}
@@ -265,7 +286,7 @@ func (h *InstanceHandler) BulkStop(c *gin.Context) {
 			})
 		}
 
-		logID, err := h.deployManager.StopWithCharts(hookTriggerCtx(c), inst, chartInfos)
+		logID, err := h.deployManager.StopWithCharts(writeCtx(c), inst, chartInfos)
 		if err != nil {
 			return "", fmt.Errorf("failed to start stop operation")
 		}
@@ -310,7 +331,7 @@ func (h *InstanceHandler) BulkClean(c *gin.Context) {
 			return "", fmt.Errorf("failed to list chart configs")
 		}
 
-		logID, err := h.deployManager.Clean(hookTriggerCtx(c), inst, charts)
+		logID, err := h.deployManager.Clean(writeCtx(c), inst, charts)
 		if errors.Is(err, models.ErrCleanConflict) {
 			return "", errors.New(msgCleanConflict)
 		}

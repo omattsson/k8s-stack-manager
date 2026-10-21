@@ -1000,7 +1000,10 @@ func NewMockStackInstanceRepository() *MockStackInstanceRepository {
 	return &MockStackInstanceRepository{items: make(map[string]*models.StackInstance)}
 }
 
-func (m *MockStackInstanceRepository) Create(i *models.StackInstance) error {
+func (m *MockStackInstanceRepository) Create(ctx context.Context, i *models.StackInstance) error {
+	if err := ctxDone(ctx, "create"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.createErr != nil {
@@ -1013,7 +1016,10 @@ func (m *MockStackInstanceRepository) Create(i *models.StackInstance) error {
 	return nil
 }
 
-func (m *MockStackInstanceRepository) FindByID(id string) (*models.StackInstance, error) {
+func (m *MockStackInstanceRepository) FindByID(ctx context.Context, id string) (*models.StackInstance, error) {
+	if err := ctxDone(ctx, "find_by_id"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.fetchErr != nil {
@@ -1027,7 +1033,10 @@ func (m *MockStackInstanceRepository) FindByID(id string) (*models.StackInstance
 	return &cp, nil
 }
 
-func (m *MockStackInstanceRepository) FindByNamespace(namespace string) (*models.StackInstance, error) {
+func (m *MockStackInstanceRepository) FindByNamespace(ctx context.Context, namespace string) (*models.StackInstance, error) {
+	if err := ctxDone(ctx, "find_by_namespace"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.fetchErr != nil {
@@ -1042,7 +1051,10 @@ func (m *MockStackInstanceRepository) FindByNamespace(namespace string) (*models
 	return nil, dberrors.NewDatabaseError("FindByNamespace", dberrors.ErrNotFound)
 }
 
-func (m *MockStackInstanceRepository) Update(i *models.StackInstance) error {
+func (m *MockStackInstanceRepository) Update(ctx context.Context, i *models.StackInstance) error {
+	if err := ctxDone(ctx, "update"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -1058,7 +1070,10 @@ func (m *MockStackInstanceRepository) Update(i *models.StackInstance) error {
 // MarkCleanStart implements models.CleanStartMarker with the conditional
 // semantics of the GORM repository. It stores a copy, so a caller's pointer
 // is not changed.
-func (m *MockStackInstanceRepository) MarkCleanStart(id string, fromStatuses []string, deleteAfterClean bool) error {
+func (m *MockStackInstanceRepository) MarkCleanStart(ctx context.Context, id string, fromStatuses []string, deleteAfterClean bool) error {
+	if err := ctxDone(ctx, "mark_clean_start"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -1088,7 +1103,10 @@ func (m *MockStackInstanceRepository) MarkCleanStart(id string, fromStatuses []s
 }
 
 // ClearDeleteAfterClean implements models.CleanStartMarker.
-func (m *MockStackInstanceRepository) ClearDeleteAfterClean(id string) error {
+func (m *MockStackInstanceRepository) ClearDeleteAfterClean(ctx context.Context, id string) error {
+	if err := ctxDone(ctx, "clear_delete_after_clean"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if i, ok := m.items[id]; ok {
@@ -1099,7 +1117,10 @@ func (m *MockStackInstanceRepository) ClearDeleteAfterClean(id string) error {
 	return nil
 }
 
-func (m *MockStackInstanceRepository) Delete(id string) error {
+func (m *MockStackInstanceRepository) Delete(ctx context.Context, id string) error {
+	if err := ctxDone(ctx, "delete"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -1112,7 +1133,10 @@ func (m *MockStackInstanceRepository) Delete(id string) error {
 	return nil
 }
 
-func (m *MockStackInstanceRepository) List() ([]models.StackInstance, error) {
+func (m *MockStackInstanceRepository) List(ctx context.Context) ([]models.StackInstance, error) {
+	if err := ctxDone(ctx, "list"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -1125,7 +1149,10 @@ func (m *MockStackInstanceRepository) List() ([]models.StackInstance, error) {
 	return out, nil
 }
 
-func (m *MockStackInstanceRepository) ListByOwner(ownerID string) ([]models.StackInstance, error) {
+func (m *MockStackInstanceRepository) ListByOwner(ctx context.Context, ownerID string) ([]models.StackInstance, error) {
+	if err := ctxDone(ctx, "list_by_owner"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -1140,7 +1167,10 @@ func (m *MockStackInstanceRepository) ListByOwner(ownerID string) ([]models.Stac
 	return out, nil
 }
 
-func (m *MockStackInstanceRepository) FindByName(name string) ([]models.StackInstance, error) {
+func (m *MockStackInstanceRepository) FindByName(ctx context.Context, name string) ([]models.StackInstance, error) {
+	if err := ctxDone(ctx, "find_by_name"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -1155,7 +1185,10 @@ func (m *MockStackInstanceRepository) FindByName(name string) ([]models.StackIns
 	return out, nil
 }
 
-func (m *MockStackInstanceRepository) FindByNameOnCluster(name, clusterID string, includeUnassigned bool) ([]models.StackInstance, error) {
+func (m *MockStackInstanceRepository) FindByNameOnCluster(ctx context.Context, name, clusterID string, includeUnassigned bool) ([]models.StackInstance, error) {
+	if err := ctxDone(ctx, "find_by_name_on_cluster"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -1176,7 +1209,10 @@ func (m *MockStackInstanceRepository) FindByNameOnCluster(name, clusterID string
 	return out, nil
 }
 
-func (m *MockStackInstanceRepository) DuplicateInstanceNames(defaultClusterID string) ([]models.DuplicateInstanceName, error) {
+func (m *MockStackInstanceRepository) DuplicateInstanceNames(ctx context.Context, defaultClusterID string) ([]models.DuplicateInstanceName, error) {
+	if err := ctxDone(ctx, "duplicate_instance_names"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -1199,7 +1235,10 @@ func (m *MockStackInstanceRepository) DuplicateInstanceNames(defaultClusterID st
 	return out, nil
 }
 
-func (m *MockStackInstanceRepository) FindByCluster(clusterID string) ([]models.StackInstance, error) {
+func (m *MockStackInstanceRepository) FindByCluster(ctx context.Context, clusterID string) ([]models.StackInstance, error) {
+	if err := ctxDone(ctx, "find_by_cluster"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -1214,7 +1253,10 @@ func (m *MockStackInstanceRepository) FindByCluster(clusterID string) ([]models.
 	return out, nil
 }
 
-func (m *MockStackInstanceRepository) CountByClusterAndOwner(clusterID, ownerID string) (int, error) {
+func (m *MockStackInstanceRepository) CountByClusterAndOwner(ctx context.Context, clusterID, ownerID string) (int, error) {
+	if err := ctxDone(ctx, "count_by_cluster_and_owner"); err != nil {
+		return 0, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -1229,7 +1271,10 @@ func (m *MockStackInstanceRepository) CountByClusterAndOwner(clusterID, ownerID 
 	return count, nil
 }
 
-func (m *MockStackInstanceRepository) ListPaged(filter models.StackInstanceFilter, limit, offset int) ([]models.StackInstance, int, error) {
+func (m *MockStackInstanceRepository) ListPaged(ctx context.Context, filter models.StackInstanceFilter, limit, offset int) ([]models.StackInstance, int, error) {
+	if err := ctxDone(ctx, "list_paged"); err != nil {
+		return nil, 0, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -1270,7 +1315,10 @@ func instanceMatchesFilter(i *models.StackInstance, f models.StackInstanceFilter
 		(f.OwnerID == "" || i.OwnerID == f.OwnerID)
 }
 
-func (m *MockStackInstanceRepository) CountAll() (int, error) {
+func (m *MockStackInstanceRepository) CountAll(ctx context.Context) (int, error) {
+	if err := ctxDone(ctx, "count_all"); err != nil {
+		return 0, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -1279,7 +1327,10 @@ func (m *MockStackInstanceRepository) CountAll() (int, error) {
 	return len(m.items), nil
 }
 
-func (m *MockStackInstanceRepository) CountByStatus(status string) (int, error) {
+func (m *MockStackInstanceRepository) CountByStatus(ctx context.Context, status string) (int, error) {
+	if err := ctxDone(ctx, "count_by_status"); err != nil {
+		return 0, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -1294,7 +1345,10 @@ func (m *MockStackInstanceRepository) CountByStatus(status string) (int, error) 
 	return count, nil
 }
 
-func (m *MockStackInstanceRepository) CountByStatuses(statuses []string) (int, error) {
+func (m *MockStackInstanceRepository) CountByStatuses(ctx context.Context, statuses []string) (int, error) {
+	if err := ctxDone(ctx, "count_by_statuses"); err != nil {
+		return 0, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -1313,7 +1367,10 @@ func (m *MockStackInstanceRepository) CountByStatuses(statuses []string) (int, e
 	return count, nil
 }
 
-func (m *MockStackInstanceRepository) ExistsByDefinitionAndStatus(definitionID, status string) (bool, error) {
+func (m *MockStackInstanceRepository) ExistsByDefinitionAndStatus(ctx context.Context, definitionID, status string) (bool, error) {
+	if err := ctxDone(ctx, "exists_by_definition_and_status"); err != nil {
+		return false, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -1327,7 +1384,10 @@ func (m *MockStackInstanceRepository) ExistsByDefinitionAndStatus(definitionID, 
 	return false, nil
 }
 
-func (m *MockStackInstanceRepository) ListExpired() ([]*models.StackInstance, error) {
+func (m *MockStackInstanceRepository) ListExpired(ctx context.Context) ([]*models.StackInstance, error) {
+	if err := ctxDone(ctx, "list_expired"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -1344,7 +1404,10 @@ func (m *MockStackInstanceRepository) ListExpired() ([]*models.StackInstance, er
 	return out, nil
 }
 
-func (m *MockStackInstanceRepository) ListExpiringSoon(threshold time.Duration) ([]*models.StackInstance, error) {
+func (m *MockStackInstanceRepository) ListExpiringSoon(ctx context.Context, threshold time.Duration) ([]*models.StackInstance, error) {
+	if err := ctxDone(ctx, "list_expiring_soon"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -1364,7 +1427,10 @@ func (m *MockStackInstanceRepository) ListExpiringSoon(threshold time.Duration) 
 
 // MarkExpiryWarned sets ExpiryWarnedAt when it is nil and ExpiresAt still
 // equals expiresAt, like the conditional update of the GORM repository.
-func (m *MockStackInstanceRepository) MarkExpiryWarned(id string, expiresAt, warnedAt time.Time) (bool, error) {
+func (m *MockStackInstanceRepository) MarkExpiryWarned(ctx context.Context, id string, expiresAt, warnedAt time.Time) (bool, error) {
+	if err := ctxDone(ctx, "mark_expiry_warned"); err != nil {
+		return false, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -1378,7 +1444,10 @@ func (m *MockStackInstanceRepository) MarkExpiryWarned(id string, expiresAt, war
 	return true, nil
 }
 
-func (m *MockStackInstanceRepository) CountByDefinitionIDs(definitionIDs []string) (map[string]int, error) {
+func (m *MockStackInstanceRepository) CountByDefinitionIDs(ctx context.Context, definitionIDs []string) (map[string]int, error) {
+	if err := ctxDone(ctx, "count_by_definition_ids"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -1397,7 +1466,10 @@ func (m *MockStackInstanceRepository) CountByDefinitionIDs(definitionIDs []strin
 	return result, nil
 }
 
-func (m *MockStackInstanceRepository) CountByOwnerIDs(ownerIDs []string) (map[string]int, error) {
+func (m *MockStackInstanceRepository) CountByOwnerIDs(ctx context.Context, ownerIDs []string) (map[string]int, error) {
+	if err := ctxDone(ctx, "count_by_owner_ids"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -1416,7 +1488,10 @@ func (m *MockStackInstanceRepository) CountByOwnerIDs(ownerIDs []string) (map[st
 	return result, nil
 }
 
-func (m *MockStackInstanceRepository) ListIDsByDefinitionIDs(definitionIDs []string) (map[string][]string, error) {
+func (m *MockStackInstanceRepository) ListIDsByDefinitionIDs(ctx context.Context, definitionIDs []string) (map[string][]string, error) {
+	if err := ctxDone(ctx, "list_ids_by_definition_ids"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -1435,7 +1510,10 @@ func (m *MockStackInstanceRepository) ListIDsByDefinitionIDs(definitionIDs []str
 	return result, nil
 }
 
-func (m *MockStackInstanceRepository) ListIDsByOwnerIDs(ownerIDs []string) (map[string][]string, error) {
+func (m *MockStackInstanceRepository) ListIDsByOwnerIDs(ctx context.Context, ownerIDs []string) (map[string][]string, error) {
+	if err := ctxDone(ctx, "list_ids_by_owner_ids"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -1454,7 +1532,10 @@ func (m *MockStackInstanceRepository) ListIDsByOwnerIDs(ownerIDs []string) (map[
 	return result, nil
 }
 
-func (m *MockStackInstanceRepository) ListByStatus(status string, limit int) ([]*models.StackInstance, error) {
+func (m *MockStackInstanceRepository) ListByStatus(ctx context.Context, status string, limit int) ([]*models.StackInstance, error) {
+	if err := ctxDone(ctx, "list_by_status"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {

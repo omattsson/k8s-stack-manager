@@ -23,14 +23,20 @@ func newMockInstanceRepo() *mockInstanceRepo {
 	return &mockInstanceRepo{items: make(map[string]*models.StackInstance)}
 }
 
-func (m *mockInstanceRepo) Create(i *models.StackInstance) error {
+func (m *mockInstanceRepo) Create(ctx context.Context, i *models.StackInstance) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.items[i.ID] = i
 	return nil
 }
 
-func (m *mockInstanceRepo) FindByID(id string) (*models.StackInstance, error) {
+func (m *mockInstanceRepo) FindByID(ctx context.Context, id string) (*models.StackInstance, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	i, ok := m.items[id]
@@ -41,11 +47,14 @@ func (m *mockInstanceRepo) FindByID(id string) (*models.StackInstance, error) {
 	return &cp, nil
 }
 
-func (m *mockInstanceRepo) FindByNamespace(string) (*models.StackInstance, error) {
-	return nil, nil
+func (m *mockInstanceRepo) FindByNamespace(ctx context.Context, _ string) (*models.StackInstance, error) {
+	return nil, ctx.Err()
 }
 
-func (m *mockInstanceRepo) Update(i *models.StackInstance) error {
+func (m *mockInstanceRepo) Update(ctx context.Context, i *models.StackInstance) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -55,40 +64,55 @@ func (m *mockInstanceRepo) Update(i *models.StackInstance) error {
 	return nil
 }
 
-func (m *mockInstanceRepo) Delete(string) error { return nil }
+func (m *mockInstanceRepo) Delete(ctx context.Context, _ string) error { return ctx.Err() }
 
-func (m *mockInstanceRepo) List() ([]models.StackInstance, error) { return nil, nil }
-
-func (m *mockInstanceRepo) ListByOwner(string) ([]models.StackInstance, error) {
-	return nil, nil
+func (m *mockInstanceRepo) List(ctx context.Context) ([]models.StackInstance, error) {
+	return nil, ctx.Err()
 }
 
-func (m *mockInstanceRepo) FindByCluster(string) ([]models.StackInstance, error) {
-	return nil, nil
+func (m *mockInstanceRepo) ListByOwner(ctx context.Context, _ string) ([]models.StackInstance, error) {
+	return nil, ctx.Err()
 }
 
-func (m *mockInstanceRepo) CountByClusterAndOwner(string, string) (int, error) {
-	return 0, nil
+func (m *mockInstanceRepo) FindByCluster(ctx context.Context, _ string) ([]models.StackInstance, error) {
+	return nil, ctx.Err()
 }
 
-func (m *mockInstanceRepo) ListPaged(_ models.StackInstanceFilter, _, _ int) ([]models.StackInstance, int, error) {
-	return nil, 0, nil
-}
-func (m *mockInstanceRepo) CountAll() (int, error)                                  { return 0, nil }
-func (m *mockInstanceRepo) CountByStatus(_ string) (int, error)                     { return 0, nil }
-func (m *mockInstanceRepo) ExistsByDefinitionAndStatus(_, _ string) (bool, error)   { return false, nil }
-func (m *mockInstanceRepo) CountByDefinitionIDs(_ []string) (map[string]int, error) { return nil, nil }
-func (m *mockInstanceRepo) CountByOwnerIDs(_ []string) (map[string]int, error)      { return nil, nil }
-func (m *mockInstanceRepo) ListIDsByDefinitionIDs(_ []string) (map[string][]string, error) {
-	return nil, nil
-}
-func (m *mockInstanceRepo) ListIDsByOwnerIDs(_ []string) (map[string][]string, error) {
-	return nil, nil
+func (m *mockInstanceRepo) CountByClusterAndOwner(ctx context.Context, _ string, _ string) (int, error) {
+	return 0, ctx.Err()
 }
 
-func (m *mockInstanceRepo) FindByName(_ string) ([]models.StackInstance, error) { return nil, nil }
+func (m *mockInstanceRepo) ListPaged(ctx context.Context, _ models.StackInstanceFilter, _, _ int) ([]models.StackInstance, int, error) {
+	return nil, 0, ctx.Err()
+}
+func (m *mockInstanceRepo) CountAll(ctx context.Context) (int, error) { return 0, ctx.Err() }
+func (m *mockInstanceRepo) CountByStatus(ctx context.Context, _ string) (int, error) {
+	return 0, ctx.Err()
+}
+func (m *mockInstanceRepo) ExistsByDefinitionAndStatus(ctx context.Context, _, _ string) (bool, error) {
+	return false, ctx.Err()
+}
+func (m *mockInstanceRepo) CountByDefinitionIDs(ctx context.Context, _ []string) (map[string]int, error) {
+	return nil, ctx.Err()
+}
+func (m *mockInstanceRepo) CountByOwnerIDs(ctx context.Context, _ []string) (map[string]int, error) {
+	return nil, ctx.Err()
+}
+func (m *mockInstanceRepo) ListIDsByDefinitionIDs(ctx context.Context, _ []string) (map[string][]string, error) {
+	return nil, ctx.Err()
+}
+func (m *mockInstanceRepo) ListIDsByOwnerIDs(ctx context.Context, _ []string) (map[string][]string, error) {
+	return nil, ctx.Err()
+}
 
-func (m *mockInstanceRepo) ListExpired() ([]*models.StackInstance, error) {
+func (m *mockInstanceRepo) FindByName(ctx context.Context, _ string) ([]models.StackInstance, error) {
+	return nil, ctx.Err()
+}
+
+func (m *mockInstanceRepo) ListExpired(ctx context.Context) ([]*models.StackInstance, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -105,14 +129,14 @@ func (m *mockInstanceRepo) ListExpired() ([]*models.StackInstance, error) {
 	return out, nil
 }
 
-func (m *mockInstanceRepo) ListExpiringSoon(_ time.Duration) ([]*models.StackInstance, error) {
-	return nil, nil
+func (m *mockInstanceRepo) ListExpiringSoon(ctx context.Context, _ time.Duration) ([]*models.StackInstance, error) {
+	return nil, ctx.Err()
 }
-func (*mockInstanceRepo) MarkExpiryWarned(_ string, _, _ time.Time) (bool, error) {
-	return false, nil
+func (*mockInstanceRepo) MarkExpiryWarned(ctx context.Context, _ string, _, _ time.Time) (bool, error) {
+	return false, ctx.Err()
 }
-func (m *mockInstanceRepo) ListByStatus(_ string, _ int) ([]*models.StackInstance, error) {
-	return nil, nil
+func (m *mockInstanceRepo) ListByStatus(ctx context.Context, _ string, _ int) ([]*models.StackInstance, error) {
+	return nil, ctx.Err()
 }
 
 func (m *mockInstanceRepo) get(id string) *models.StackInstance {
@@ -177,7 +201,7 @@ func TestReaper_ExpiredInstancesGetStopped(t *testing.T) {
 		TTLMinutes: 60,
 		ExpiresAt:  &past,
 	}
-	require.NoError(t, repo.Create(expired))
+	require.NoError(t, repo.Create(context.Background(), expired))
 
 	active := &models.StackInstance{
 		ID:         "active-1",
@@ -186,7 +210,7 @@ func TestReaper_ExpiredInstancesGetStopped(t *testing.T) {
 		TTLMinutes: 60,
 		ExpiresAt:  &future,
 	}
-	require.NoError(t, repo.Create(active))
+	require.NoError(t, repo.Create(context.Background(), active))
 
 	alreadyStopped := &models.StackInstance{
 		ID:         "stopped-1",
@@ -195,7 +219,7 @@ func TestReaper_ExpiredInstancesGetStopped(t *testing.T) {
 		TTLMinutes: 60,
 		ExpiresAt:  &past,
 	}
-	require.NoError(t, repo.Create(alreadyStopped))
+	require.NoError(t, repo.Create(context.Background(), alreadyStopped))
 
 	reaper := NewReaper(repo, auditRepo, hub, nil, 50*time.Millisecond)
 	go reaper.Start()
@@ -235,7 +259,7 @@ func TestReaper_NoExpiredInstances(t *testing.T) {
 		TTLMinutes: 60,
 		ExpiresAt:  &future,
 	}
-	require.NoError(t, repo.Create(inst))
+	require.NoError(t, repo.Create(context.Background(), inst))
 
 	reaper := NewReaper(repo, auditRepo, nil, nil, 50*time.Millisecond)
 	go reaper.Start()
@@ -280,7 +304,7 @@ func TestReaper_NilOptionalDeps(t *testing.T) {
 		TTLMinutes: 60,
 		ExpiresAt:  &past,
 	}
-	require.NoError(t, repo.Create(expired))
+	require.NoError(t, repo.Create(context.Background(), expired))
 
 	reaper := NewReaper(repo, nil, nil, nil, 50*time.Millisecond)
 	go reaper.Start()
@@ -331,7 +355,7 @@ func TestReaper_InitialCheckOnStart(t *testing.T) {
 		TTLMinutes: 60,
 		ExpiresAt:  &past,
 	}
-	require.NoError(t, repo.Create(expired))
+	require.NoError(t, repo.Create(context.Background(), expired))
 
 	// Use a very long interval so only the initial check fires.
 	reaper := NewReaper(repo, auditRepo, hub, nil, 10*time.Minute)
@@ -347,7 +371,9 @@ func TestReaper_InitialCheckOnStart(t *testing.T) {
 	assert.Equal(t, 1, auditRepo.count())
 }
 
-func (*mockInstanceRepo) CountByStatuses(statuses []string) (int, error) { return 0, nil }
+func (*mockInstanceRepo) CountByStatuses(ctx context.Context, statuses []string) (int, error) {
+	return 0, ctx.Err()
+}
 
 // fakeStopper is an InstanceStopper that returns err.
 type fakeStopper struct{ err error }
@@ -408,7 +434,7 @@ func TestReaper_NotifiesStackExpired(t *testing.T) {
 			if tt.fixedStop {
 				ttl = 0
 			}
-			require.NoError(t, repo.Create(&models.StackInstance{
+			require.NoError(t, repo.Create(context.Background(), &models.StackInstance{
 				ID: "exp-1", Name: "exp", OwnerID: "owner-1",
 				Status: models.StackStatusRunning, TTLMinutes: ttl, ExpiresAt: &past,
 			}))
@@ -418,7 +444,7 @@ func TestReaper_NotifiesStackExpired(t *testing.T) {
 			if !tt.noNotifier {
 				reaper.WithNotifier(notifier)
 			}
-			reaper.processExpired()
+			reaper.processExpired(context.Background())
 
 			calls := notifier.getCalls()
 			require.Len(t, calls, tt.wantCalls)

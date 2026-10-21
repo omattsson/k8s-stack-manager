@@ -77,7 +77,7 @@ func (w *Warner) Run(ctx context.Context) {
 
 	slog.Info("TTL warner started", "threshold", w.threshold, "interval", w.interval)
 
-	w.check()
+	w.check(ctx)
 
 	for {
 		select {
@@ -85,15 +85,16 @@ func (w *Warner) Run(ctx context.Context) {
 			slog.Info("TTL warner stopped")
 			return
 		case <-ticker.C:
-			w.check()
+			w.check(ctx)
 		}
 	}
 }
 
-func (w *Warner) check() {
+// check runs one cycle. The queries run with ctx, the context of the worker.
+func (w *Warner) check(ctx context.Context) {
 	// The repository returns only instances without a warning for the
 	// current expiry time.
-	instances, err := w.instanceRepo.ListExpiringSoon(w.threshold)
+	instances, err := w.instanceRepo.ListExpiringSoon(ctx, w.threshold)
 	if err != nil {
 		slog.Error("TTL warner: failed to list expiring instances", "error", err)
 		return
@@ -105,7 +106,7 @@ func (w *Warner) check() {
 		}
 		// Mark first, then notify: the mark succeeds for one warner only,
 		// and it fails when the expiry time changed after the list.
-		marked, markErr := w.instanceRepo.MarkExpiryWarned(inst.ID, *inst.ExpiresAt, time.Now().UTC())
+		marked, markErr := w.instanceRepo.MarkExpiryWarned(ctx, inst.ID, *inst.ExpiresAt, time.Now().UTC())
 		if markErr != nil {
 			slog.Error("TTL warner: failed to mark expiry warning", "instance_id", inst.ID, "error", markErr)
 			continue

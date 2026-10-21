@@ -1,6 +1,8 @@
 package database
 
 import (
+	"context"
+
 	"backend/internal/models"
 
 	"gorm.io/gorm"
@@ -9,10 +11,11 @@ import (
 // TxRunner executes a function within a database transaction.
 // All repositories in the callback share the same *gorm.DB transaction.
 type TxRunner interface {
-	// RunInTx executes fn within a transaction. If fn returns an error, the
-	// transaction is rolled back. The TxRepos provides transactional repository
-	// instances that share the same underlying connection.
-	RunInTx(fn func(repos TxRepos) error) error
+	// RunInTx executes fn within a transaction that runs with ctx. If fn
+	// returns an error, the transaction is rolled back. The TxRepos provides
+	// transactional repository instances that share the same underlying
+	// connection.
+	RunInTx(ctx context.Context, fn func(repos TxRepos) error) error
 }
 
 // TxRepos provides access to repository instances that share a transaction.
@@ -53,8 +56,10 @@ func NewGORMTxRunner(db *gorm.DB) *GORMTxRunner {
 // RunInTx executes fn within a GORM transaction. All repositories in the
 // TxRepos share the same transactional *gorm.DB, so updates are atomic.
 // If fn returns an error, the transaction is rolled back automatically.
-func (r *GORMTxRunner) RunInTx(fn func(repos TxRepos) error) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
+// The statements run with ctx, also those of repositories without a ctx
+// parameter. When ctx ends, the error matches the context error.
+func (r *GORMTxRunner) RunInTx(ctx context.Context, fn func(repos TxRepos) error) error {
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		repos := TxRepos{
 			StackDefinition: NewGORMStackDefinitionRepository(tx),
 			ChartConfig:     NewGORMChartConfigRepository(tx),
@@ -72,4 +77,5 @@ func (r *GORMTxRunner) RunInTx(fn func(repos TxRepos) error) error {
 		}
 		return fn(repos)
 	})
+	return withContextErr(ctx, "transaction", err)
 }

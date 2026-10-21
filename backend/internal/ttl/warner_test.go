@@ -82,7 +82,10 @@ func (m *warnerMockInstanceRepo) setExpiringSoon(items []*models.StackInstance) 
 	m.expiringSoonItems = items
 }
 
-func (m *warnerMockInstanceRepo) ListExpiringSoon(_ time.Duration) ([]*models.StackInstance, error) {
+func (m *warnerMockInstanceRepo) ListExpiringSoon(ctx context.Context, _ time.Duration) ([]*models.StackInstance, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.listCalls++
@@ -96,7 +99,10 @@ func (m *warnerMockInstanceRepo) ListExpiringSoon(_ time.Duration) ([]*models.St
 	return out, nil
 }
 
-func (m *warnerMockInstanceRepo) MarkExpiryWarned(id string, expiresAt, warnedAt time.Time) (bool, error) {
+func (m *warnerMockInstanceRepo) MarkExpiryWarned(ctx context.Context, id string, expiresAt, warnedAt time.Time) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.markCalls++
@@ -118,51 +124,61 @@ func (m *warnerMockInstanceRepo) MarkExpiryWarned(id string, expiresAt, warnedAt
 
 // --- no-op stubs for the rest of the interface ---
 
-func (m *warnerMockInstanceRepo) Create(_ *models.StackInstance) error { return nil }
-func (m *warnerMockInstanceRepo) FindByID(_ string) (*models.StackInstance, error) {
-	return nil, nil
+func (m *warnerMockInstanceRepo) Create(ctx context.Context, _ *models.StackInstance) error {
+	return ctx.Err()
 }
-func (m *warnerMockInstanceRepo) FindByNamespace(_ string) (*models.StackInstance, error) {
-	return nil, nil
+func (m *warnerMockInstanceRepo) FindByID(ctx context.Context, _ string) (*models.StackInstance, error) {
+	return nil, ctx.Err()
 }
-func (m *warnerMockInstanceRepo) Update(_ *models.StackInstance) error { return nil }
-func (m *warnerMockInstanceRepo) Delete(_ string) error                { return nil }
-func (m *warnerMockInstanceRepo) List() ([]models.StackInstance, error) {
-	return nil, nil
+func (m *warnerMockInstanceRepo) FindByNamespace(ctx context.Context, _ string) (*models.StackInstance, error) {
+	return nil, ctx.Err()
 }
-func (m *warnerMockInstanceRepo) ListPaged(_ models.StackInstanceFilter, _, _ int) ([]models.StackInstance, int, error) {
-	return nil, 0, nil
+func (m *warnerMockInstanceRepo) Update(ctx context.Context, _ *models.StackInstance) error {
+	return ctx.Err()
 }
-func (m *warnerMockInstanceRepo) ListByOwner(_ string) ([]models.StackInstance, error) {
-	return nil, nil
+func (m *warnerMockInstanceRepo) Delete(ctx context.Context, _ string) error { return ctx.Err() }
+func (m *warnerMockInstanceRepo) List(ctx context.Context) ([]models.StackInstance, error) {
+	return nil, ctx.Err()
 }
-func (m *warnerMockInstanceRepo) FindByName(_ string) ([]models.StackInstance, error) {
-	return nil, nil
+func (m *warnerMockInstanceRepo) ListPaged(ctx context.Context, _ models.StackInstanceFilter, _, _ int) ([]models.StackInstance, int, error) {
+	return nil, 0, ctx.Err()
 }
-func (m *warnerMockInstanceRepo) FindByCluster(_ string) ([]models.StackInstance, error) {
-	return nil, nil
+func (m *warnerMockInstanceRepo) ListByOwner(ctx context.Context, _ string) ([]models.StackInstance, error) {
+	return nil, ctx.Err()
 }
-func (m *warnerMockInstanceRepo) CountByClusterAndOwner(_, _ string) (int, error) { return 0, nil }
-func (m *warnerMockInstanceRepo) CountAll() (int, error)                          { return 0, nil }
-func (m *warnerMockInstanceRepo) CountByStatus(_ string) (int, error)             { return 0, nil }
-func (m *warnerMockInstanceRepo) CountByDefinitionIDs(_ []string) (map[string]int, error) {
-	return nil, nil
+func (m *warnerMockInstanceRepo) FindByName(ctx context.Context, _ string) ([]models.StackInstance, error) {
+	return nil, ctx.Err()
 }
-func (m *warnerMockInstanceRepo) CountByOwnerIDs(_ []string) (map[string]int, error) {
-	return nil, nil
+func (m *warnerMockInstanceRepo) FindByCluster(ctx context.Context, _ string) ([]models.StackInstance, error) {
+	return nil, ctx.Err()
 }
-func (m *warnerMockInstanceRepo) ListIDsByDefinitionIDs(_ []string) (map[string][]string, error) {
-	return nil, nil
+func (m *warnerMockInstanceRepo) CountByClusterAndOwner(ctx context.Context, _, _ string) (int, error) {
+	return 0, ctx.Err()
 }
-func (m *warnerMockInstanceRepo) ListIDsByOwnerIDs(_ []string) (map[string][]string, error) {
-	return nil, nil
+func (m *warnerMockInstanceRepo) CountAll(ctx context.Context) (int, error) { return 0, ctx.Err() }
+func (m *warnerMockInstanceRepo) CountByStatus(ctx context.Context, _ string) (int, error) {
+	return 0, ctx.Err()
 }
-func (m *warnerMockInstanceRepo) ExistsByDefinitionAndStatus(_, _ string) (bool, error) {
-	return false, nil
+func (m *warnerMockInstanceRepo) CountByDefinitionIDs(ctx context.Context, _ []string) (map[string]int, error) {
+	return nil, ctx.Err()
 }
-func (m *warnerMockInstanceRepo) ListExpired() ([]*models.StackInstance, error) { return nil, nil }
-func (m *warnerMockInstanceRepo) ListByStatus(_ string, _ int) ([]*models.StackInstance, error) {
-	return nil, nil
+func (m *warnerMockInstanceRepo) CountByOwnerIDs(ctx context.Context, _ []string) (map[string]int, error) {
+	return nil, ctx.Err()
+}
+func (m *warnerMockInstanceRepo) ListIDsByDefinitionIDs(ctx context.Context, _ []string) (map[string][]string, error) {
+	return nil, ctx.Err()
+}
+func (m *warnerMockInstanceRepo) ListIDsByOwnerIDs(ctx context.Context, _ []string) (map[string][]string, error) {
+	return nil, ctx.Err()
+}
+func (m *warnerMockInstanceRepo) ExistsByDefinitionAndStatus(ctx context.Context, _, _ string) (bool, error) {
+	return false, ctx.Err()
+}
+func (m *warnerMockInstanceRepo) ListExpired(ctx context.Context) ([]*models.StackInstance, error) {
+	return nil, ctx.Err()
+}
+func (m *warnerMockInstanceRepo) ListByStatus(ctx context.Context, _ string, _ int) ([]*models.StackInstance, error) {
+	return nil, ctx.Err()
 }
 
 // ---------------------------------------------------------------------------
@@ -187,7 +203,7 @@ func TestWarner_SendsWarningForExpiringSoon(t *testing.T) {
 	notifier := &mockExpiryNotifier{}
 
 	w := NewWarner(repo, notifier, 30*time.Minute, 60*time.Second)
-	w.check()
+	w.check(context.Background())
 
 	calls := notifier.getCalls()
 	require.Len(t, calls, 1)
@@ -216,8 +232,8 @@ func TestWarner_DeduplicatesWarnings(t *testing.T) {
 	notifier := &mockExpiryNotifier{}
 
 	w := NewWarner(repo, notifier, 30*time.Minute, 60*time.Second)
-	w.check()
-	w.check()
+	w.check(context.Background())
+	w.check(context.Background())
 
 	assert.Equal(t, 1, notifier.count(), "notifier should have been called only once; second check should deduplicate")
 }
@@ -243,7 +259,7 @@ func TestWarner_TwoWarnersOneDatabaseSendOneWarning(t *testing.T) {
 		wg.Add(1)
 		go func(w *Warner) {
 			defer wg.Done()
-			w.check()
+			w.check(context.Background())
 		}(w)
 	}
 	wg.Wait()
@@ -268,7 +284,7 @@ func TestWarner_MarkErrorSendsNoWarning(t *testing.T) {
 	}
 	notifier := &mockExpiryNotifier{}
 
-	NewWarner(repo, notifier, 30*time.Minute, time.Minute).check()
+	NewWarner(repo, notifier, 30*time.Minute, time.Minute).check(context.Background())
 
 	assert.Equal(t, 0, notifier.count())
 	assert.Equal(t, 1, repo.markCalls)
@@ -329,7 +345,7 @@ func TestWarner_TTLExtensionResetsWarning(t *testing.T) {
 	w := NewWarner(repo, notifier, 30*time.Minute, 60*time.Second)
 
 	// First check: warns for expiresT1.
-	w.check()
+	w.check(context.Background())
 	require.Equal(t, 1, notifier.count())
 
 	// Simulate TTL extension: same instance, new ExpiresAt.
@@ -344,7 +360,7 @@ func TestWarner_TTLExtensionResetsWarning(t *testing.T) {
 	repo.setExpiringSoon([]*models.StackInstance{extendedInst})
 
 	// Second check: new ExpiresAt means a different key, so should warn again.
-	w.check()
+	w.check(context.Background())
 	assert.Equal(t, 2, notifier.count(), "TTL extension should trigger a new warning")
 }
 
@@ -360,4 +376,6 @@ func TestWarner_DefaultThresholdAndInterval(t *testing.T) {
 	assert.Equal(t, 60*time.Second, w.interval, "default interval should be 60s")
 }
 
-func (*warnerMockInstanceRepo) CountByStatuses(statuses []string) (int, error) { return 0, nil }
+func (*warnerMockInstanceRepo) CountByStatuses(ctx context.Context, statuses []string) (int, error) {
+	return 0, ctx.Err()
+}

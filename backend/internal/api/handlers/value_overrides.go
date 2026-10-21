@@ -30,7 +30,7 @@ func (h *InstanceHandler) GetOverrides(c *gin.Context) {
 	instanceID := c.Param("id")
 
 	// Verify instance exists.
-	inst, err := h.instanceRepo.FindByID(instanceID)
+	inst, err := h.instanceRepo.FindByID(c.Request.Context(), instanceID)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
@@ -76,7 +76,7 @@ func (h *InstanceHandler) SetOverride(c *gin.Context) {
 	chartID := c.Param("chartId")
 
 	// Verify instance exists.
-	inst, err := h.instanceRepo.FindByID(instanceID)
+	inst, err := h.instanceRepo.FindByID(c.Request.Context(), instanceID)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
@@ -226,7 +226,7 @@ func (h *InstanceHandler) GetOverride(c *gin.Context) {
 	instanceID := c.Param("id")
 	chartID := c.Param("chartId")
 
-	inst, err := h.instanceRepo.FindByID(instanceID)
+	inst, err := h.instanceRepo.FindByID(c.Request.Context(), instanceID)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
@@ -278,7 +278,7 @@ func (h *InstanceHandler) DeleteOverride(c *gin.Context) {
 	instanceID := c.Param("id")
 	chartID := c.Param("chartId")
 
-	inst, err := h.instanceRepo.FindByID(instanceID)
+	inst, err := h.instanceRepo.FindByID(c.Request.Context(), instanceID)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})

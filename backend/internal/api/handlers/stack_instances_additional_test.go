@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -214,7 +215,7 @@ func TestUpdateInstance_TTLUpdate(t *testing.T) {
 			CreatedAt:         time.Now().UTC(),
 			UpdatedAt:         time.Now().UTC(),
 		}
-		require.NoError(t, instRepo.Create(inst))
+		require.NoError(t, instRepo.Create(context.Background(), inst))
 
 		router := setupInstanceRouterFull(t,
 			instRepo, NewMockValueOverrideRepository(), nil,
@@ -818,7 +819,7 @@ func TestExtendTTL_Forbidden(t *testing.T) {
 		Status:            models.StackStatusRunning,
 		TTLMinutes:        60,
 	}
-	require.NoError(t, instRepo.Create(inst))
+	require.NoError(t, instRepo.Create(context.Background(), inst))
 
 	router := setupInstanceRouterFull(t,
 		instRepo, NewMockValueOverrideRepository(), nil,
@@ -851,7 +852,7 @@ func TestExtendTTL_InvalidJSON(t *testing.T) {
 		TTLMinutes:        60,
 		ExpiresAt:         &past,
 	}
-	require.NoError(t, instRepo.Create(inst))
+	require.NoError(t, instRepo.Create(context.Background(), inst))
 
 	router := setupInstanceRouterFull(t,
 		instRepo, NewMockValueOverrideRepository(), nil,
@@ -900,7 +901,7 @@ func TestDeployInstance_Additional(t *testing.T) {
 			CreatedAt:         time.Now().UTC(),
 			UpdatedAt:         time.Now().UTC(),
 		}
-		require.NoError(t, instRepo.Create(inst))
+		require.NoError(t, instRepo.Create(context.Background(), inst))
 
 		mgr := newTestManager(instRepo, logRepo)
 
@@ -918,7 +919,7 @@ func TestDeployInstance_Additional(t *testing.T) {
 		assert.Equal(t, http.StatusAccepted, w.Code)
 
 		// Check that ExpiresAt was reset to the future.
-		updated, err := instRepo.FindByID("i-ttl")
+		updated, err := instRepo.FindByID(context.Background(), "i-ttl")
 		require.NoError(t, err)
 		assert.NotNil(t, updated.ExpiresAt)
 		assert.True(t, updated.ExpiresAt.After(time.Now().Add(50*time.Minute)))
@@ -962,7 +963,7 @@ func TestDeployInstance_Additional(t *testing.T) {
 			CreatedAt:         time.Now().UTC(),
 			UpdatedAt:         time.Now().UTC(),
 		}
-		require.NoError(t, instRepo.Create(inst))
+		require.NoError(t, instRepo.Create(context.Background(), inst))
 
 		mgr := newTestManager(instRepo, logRepo)
 
@@ -1002,7 +1003,7 @@ func TestDeployInstance_Additional(t *testing.T) {
 			CreatedAt:         time.Now().UTC(),
 			UpdatedAt:         time.Now().UTC(),
 		}
-		require.NoError(t, instRepo.Create(inst))
+		require.NoError(t, instRepo.Create(context.Background(), inst))
 
 		mgr := newTestManager(instRepo, logRepo)
 
@@ -1459,7 +1460,7 @@ func TestGetInstanceStatus_Additional(t *testing.T) {
 			CreatedAt:         time.Now().UTC(),
 			UpdatedAt:         time.Now().UTC(),
 		}
-		require.NoError(t, instRepo.Create(inst))
+		require.NoError(t, instRepo.Create(context.Background(), inst))
 
 		cs := fake.NewSimpleClientset(&corev1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{Name: "stack-stack-a-owner"},

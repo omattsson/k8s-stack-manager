@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -181,7 +182,7 @@ func TestCreateInstance_PreHookDenialReturns403(t *testing.T) {
 	// Only pre-create was attempted; the create never reached the post hook.
 	assert.Equal(t, []string{hooks.EventPreInstanceCreate}, rec.names())
 	// And nothing was persisted.
-	all, err := instRepo.List()
+	all, err := instRepo.List(context.Background())
 	require.NoError(t, err)
 	assert.Empty(t, all)
 }
@@ -335,7 +336,7 @@ func TestDeleteInstance_PreHookDenialReturns403(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, w.Code)
 	assert.Contains(t, w.Body.String(), "pre-instance-delete hook rejected the request")
 	// Instance must still exist.
-	stored, err := instRepo.FindByID("i-1")
+	stored, err := instRepo.FindByID(context.Background(), "i-1")
 	require.NoError(t, err)
 	assert.Equal(t, "i-1", stored.ID)
 	// Post-delete must not have fired.
@@ -445,7 +446,7 @@ func TestBulkDelete_FiresDeleteHooks(t *testing.T) {
 			} else {
 				assert.Equal(t, tt.expectEvents, rec.names())
 			}
-			_, findErr := instRepo.FindByID("i-1")
+			_, findErr := instRepo.FindByID(context.Background(), "i-1")
 			assert.Equal(t, tt.expectExists, findErr == nil)
 			rec.mu.Lock()
 			defer rec.mu.Unlock()

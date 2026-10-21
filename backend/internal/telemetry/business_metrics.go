@@ -89,15 +89,15 @@ func StartBusinessMetrics(
 		// skip only its own gauge instead of suppressing the others.
 
 		// Instances.
-		if total, instErr := instanceRepo.CountAll(); instErr != nil {
-			slog.Warn("business metrics: failed to count instances", "error", instErr)
+		if total, instErr := instanceRepo.CountAll(ctx); instErr != nil {
+			slog.WarnContext(ctx, "business metrics: failed to count instances", "error", instErr)
 		} else {
 			o.ObserveInt64(businessMetrics.instancesTotal, int64(total))
 		}
 		// Count all active statuses in one query so an instance changing status
 		// mid-scrape cannot be double-counted or missed.
-		if active, activeErr := instanceRepo.CountByStatuses(activeInstanceStatuses); activeErr != nil {
-			slog.Warn("business metrics: failed to count active instances", "error", activeErr)
+		if active, activeErr := instanceRepo.CountByStatuses(ctx, activeInstanceStatuses); activeErr != nil {
+			slog.WarnContext(ctx, "business metrics: failed to count active instances", "error", activeErr)
 		} else {
 			o.ObserveInt64(businessMetrics.instancesActive, int64(active))
 		}

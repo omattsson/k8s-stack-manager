@@ -83,8 +83,13 @@ type mockInstanceRepo struct {
 	instances []models.StackInstance
 }
 
-func (r *mockInstanceRepo) Create(inst *models.StackInstance) error { return nil }
-func (r *mockInstanceRepo) FindByID(id string) (*models.StackInstance, error) {
+func (r *mockInstanceRepo) Create(ctx context.Context, inst *models.StackInstance) error {
+	return ctx.Err()
+}
+func (r *mockInstanceRepo) FindByID(ctx context.Context, id string) (*models.StackInstance, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	for i := range r.instances {
 		if r.instances[i].ID == id {
 			return &r.instances[i], nil
@@ -92,18 +97,26 @@ func (r *mockInstanceRepo) FindByID(id string) (*models.StackInstance, error) {
 	}
 	return nil, errors.New("not found")
 }
-func (r *mockInstanceRepo) FindByNamespace(ns string) (*models.StackInstance, error) {
+func (r *mockInstanceRepo) FindByNamespace(ctx context.Context, ns string) (*models.StackInstance, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return nil, errors.New("not found")
 }
-func (r *mockInstanceRepo) Update(inst *models.StackInstance) error { return nil }
-func (r *mockInstanceRepo) Delete(id string) error                  { return nil }
-func (r *mockInstanceRepo) List() ([]models.StackInstance, error) {
-	return r.instances, nil
+func (r *mockInstanceRepo) Update(ctx context.Context, inst *models.StackInstance) error {
+	return ctx.Err()
 }
-func (r *mockInstanceRepo) ListByOwner(ownerID string) ([]models.StackInstance, error) {
-	return nil, nil
+func (r *mockInstanceRepo) Delete(ctx context.Context, id string) error { return ctx.Err() }
+func (r *mockInstanceRepo) List(ctx context.Context) ([]models.StackInstance, error) {
+	return r.instances, ctx.Err()
 }
-func (r *mockInstanceRepo) FindByCluster(clusterID string) ([]models.StackInstance, error) {
+func (r *mockInstanceRepo) ListByOwner(ctx context.Context, ownerID string) ([]models.StackInstance, error) {
+	return nil, ctx.Err()
+}
+func (r *mockInstanceRepo) FindByCluster(ctx context.Context, clusterID string) ([]models.StackInstance, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	var result []models.StackInstance
 	for _, inst := range r.instances {
 		if inst.ClusterID == clusterID {
@@ -112,33 +125,45 @@ func (r *mockInstanceRepo) FindByCluster(clusterID string) ([]models.StackInstan
 	}
 	return result, nil
 }
-func (r *mockInstanceRepo) CountByClusterAndOwner(string, string) (int, error) { return 0, nil }
-func (r *mockInstanceRepo) ListPaged(_ models.StackInstanceFilter, _, _ int) ([]models.StackInstance, int, error) {
-	return nil, 0, nil
+func (r *mockInstanceRepo) CountByClusterAndOwner(ctx context.Context, _ string, _ string) (int, error) {
+	return 0, ctx.Err()
 }
-func (r *mockInstanceRepo) CountAll() (int, error)            { return 0, nil }
-func (r *mockInstanceRepo) CountByStatus(string) (int, error) { return 0, nil }
-func (r *mockInstanceRepo) ExistsByDefinitionAndStatus(string, string) (bool, error) {
-	return false, nil
+func (r *mockInstanceRepo) ListPaged(ctx context.Context, _ models.StackInstanceFilter, _, _ int) ([]models.StackInstance, int, error) {
+	return nil, 0, ctx.Err()
 }
-func (r *mockInstanceRepo) ListExpired() ([]*models.StackInstance, error) { return nil, nil }
-func (r *mockInstanceRepo) ListExpiringSoon(_ time.Duration) ([]*models.StackInstance, error) {
-	return nil, nil
+func (r *mockInstanceRepo) CountAll(ctx context.Context) (int, error) { return 0, ctx.Err() }
+func (r *mockInstanceRepo) CountByStatus(ctx context.Context, _ string) (int, error) {
+	return 0, ctx.Err()
 }
-func (*mockInstanceRepo) MarkExpiryWarned(_ string, _, _ time.Time) (bool, error) {
-	return false, nil
+func (r *mockInstanceRepo) ExistsByDefinitionAndStatus(ctx context.Context, _ string, _ string) (bool, error) {
+	return false, ctx.Err()
 }
-func (r *mockInstanceRepo) CountByDefinitionIDs(_ []string) (map[string]int, error) { return nil, nil }
-func (r *mockInstanceRepo) CountByOwnerIDs(_ []string) (map[string]int, error)      { return nil, nil }
-func (r *mockInstanceRepo) ListIDsByDefinitionIDs(_ []string) (map[string][]string, error) {
-	return nil, nil
+func (r *mockInstanceRepo) ListExpired(ctx context.Context) ([]*models.StackInstance, error) {
+	return nil, ctx.Err()
 }
-func (r *mockInstanceRepo) ListIDsByOwnerIDs(_ []string) (map[string][]string, error) {
-	return nil, nil
+func (r *mockInstanceRepo) ListExpiringSoon(ctx context.Context, _ time.Duration) ([]*models.StackInstance, error) {
+	return nil, ctx.Err()
 }
-func (r *mockInstanceRepo) FindByName(_ string) ([]models.StackInstance, error) { return nil, nil }
-func (r *mockInstanceRepo) ListByStatus(_ string, _ int) ([]*models.StackInstance, error) {
-	return nil, nil
+func (*mockInstanceRepo) MarkExpiryWarned(ctx context.Context, _ string, _, _ time.Time) (bool, error) {
+	return false, ctx.Err()
+}
+func (r *mockInstanceRepo) CountByDefinitionIDs(ctx context.Context, _ []string) (map[string]int, error) {
+	return nil, ctx.Err()
+}
+func (r *mockInstanceRepo) CountByOwnerIDs(ctx context.Context, _ []string) (map[string]int, error) {
+	return nil, ctx.Err()
+}
+func (r *mockInstanceRepo) ListIDsByDefinitionIDs(ctx context.Context, _ []string) (map[string][]string, error) {
+	return nil, ctx.Err()
+}
+func (r *mockInstanceRepo) ListIDsByOwnerIDs(ctx context.Context, _ []string) (map[string][]string, error) {
+	return nil, ctx.Err()
+}
+func (r *mockInstanceRepo) FindByName(ctx context.Context, _ string) ([]models.StackInstance, error) {
+	return nil, ctx.Err()
+}
+func (r *mockInstanceRepo) ListByStatus(ctx context.Context, _ string, _ int) ([]*models.StackInstance, error) {
+	return nil, ctx.Err()
 }
 
 // mockAuditRepo is a minimal in-memory mock for AuditLogRepository.
@@ -506,4 +531,6 @@ func TestRunPolicyNotFound(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func (*mockInstanceRepo) CountByStatuses(statuses []string) (int, error) { return 0, nil }
+func (*mockInstanceRepo) CountByStatuses(ctx context.Context, statuses []string) (int, error) {
+	return 0, ctx.Err()
+}

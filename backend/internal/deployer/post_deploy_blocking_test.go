@@ -8,9 +8,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"backend/internal/database"
 	"backend/internal/hooks"
 	"backend/internal/models"
 
@@ -191,7 +193,7 @@ func TestManager_Deploy_BlockingPostDeploy(t *testing.T) {
 			var obs observed
 			srv.handlers["restore"] = func(w http.ResponseWriter, r *http.Request, env hooks.EventEnvelope) {
 				if env.Event == hooks.EventPostDeploy {
-					cur, err := instanceRepo.FindByID(inst.ID)
+					cur, err := instanceRepo.FindByID(context.Background(), inst.ID)
 					require.NoError(t, err)
 					obsMu.Lock()
 					obs = observed{
@@ -244,7 +246,7 @@ func TestManager_Deploy_BlockingPostDeploy(t *testing.T) {
 			assert.True(t, obs.markerFuture, "the watcher marker is set during the wait")
 			obsMu.Unlock()
 
-			stored, err := instanceRepo.FindByID(inst.ID)
+			stored, err := instanceRepo.FindByID(context.Background(), inst.ID)
 			require.NoError(t, err)
 			assert.Equal(t, tt.expectStatus, stored.Status)
 			assert.Equal(t, tt.expectErrorMessage, stored.ErrorMessage)
@@ -307,10 +309,10 @@ func TestManager_Deploy_BlockingPostDeployCancelledByStop(t *testing.T) {
 	cancelled := make(chan struct{})
 	srv.handlers["restore"] = func(_ http.ResponseWriter, r *http.Request, _ hooks.EventEnvelope) {
 		// A stop starts while the subscriber works.
-		cur, err := instanceRepo.FindByID(inst.ID)
+		cur, err := instanceRepo.FindByID(context.Background(), inst.ID)
 		require.NoError(t, err)
 		cur.Status = models.StackStatusStopping
-		require.NoError(t, instanceRepo.Update(cur))
+		require.NoError(t, instanceRepo.Update(context.Background(), cur))
 		select {
 		case <-r.Context().Done():
 			close(cancelled)
@@ -346,7 +348,7 @@ func TestManager_Deploy_BlockingPostDeployCancelledByStop(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the stop must cancel the wait for the blocking subscriber")
 	}
-	stored, err := instanceRepo.FindByID(inst.ID)
+	stored, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	require.NoError(t, err)
 	assert.Equal(t, models.StackStatusStopping, stored.Status, "the status of the stop stays")
 	assert.Equal(t, models.DeployLogError, deployLog.Status)
@@ -367,7 +369,7 @@ func TestManager_Deploy_NonBlockingPostDeployUnchanged(t *testing.T) {
 	var mu sync.Mutex
 	srv.handlers["notify"] = func(w http.ResponseWriter, _ *http.Request, env hooks.EventEnvelope) {
 		if env.Event == hooks.EventPostDeploy {
-			cur, _ := instanceRepo.FindByID(inst.ID)
+			cur, _ := instanceRepo.FindByID(context.Background(), inst.ID)
 			mu.Lock()
 			statusAtPostDeploy = cur.Status
 			mu.Unlock()
@@ -424,7 +426,7 @@ func TestManager_HookTriggers(t *testing.T) {
 			logRepo := newMockDeployLogRepo()
 			inst := seedInstance(t, instanceRepo, "inst-trigger", "trigger", "owner-1")
 			inst.Status = models.StackStatusRunning
-			require.NoError(t, instanceRepo.Update(inst))
+			require.NoError(t, instanceRepo.Update(context.Background(), inst))
 			mgr := NewManager(ManagerConfig{
 				Registry:      &mockClusterResolver{helm: &mockHelmExecutor{}},
 				InstanceRepo:  instanceRepo,
@@ -481,7 +483,7 @@ func TestCleanupExecutor_DeleteInstance_FiresDeleteEvents(t *testing.T) {
 				notif := &mockNotifier{followers: []string{"f1", "f2"}}
 				inst := seedInstance(t, instanceRepo, "inst-del", "del-demo", "owner-9")
 				inst.Status = status
-				require.NoError(t, instanceRepo.Update(inst))
+				require.NoError(t, instanceRepo.Update(context.Background(), inst))
 				defRepo := newMockDefinitionRepo()
 				require.NoError(t, defRepo.Create(&models.StackDefinition{ID: "def-1", Name: "def"}))
 				ccRepo := newMockChartConfigRepo()
@@ -500,7 +502,7 @@ func TestCleanupExecutor_DeleteInstance_FiresDeleteEvents(t *testing.T) {
 				require.NoError(t, exec.DeleteInstance(tt.ctx, inst))
 
 				require.Eventually(t, func() bool {
-					_, err := instanceRepo.FindByID(inst.ID)
+					_, err := instanceRepo.FindByID(context.Background(), inst.ID)
 					return err != nil && len(srv.snapshot()) == 2 && len(notif.getCalls()) == 1
 				}, 5*time.Second, 10*time.Millisecond, "the instance is deleted and the events are sent")
 				assert.Equal(t, []string{"rec:post-instance-delete", "rec:delete-completed"}, srv.callNames())
@@ -555,7 +557,7 @@ func TestCleanupExecutor_DeleteInstance_PreDeleteHookStopsDelete(t *testing.T) {
 	notif := &mockNotifier{}
 	inst := seedInstance(t, instanceRepo, "inst-pinned", "pinned", "owner-1")
 	inst.Status = models.StackStatusStopped
-	require.NoError(t, instanceRepo.Update(inst))
+	require.NoError(t, instanceRepo.Update(context.Background(), inst))
 	mgr := NewManager(ManagerConfig{
 		InstanceRepo: instanceRepo,
 		Notifier:     notif,
@@ -571,7 +573,7 @@ func TestCleanupExecutor_DeleteInstance_PreDeleteHookStopsDelete(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, `pre-instance-delete hook "gate" denied the delete: stack is pinned`, err.Error())
 	assert.NotContains(t, err.Error(), srv.server.URL)
-	_, findErr := instanceRepo.FindByID(inst.ID)
+	_, findErr := instanceRepo.FindByID(context.Background(), inst.ID)
 	assert.NoError(t, findErr, "the instance stays")
 	assert.Equal(t, []string{"gate:pre-instance-delete"}, srv.callNames())
 	assert.Equal(t, "cleanup-policy", srv.snapshot()[0].envelope.Trigger.Type)
@@ -600,7 +602,7 @@ func TestManager_DeleteAfterClean_FiresDeleteEvents(t *testing.T) {
 	})
 	inst := seedInstance(t, instanceRepo, "inst-del-clean", "del-clean", "owner-1")
 	inst.Status = models.StackStatusRunning
-	require.NoError(t, instanceRepo.Update(inst))
+	require.NoError(t, instanceRepo.Update(context.Background(), inst))
 	ctx := hooks.WithTrigger(context.Background(), hooks.Trigger{Type: hooks.TriggerUser, ID: "u1", Name: "alice"})
 	_, err := mgr.CleanForDelete(ctx, inst, []models.ChartConfig{{ChartName: "app"}})
 	require.NoError(t, err)
@@ -631,7 +633,7 @@ func TestManager_CleanWithoutDelete_HasNoDeleteMark(t *testing.T) {
 	})
 	inst := seedInstance(t, instanceRepo, "inst-clean-only", "clean-only", "owner-1")
 	inst.Status = models.StackStatusRunning
-	require.NoError(t, instanceRepo.Update(inst))
+	require.NoError(t, instanceRepo.Update(context.Background(), inst))
 
 	_, err := mgr.Clean(context.Background(), inst, []models.ChartConfig{{ChartName: "app"}})
 	require.NoError(t, err)
@@ -694,7 +696,7 @@ func TestManager_BlockingPostDeploy_TransientDBErrorKeepsWaiting(t *testing.T) {
 
 	assert.Equal(t, models.DeployLogSuccess, deployLog.Status)
 	assert.NotContains(t, deployLog.Output, "deploy cancelled")
-	stored, err := instanceRepo.FindByID(inst.ID)
+	stored, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	require.NoError(t, err)
 	assert.Equal(t, models.StackStatusRunning, stored.Status)
 }
@@ -729,7 +731,7 @@ func TestManager_BlockingPostDeploy_ShutdownInterrupts(t *testing.T) {
 			mgr.Shutdown()
 
 			deployLog := waitForLogDone(t, logRepo, logID)
-			stored, err := instanceRepo.FindByID(inst.ID)
+			stored, err := instanceRepo.FindByID(context.Background(), inst.ID)
 			require.NoError(t, err)
 			assert.Equal(t, models.StackStatusError, stored.Status)
 			assert.Equal(t, "Interrupted by a server restart. Deploy again.", stored.ErrorMessage)
@@ -737,6 +739,152 @@ func TestManager_BlockingPostDeploy_ShutdownInterrupts(t *testing.T) {
 			assert.Contains(t, deployLog.Output, "ERROR: Interrupted by a server restart. Deploy again.")
 			assert.NotContains(t, notifTypes(notif.getCalls()), "deployment.success")
 			assert.NotContains(t, notifTypes(notif.getCalls()), "deployment.warning")
+		})
+	}
+}
+
+// shutdownAtReadRepo cancels the shutdown context at the first FindByID
+// after arm, then reads with the context of the caller.
+type shutdownAtReadRepo struct {
+	*mockInstanceRepo
+	armed  atomic.Bool
+	cancel func()
+}
+
+func (r *shutdownAtReadRepo) FindByID(ctx context.Context, id string) (*models.StackInstance, error) {
+	if r.armed.CompareAndSwap(true, false) {
+		r.cancel()
+	}
+	return r.mockInstanceRepo.FindByID(ctx, id)
+}
+
+// TestManager_BlockingPostDeploy_ShutdownBeforePhase checks that a shutdown
+// that comes before the blocking post-deploy subscribers run ends the deploy
+// as interrupted: a failed start read must not finalize it as a success
+// (#656).
+func TestManager_BlockingPostDeploy_ShutdownBeforePhase(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		// atPhaseRead cancels the shutdown context at the first instance
+		// read of the phase, after its shutdown check.
+		atPhaseRead bool
+	}{
+		{name: "shutdown during the Helm install"},
+		{name: "shutdown at the first read of the phase", atPhaseRead: true},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			srv := newSubscriberServer(t)
+			instanceRepo := newMockInstanceRepo()
+			logRepo := newMockDeployLogRepo()
+			notif := &mockNotifier{}
+			inst := seedInstance(t, instanceRepo, "inst-early-shutdown", "early-shutdown", "owner-1")
+			mgr := blockingManager(t, srv, instanceRepo, logRepo, notif, hooks.FailurePolicyFail, 1)
+			readRepo := &shutdownAtReadRepo{mockInstanceRepo: instanceRepo, cancel: mgr.shutdownCancel}
+			mgr.instanceRepo = readRepo
+			inHelm := make(chan struct{})
+			release := make(chan struct{})
+			mgr.registry = &mockClusterResolver{helm: &mockHelmExecutor{installFunc: func(_ context.Context, req InstallRequest) (string, error) {
+				if tt.atPhaseRead {
+					readRepo.armed.Store(true)
+					return "installed " + req.ReleaseName, nil
+				}
+				close(inHelm)
+				<-release
+				return "installed " + req.ReleaseName, nil
+			}}}
+			t.Cleanup(mgr.Shutdown)
+
+			logID := deployOneChart(t, mgr, inst)
+			if !tt.atPhaseRead {
+				<-inHelm
+				done := make(chan struct{})
+				go func() { mgr.Shutdown(); close(done) }()
+				require.Eventually(t, func() bool { return mgr.shutdownCtx.Err() != nil }, 5*time.Second, time.Millisecond)
+				close(release)
+				<-done
+			}
+
+			deployLog := waitForLogDone(t, logRepo, logID)
+			stored, err := instanceRepo.FindByID(context.Background(), inst.ID)
+			require.NoError(t, err)
+			assert.Equal(t, models.StackStatusError, stored.Status, "the subscriber never ran")
+			assert.Equal(t, ErrDeployInterrupted.Error(), stored.ErrorMessage)
+			assert.Equal(t, models.DeployLogError, deployLog.Status)
+			assert.Contains(t, deployLog.Output, "ERROR: "+ErrDeployInterrupted.Error())
+			assert.Empty(t, srv.callNames(), "the blocking subscriber is not called")
+			assert.NotContains(t, notifTypes(notif.getCalls()), "deployment.success")
+			if !tt.atPhaseRead {
+				assert.NotContains(t, deployLog.Output, "Running post-deploy step", "the phase does not start after a shutdown")
+			}
+		})
+	}
+}
+
+// failReadRepo fails the first FindByID after arm with err.
+type failReadRepo struct {
+	*mockInstanceRepo
+	armed atomic.Bool
+	err   error
+}
+
+func (r *failReadRepo) FindByID(ctx context.Context, id string) (*models.StackInstance, error) {
+	if r.armed.CompareAndSwap(true, false) {
+		return nil, r.err
+	}
+	return r.mockInstanceRepo.FindByID(ctx, id)
+}
+
+// TestManager_BlockingPostDeploy_StartReadErrorFailsDeploy checks that a
+// failed instance read at the start of the blocking phase fails the deploy:
+// the subscriber did not run, so the stack must not get running (#656).
+func TestManager_BlockingPostDeploy_StartReadErrorFailsDeploy(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "transient error", err: errors.New("transient db error")},
+		{name: "connection failed", err: database.NewDatabaseError("find_by_id", database.ErrConnectionFailed)},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			srv := newSubscriberServer(t)
+			instanceRepo := newMockInstanceRepo()
+			logRepo := newMockDeployLogRepo()
+			notif := &mockNotifier{}
+			inst := seedInstance(t, instanceRepo, "inst-start-read", "start-read", "owner-1")
+			mgr := blockingManager(t, srv, instanceRepo, logRepo, notif, hooks.FailurePolicyIgnore, 1)
+			readRepo := &failReadRepo{mockInstanceRepo: instanceRepo, err: tt.err}
+			mgr.instanceRepo = readRepo
+			mgr.registry = &mockClusterResolver{helm: &mockHelmExecutor{installFunc: func(_ context.Context, req InstallRequest) (string, error) {
+				readRepo.armed.Store(true)
+				return "installed " + req.ReleaseName, nil
+			}}}
+			t.Cleanup(mgr.Shutdown)
+
+			deployLog := waitForLogDone(t, logRepo, deployOneChart(t, mgr, inst))
+
+			stored, err := instanceRepo.FindByID(context.Background(), inst.ID)
+			require.NoError(t, err)
+			assert.Equal(t, models.StackStatusError, stored.Status)
+			assert.Equal(t, errPostDeployNotStarted.Error(), stored.ErrorMessage)
+			assert.Nil(t, stored.PostDeployHookUntil)
+			assert.Equal(t, models.DeployLogError, deployLog.Status)
+			assert.Equal(t, errPostDeployNotStarted.Error(), deployLog.ErrorMessage)
+			assert.Contains(t, deployLog.Output, "ERROR: "+errPostDeployNotStarted.Error())
+			assert.NotContains(t, deployLog.Output, "deploy cancelled")
+			assert.Empty(t, srv.callNames(), "the blocking subscriber is not called")
+			types := notifTypes(notif.getCalls())
+			assert.NotContains(t, types, "deployment.success")
+			assert.Contains(t, types, "deployment.error")
 		})
 	}
 }
@@ -761,7 +909,7 @@ func TestManager_BlockingPostDeploy_FreesDeploySlot(t *testing.T) {
 
 	slowLog := deployOneChart(t, mgr, slow)
 	require.Eventually(t, func() bool {
-		cur, err := instanceRepo.FindByID(slow.ID)
+		cur, err := instanceRepo.FindByID(context.Background(), slow.ID)
 		return err == nil && cur.Status == models.StackStatusStabilizing
 	}, 5*time.Second, 10*time.Millisecond)
 
@@ -797,7 +945,7 @@ func TestManager_BlockingPostDeploy_StopClearsMarker(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("blocking subscriber not called")
 	}
-	cur, err := instanceRepo.FindByID(inst.ID)
+	cur, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	require.NoError(t, err)
 	require.NotNil(t, cur.PostDeployHookUntil, "marker set during the wait")
 
@@ -806,7 +954,7 @@ func TestManager_BlockingPostDeploy_StopClearsMarker(t *testing.T) {
 	assert.Equal(t, models.DeployLogSuccess, waitForLogDone(t, logRepo, stopLogID).Status)
 	assert.Equal(t, models.DeployLogError, waitForLogDone(t, logRepo, deployLogID).Status)
 
-	stored, err := instanceRepo.FindByID(inst.ID)
+	stored, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	require.NoError(t, err)
 	assert.Equal(t, models.StackStatusStopped, stored.Status)
 	assert.Nil(t, stored.PostDeployHookUntil, "the stop clears the marker")

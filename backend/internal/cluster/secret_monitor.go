@@ -106,7 +106,7 @@ func (m *SecretMonitor) Run(ctx context.Context) {
 
 	slog.Info("Secret monitor started", "interval", m.interval, "threshold", m.threshold)
 
-	m.scan()
+	m.scan(ctx)
 
 	for {
 		select {
@@ -114,12 +114,13 @@ func (m *SecretMonitor) Run(ctx context.Context) {
 			slog.Info("Secret monitor stopped")
 			return
 		case <-ticker.C:
-			m.scan()
+			m.scan(ctx)
 		}
 	}
 }
 
-func (m *SecretMonitor) scan() {
+// scan runs one cycle. The instance queries run with ctx, the worker context.
+func (m *SecretMonitor) scan(ctx context.Context) {
 	if m.notifier == nil {
 		return
 	}
@@ -134,7 +135,7 @@ func (m *SecretMonitor) scan() {
 
 	for i := range clusters {
 		cl := &clusters[i]
-		m.scanCluster(cl)
+		m.scanCluster(ctx, cl)
 	}
 }
 
@@ -149,8 +150,8 @@ func (m *SecretMonitor) pruneWarned() {
 	}
 }
 
-func (m *SecretMonitor) scanCluster(cl *models.Cluster) {
-	instances, err := m.instanceRepo.FindByCluster(cl.ID)
+func (m *SecretMonitor) scanCluster(ctx context.Context, cl *models.Cluster) {
+	instances, err := m.instanceRepo.FindByCluster(ctx, cl.ID)
 	if err != nil {
 		return
 	}

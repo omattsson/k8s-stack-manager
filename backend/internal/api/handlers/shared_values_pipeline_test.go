@@ -94,7 +94,7 @@ func newSVFixture(t *testing.T, clusterID string) *svFixture {
 	}
 	inst := seedInstance(t, f.instRepo, "inst-1", "stack-a", "d1", "uid-1", models.StackStatusDraft)
 	inst.ClusterID = clusterID
-	require.NoError(t, f.instRepo.Update(inst))
+	require.NoError(t, f.instRepo.Update(context.Background(), inst))
 	seedDefinition(t, f.defRepo, "d1", "My Def", "uid-1")
 	require.NoError(t, f.ccRepo.Create(&models.ChartConfig{
 		ID: "c1", StackDefinitionID: "d1", ChartName: "app", DeployOrder: 1,
@@ -430,11 +430,11 @@ func TestCompareInstances_ValueOverrideOnOneSide(t *testing.T) {
 	f := newSVFixture(t, "cl-1")
 	right := seedInstance(t, f.instRepo, "inst-2", "stack-a", "d1", "uid-1", models.StackStatusDraft)
 	// Same namespace and name vars on both sides so only the override differs.
-	left, err := f.instRepo.FindByID("inst-1")
+	left, err := f.instRepo.FindByID(context.Background(), "inst-1")
 	require.NoError(t, err)
 	right.ClusterID = "cl-1"
 	right.Namespace = left.Namespace
-	require.NoError(t, f.instRepo.Update(right))
+	require.NoError(t, f.instRepo.Update(context.Background(), right))
 	f.addShared(t, "sv-1", "cl-1", 0, "sharedValuesOnly: shared\n")
 	seedValueOverride(t, f.ovRepo, "ov-1", "inst-1", "c1", "replicaCount: 3\n")
 
@@ -544,7 +544,7 @@ func TestDeployInstance_SharedValuesLoadErrorFailsClosed(t *testing.T) {
 	require.Equal(t, http.StatusInternalServerError, w.Code)
 	assert.NotContains(t, w.Body.String(), "connection refused", "internal error must not leak")
 
-	inst, err := f.instRepo.FindByID("inst-1")
+	inst, err := f.instRepo.FindByID(context.Background(), "inst-1")
 	require.NoError(t, err)
 	assert.Equal(t, models.StackStatusDraft, inst.Status, "deploy must not start")
 }
@@ -654,7 +654,7 @@ func TestQuickDeploy_UsesValuesPipeline(t *testing.T) {
 
 			if !tt.wantOK {
 				assert.Empty(t, resp.LogID)
-				inst, err := instRepo.FindByID(resp.Instance.ID)
+				inst, err := instRepo.FindByID(context.Background(), resp.Instance.ID)
 				require.NoError(t, err)
 				assert.Equal(t, models.StackStatusError, inst.Status)
 				assert.Equal(t, "Deployment failed", inst.ErrorMessage)
@@ -676,10 +676,10 @@ func TestQuickDeploy_UsesValuesPipeline(t *testing.T) {
 
 			// LastDeployedValues is recorded once the deploy finishes.
 			require.Eventually(t, func() bool {
-				inst, err := instRepo.FindByID(resp.Instance.ID)
+				inst, err := instRepo.FindByID(context.Background(), resp.Instance.ID)
 				return err == nil && inst.LastDeployedValues != ""
 			}, 3*time.Second, 20*time.Millisecond)
-			inst, err := instRepo.FindByID(resp.Instance.ID)
+			inst, err := instRepo.FindByID(context.Background(), resp.Instance.ID)
 			require.NoError(t, err)
 			var last map[string]string
 			require.NoError(t, json.Unmarshal([]byte(inst.LastDeployedValues), &last))

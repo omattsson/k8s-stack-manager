@@ -18,6 +18,9 @@ import (
 
 const dashboardCacheTTL = 30 * time.Second
 
+// dashboardBuildTimeout bounds one shared dashboard build (singleflight).
+const dashboardBuildTimeout = 30 * time.Second
+
 // ---- Response types ----
 
 type DashboardResponse struct {
@@ -131,13 +134,17 @@ func (h *DashboardHandler) GetDashboard(c *gin.Context) {
 		return
 	}
 
-	ctx := c.Request.Context()
+	reqCtx := c.Request.Context()
 
 	val, err, _ := h.sfGroup.Do(cacheKey, func() (interface{}, error) {
 		// Re-check cache inside singleflight to avoid redundant work.
 		if cached, ok := cacheStore.Get(cacheKey); ok {
 			return cached, nil
 		}
+		// The waiters share this build: the first caller leaving must not
+		// fail them all (#656). WithoutCancel keeps the trace.
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(reqCtx), dashboardBuildTimeout)
+		defer cancel()
 		return h.buildDashboard(ctx, privileged, cacheStore, cacheKey)
 	})
 	if err != nil {
@@ -160,12 +167,12 @@ func (h *DashboardHandler) buildDashboard(ctx context.Context, privileged bool, 
 		return nil, err
 	}
 
-	expiring, err := h.buildExpiringSoon()
+	expiring, err := h.buildExpiringSoon(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	failing, err := h.buildFailingInstances()
+	failing, err := h.buildFailingInstances(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -267,8 +274,8 @@ func (h *DashboardHandler) buildRecentDeployments(ctx context.Context) ([]Dashbo
 	return result, nil
 }
 
-func (h *DashboardHandler) buildExpiringSoon() ([]DashboardExpiring, error) {
-	instances, err := h.instanceRepo.ListExpiringSoon(1 * time.Hour)
+func (h *DashboardHandler) buildExpiringSoon(ctx context.Context) ([]DashboardExpiring, error) {
+	instances, err := h.instanceRepo.ListExpiringSoon(ctx, 1*time.Hour)
 	if err != nil {
 		return nil, err
 	}
@@ -293,8 +300,8 @@ func (h *DashboardHandler) buildExpiringSoon() ([]DashboardExpiring, error) {
 	return result, nil
 }
 
-func (h *DashboardHandler) buildFailingInstances() ([]DashboardFailing, error) {
-	failing, err := h.instanceRepo.ListByStatus(models.StackStatusError, 50)
+func (h *DashboardHandler) buildFailingInstances(ctx context.Context) ([]DashboardFailing, error) {
+	failing, err := h.instanceRepo.ListByStatus(ctx, models.StackStatusError, 50)
 	if err != nil {
 		return nil, err
 	}

@@ -51,7 +51,7 @@ func quotaHard(t *testing.T, cs kubernetes.Interface, namespace string, resource
 
 func seedQuotaInstance(t *testing.T, repo *MockStackInstanceRepository, id, clusterID, namespace, status string) {
 	t.Helper()
-	require.NoError(t, repo.Create(&models.StackInstance{
+	require.NoError(t, repo.Create(context.Background(), &models.StackInstance{
 		ID:        id,
 		Name:      id,
 		Namespace: namespace,
@@ -237,7 +237,7 @@ func TestInstanceQuotaOverride_ApplyEffectiveQuota(t *testing.T) {
 				require.NoError(t, overrideRepo.Upsert(context.Background(), tt.override))
 			}
 			h := NewInstanceQuotaOverrideHandler(overrideRepo, instanceRepo).WithClusterQuotas(quotaRepo, registry)
-			inst, err := instanceRepo.FindByID("inst-1")
+			inst, err := instanceRepo.FindByID(context.Background(), "inst-1")
 			require.NoError(t, err)
 
 			err = h.applyEffectiveQuota(context.Background(), inst)

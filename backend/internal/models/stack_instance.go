@@ -1,6 +1,7 @@
 package models
 
 import (
+	"context"
 	"errors"
 	"time"
 )
@@ -106,9 +107,9 @@ type CleanStartMarker interface {
 	// sets delete_after_clean (else ErrDeleteConflict when no row matched).
 	// Without it, the row must not have delete_after_clean (else
 	// ErrCleanConflict), so a plain clean never overwrites a delete.
-	MarkCleanStart(id string, fromStatuses []string, deleteAfterClean bool) error
+	MarkCleanStart(ctx context.Context, id string, fromStatuses []string, deleteAfterClean bool) error
 	// ClearDeleteAfterClean clears delete_after_clean.
-	ClearDeleteAfterClean(id string) error
+	ClearDeleteAfterClean(ctx context.Context, id string) error
 }
 
 // InstanceErrorMarker is implemented by stack instance repositories that set
@@ -121,7 +122,7 @@ type InstanceErrorMarker interface {
 	// status is running or partial, or stabilizing without active blocking
 	// post-deploy hooks (post_deploy_hook_until empty or before now). It
 	// reports whether the row changed.
-	MarkNamespaceError(id, message string, now time.Time) (bool, error)
+	MarkNamespaceError(ctx context.Context, id, message string, now time.Time) (bool, error)
 }
 
 // InstanceNameLookup is implemented by stack instance repositories that can
@@ -130,11 +131,11 @@ type InstanceNameLookup interface {
 	// FindByNameOnCluster returns the instances that use name on clusterID.
 	// It compares the names without case. With includeUnassigned it also
 	// returns the instances without a cluster (they use the default cluster).
-	FindByNameOnCluster(name, clusterID string, includeUnassigned bool) ([]StackInstance, error)
+	FindByNameOnCluster(ctx context.Context, name, clusterID string, includeUnassigned bool) ([]StackInstance, error)
 	// DuplicateInstanceNames returns the names that more than one instance
 	// uses on the same cluster (compared without case). Instances without a
 	// cluster count as defaultClusterID.
-	DuplicateInstanceNames(defaultClusterID string) ([]DuplicateInstanceName, error)
+	DuplicateInstanceNames(ctx context.Context, defaultClusterID string) ([]DuplicateInstanceName, error)
 }
 
 // DuplicateInstanceName is a name that Count instances use on one cluster.
@@ -182,34 +183,34 @@ const (
 
 // StackInstanceRepository defines data access operations for stack instances.
 type StackInstanceRepository interface {
-	Create(instance *StackInstance) error
-	FindByID(id string) (*StackInstance, error)
-	FindByNamespace(namespace string) (*StackInstance, error)
-	Update(instance *StackInstance) error
-	Delete(id string) error
-	List() ([]StackInstance, error)
+	Create(ctx context.Context, instance *StackInstance) error
+	FindByID(ctx context.Context, id string) (*StackInstance, error)
+	FindByNamespace(ctx context.Context, namespace string) (*StackInstance, error)
+	Update(ctx context.Context, instance *StackInstance) error
+	Delete(ctx context.Context, id string) error
+	List(ctx context.Context) ([]StackInstance, error)
 	// ListPaged returns one page of the instances that match filter, newest
 	// first, and the total number of matching instances.
-	ListPaged(filter StackInstanceFilter, limit, offset int) ([]StackInstance, int, error)
-	ListByOwner(ownerID string) ([]StackInstance, error)
-	FindByName(name string) ([]StackInstance, error)
-	FindByCluster(clusterID string) ([]StackInstance, error)
-	CountByClusterAndOwner(clusterID, ownerID string) (int, error)
-	CountAll() (int, error)
-	CountByStatus(status string) (int, error)
-	CountByStatuses(statuses []string) (int, error)
-	CountByDefinitionIDs(definitionIDs []string) (map[string]int, error)
-	CountByOwnerIDs(ownerIDs []string) (map[string]int, error)
-	ListIDsByDefinitionIDs(definitionIDs []string) (map[string][]string, error)
-	ListIDsByOwnerIDs(ownerIDs []string) (map[string][]string, error)
-	ExistsByDefinitionAndStatus(definitionID, status string) (bool, error)
-	ListExpired() ([]*StackInstance, error)
+	ListPaged(ctx context.Context, filter StackInstanceFilter, limit, offset int) ([]StackInstance, int, error)
+	ListByOwner(ctx context.Context, ownerID string) ([]StackInstance, error)
+	FindByName(ctx context.Context, name string) ([]StackInstance, error)
+	FindByCluster(ctx context.Context, clusterID string) ([]StackInstance, error)
+	CountByClusterAndOwner(ctx context.Context, clusterID, ownerID string) (int, error)
+	CountAll(ctx context.Context) (int, error)
+	CountByStatus(ctx context.Context, status string) (int, error)
+	CountByStatuses(ctx context.Context, statuses []string) (int, error)
+	CountByDefinitionIDs(ctx context.Context, definitionIDs []string) (map[string]int, error)
+	CountByOwnerIDs(ctx context.Context, ownerIDs []string) (map[string]int, error)
+	ListIDsByDefinitionIDs(ctx context.Context, definitionIDs []string) (map[string][]string, error)
+	ListIDsByOwnerIDs(ctx context.Context, ownerIDs []string) (map[string][]string, error)
+	ExistsByDefinitionAndStatus(ctx context.Context, definitionID, status string) (bool, error)
+	ListExpired(ctx context.Context) ([]*StackInstance, error)
 	// ListExpiringSoon returns running or partial instances that expire
 	// within threshold and have no expiry warning yet.
-	ListExpiringSoon(threshold time.Duration) ([]*StackInstance, error)
+	ListExpiringSoon(ctx context.Context, threshold time.Duration) ([]*StackInstance, error)
 	// MarkExpiryWarned sets ExpiryWarnedAt to warnedAt when the instance has
 	// no expiry warning and its ExpiresAt is still expiresAt. It reports
 	// whether it changed the row: only one caller gets true.
-	MarkExpiryWarned(id string, expiresAt, warnedAt time.Time) (bool, error)
-	ListByStatus(status string, limit int) ([]*StackInstance, error)
+	MarkExpiryWarned(ctx context.Context, id string, expiresAt, warnedAt time.Time) (bool, error)
+	ListByStatus(ctx context.Context, status string, limit int) ([]*StackInstance, error)
 }

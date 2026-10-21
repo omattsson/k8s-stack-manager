@@ -71,7 +71,7 @@ func TestDeploy_NamespaceReadyPassedToHelm(t *testing.T) {
 				ID: "inst-ns", StackDefinitionID: "def-1", Name: "ns", Namespace: "stack-ns-user",
 				OwnerID: "user-1", Branch: "main", ClusterID: "cluster-1", Status: models.StackStatusDraft,
 			}
-			require.NoError(t, instanceRepo.Create(inst))
+			require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 			cs := fake.NewSimpleClientset()
 			if tt.failCreate {

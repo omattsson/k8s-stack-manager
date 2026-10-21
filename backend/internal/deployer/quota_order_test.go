@@ -91,7 +91,7 @@ func TestManager_Deploy_AppliesQuotaBeforeFirstInstall(t *testing.T) {
 				ID: "inst-qo", StackDefinitionID: "def-1", Name: "qo", Namespace: "stack-qo",
 				OwnerID: "user-1", Branch: "main", ClusterID: "cluster-1", Status: models.StackStatusDraft,
 			}
-			require.NoError(t, instanceRepo.Create(inst))
+			require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 			var objects []runtime.Object
 			if tt.existingNS {
@@ -155,7 +155,7 @@ func TestManager_Deploy_QuotaFallbackWithoutNamespace(t *testing.T) {
 		ID: "inst-qf", StackDefinitionID: "def-1", Name: "qf", Namespace: "stack-qf",
 		OwnerID: "user-1", Branch: "main", ClusterID: "cluster-1", Status: models.StackStatusDraft,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	cs := fake.NewSimpleClientset()
 	// The namespace create fails; Helm (--create-namespace) creates it.
@@ -205,7 +205,7 @@ func TestRollback_ToTarget_AppliesQuotaBeforeInstall(t *testing.T) {
 		OwnerID: "user-1", Branch: "main", ClusterID: "cluster-1", Status: models.StackStatusError,
 		LastDeployedValues: string(running),
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	cs := fake.NewSimpleClientset() // namespace deleted (for example by a failed clean)
 	helm, seen := quotaRecordingHelm(cs)
@@ -249,7 +249,7 @@ func TestManager_Deploy_QuotaRetryAfterFailedApply(t *testing.T) {
 		ID: "inst-qr", StackDefinitionID: "def-1", Name: "qr", Namespace: "stack-qr",
 		OwnerID: "user-1", Branch: "main", ClusterID: "cluster-1", Status: models.StackStatusDraft,
 	}
-	require.NoError(t, instanceRepo.Create(inst))
+	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
 	cs := fake.NewSimpleClientset()
 	var mu sync.Mutex

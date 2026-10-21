@@ -378,7 +378,7 @@ func TestDeployInstance_ErrorPaths(t *testing.T) {
 					CreatedAt:         time.Now().UTC(),
 					UpdatedAt:         time.Now().UTC(),
 				}
-				require.NoError(t, instRepo.Create(inst))
+				require.NoError(t, instRepo.Create(context.Background(), inst))
 				seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
 				require.NoError(t, ccRepo.Create(&models.ChartConfig{
 					ID:                "c1",
@@ -441,7 +441,7 @@ func TestGetInstanceStatus_ErrorPaths(t *testing.T) {
 		instRepo := NewMockStackInstanceRepository()
 		inst := seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusRunning)
 		inst.ClusterID = "test-cluster"
-		require.NoError(t, instRepo.Update(inst))
+		require.NoError(t, instRepo.Update(context.Background(), inst))
 
 		// Registry has the cluster; namespace does not exist but GetNamespaceStatus
 		// returns a "not_found" status rather than an error.
@@ -473,7 +473,7 @@ func TestGetInstanceStatus_ErrorPaths(t *testing.T) {
 		instRepo := NewMockStackInstanceRepository()
 		inst := seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusRunning)
 		inst.ClusterID = "test-cluster"
-		require.NoError(t, instRepo.Update(inst))
+		require.NoError(t, instRepo.Update(context.Background(), inst))
 
 		cs := fake.NewSimpleClientset()
 		k8sClient := k8s.NewClientFromInterface(cs)
@@ -521,7 +521,7 @@ func TestGetInstanceStatus_ErrorPaths(t *testing.T) {
 		instRepo := NewMockStackInstanceRepository()
 		inst := seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusRunning)
 		inst.ClusterID = "test-cluster"
-		require.NoError(t, instRepo.Update(inst))
+		require.NoError(t, instRepo.Update(context.Background(), inst))
 
 		// Fake clientset with no namespace pre-created.
 		cs := fake.NewSimpleClientset()

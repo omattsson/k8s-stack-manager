@@ -87,7 +87,7 @@ func (r *Reaper) Run(ctx context.Context) {
 	slog.Info("TTL reaper started", "interval", r.interval)
 
 	// Perform an initial check immediately on startup.
-	r.processExpired()
+	r.processExpired(ctx)
 
 	for {
 		select {
@@ -95,7 +95,7 @@ func (r *Reaper) Run(ctx context.Context) {
 			slog.Info("TTL reaper stopped")
 			return
 		case <-ticker.C:
-			r.processExpired()
+			r.processExpired(ctx)
 		}
 	}
 }
@@ -114,11 +114,13 @@ func contextUntilClosed(stopCh <-chan struct{}) (context.Context, context.Cancel
 	return ctx, cancel
 }
 
-func (r *Reaper) processExpired() {
+// processExpired runs one cycle. The queries and the stop start run with
+// ctx, the context of the worker, so a lost leadership ends them.
+func (r *Reaper) processExpired(ctx context.Context) {
 	start := time.Now()
-	ctx, span := reaperTracer.Start(context.Background(), "ttl.reap_cycle")
+	ctx, span := reaperTracer.Start(ctx, "ttl.reap_cycle")
 
-	expired, err := r.instanceRepo.ListExpired()
+	expired, err := r.instanceRepo.ListExpired(ctx)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
@@ -131,9 +133,18 @@ func (r *Reaper) processExpired() {
 	span.SetAttributes(attribute.Int("ttl.expired_count", len(expired)))
 
 	for _, inst := range expired {
+		// A lost leadership: the next leader reaps the rest.
+		if ctx.Err() != nil {
+			slog.Info("TTL reaper cycle ended early", "error", ctx.Err())
+			break
+		}
 		// Attempt Helm uninstall via stopper if available.
 		if r.stopper != nil {
-			if stopErr := r.stopper.StopInstance(context.Background(), inst); stopErr != nil {
+			if stopErr := r.stopper.StopInstance(ctx, inst); stopErr != nil {
+				if ctx.Err() != nil {
+					slog.Info("TTL reaper cycle ended early", "instance_id", inst.ID, "error", stopErr)
+					break
+				}
 				slog.Error("Failed to initiate stop for expired instance, marking as stopped", "instance_id", inst.ID, "error", stopErr)
 				// Fall through to manual status update below.
 			} else {
@@ -152,7 +163,7 @@ func (r *Reaper) processExpired() {
 		inst.ErrorMessage = "Expired (TTL)"
 		inst.StoppedAt = &now
 		inst.UpdatedAt = now
-		if updateErr := r.instanceRepo.Update(inst); updateErr != nil {
+		if updateErr := r.instanceRepo.Update(ctx, inst); updateErr != nil {
 			slog.Error("Failed to update expired instance", "instance_id", inst.ID, "error", updateErr)
 			continue
 		}
@@ -164,7 +175,12 @@ func (r *Reaper) processExpired() {
 		slog.Info("Instance expired and stopped", "instance_id", inst.ID)
 	}
 
-	span.SetStatus(codes.Ok, "")
+	if err := ctx.Err(); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	} else {
+		span.SetStatus(codes.Ok, "")
+	}
 	span.End()
 	rMetrics.reapDuration.Record(ctx, time.Since(start).Seconds())
 }

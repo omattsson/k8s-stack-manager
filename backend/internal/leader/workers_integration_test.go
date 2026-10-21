@@ -103,7 +103,7 @@ func TestTwoReplicasOneDatabase(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(&models.StackInstance{}, &models.CleanupPolicy{}))
 
 	exp := time.Now().UTC().Add(10 * time.Minute)
-	require.NoError(t, database.NewGORMStackInstanceRepository(db).Create(&models.StackInstance{
+	require.NoError(t, database.NewGORMStackInstanceRepository(db).Create(context.Background(), &models.StackInstance{
 		Name: "expiring", StackDefinitionID: "d1", Namespace: "stack-expiring", OwnerID: "u1",
 		Branch: "main", Status: models.StackStatusRunning, ExpiresAt: &exp,
 	}))
