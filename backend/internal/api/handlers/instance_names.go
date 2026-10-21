@@ -95,7 +95,7 @@ func (g instanceNameGuard) check(c *gin.Context, name, clusterID, excludeID, own
 	c.JSON(http.StatusConflict, NamespaceConflictResponse{
 		Error: msgInstanceNameExists,
 		Message: fmt.Sprintf("A stack named %q already exists on this cluster (owner: %s)",
-			holder.Name, resolveOwnerName(g.userRepo, holder.OwnerID)),
+			holder.Name, resolveOwnerName(c.Request.Context(), g.userRepo, holder.OwnerID)),
 		Suggestions: g.freeSuggestions(name, clusterID, owner),
 	})
 	return true

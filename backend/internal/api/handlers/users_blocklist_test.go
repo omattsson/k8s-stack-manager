@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -174,7 +175,7 @@ func TestEnableUser_ReblocksInsteadOfUnblock(t *testing.T) {
 			router.ServeHTTP(w, req)
 
 			assert.Equal(t, tt.wantStatus, w.Code)
-			got, err := userRepo.FindByID(targetID)
+			got, err := userRepo.FindByID(context.Background(), targetID)
 			require.NoError(t, err)
 			assert.False(t, got.Disabled)
 

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -149,14 +150,14 @@ func TestEnsureAdminUser(t *testing.T) {
 				AdminPassword: tt.adminPassword,
 			}
 			h := NewAuthHandler(repo, cfg, &config.OIDCConfig{})
-			h.EnsureAdminUser()
+			h.EnsureAdminUser(context.Background())
 
-			users, err := repo.List()
+			users, err := repo.List(context.Background())
 			require.NoError(t, err)
 			assert.Len(t, users, tt.expectUserCount)
 
 			if tt.expectUserCount > 0 && tt.adminUsername != "" {
-				found, findErr := repo.FindByUsername(tt.adminUsername)
+				found, findErr := repo.FindByUsername(context.Background(), tt.adminUsername)
 				require.NoError(t, findErr)
 				assert.Equal(t, "admin", found.Role)
 			}

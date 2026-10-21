@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -60,8 +61,8 @@ func newNameTestRepos(t *testing.T) nameTestRepos {
 		cluster: NewMockClusterRepository(),
 		user:    NewMockUserRepository(),
 	}
-	require.NoError(t, r.user.Create(&models.User{ID: "uid-alice", Username: "alice"}))
-	require.NoError(t, r.user.Create(&models.User{ID: "uid-bob", Username: "bob"}))
+	require.NoError(t, r.user.Create(context.Background(), &models.User{ID: "uid-alice", Username: "alice"}))
+	require.NoError(t, r.user.Create(context.Background(), &models.User{ID: "uid-bob", Username: "bob"}))
 	require.NoError(t, r.def.Create(&models.StackDefinition{ID: "def-a", Name: "Definition A", OwnerID: "uid-alice"}))
 	require.NoError(t, r.def.Create(&models.StackDefinition{ID: "def-b", Name: "Definition B", OwnerID: "uid-bob"}))
 	require.NoError(t, r.cluster.Create(&models.Cluster{ID: "cl-1", Name: "cluster-one"}))
@@ -271,7 +272,7 @@ func TestInstanceNames_MissingReferences(t *testing.T) {
 			repos := newNameTestRepos(t)
 			// Owner, definition and cluster do not exist (deleted).
 			seedFilterInstance(t, repos.inst, "orphan", "def-gone", "uid-alice", "cl-gone", models.StackStatusDraft, 0)
-			require.NoError(t, repos.user.Delete("uid-alice"))
+			require.NoError(t, repos.user.Delete(context.Background(), "uid-alice"))
 			router := setupNameRouter(repos, "uid-alice", "user")
 
 			w := httptest.NewRecorder()
@@ -414,8 +415,8 @@ func TestListDefinitions_OwnerFilter(t *testing.T) {
 			t.Parallel()
 			defRepo := NewMockStackDefinitionRepository()
 			userRepo := NewMockUserRepository()
-			require.NoError(t, userRepo.Create(&models.User{ID: "uid-alice", Username: "alice"}))
-			require.NoError(t, userRepo.Create(&models.User{ID: "uid-bob", Username: "bob"}))
+			require.NoError(t, userRepo.Create(context.Background(), &models.User{ID: "uid-alice", Username: "alice"}))
+			require.NoError(t, userRepo.Create(context.Background(), &models.User{ID: "uid-bob", Username: "bob"}))
 			base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 			for i, d := range []models.StackDefinition{
 				{ID: "d1", Name: "first", OwnerID: "uid-alice"},
@@ -475,7 +476,7 @@ func TestDefinitionOwnerUsername_DetailAndCreate(t *testing.T) {
 			t.Parallel()
 			defRepo := NewMockStackDefinitionRepository()
 			userRepo := NewMockUserRepository()
-			require.NoError(t, userRepo.Create(&models.User{ID: "uid-alice", Username: "alice"}))
+			require.NoError(t, userRepo.Create(context.Background(), &models.User{ID: "uid-alice", Username: "alice"}))
 			require.NoError(t, defRepo.Create(&models.StackDefinition{ID: "d1", Name: "first", OwnerID: "uid-alice"}))
 			require.NoError(t, defRepo.Create(&models.StackDefinition{ID: "d-orphan", Name: "orphan", OwnerID: "uid-gone"}))
 			router := setupDefinitionNameRouter(defRepo, userRepo, "uid-alice")
@@ -514,7 +515,7 @@ func TestTemplateOwnerUsername(t *testing.T) {
 			tmplRepo := NewMockStackTemplateRepository()
 			chartRepo := NewMockTemplateChartConfigRepository()
 			userRepo := NewMockUserRepository()
-			require.NoError(t, userRepo.Create(&models.User{ID: "uid-alice", Username: "alice"}))
+			require.NoError(t, userRepo.Create(context.Background(), &models.User{ID: "uid-alice", Username: "alice"}))
 			seedTemplate(t, tmplRepo, "t1", "Template One", tt.ownerID, true)
 
 			gin.SetMode(gin.TestMode)
@@ -559,12 +560,13 @@ func TestResolveOwnerFilter(t *testing.T) {
 	)
 
 	tests := []struct {
-		name     string
-		owner    string
-		caller   string
-		findErr  error
-		wantCode int
-		wantID   string
+		name      string
+		owner     string
+		caller    string
+		findErr   error
+		wantCode  int
+		wantID    string
+		cancelled bool // the request context is cancelled (#656)
 	}{
 		{name: "empty is no filter", owner: "", caller: uuidAlice, wantCode: http.StatusOK, wantID: ""},
 		{name: "me", owner: "me", caller: uuidAlice, wantCode: http.StatusOK, wantID: uuidAlice},
@@ -577,6 +579,8 @@ func TestResolveOwnerFilter(t *testing.T) {
 		{name: "unknown value is used as an ID", owner: "nobody", caller: uuidAlice, wantCode: http.StatusOK, wantID: "nobody"},
 		{name: "lookup error gives 500", owner: uuidBob, caller: uuidAlice, findErr: errors.New("connection refused"), wantCode: http.StatusInternalServerError},
 		{name: "too long gives 400", owner: strings.Repeat("o", 256), caller: uuidAlice, wantCode: http.StatusBadRequest},
+		{name: "cancelled ID lookup gives 499", owner: uuidBob, caller: uuidAlice, cancelled: true, wantCode: statusClientClosedRequest},
+		{name: "cancelled username lookup gives 499", owner: "bob", caller: uuidAlice, cancelled: true, wantCode: statusClientClosedRequest},
 	}
 
 	for _, tt := range tests {
@@ -584,12 +588,12 @@ func TestResolveOwnerFilter(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			userRepo := NewMockUserRepository()
-			require.NoError(t, userRepo.Create(&models.User{ID: uuidAlice, Username: "alice"}))
-			require.NoError(t, userRepo.Create(&models.User{ID: uuidBob, Username: "bob"}))
+			require.NoError(t, userRepo.Create(context.Background(), &models.User{ID: uuidAlice, Username: "alice"}))
+			require.NoError(t, userRepo.Create(context.Background(), &models.User{ID: uuidBob, Username: "bob"}))
 			// A user whose username is a UUID that is no user ID.
-			require.NoError(t, userRepo.Create(&models.User{ID: "uid-uuid-name", Username: uuidGone}))
+			require.NoError(t, userRepo.Create(context.Background(), &models.User{ID: "uid-uuid-name", Username: uuidGone}))
 			// A user whose username is the ID of alice.
-			require.NoError(t, userRepo.Create(&models.User{ID: "uid-shadow", Username: uuidAlice}))
+			require.NoError(t, userRepo.Create(context.Background(), &models.User{ID: "uid-shadow", Username: uuidAlice}))
 			userRepo.findErr = tt.findErr
 
 			gin.SetMode(gin.TestMode)
@@ -607,6 +611,11 @@ func TestResolveOwnerFilter(t *testing.T) {
 
 			w := httptest.NewRecorder()
 			req, _ := http.NewRequest(http.MethodGet, "/owner?owner="+tt.owner, nil)
+			if tt.cancelled {
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+				req = req.WithContext(ctx)
+			}
 			router.ServeHTTP(w, req)
 
 			require.Equal(t, tt.wantCode, w.Code, w.Body.String())

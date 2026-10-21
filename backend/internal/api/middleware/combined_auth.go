@@ -237,11 +237,14 @@ func authenticateAPIKey(ctx context.Context, apiKeyRepo models.APIKeyRepository,
 	}
 
 	// Load the associated user to get role and current username.
-	user, err := userRepo.FindByID(record.UserID)
+	user, err := userRepo.FindByID(ctx, record.UserID)
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return nil, nil, cancelled("API key user lookup cancelled", err)
+		}
 		outcome := apiKeyLookupOutcome(err)
 		if outcome == "failure" {
-			slog.Error("API key user lookup failed", "user_id", record.UserID, "error", err)
+			slog.ErrorContext(ctx, "API key user lookup failed", "user_id", record.UserID, "error", err)
 		}
 		return nil, nil, invalid(outcome)
 	}

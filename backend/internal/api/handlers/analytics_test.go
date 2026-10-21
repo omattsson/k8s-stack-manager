@@ -280,8 +280,8 @@ func TestGetOverview(t *testing.T) {
 				_ = logRepo.Create(context.Background(), &models.DeploymentLog{ID: "l1", StackInstanceID: "i1", Action: "deploy", Status: "success"})
 				_ = logRepo.Create(context.Background(), &models.DeploymentLog{ID: "l2", StackInstanceID: "i1", Action: "deploy", Status: "error"})
 				_ = logRepo.Create(context.Background(), &models.DeploymentLog{ID: "l3", StackInstanceID: "i1", Action: "stop", Status: "success"})
-				_ = userRepo.Create(&models.User{ID: "u1", Username: "alice"})
-				_ = userRepo.Create(&models.User{ID: "u2", Username: "bob"})
+				_ = userRepo.Create(context.Background(), &models.User{ID: "u1", Username: "alice"})
+				_ = userRepo.Create(context.Background(), &models.User{ID: "u2", Username: "bob"})
 			},
 			expectedStatus: http.StatusOK,
 			checkBody: func(t *testing.T, s OverviewStats) {
@@ -466,8 +466,8 @@ func TestGetUserStats(t *testing.T) {
 				logRepo *mockDeployLogRepo,
 				userRepo *MockUserRepository,
 			) {
-				_ = userRepo.Create(&models.User{ID: "u1", Username: "alice"})
-				_ = userRepo.Create(&models.User{ID: "u2", Username: "bob"})
+				_ = userRepo.Create(context.Background(), &models.User{ID: "u1", Username: "alice"})
+				_ = userRepo.Create(context.Background(), &models.User{ID: "u2", Username: "bob"})
 
 				_ = instRepo.Create(&models.StackInstance{ID: "i1", StackDefinitionID: "d1", OwnerID: "u1", Status: "running"})
 				_ = instRepo.Create(&models.StackInstance{ID: "i2", StackDefinitionID: "d1", OwnerID: "u1", Status: "stopped"})
@@ -513,8 +513,8 @@ func TestGetUserStats(t *testing.T) {
 				logRepo *mockDeployLogRepo,
 				userRepo *MockUserRepository,
 			) {
-				_ = userRepo.Create(&models.User{ID: "u1", Username: "alice"})
-				_ = userRepo.Create(&models.User{ID: "u2", Username: "bob"})
+				_ = userRepo.Create(context.Background(), &models.User{ID: "u1", Username: "alice"})
+				_ = userRepo.Create(context.Background(), &models.User{ID: "u2", Username: "bob"})
 				// Only i1 (owned by alice) still exists; "gone" was deleted.
 				_ = instRepo.Create(&models.StackInstance{ID: "i1", StackDefinitionID: "d1", OwnerID: "u1", Status: "running"})
 
@@ -577,8 +577,19 @@ func TestGetUserStats(t *testing.T) {
 
 type failingUserRepo struct{ MockUserRepository }
 
-func (f *failingUserRepo) List() ([]models.User, error) { return nil, assert.AnError }
-func (f *failingUserRepo) Count() (int64, error)        { return 0, assert.AnError }
+func (f *failingUserRepo) List(ctx context.Context) ([]models.User, error) {
+	if err := ctxDone(ctx, "list"); err != nil {
+		return nil, err
+	}
+	return nil, assert.AnError
+}
+
+func (f *failingUserRepo) Count(ctx context.Context) (int64, error) {
+	if err := ctxDone(ctx, "count"); err != nil {
+		return 0, err
+	}
+	return 0, assert.AnError
+}
 
 // ---- Error propagation tests ----
 

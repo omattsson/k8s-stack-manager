@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -35,8 +36,8 @@ func newUniqueNamesFixture(t *testing.T, seed ...models.StackInstance) *uniqueNa
 		users:     NewMockUserRepository(),
 	}
 	seedDefinition(t, f.defs, "d1", "My Def", "uid-1")
-	require.NoError(t, f.users.Create(&models.User{ID: "uid-1", Username: "alice", Role: "user"}))
-	require.NoError(t, f.users.Create(&models.User{ID: "uid-carol", Username: "carol", Role: "user"}))
+	require.NoError(t, f.users.Create(context.Background(), &models.User{ID: "uid-1", Username: "alice", Role: "user"}))
+	require.NoError(t, f.users.Create(context.Background(), &models.User{ID: "uid-carol", Username: "carol", Role: "user"}))
 	now := time.Now().UTC()
 	for i := range seed {
 		inst := seed[i]

@@ -337,15 +337,17 @@ type mockUserRepository struct {
 	rolesReceived     []string
 }
 
-func (m *mockUserRepository) UpdateRole(_, _, _ string) (string, error) { return "", nil }
-func (m *mockUserRepository) SetDisabled(_, _ string, _ bool) error     { return nil }
-func (m *mockUserRepository) DeleteGuarded(_, _ string) error           { return nil }
-func (m *mockUserRepository) UpdatePassword(_, _ string) error          { return nil }
-func (m *mockUserRepository) UpdateProfile(_ string, _ models.UserProfileUpdate) error {
+func (m *mockUserRepository) UpdateRole(_ context.Context, _, _, _ string) (string, error) {
+	return "", nil
+}
+func (m *mockUserRepository) SetDisabled(_ context.Context, _, _ string, _ bool) error { return nil }
+func (m *mockUserRepository) DeleteGuarded(_ context.Context, _, _ string) error       { return nil }
+func (m *mockUserRepository) UpdatePassword(_ context.Context, _, _ string) error      { return nil }
+func (m *mockUserRepository) UpdateProfile(_ context.Context, _ string, _ models.UserProfileUpdate) error {
 	return nil
 }
 
-func (m *mockUserRepository) ListByRoles(roles []string) ([]models.User, error) {
+func (m *mockUserRepository) ListByRoles(_ context.Context, roles []string) ([]models.User, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.listByRolesCalled = true
@@ -357,15 +359,23 @@ func (m *mockUserRepository) ListByRoles(roles []string) ([]models.User, error) 
 }
 
 // Stub methods to satisfy models.UserRepository interface.
-func (m *mockUserRepository) Create(_ *models.User) error                           { return nil }
-func (m *mockUserRepository) FindByID(_ string) (*models.User, error)               { return nil, nil }
-func (m *mockUserRepository) FindByIDs(_ []string) (map[string]*models.User, error) { return nil, nil }
-func (m *mockUserRepository) FindByUsername(_ string) (*models.User, error)         { return nil, nil }
-func (m *mockUserRepository) FindByExternalID(_, _ string) (*models.User, error)    { return nil, nil }
-func (m *mockUserRepository) Update(_ *models.User) error                           { return nil }
-func (m *mockUserRepository) Delete(_ string) error                                 { return nil }
-func (m *mockUserRepository) List() ([]models.User, error)                          { return nil, nil }
-func (m *mockUserRepository) Count() (int64, error)                                 { return 0, nil }
+func (m *mockUserRepository) Create(_ context.Context, _ *models.User) error { return nil }
+func (m *mockUserRepository) FindByID(_ context.Context, _ string) (*models.User, error) {
+	return nil, nil
+}
+func (m *mockUserRepository) FindByIDs(_ context.Context, _ []string) (map[string]*models.User, error) {
+	return nil, nil
+}
+func (m *mockUserRepository) FindByUsername(_ context.Context, _ string) (*models.User, error) {
+	return nil, nil
+}
+func (m *mockUserRepository) FindByExternalID(_ context.Context, _, _ string) (*models.User, error) {
+	return nil, nil
+}
+func (m *mockUserRepository) Update(_ *models.User) error                   { return nil }
+func (m *mockUserRepository) Delete(_ context.Context, _ string) error      { return nil }
+func (m *mockUserRepository) List(_ context.Context) ([]models.User, error) { return nil, nil }
+func (m *mockUserRepository) Count(_ context.Context) (int64, error)        { return 0, nil }
 
 // ---- NotifySystem Tests ----
 

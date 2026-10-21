@@ -59,7 +59,7 @@ func TestLoginHandler_MetricOutcomes(t *testing.T) {
 
 	userRepo := NewMockUserRepository()
 	seedUser(t, userRepo, "u1", "alice", "correct-horse", "devops")
-	require.NoError(t, userRepo.Create(&models.User{
+	require.NoError(t, userRepo.Create(context.Background(), &models.User{
 		ID: "u2", Username: "bob", PasswordHash: hashPassword(t, "pw"), Disabled: true,
 	}))
 	router, _ := setupAuthRouter(userRepo, false, "", "")

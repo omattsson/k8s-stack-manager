@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"time"
@@ -27,7 +28,7 @@ func NewGORMUserRepository(db *gorm.DB) *GORMUserRepository {
 }
 
 // Create inserts a new user record.
-func (r *GORMUserRepository) Create(user *models.User) error {
+func (r *GORMUserRepository) Create(ctx context.Context, user *models.User) error {
 	if user.Username == "" {
 		return dberrors.NewDatabaseError("create", dberrors.ErrValidation)
 	}
@@ -37,7 +38,7 @@ func (r *GORMUserRepository) Create(user *models.User) error {
 	now := time.Now().UTC()
 	user.CreatedAt = now
 	user.UpdatedAt = now
-	if err := r.db.Create(user).Error; err != nil {
+	if err := r.db.WithContext(ctx).Create(user).Error; err != nil {
 		if isDuplicateKeyError(err) {
 			return dberrors.NewDatabaseError("create", dberrors.ErrDuplicateKey)
 		}
@@ -47,9 +48,9 @@ func (r *GORMUserRepository) Create(user *models.User) error {
 }
 
 // FindByID returns a user by their ID.
-func (r *GORMUserRepository) FindByID(id string) (*models.User, error) {
+func (r *GORMUserRepository) FindByID(ctx context.Context, id string) (*models.User, error) {
 	var user models.User
-	if err := r.db.Where("id = ?", id).First(&user).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, dberrors.NewDatabaseError("find_by_id", dberrors.ErrNotFound)
 		}
@@ -59,12 +60,12 @@ func (r *GORMUserRepository) FindByID(id string) (*models.User, error) {
 }
 
 // FindByIDs returns a map of user ID to User for the given IDs in a single query.
-func (r *GORMUserRepository) FindByIDs(ids []string) (map[string]*models.User, error) {
+func (r *GORMUserRepository) FindByIDs(ctx context.Context, ids []string) (map[string]*models.User, error) {
 	if len(ids) == 0 {
 		return make(map[string]*models.User), nil
 	}
 	var users []models.User
-	if err := r.db.Where("id IN ?", ids).Find(&users).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("id IN ?", ids).Find(&users).Error; err != nil {
 		return nil, dberrors.NewDatabaseError("find_by_ids", err)
 	}
 	result := make(map[string]*models.User, len(users))
@@ -75,9 +76,9 @@ func (r *GORMUserRepository) FindByIDs(ids []string) (map[string]*models.User, e
 }
 
 // FindByUsername returns a user by their username.
-func (r *GORMUserRepository) FindByUsername(username string) (*models.User, error) {
+func (r *GORMUserRepository) FindByUsername(ctx context.Context, username string) (*models.User, error) {
 	var user models.User
-	if err := r.db.Where("username = ?", username).First(&user).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("username = ?", username).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, dberrors.NewDatabaseError("find_by_username", dberrors.ErrNotFound)
 		}
@@ -87,9 +88,9 @@ func (r *GORMUserRepository) FindByUsername(username string) (*models.User, erro
 }
 
 // FindByExternalID returns a user by auth provider and external ID.
-func (r *GORMUserRepository) FindByExternalID(provider, externalID string) (*models.User, error) {
+func (r *GORMUserRepository) FindByExternalID(ctx context.Context, provider, externalID string) (*models.User, error) {
 	var user models.User
-	if err := r.db.Where("auth_provider = ? AND external_id = ?", provider, externalID).First(&user).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("auth_provider = ? AND external_id = ?", provider, externalID).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, dberrors.NewDatabaseError("find_by_external_id", dberrors.ErrNotFound)
 		}
@@ -98,24 +99,9 @@ func (r *GORMUserRepository) FindByExternalID(provider, externalID string) (*mod
 	return &user, nil
 }
 
-// Update saves the full user row. It is not part of models.UserRepository and
-// only test setup uses it: a full-row save overwrites concurrent changes to
-// other columns (role, disabled). Handlers use the targeted updates
-// (UpdatePassword, UpdateProfile, UpdateRole, SetDisabled).
-func (r *GORMUserRepository) Update(user *models.User) error {
-	user.UpdatedAt = time.Now().UTC()
-	if err := r.db.Save(user).Error; err != nil {
-		if isDuplicateKeyError(err) {
-			return dberrors.NewDatabaseError("update", dberrors.ErrDuplicateKey)
-		}
-		return dberrors.NewDatabaseError("update", err)
-	}
-	return nil
-}
-
 // Delete removes a user by ID.
-func (r *GORMUserRepository) Delete(id string) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
+func (r *GORMUserRepository) Delete(ctx context.Context, id string) error {
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		result := tx.Where("id = ?", id).Delete(&models.User{})
 		if result.Error != nil {
 			return dberrors.NewDatabaseError("delete", result.Error)
@@ -129,33 +115,34 @@ func (r *GORMUserRepository) Delete(id string) error {
 		}
 		return nil
 	})
+	return withContextErr(ctx, "delete", err)
 }
 
 // Count returns the total number of users.
-func (r *GORMUserRepository) Count() (int64, error) {
+func (r *GORMUserRepository) Count(ctx context.Context) (int64, error) {
 	var count int64
-	if err := r.db.Model(&models.User{}).Count(&count).Error; err != nil {
+	if err := r.db.WithContext(ctx).Model(&models.User{}).Count(&count).Error; err != nil {
 		return 0, dberrors.NewDatabaseError("count", err)
 	}
 	return count, nil
 }
 
 // List returns all users.
-func (r *GORMUserRepository) List() ([]models.User, error) {
+func (r *GORMUserRepository) List(ctx context.Context) ([]models.User, error) {
 	var users []models.User
-	if err := r.db.Find(&users).Error; err != nil {
+	if err := r.db.WithContext(ctx).Find(&users).Error; err != nil {
 		return nil, dberrors.NewDatabaseError("list", err)
 	}
 	return users, nil
 }
 
 // ListByRoles returns users whose role matches any of the given roles.
-func (r *GORMUserRepository) ListByRoles(roles []string) ([]models.User, error) {
+func (r *GORMUserRepository) ListByRoles(ctx context.Context, roles []string) ([]models.User, error) {
 	if len(roles) == 0 {
 		return nil, nil
 	}
 	var users []models.User
-	if err := r.db.Where("role IN ?", roles).Find(&users).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("role IN ?", roles).Find(&users).Error; err != nil {
 		return nil, dberrors.NewDatabaseError("list_by_roles", err)
 	}
 	return users, nil
@@ -186,9 +173,9 @@ func (g guardTarget) wouldRemoveLastAdmin() bool {
 //
 // A deadlock (next-key locks on idx_users_role, #639) runs the whole
 // transaction again, so fn must only write through tx.
-func (r *GORMUserRepository) guardedAdminChange(op, callerID, id string, fn func(tx *gorm.DB, t guardTarget) error) error {
-	return retryOnDeadlock(op, func() error {
-		return r.guardedAdminTx(op, callerID, id, fn)
+func (r *GORMUserRepository) guardedAdminChange(ctx context.Context, op, callerID, id string, fn func(tx *gorm.DB, t guardTarget) error) error {
+	return retryOnDeadlock(ctx, op, func() error {
+		return r.guardedAdminTx(ctx, op, callerID, id, fn)
 	})
 }
 
@@ -206,8 +193,8 @@ func lockAdminRows(tx *gorm.DB, op string) ([]models.User, error) {
 	return admins, nil
 }
 
-func (r *GORMUserRepository) guardedAdminTx(op, callerID, id string, fn func(tx *gorm.DB, t guardTarget) error) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
+func (r *GORMUserRepository) guardedAdminTx(ctx context.Context, op, callerID, id string, fn func(tx *gorm.DB, t guardTarget) error) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		admins, err := lockAdminRows(tx, op)
 		if err != nil {
 			return err
@@ -246,9 +233,9 @@ func (r *GORMUserRepository) guardedAdminTx(op, callerID, id string, fn func(tx 
 
 // UpdateRole sets the role of a user and returns the previous role. See
 // models.UserRepository.
-func (r *GORMUserRepository) UpdateRole(callerID, id, role string) (string, error) {
+func (r *GORMUserRepository) UpdateRole(ctx context.Context, callerID, id, role string) (string, error) {
 	var oldRole string
-	err := r.guardedAdminChange("update_role", callerID, id, func(tx *gorm.DB, g guardTarget) error {
+	err := r.guardedAdminChange(ctx, "update_role", callerID, id, func(tx *gorm.DB, g guardTarget) error {
 		oldRole = g.user.Role
 		if oldRole == role {
 			return nil
@@ -265,8 +252,8 @@ func (r *GORMUserRepository) UpdateRole(callerID, id, role string) (string, erro
 }
 
 // SetDisabled disables or enables a user. See models.UserRepository.
-func (r *GORMUserRepository) SetDisabled(callerID, id string, disabled bool) error {
-	return r.guardedAdminChange("set_disabled", callerID, id, func(tx *gorm.DB, g guardTarget) error {
+func (r *GORMUserRepository) SetDisabled(ctx context.Context, callerID, id string, disabled bool) error {
+	return r.guardedAdminChange(ctx, "set_disabled", callerID, id, func(tx *gorm.DB, g guardTarget) error {
 		if disabled && g.wouldRemoveLastAdmin() {
 			return models.ErrLastAdmin
 		}
@@ -275,8 +262,8 @@ func (r *GORMUserRepository) SetDisabled(callerID, id string, disabled bool) err
 }
 
 // DeleteGuarded deletes a user. See models.UserRepository.
-func (r *GORMUserRepository) DeleteGuarded(callerID, id string) error {
-	return r.guardedAdminChange("delete", callerID, id, func(tx *gorm.DB, g guardTarget) error {
+func (r *GORMUserRepository) DeleteGuarded(ctx context.Context, callerID, id string) error {
+	return r.guardedAdminChange(ctx, "delete", callerID, id, func(tx *gorm.DB, g guardTarget) error {
 		if g.wouldRemoveLastAdmin() {
 			return models.ErrLastAdmin
 		}
@@ -304,8 +291,8 @@ func updateUserColumns(tx *gorm.DB, op, id string, cols map[string]interface{}) 
 }
 
 // UpdatePassword sets only the password hash. See models.UserRepository.
-func (r *GORMUserRepository) UpdatePassword(id, passwordHash string) error {
-	result := r.db.Model(&models.User{}).Where("id = ?", id).Updates(map[string]interface{}{
+func (r *GORMUserRepository) UpdatePassword(ctx context.Context, id, passwordHash string) error {
+	result := r.db.WithContext(ctx).Model(&models.User{}).Where("id = ?", id).Updates(map[string]interface{}{
 		"password_hash": passwordHash,
 		"updated_at":    time.Now().UTC(),
 	})
@@ -320,12 +307,12 @@ func (r *GORMUserRepository) UpdatePassword(id, passwordHash string) error {
 
 // UpdateProfile sets only the columns listed in upd. See
 // models.UserRepository.
-func (r *GORMUserRepository) UpdateProfile(id string, upd models.UserProfileUpdate) error {
-	return retryOnDeadlock("update_profile", func() error { return r.updateProfileTx(id, upd) })
+func (r *GORMUserRepository) UpdateProfile(ctx context.Context, id string, upd models.UserProfileUpdate) error {
+	return retryOnDeadlock(ctx, "update_profile", func() error { return r.updateProfileTx(ctx, id, upd) })
 }
 
-func (r *GORMUserRepository) updateProfileTx(id string, upd models.UserProfileUpdate) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
+func (r *GORMUserRepository) updateProfileTx(ctx context.Context, id string, upd models.UserProfileUpdate) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if upd.Role != nil {
 			// Same lock order as guardedAdminChange: without it, the two deadlock on every overlap (#639).
 			if _, err := lockAdminRows(tx, "update_profile"); err != nil {

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -253,7 +254,7 @@ func TestChangeUserRole(t *testing.T) {
 			}
 
 			if tt.wantRole != "" {
-				u, err := userRepo.FindByID(stored)
+				u, err := userRepo.FindByID(context.Background(), stored)
 				require.NoError(t, err)
 				assert.Equal(t, tt.wantRole, u.Role)
 			}
@@ -340,7 +341,7 @@ func TestChangeUserRole_AuditOnlyRealChanges(t *testing.T) {
 // seedRoleUser adds a user without a password hash (bcrypt is not needed).
 func seedRoleUser(t *testing.T, repo *MockUserRepository, id, role, provider string, disabled bool) {
 	t.Helper()
-	require.NoError(t, repo.Create(&models.User{
+	require.NoError(t, repo.Create(context.Background(), &models.User{
 		ID: id, Username: id + "-name", Role: role, AuthProvider: provider, Disabled: disabled,
 	}))
 }
@@ -376,7 +377,7 @@ func TestLogin_CacheUsesCurrentRole(t *testing.T) {
 
 	assert.Equal(t, "user", login().Role)
 	seedRoleUser(t, userRepo, "admin-x", "admin", "local", false)
-	_, err := userRepo.UpdateRole("admin-x", "u1", "devops")
+	_, err := userRepo.UpdateRole(context.Background(), "admin-x", "u1", "devops")
 	require.NoError(t, err)
 	assert.Equal(t, "devops", login().Role, "cache hit must use the current role")
 }
@@ -427,7 +428,7 @@ func TestGuardedUserChanges(t *testing.T) {
 				if caller == nil {
 					caller = &models.User{ID: "admin-c", Username: "c", Role: "admin"}
 				}
-				require.NoError(t, userRepo.Create(caller))
+				require.NoError(t, userRepo.Create(context.Background(), caller))
 				seedRoleUser(t, userRepo, "user-t", "user", "local", false)
 				if tt.repoErr != nil {
 					userRepo.mu.Lock()
@@ -452,7 +453,7 @@ func TestGuardedUserChanges(t *testing.T) {
 					assert.True(t, validateJSONSchema(t, errorSchema, w.Body.Bytes()))
 					assert.False(t, f.store.wasBlockUserCalledFor("user-t"))
 					assert.False(t, f.store.wasBlockUserCalledFor("admin-c"))
-					u, err := userRepo.FindByID("user-t")
+					u, err := userRepo.FindByID(context.Background(), "user-t")
 					require.NoError(t, err)
 					assert.False(t, u.Disabled)
 					assert.Equal(t, "user", u.Role)
@@ -473,8 +474,8 @@ type changeDuringLoginRepo struct {
 	change func(u *models.User)
 }
 
-func (r *changeDuringLoginRepo) FindByID(id string) (*models.User, error) {
-	u, err := r.MockUserRepository.FindByID(id)
+func (r *changeDuringLoginRepo) FindByID(ctx context.Context, id string) (*models.User, error) {
+	u, err := r.MockUserRepository.FindByID(ctx, id)
 	if err == nil && r.change != nil {
 		r.change(u)
 	}

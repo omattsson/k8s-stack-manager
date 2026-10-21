@@ -42,15 +42,18 @@ type scriptedUserRepo struct {
 	byIDCalls     int
 }
 
-func (s *scriptedUserRepo) FindByUsername(username string) (*models.User, error) {
+func (s *scriptedUserRepo) FindByUsername(ctx context.Context, username string) (*models.User, error) {
+	if err := ctxDone(ctx, "find_by_username"); err != nil {
+		return nil, err
+	}
 	if s.byUsernameErr != nil {
 		return nil, s.byUsernameErr
 	}
-	return s.MockUserRepository.FindByUsername(username)
+	return s.MockUserRepository.FindByUsername(ctx, username)
 }
 
-func (s *scriptedUserRepo) FindByID(id string) (*models.User, error) {
-	u, err := s.MockUserRepository.FindByID(id)
+func (s *scriptedUserRepo) FindByID(ctx context.Context, id string) (*models.User, error) {
+	u, err := s.MockUserRepository.FindByID(ctx, id)
 	s.mu.Lock()
 	s.byIDCalls++
 	call := s.byIDCalls
@@ -95,14 +98,14 @@ func TestLogin_FailureReasonLogged(t *testing.T) {
 		{
 			name: "no local password (SSO user)", username: "alice", reason: loginReasonNoPassword,
 			setup: func(t *testing.T, repo *scriptedUserRepo, _ *AuthHandler, _ *MockRefreshTokenRepository) {
-				require.NoError(t, repo.Create(&models.User{ID: "uid-1", Username: "alice", Role: "user", AuthProvider: "oidc"}))
+				require.NoError(t, repo.Create(context.Background(), &models.User{ID: "uid-1", Username: "alice", Role: "user", AuthProvider: "oidc"}))
 			},
 			wantCode: http.StatusUnauthorized, wantBody: `{"error":"Invalid username or password"}`, wantLevel: "WARN",
 		},
 		{
 			name: "stored hash malformed", username: "alice", reason: loginReasonHashInvalid,
 			setup: func(t *testing.T, repo *scriptedUserRepo, _ *AuthHandler, _ *MockRefreshTokenRepository) {
-				require.NoError(t, repo.Create(&models.User{ID: "uid-1", Username: "alice", Role: "user", PasswordHash: "not-a-hash"}))
+				require.NoError(t, repo.Create(context.Background(), &models.User{ID: "uid-1", Username: "alice", Role: "user", PasswordHash: "not-a-hash"}))
 			},
 			wantCode: http.StatusUnauthorized, wantBody: `{"error":"Invalid username or password"}`, wantLevel: "WARN", // Warn: any client can trigger it
 		},
@@ -152,7 +155,7 @@ func TestLogin_FailureReasonLogged(t *testing.T) {
 		{
 			name: "disabled user", username: "alice", reason: loginReasonDisabled,
 			setup: func(t *testing.T, repo *scriptedUserRepo, _ *AuthHandler, _ *MockRefreshTokenRepository) {
-				require.NoError(t, repo.Create(&models.User{ID: "uid-1", Username: "alice", Role: "user",
+				require.NoError(t, repo.Create(context.Background(), &models.User{ID: "uid-1", Username: "alice", Role: "user",
 					PasswordHash: hashPassword(t, loginFailurePassword), Disabled: true}))
 			},
 			wantCode: http.StatusForbidden, wantBody: `{"error":"Account disabled"}`, wantLevel: "WARN",
@@ -235,7 +238,7 @@ func TestLogin_FailureReasonLogged(t *testing.T) {
 				tt.setup(t, repo, h, refresh)
 			}
 			var storedHash string
-			if u, err := repo.MockUserRepository.FindByUsername(tt.username); err == nil {
+			if u, err := repo.MockUserRepository.FindByUsername(context.Background(), tt.username); err == nil {
 				storedHash = u.PasswordHash
 			}
 			if tt.useCache {
@@ -368,11 +371,11 @@ func TestLoginHandler_MetricReasons(t *testing.T) {
 
 	userRepo := NewMockUserRepository()
 	seedUser(t, userRepo, "u1", "alice", "correct-horse", "devops")
-	require.NoError(t, userRepo.Create(&models.User{
+	require.NoError(t, userRepo.Create(context.Background(), &models.User{
 		ID: "u2", Username: "bob", PasswordHash: hashPassword(t, "pw"), Disabled: true,
 	}))
-	require.NoError(t, userRepo.Create(&models.User{ID: "u3", Username: "carol", AuthProvider: "oidc"}))
-	require.NoError(t, userRepo.Create(&models.User{ID: "u4", Username: "dave", PasswordHash: "not-a-hash"}))
+	require.NoError(t, userRepo.Create(context.Background(), &models.User{ID: "u3", Username: "carol", AuthProvider: "oidc"}))
+	require.NoError(t, userRepo.Create(context.Background(), &models.User{ID: "u4", Username: "dave", PasswordHash: "not-a-hash"}))
 	h := NewAuthHandler(userRepo, testAuthConfig(false), &config.OIDCConfig{})
 	h.logger = slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
 	gin.SetMode(gin.TestMode)

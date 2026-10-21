@@ -1,6 +1,7 @@
 package models
 
 import (
+	"context"
 	"errors"
 	"time"
 )
@@ -65,22 +66,22 @@ type UserProfileUpdate struct {
 // full-row update: each change writes only its own columns, so concurrent
 // changes (role, disabled, password, profile) cannot overwrite each other.
 type UserRepository interface {
-	Create(user *User) error
-	FindByID(id string) (*User, error)
-	FindByIDs(ids []string) (map[string]*User, error)
-	FindByUsername(username string) (*User, error)
-	FindByExternalID(provider, externalID string) (*User, error)
+	Create(ctx context.Context, user *User) error
+	FindByID(ctx context.Context, id string) (*User, error)
+	FindByIDs(ctx context.Context, ids []string) (map[string]*User, error)
+	FindByUsername(ctx context.Context, username string) (*User, error)
+	FindByExternalID(ctx context.Context, provider, externalID string) (*User, error)
 	// UpdatePassword sets only the password hash of a user.
-	UpdatePassword(id, passwordHash string) error
+	UpdatePassword(ctx context.Context, id, passwordHash string) error
 	// UpdateProfile sets only the columns listed in upd. It never writes
 	// disabled, and it writes the role only for an SSO user (see
 	// UserProfileUpdate.Role). Use it instead of a full-row save, which would
 	// overwrite a concurrent role or disabled change.
-	UpdateProfile(id string, upd UserProfileUpdate) error
-	Delete(id string) error
-	List() ([]User, error)
-	ListByRoles(roles []string) ([]User, error)
-	Count() (int64, error)
+	UpdateProfile(ctx context.Context, id string, upd UserProfileUpdate) error
+	Delete(ctx context.Context, id string) error
+	List(ctx context.Context) ([]User, error)
+	ListByRoles(ctx context.Context, roles []string) ([]User, error)
+	Count(ctx context.Context) (int64, error)
 	// Guarded admin changes. Each runs in one transaction that locks the
 	// admin rows (ordered by ID) and then the target row, so concurrent
 	// changes serialize. Each returns ErrCallerNotAdmin when callerID is not
@@ -89,9 +90,9 @@ type UserRepository interface {
 
 	// UpdateRole sets the role of a user and returns the previous role. An
 	// unchanged role is a no-op.
-	UpdateRole(callerID, id, role string) (oldRole string, err error)
+	UpdateRole(ctx context.Context, callerID, id, role string) (oldRole string, err error)
 	// SetDisabled disables or enables a user.
-	SetDisabled(callerID, id string, disabled bool) error
+	SetDisabled(ctx context.Context, callerID, id string, disabled bool) error
 	// DeleteGuarded deletes a user.
-	DeleteGuarded(callerID, id string) error
+	DeleteGuarded(ctx context.Context, callerID, id string) error
 }

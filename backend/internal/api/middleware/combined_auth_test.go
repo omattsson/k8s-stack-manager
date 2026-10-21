@@ -84,7 +84,7 @@ func (r *testUserRepo) addUser(u *models.User) {
 	r.users[u.ID] = u
 }
 
-func (r *testUserRepo) FindByID(id string) (*models.User, error) {
+func (r *testUserRepo) FindByID(_ context.Context, id string) (*models.User, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	u, ok := r.users[id]
@@ -95,8 +95,8 @@ func (r *testUserRepo) FindByID(id string) (*models.User, error) {
 	return &cp, nil
 }
 
-func (r *testUserRepo) Create(user *models.User) error { return nil }
-func (r *testUserRepo) FindByIDs(ids []string) (map[string]*models.User, error) {
+func (r *testUserRepo) Create(_ context.Context, user *models.User) error { return nil }
+func (r *testUserRepo) FindByIDs(_ context.Context, ids []string) (map[string]*models.User, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	result := make(map[string]*models.User, len(ids))
@@ -108,20 +108,24 @@ func (r *testUserRepo) FindByIDs(ids []string) (map[string]*models.User, error) 
 	}
 	return result, nil
 }
-func (r *testUserRepo) FindByUsername(username string) (*models.User, error) { return nil, nil }
-func (r *testUserRepo) FindByExternalID(provider, externalID string) (*models.User, error) {
+func (r *testUserRepo) FindByUsername(_ context.Context, username string) (*models.User, error) {
+	return nil, nil
+}
+func (r *testUserRepo) FindByExternalID(_ context.Context, provider, externalID string) (*models.User, error) {
 	return nil, nil
 }
 func (r *testUserRepo) Update(user *models.User) error                { return nil }
-func (r *testUserRepo) Delete(id string) error                        { return nil }
-func (r *testUserRepo) List() ([]models.User, error)                  { return nil, nil }
-func (r *testUserRepo) Count() (int64, error)                         { return 0, nil }
-func (r *testUserRepo) ListByRoles(_ []string) ([]models.User, error) { return nil, nil }
-func (r *testUserRepo) UpdateRole(_, _, _ string) (string, error)     { return "", nil }
-func (r *testUserRepo) SetDisabled(_, _ string, _ bool) error         { return nil }
-func (r *testUserRepo) DeleteGuarded(_, _ string) error               { return nil }
-func (r *testUserRepo) UpdatePassword(_, _ string) error              { return nil }
-func (r *testUserRepo) UpdateProfile(_ string, _ models.UserProfileUpdate) error {
+func (r *testUserRepo) Delete(_ context.Context, id string) error     { return nil }
+func (r *testUserRepo) List(_ context.Context) ([]models.User, error) { return nil, nil }
+func (r *testUserRepo) Count(_ context.Context) (int64, error)        { return 0, nil }
+func (r *testUserRepo) ListByRoles(_ context.Context, _ []string) ([]models.User, error) {
+	return nil, nil
+}
+func (r *testUserRepo) UpdateRole(_ context.Context, _, _, _ string) (string, error) { return "", nil }
+func (r *testUserRepo) SetDisabled(_ context.Context, _, _ string, _ bool) error     { return nil }
+func (r *testUserRepo) DeleteGuarded(_ context.Context, _, _ string) error           { return nil }
+func (r *testUserRepo) UpdatePassword(_ context.Context, _, _ string) error          { return nil }
+func (r *testUserRepo) UpdateProfile(_ context.Context, _ string, _ models.UserProfileUpdate) error {
 	return nil
 }
 

@@ -35,10 +35,14 @@ func (f *fakeInstanceRepo) CountByStatuses(statuses []string) (int, error) {
 
 type fakeUserRepo struct {
 	models.UserRepository
-	count int64
+	countCtx context.Context // context of the last Count call
+	count    int64
 }
 
-func (f *fakeUserRepo) Count() (int64, error) { return f.count, nil }
+func (f *fakeUserRepo) Count(ctx context.Context) (int64, error) {
+	f.countCtx = ctx
+	return f.count, nil
+}
 
 type fakeTemplateRepo struct {
 	models.StackTemplateRepository
@@ -115,4 +119,28 @@ func TestStartBusinessMetrics_ObservesGauges(t *testing.T) {
 	assert.Equal(t, int64(4), got["business.templates.total"])
 	assert.Equal(t, int64(3), got["business.clusters.total"])
 	assert.Equal(t, int64(2), got["business.clusters.healthy"])
+}
+
+type collectCtxKey struct{}
+
+// TestStartBusinessMetrics_UserCountUsesCallbackContext checks that the user
+// count runs with the context of the metrics collection (#656).
+func TestStartBusinessMetrics_UserCountUsesCallbackContext(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	prev := otel.GetMeterProvider()
+	otel.SetMeterProvider(mp)
+	t.Cleanup(func() {
+		otel.SetMeterProvider(prev)
+		_ = mp.Shutdown(context.Background())
+	})
+
+	userRepo := &fakeUserRepo{count: 1}
+	require.NoError(t, StartBusinessMetrics(&fakeInstanceRepo{}, userRepo, &fakeTemplateRepo{}, &fakeClusterRepo{}))
+
+	var rm metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(context.WithValue(context.Background(), collectCtxKey{}, "scrape"), &rm))
+
+	require.NotNil(t, userRepo.countCtx)
+	assert.Equal(t, "scrape", userRepo.countCtx.Value(collectCtxKey{}))
 }

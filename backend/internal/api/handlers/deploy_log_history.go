@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"strings"
 
 	"backend/internal/models"
@@ -47,14 +48,14 @@ func summaryDeployLog(log *models.DeploymentLog) {
 
 // setDeployLogStartedBy sets StartedBy of each log from its UserID with one
 // batch user lookup. A user that is not found keeps StartedBy empty.
-func setDeployLogStartedBy(userRepo models.UserRepository, logs []*models.DeploymentLog) {
+func setDeployLogStartedBy(ctx context.Context, userRepo models.UserRepository, logs []*models.DeploymentLog) {
 	ids := make([]string, 0, len(logs))
 	for _, l := range logs {
 		if l != nil {
 			ids = append(ids, l.UserID)
 		}
 	}
-	names := lookupUsernames(userRepo, ids)
+	names := lookupUsernames(ctx, userRepo, ids)
 	for _, l := range logs {
 		if l != nil {
 			l.StartedBy = names[l.UserID]

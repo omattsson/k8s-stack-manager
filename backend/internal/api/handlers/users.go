@@ -138,9 +138,10 @@ func (h *UserHandler) revokeUserAccess(ctx context.Context, userID string, opts 
 // @Failure      403  {object}  map[string]string
 // @Router       /api/v1/users [get]
 func (h *UserHandler) ListUsers(c *gin.Context) {
-	users, err := h.userRepo.List()
+	users, err := h.userRepo.List(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		status, message := mapError(err, "User")
+		c.JSON(status, gin.H{"error": message})
 		return
 	}
 	// models.User.PasswordHash is tagged json:"-" so it is never serialised.
@@ -176,7 +177,10 @@ func (h *UserHandler) DeleteUser(c *gin.Context) {
 		return
 	}
 
-	user, err := h.userRepo.FindByID(id)
+	// Detached: a client cancel must not commit the change and then skip the
+	// revocation or the audit entry (#656).
+	ctx := context.WithoutCancel(c.Request.Context())
+	user, err := h.userRepo.FindByID(ctx, id)
 	if err != nil {
 		status, message := mapError(err, "User")
 		c.JSON(status, gin.H{"error": message})
@@ -189,12 +193,12 @@ func (h *UserHandler) DeleteUser(c *gin.Context) {
 		return
 	}
 
-	if err := h.userRepo.DeleteGuarded(callerID, user.ID); err != nil {
+	if err := h.userRepo.DeleteGuarded(ctx, callerID, user.ID); err != nil {
 		writeGuardedChangeError(c, err)
 		return
 	}
 
-	h.revokeUserAccess(context.WithoutCancel(c.Request.Context()), user.ID, revokeOptions{deleteAPIKeys: true})
+	h.revokeUserAccess(ctx, user.ID, revokeOptions{deleteAPIKeys: true})
 
 	c.Status(http.StatusNoContent)
 }
@@ -251,7 +255,8 @@ func (h *UserHandler) setDisabled(c *gin.Context, disabled bool) {
 		return
 	}
 
-	user, err := h.userRepo.FindByID(id)
+	ctx := context.WithoutCancel(c.Request.Context()) // see DeleteUser
+	user, err := h.userRepo.FindByID(ctx, id)
 	if err != nil {
 		status, message := mapError(err, "User")
 		c.JSON(status, gin.H{"error": message})
@@ -263,18 +268,18 @@ func (h *UserHandler) setDisabled(c *gin.Context, disabled bool) {
 		return
 	}
 
-	if err := h.userRepo.SetDisabled(callerID, user.ID, disabled); err != nil {
+	if err := h.userRepo.SetDisabled(ctx, callerID, user.ID, disabled); err != nil {
 		writeGuardedChangeError(c, err)
 		return
 	}
 
 	if disabled {
-		h.revokeUserAccess(context.WithoutCancel(c.Request.Context()), user.ID, revokeOptions{})
+		h.revokeUserAccess(ctx, user.ID, revokeOptions{})
 	} else {
 		// Do not unblock: that would make tokens issued before the disable
 		// valid again. A fresh block (block time = now) lets only new logins
 		// through and also replaces a legacy block row without a block time.
-		h.blockIssuedTokens(context.WithoutCancel(c.Request.Context()), user.ID)
+		h.blockIssuedTokens(ctx, user.ID)
 	}
 
 	action := "enabled"
@@ -318,7 +323,8 @@ func (h *UserHandler) ResetUserPassword(c *gin.Context) {
 		return
 	}
 
-	user, err := h.userRepo.FindByID(id)
+	ctx := context.WithoutCancel(c.Request.Context()) // see DeleteUser
+	user, err := h.userRepo.FindByID(ctx, id)
 	if err != nil {
 		status, message := mapError(err, "User")
 		c.JSON(status, gin.H{"error": message})
@@ -341,13 +347,13 @@ func (h *UserHandler) ResetUserPassword(c *gin.Context) {
 	// Write only the password hash: a full-row save would overwrite a
 	// concurrent role or disabled change. Use the stored (canonical) ID (see
 	// DeleteUser).
-	if err := h.userRepo.UpdatePassword(user.ID, string(hash)); err != nil {
+	if err := h.userRepo.UpdatePassword(ctx, user.ID, string(hash)); err != nil {
 		status, message := mapError(err, "User")
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
-	h.revokeUserAccess(context.WithoutCancel(c.Request.Context()), user.ID, revokeOptions{})
+	h.revokeUserAccess(ctx, user.ID, revokeOptions{})
 
 	c.JSON(http.StatusOK, gin.H{"message": "Password reset successfully"})
 }
@@ -425,7 +431,8 @@ func (h *UserHandler) ChangeUserRole(c *gin.Context) {
 		return
 	}
 
-	user, err := h.userRepo.FindByID(id)
+	ctx := context.WithoutCancel(c.Request.Context()) // see DeleteUser
+	user, err := h.userRepo.FindByID(ctx, id)
 	if err != nil {
 		status, message := mapError(err, "User")
 		c.JSON(status, gin.H{"error": message})
@@ -444,7 +451,7 @@ func (h *UserHandler) ChangeUserRole(c *gin.Context) {
 		return
 	}
 
-	oldRole, err := h.userRepo.UpdateRole(callerID, user.ID, req.Role)
+	oldRole, err := h.userRepo.UpdateRole(ctx, callerID, user.ID, req.Role)
 	if err != nil {
 		writeGuardedChangeError(c, err)
 		return
@@ -454,7 +461,7 @@ func (h *UserHandler) ChangeUserRole(c *gin.Context) {
 	if changed {
 		// Tokens carry the role claim. End the sessions so the next request
 		// needs a new login, which issues a token with the new role.
-		h.revokeUserAccess(context.WithoutCancel(c.Request.Context()), user.ID, revokeOptions{})
+		h.revokeUserAccess(ctx, user.ID, revokeOptions{})
 	}
 
 	message := "Role changed"

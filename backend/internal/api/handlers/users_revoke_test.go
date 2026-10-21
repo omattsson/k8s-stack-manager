@@ -163,7 +163,7 @@ func TestRevokeUserAccess_AllPaths(t *testing.T) {
 
 			require.Equal(t, tt.wantStatus, w.Code, w.Body.String())
 
-			_, err := f.userRepo.FindByID(revokeTargetID)
+			_, err := f.userRepo.FindByID(context.Background(), revokeTargetID)
 			assert.Equal(t, tt.wantUserExists, err == nil)
 
 			// Access tokens: user is blocked in the session store.

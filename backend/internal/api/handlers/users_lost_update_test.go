@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -23,8 +24,8 @@ type concurrentChangeRepo struct {
 	change func(stored *models.User)
 }
 
-func (r *concurrentChangeRepo) FindByID(id string) (*models.User, error) {
-	u, err := r.MockUserRepository.FindByID(id)
+func (r *concurrentChangeRepo) FindByID(ctx context.Context, id string) (*models.User, error) {
+	u, err := r.MockUserRepository.FindByID(ctx, id)
 	if err == nil && r.change != nil {
 		r.MockUserRepository.mu.Lock()
 		if stored, ok := r.MockUserRepository.lookupLocked(id); ok {
@@ -59,8 +60,8 @@ func TestResetUserPassword_KeepsConcurrentChanges(t *testing.T) {
 			t.Parallel()
 			f := newRevokeFixture(t)
 			mock := NewMockUserRepository()
-			require.NoError(t, mock.Create(&models.User{ID: "admin-c", Username: "c", Role: "admin"}))
-			require.NoError(t, mock.Create(&models.User{ID: "user-t", Username: "t", Role: "devops", PasswordHash: "old"}))
+			require.NoError(t, mock.Create(context.Background(), &models.User{ID: "admin-c", Username: "c", Role: "admin"}))
+			require.NoError(t, mock.Create(context.Background(), &models.User{ID: "user-t", Username: "t", Role: "devops", PasswordHash: "old"}))
 
 			h := NewUserHandler(&concurrentChangeRepo{MockUserRepository: mock, change: tt.change}, f.refreshRepo, f.apiKeyRepo)
 			h.SetSessionStore(f.store)
@@ -75,7 +76,7 @@ func TestResetUserPassword_KeepsConcurrentChanges(t *testing.T) {
 			r.ServeHTTP(w, req)
 			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
-			u, err := mock.FindByID("user-t")
+			u, err := mock.FindByID(context.Background(), "user-t")
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantRole, u.Role)
 			assert.Equal(t, tt.wantDisabled, u.Disabled)
@@ -108,8 +109,8 @@ func TestOIDCUserSync_KeepsConcurrentDisable(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			h, _, repo := newOIDCHandlerSetup(t, false)
-			require.NoError(t, repo.Create(&models.User{ID: "u1", Username: "sso", Role: "user", AuthProvider: tt.provider, PasswordHash: "h"}))
-			stale, err := repo.FindByID("u1")
+			require.NoError(t, repo.Create(context.Background(), &models.User{ID: "u1", Username: "sso", Role: "user", AuthProvider: tt.provider, PasswordHash: "h"}))
+			stale, err := repo.FindByID(context.Background(), "u1")
 			require.NoError(t, err)
 
 			// Concurrent disable after the read.
@@ -119,13 +120,13 @@ func TestOIDCUserSync_KeepsConcurrentDisable(t *testing.T) {
 
 			oidcUser := &auth.OIDCUser{Subject: "sub-1", Email: "new@example.com", Name: "New Name", Roles: []string{"k8s-stack-devops"}}
 			if tt.link {
-				_, err = h.linkLocalUserToOIDC(stale, oidcUser)
+				_, err = h.linkLocalUserToOIDC(context.Background(), stale, oidcUser)
 			} else {
-				_, err = h.updateExistingOIDCUser(stale, oidcUser)
+				_, err = h.updateExistingOIDCUser(context.Background(), stale, oidcUser)
 			}
 			require.NoError(t, err)
 
-			u, err := repo.FindByID("u1")
+			u, err := repo.FindByID(context.Background(), "u1")
 			require.NoError(t, err)
 			assert.True(t, u.Disabled, "the concurrent disable must stay")
 			assert.Equal(t, "new@example.com", u.Email)

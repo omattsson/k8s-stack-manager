@@ -1365,10 +1365,10 @@ func TestEnsureAdminUser_CreateError(t *testing.T) {
 			h := NewAuthHandler(repo, cfg, &config.OIDCConfig{})
 
 			// Should not panic.
-			h.EnsureAdminUser()
+			h.EnsureAdminUser(context.Background())
 
 			// Check if user was created.
-			user, err := repo.FindByUsername(tt.adminUsername)
+			user, err := repo.FindByUsername(context.Background(), tt.adminUsername)
 			if tt.wantCreated {
 				require.NoError(t, err)
 				assert.Equal(t, "admin", user.Role)

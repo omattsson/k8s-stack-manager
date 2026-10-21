@@ -39,8 +39,8 @@ type wsKeyFixture struct {
 func newWSKeyFixture(t *testing.T) *wsKeyFixture {
 	t.Helper()
 	f := &wsKeyFixture{users: NewMockUserRepository(), keys: NewMockAPIKeyRepository(), raw: map[string]string{}}
-	require.NoError(t, f.users.Create(&models.User{ID: "u-active", Username: "active", Role: "developer"}))
-	require.NoError(t, f.users.Create(&models.User{ID: "u-disabled", Username: "disabled", Role: "developer", Disabled: true}))
+	require.NoError(t, f.users.Create(context.Background(), &models.User{ID: "u-active", Username: "active", Role: "developer"}))
+	require.NoError(t, f.users.Create(context.Background(), &models.User{ID: "u-disabled", Username: "disabled", Role: "developer", Disabled: true}))
 	past := time.Now().Add(-time.Hour)
 	for _, k := range []struct {
 		expires *time.Time
@@ -278,7 +278,7 @@ func TestHandleWebSocket_APIKeyRevalidation(t *testing.T) {
 			require.NoError(t, f.keys.Delete(context.Background(), "u-active", "key-ok"))
 		}},
 		{name: "user disabled in the database", change: func(t *testing.T, f *wsKeyFixture) {
-			user, err := f.users.FindByID("u-active")
+			user, err := f.users.FindByID(context.Background(), "u-active")
 			require.NoError(t, err)
 			user.Disabled = true
 			require.NoError(t, f.users.Update(user))
@@ -611,12 +611,12 @@ type flipUserRepo struct {
 	finds int
 }
 
-func (r *flipUserRepo) FindByID(id string) (*models.User, error) {
+func (r *flipUserRepo) FindByID(ctx context.Context, id string) (*models.User, error) {
 	r.mu.Lock()
 	r.finds++
 	n := r.finds
 	r.mu.Unlock()
-	u, err := r.MockUserRepository.FindByID(id)
+	u, err := r.MockUserRepository.FindByID(ctx, id)
 	if err == nil && n > 1 {
 		u.Disabled = true
 	}

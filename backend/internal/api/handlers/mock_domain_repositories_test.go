@@ -40,7 +40,10 @@ func NewMockUserRepository() *MockUserRepository {
 	}
 }
 
-func (m *MockUserRepository) Create(user *models.User) error {
+func (m *MockUserRepository) Create(ctx context.Context, user *models.User) error {
+	if err := ctxDone(ctx, "create"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.createFunc != nil {
@@ -57,7 +60,10 @@ func (m *MockUserRepository) Create(user *models.User) error {
 	return nil
 }
 
-func (m *MockUserRepository) FindByID(id string) (*models.User, error) {
+func (m *MockUserRepository) FindByID(ctx context.Context, id string) (*models.User, error) {
+	if err := ctxDone(ctx, "find_by_id"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.findErr != nil {
@@ -85,8 +91,11 @@ func (m *MockUserRepository) lookupLocked(id string) (*models.User, bool) {
 	return nil, false
 }
 
-func (m *MockUserRepository) FindByIDs(ids []string) (map[string]*models.User, error) {
+func (m *MockUserRepository) FindByIDs(ctx context.Context, ids []string) (map[string]*models.User, error) {
 	m.findByIDsCalls.Add(1)
+	if err := ctxDone(ctx, "find_by_ids"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.findErr != nil {
@@ -102,7 +111,10 @@ func (m *MockUserRepository) FindByIDs(ids []string) (map[string]*models.User, e
 	return result, nil
 }
 
-func (m *MockUserRepository) FindByUsername(username string) (*models.User, error) {
+func (m *MockUserRepository) FindByUsername(ctx context.Context, username string) (*models.User, error) {
+	if err := ctxDone(ctx, "find_by_username"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.findErr != nil {
@@ -116,7 +128,10 @@ func (m *MockUserRepository) FindByUsername(username string) (*models.User, erro
 	return &cp, nil
 }
 
-func (m *MockUserRepository) FindByExternalID(provider, externalID string) (*models.User, error) {
+func (m *MockUserRepository) FindByExternalID(ctx context.Context, provider, externalID string) (*models.User, error) {
+	if err := ctxDone(ctx, "find_by_external_id"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.findErr != nil {
@@ -153,7 +168,10 @@ func (m *MockUserRepository) Update(user *models.User) error {
 }
 
 // UpdatePassword mirrors GORMUserRepository.UpdatePassword: only the hash.
-func (m *MockUserRepository) UpdatePassword(id, passwordHash string) error {
+func (m *MockUserRepository) UpdatePassword(ctx context.Context, id, passwordHash string) error {
+	if err := ctxDone(ctx, "update_password"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.updateErr != nil {
@@ -169,7 +187,10 @@ func (m *MockUserRepository) UpdatePassword(id, passwordHash string) error {
 
 // UpdateProfile mirrors GORMUserRepository.UpdateProfile: only the listed
 // columns; the role only for an SSO user.
-func (m *MockUserRepository) UpdateProfile(id string, upd models.UserProfileUpdate) error {
+func (m *MockUserRepository) UpdateProfile(ctx context.Context, id string, upd models.UserProfileUpdate) error {
+	if err := ctxDone(ctx, "update_profile"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.updateErr != nil {
@@ -196,7 +217,10 @@ func (m *MockUserRepository) UpdateProfile(id string, upd models.UserProfileUpda
 	return nil
 }
 
-func (m *MockUserRepository) Delete(id string) error {
+func (m *MockUserRepository) Delete(ctx context.Context, id string) error {
+	if err := ctxDone(ctx, "delete"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	u, ok := m.users[id]
@@ -208,7 +232,10 @@ func (m *MockUserRepository) Delete(id string) error {
 	return nil
 }
 
-func (m *MockUserRepository) List() ([]models.User, error) {
+func (m *MockUserRepository) List(ctx context.Context) ([]models.User, error) {
+	if err := ctxDone(ctx, "list"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	out := make([]models.User, 0, len(m.users))
@@ -218,13 +245,19 @@ func (m *MockUserRepository) List() ([]models.User, error) {
 	return out, nil
 }
 
-func (m *MockUserRepository) Count() (int64, error) {
+func (m *MockUserRepository) Count(ctx context.Context) (int64, error) {
+	if err := ctxDone(ctx, "count"); err != nil {
+		return 0, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return int64(len(m.users)), nil
 }
 
-func (m *MockUserRepository) ListByRoles(roles []string) ([]models.User, error) {
+func (m *MockUserRepository) ListByRoles(ctx context.Context, roles []string) ([]models.User, error) {
+	if err := ctxDone(ctx, "list_by_roles"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	roleSet := make(map[string]struct{}, len(roles))
@@ -268,7 +301,10 @@ func removesLastAdmin(target *models.User, others int) bool {
 	return target.Role == models.RoleAdmin && !target.Disabled && others == 0
 }
 
-func (m *MockUserRepository) UpdateRole(callerID, id, role string) (string, error) {
+func (m *MockUserRepository) UpdateRole(ctx context.Context, callerID, id, role string) (string, error) {
+	if err := ctxDone(ctx, "update_role"); err != nil {
+		return "", err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	target, others, err := m.guardLocked(callerID, id)
@@ -286,7 +322,10 @@ func (m *MockUserRepository) UpdateRole(callerID, id, role string) (string, erro
 	return oldRole, nil
 }
 
-func (m *MockUserRepository) SetDisabled(callerID, id string, disabled bool) error {
+func (m *MockUserRepository) SetDisabled(ctx context.Context, callerID, id string, disabled bool) error {
+	if err := ctxDone(ctx, "set_disabled"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	target, others, err := m.guardLocked(callerID, id)
@@ -300,7 +339,10 @@ func (m *MockUserRepository) SetDisabled(callerID, id string, disabled bool) err
 	return nil
 }
 
-func (m *MockUserRepository) DeleteGuarded(callerID, id string) error {
+func (m *MockUserRepository) DeleteGuarded(ctx context.Context, callerID, id string) error {
+	if err := ctxDone(ctx, "delete"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	target, others, err := m.guardLocked(callerID, id)
@@ -1646,6 +1688,13 @@ func (m *MockAuditLogRepository) SetError(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.err = err
+}
+
+// snapshot returns a copy of the stored entries.
+func (m *MockAuditLogRepository) snapshot() []models.AuditLog {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return append([]models.AuditLog(nil), m.entries...)
 }
 
 // ---- APIKeyRepository mock ----

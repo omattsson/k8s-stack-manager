@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 
 	"backend/internal/models"
@@ -19,8 +20,8 @@ var errUserGone = errors.New("user_not_found")
 // Returns nil when the user is active, errAccountDisabled when the user is now
 // disabled, errUserGone when the user no longer exists, or the repository
 // error. Callers fail closed on every non-nil result.
-func recheckUserActive(repo models.UserRepository, userID string) error {
-	u, err := repo.FindByID(userID)
+func recheckUserActive(ctx context.Context, repo models.UserRepository, userID string) error {
+	u, err := repo.FindByID(ctx, userID)
 	if err != nil {
 		if isNotFoundError(err) {
 			return errUserGone

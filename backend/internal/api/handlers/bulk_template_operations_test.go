@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -504,7 +505,7 @@ func TestListTemplates_Enriched(t *testing.T) {
 					OwnerID:          "uid-1",
 					SourceTemplateID: "t1",
 				}))
-				require.NoError(t, userRepo.Create(&models.User{
+				require.NoError(t, userRepo.Create(context.Background(), &models.User{
 					ID:       "uid-1",
 					Username: "alice",
 				}))
