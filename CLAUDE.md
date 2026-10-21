@@ -706,6 +706,7 @@ Developers use this application to configure, store and deploy multi-service Hel
   - Instance events use `Notifier.NotifyInstance(models.NotificationTarget, ...)`. The receivers are the owner and the followers (no duplicates). Each receiver is filtered by the own event-type preferences (`DisabledUserIDs`, one query, fail open). The actor is not excluded. One channel dispatch for each event.
   - `NotifySystem` and `NotifySystemForInstances` (admin and devops) apply the preferences too.
   - Read the followers with `FollowerIDs` before an instance delete, and put them in `NotificationTarget.FollowerIDs`.
+  - `NotificationRepository.Create`, `MarkAllAsRead` and `MarkAsRead` run again after a MySQL deadlock (1213, `retryOnDeadlock`, 3 attempts): a new notification and "Mark all read" of the same user lock the same index ranges (#648). Each is one idempotent statement, and the ID is set before the first attempt, so a retry never stores a second row. Migration 62 drops the redundant `is_read` index; `idx_notifications_user_read_created` serves the queries.
 - **Favorites:** users can bookmark templates and instances (`UserFavorite` entities). A favorite does not follow the instance.
 - **Analytics and dashboard:**
   - `/analytics/*` (devops) gives read-only aggregation of instance counts, deploy stats, template usage and user activity. `/analytics/users` needs admin.

@@ -24,12 +24,20 @@ func NewGORMNotificationRepository(db *gorm.DB) *GORMNotificationRepository {
 	return &GORMNotificationRepository{db: db}
 }
 
-// Create inserts a new notification record.
+// Create inserts a new notification record. A deadlock with MarkAllAsRead
+// (or MarkAsRead) of the same user runs the insert again (#648). The retry
+// cannot insert a duplicate: the insert is one autocommit statement
+// (SkipDefaultTransaction), and InnoDB rolls the statement back before it
+// returns error 1213, so the row of the failed attempt was never stored.
+// The ID stays the same across attempts, so even a stored row would give a
+// duplicate-key error (not retried), never a second notification.
 func (r *GORMNotificationRepository) Create(ctx context.Context, notification *models.Notification) error {
-	if err := r.db.WithContext(ctx).Create(notification).Error; err != nil {
-		return dberrors.NewDatabaseError("create", err)
-	}
-	return nil
+	return retryOnDeadlock("notification_create", func() error {
+		if err := r.db.WithContext(ctx).Create(notification).Error; err != nil {
+			return dberrors.NewDatabaseError("create", err)
+		}
+		return nil
+	})
 }
 
 // ListByUser returns notifications for a user with optional unread-only filter and pagination.
@@ -66,29 +74,38 @@ func (r *GORMNotificationRepository) CountUnread(ctx context.Context, userID str
 }
 
 // MarkAsRead sets is_read=true for a specific notification owned by the user.
+// It changes the is_read index entries of the user, as MarkAllAsRead does,
+// so it runs again after a deadlock too (#648). The update is idempotent.
 func (r *GORMNotificationRepository) MarkAsRead(ctx context.Context, id string, userID string) error {
-	result := r.db.WithContext(ctx).
-		Model(&models.Notification{}).
-		Where("id = ? AND user_id = ?", id, userID).
-		Update("is_read", true)
-	if result.Error != nil {
-		return dberrors.NewDatabaseError("mark_read", result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return dberrors.NewDatabaseError("mark_read", fmt.Errorf("%w", dberrors.ErrNotFound))
-	}
-	return nil
+	return retryOnDeadlock("notification_mark_read", func() error {
+		result := r.db.WithContext(ctx).
+			Model(&models.Notification{}).
+			Where("id = ? AND user_id = ?", id, userID).
+			Update("is_read", true)
+		if result.Error != nil {
+			return dberrors.NewDatabaseError("mark_read", result.Error)
+		}
+		if result.RowsAffected == 0 {
+			return dberrors.NewDatabaseError("mark_read", fmt.Errorf("%w", dberrors.ErrNotFound))
+		}
+		return nil
+	})
 }
 
 // MarkAllAsRead sets is_read=true for all unread notifications of a user.
+// The update locks the index ranges of the user, so a concurrent Create for
+// the user can deadlock with it; it runs again after a deadlock (#648). The
+// update is idempotent.
 func (r *GORMNotificationRepository) MarkAllAsRead(ctx context.Context, userID string) error {
-	if err := r.db.WithContext(ctx).
-		Model(&models.Notification{}).
-		Where("user_id = ? AND is_read = ?", userID, false).
-		Update("is_read", true).Error; err != nil {
-		return dberrors.NewDatabaseError("mark_all_read", err)
-	}
-	return nil
+	return retryOnDeadlock("notification_mark_all_read", func() error {
+		if err := r.db.WithContext(ctx).
+			Model(&models.Notification{}).
+			Where("user_id = ? AND is_read = ?", userID, false).
+			Update("is_read", true).Error; err != nil {
+			return dberrors.NewDatabaseError("mark_all_read", err)
+		}
+		return nil
+	})
 }
 
 // GetPreferences returns all notification preferences for a user.
