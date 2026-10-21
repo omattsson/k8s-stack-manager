@@ -9,7 +9,7 @@ This folder has scripts that load-test the K8s Stack Manager backend API and the
 | k6 | Backend API and WebSocket load tests | `brew install k6` or [k6.io/docs](https://k6.io/docs/get-started/installation/) |
 | Playwright | Frontend browser load tests | Installed with `cd frontend && npm install` |
 | Docker | MySQL container of `docker-compose.yml` | Docker Desktop, Rancher Desktop or Docker Engine |
-| Go | Builds the backend for the test, reads the profiles | Go 1.27 or later |
+| Go | Builds the backend for the test, reads the profiles | Go 1.27.3 or later |
 
 The Makefile targets build the backend and run it as a local process, not in Docker. The backend log is in `backend/tmp/loadtest.log`. The start target does these steps:
 
