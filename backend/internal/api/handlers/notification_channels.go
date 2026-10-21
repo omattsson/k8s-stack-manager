@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -103,10 +105,12 @@ type notificationChannelResponse struct {
 // filterWarnings returns a warning for each filter ID that points to no
 // existing user, definition or cluster. Each kind takes one batch lookup. A
 // lookup error is logged and skips that check.
-func (h *NotificationChannelHandler) filterWarnings(f models.NotificationChannelFilters) []string {
+func (h *NotificationChannelHandler) filterWarnings(ctx context.Context, f models.NotificationChannelFilters) []string {
 	var warnings []string
 	if h.userRepo != nil && len(f.OwnerIDs) > 0 {
-		if users, err := h.userRepo.FindByIDs(f.OwnerIDs); err != nil {
+		if users, err := h.userRepo.FindByIDs(ctx, f.OwnerIDs); errors.Is(err, context.Canceled) {
+			slog.DebugContext(ctx, "Channel filter owner check cancelled", "error", err)
+		} else if err != nil {
 			slog.Error("Failed to check channel filter owners", "error", err)
 		} else {
 			for _, id := range f.OwnerIDs {
@@ -251,7 +255,7 @@ func (h *NotificationChannelHandler) CreateChannel(c *gin.Context) {
 
 	c.JSON(http.StatusCreated, notificationChannelResponse{
 		NotificationChannel: channel,
-		Warnings:            h.filterWarnings(channel.Filters),
+		Warnings:            h.filterWarnings(c.Request.Context(), channel.Filters),
 	})
 }
 
@@ -366,7 +370,7 @@ func (h *NotificationChannelHandler) UpdateChannel(c *gin.Context) {
 
 	c.JSON(http.StatusOK, notificationChannelResponse{
 		NotificationChannel: *existing,
-		Warnings:            h.filterWarnings(existing.Filters),
+		Warnings:            h.filterWarnings(c.Request.Context(), existing.Filters),
 	})
 }
 

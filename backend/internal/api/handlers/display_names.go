@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -43,15 +45,15 @@ func uniqueNonEmpty(ids []string) []string {
 // lookupUsernames returns the username of each user in ids, keyed by user
 // ID, with one query. A lookup error is logged and gives an empty map: the
 // names are display data and must not fail the response.
-func lookupUsernames(userRepo models.UserRepository, ids []string) map[string]string {
+func lookupUsernames(ctx context.Context, userRepo models.UserRepository, ids []string) map[string]string {
 	result := make(map[string]string)
 	ids = uniqueNonEmpty(ids)
 	if userRepo == nil || len(ids) == 0 {
 		return result
 	}
-	users, err := userRepo.FindByIDs(ids)
+	users, err := userRepo.FindByIDs(ctx, ids)
 	if err != nil {
-		slog.Warn("failed to batch-fetch owner usernames", "error", err)
+		logLookupError(ctx, "failed to batch-fetch owner usernames", err)
 		return result
 	}
 	for id, u := range users {
@@ -85,7 +87,7 @@ func lookupNames(lookup nameLookup, kind string, ids []string) map[string]string
 // together (no N+1). A missing owner, definition or cluster gives an empty
 // name, which the JSON omits. An instance with an empty cluster_id (older
 // instances) gets an empty cluster name.
-func (h *InstanceHandler) setInstanceNames(instances ...*models.StackInstance) {
+func (h *InstanceHandler) setInstanceNames(ctx context.Context, instances ...*models.StackInstance) {
 	if len(instances) == 0 {
 		return
 	}
@@ -98,7 +100,7 @@ func (h *InstanceHandler) setInstanceNames(instances ...*models.StackInstance) {
 		clusterIDs = append(clusterIDs, inst.ClusterID)
 	}
 
-	usernames := lookupUsernames(h.userRepo, ownerIDs)
+	usernames := lookupUsernames(ctx, h.userRepo, ownerIDs)
 	var defLookup, clusterLookup nameLookup
 	if h.definitionRepo != nil {
 		defLookup = h.definitionRepo.NamesByIDs
@@ -117,22 +119,22 @@ func (h *InstanceHandler) setInstanceNames(instances ...*models.StackInstance) {
 }
 
 // setInstanceListNames is setInstanceNames for a slice of instances.
-func (h *InstanceHandler) setInstanceListNames(instances []models.StackInstance) {
+func (h *InstanceHandler) setInstanceListNames(ctx context.Context, instances []models.StackInstance) {
 	ptrs := make([]*models.StackInstance, len(instances))
 	for i := range instances {
 		ptrs[i] = &instances[i]
 	}
-	h.setInstanceNames(ptrs...)
+	h.setInstanceNames(ctx, ptrs...)
 }
 
 // setDefinitionOwnerNames sets OwnerUsername on each definition with one
 // user query.
-func setDefinitionOwnerNames(userRepo models.UserRepository, defs ...*models.StackDefinition) {
+func setDefinitionOwnerNames(ctx context.Context, userRepo models.UserRepository, defs ...*models.StackDefinition) {
 	ownerIDs := make([]string, len(defs))
 	for i, d := range defs {
 		ownerIDs[i] = d.OwnerID
 	}
-	usernames := lookupUsernames(userRepo, ownerIDs)
+	usernames := lookupUsernames(ctx, userRepo, ownerIDs)
 	for _, d := range defs {
 		d.OwnerUsername = usernames[d.OwnerID]
 	}
@@ -164,7 +166,7 @@ func resolveOwnerFilter(c *gin.Context, userRepo models.UserRepository, owner st
 	}
 
 	if isUUIDForm(owner) {
-		u, err := userRepo.FindByID(owner)
+		u, err := userRepo.FindByID(c.Request.Context(), owner)
 		if err == nil && u != nil {
 			return u.ID, true
 		}
@@ -173,7 +175,7 @@ func resolveOwnerFilter(c *gin.Context, userRepo models.UserRepository, owner st
 		}
 	}
 
-	u, err := userRepo.FindByUsername(owner)
+	u, err := userRepo.FindByUsername(c.Request.Context(), owner)
 	if err == nil && u != nil {
 		return u.ID, true
 	}
@@ -193,8 +195,12 @@ func isUUIDForm(value string) bool {
 	return err == nil
 }
 
-// ownerLookupFailed logs err, writes a 500 response and returns false.
+// ownerLookupFailed logs err, writes a 500 response (499 for a cancelled
+// request) and returns false.
 func ownerLookupFailed(c *gin.Context, err error) bool {
+	if respondCancelled(c, err) {
+		return false
+	}
 	slog.Error("failed to resolve owner filter", "error", err)
 	c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 	return false
@@ -246,4 +252,14 @@ func listPagination(c *gin.Context) (page, pageSize, offset int) {
 		}
 	}
 	return page, pageSize, offset
+}
+
+// logLookupError logs a failed display-name lookup at warn, or at debug when
+// the request was cancelled (the client left).
+func logLookupError(ctx context.Context, msg string, err error) {
+	if errors.Is(err, context.Canceled) {
+		slog.DebugContext(ctx, msg, "error", err)
+		return
+	}
+	slog.WarnContext(ctx, msg, "error", err)
 }

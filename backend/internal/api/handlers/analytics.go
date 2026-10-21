@@ -151,8 +151,11 @@ func (h *AnalyticsHandler) GetOverview(c *gin.Context) {
 		return
 	}
 
-	userCount, err := h.userRepo.Count()
+	userCount, err := h.userRepo.Count(c.Request.Context())
 	if err != nil {
+		if respondCancelled(c, err) {
+			return
+		}
 		slog.Error("analytics: failed to count users", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
@@ -218,8 +221,11 @@ func (h *AnalyticsHandler) GetTemplateStats(c *gin.Context) {
 // @Failure     500 {object} map[string]string
 // @Router      /api/v1/analytics/users [get]
 func (h *AnalyticsHandler) GetUserStats(c *gin.Context) {
-	users, err := h.userRepo.List()
+	users, err := h.userRepo.List(c.Request.Context())
 	if err != nil {
+		if respondCancelled(c, err) {
+			return
+		}
 		slog.Error("analytics: failed to list users", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return

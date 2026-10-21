@@ -146,7 +146,7 @@ func (h *DefinitionHandler) SetTemplateLink(c *gin.Context) {
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
-	setDefinitionOwnerNames(h.userRepo, updated)
+	setDefinitionOwnerNames(c.Request.Context(), h.userRepo, updated)
 	c.JSON(http.StatusOK, updated)
 }
 

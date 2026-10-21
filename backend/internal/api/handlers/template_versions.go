@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -46,7 +47,7 @@ func (h *TemplateVersionHandler) WithUserRepo(repo models.UserRepository) *Templ
 
 // usernames returns user ID -> username for the given IDs with one batch
 // query. Lookup errors are logged; the result is then empty.
-func (h *TemplateVersionHandler) usernames(ids ...string) map[string]string {
+func (h *TemplateVersionHandler) usernames(ctx context.Context, ids ...string) map[string]string {
 	out := make(map[string]string)
 	if h.userRepo == nil {
 		return out
@@ -66,9 +67,9 @@ func (h *TemplateVersionHandler) usernames(ids ...string) map[string]string {
 	if len(unique) == 0 {
 		return out
 	}
-	users, err := h.userRepo.FindByIDs(unique)
+	users, err := h.userRepo.FindByIDs(ctx, unique)
 	if err != nil {
-		slog.Warn("failed to batch-fetch template version authors", "error", err)
+		logLookupError(ctx, "failed to batch-fetch template version authors", err)
 		return out
 	}
 	for id, u := range users {
@@ -134,7 +135,7 @@ func (h *TemplateVersionHandler) ListVersions(c *gin.Context) {
 	for _, v := range versions {
 		authorIDs = append(authorIDs, v.CreatedBy)
 	}
-	names := h.usernames(authorIDs...)
+	names := h.usernames(c.Request.Context(), authorIDs...)
 
 	items := make([]templateVersionListItem, 0, len(versions))
 	for _, v := range versions {
@@ -198,7 +199,7 @@ func (h *TemplateVersionHandler) GetVersion(c *gin.Context) {
 		Version:           version.Version,
 		ChangeSummary:     version.ChangeSummary,
 		CreatedBy:         version.CreatedBy,
-		CreatedByUsername: h.usernames(version.CreatedBy)[version.CreatedBy],
+		CreatedByUsername: h.usernames(c.Request.Context(), version.CreatedBy)[version.CreatedBy],
 		CreatedAt:         version.CreatedAt,
 		Snapshot:          snapshot,
 	})
@@ -325,7 +326,7 @@ func (h *TemplateVersionHandler) DiffVersions(c *gin.Context) {
 		return
 	}
 
-	names := h.usernames(left.CreatedBy, right.CreatedBy)
+	names := h.usernames(c.Request.Context(), left.CreatedBy, right.CreatedBy)
 	left.CreatedByUsername = names[left.CreatedBy]
 	right.CreatedByUsername = names[right.CreatedBy]
 

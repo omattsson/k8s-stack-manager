@@ -259,21 +259,36 @@ func (h *WebSocketHandler) handleAPIKeyUpgrade(c *gin.Context, header string) {
 // pass (fail open): the revalidation checks again.
 func (h *WebSocketHandler) apiKeySocketRevoked(ctx context.Context, id websocket.ClientIdentity) bool {
 	if revoked, err := apiKeyRevoked(ctx, h.apiKeyRepo, id.UserID, id.APIKeyID, time.Now()); err != nil {
-		slog.Error("WebSocket API key re-check failed", "user_id", id.UserID, "error", err)
+		logRecheckError(ctx, "WebSocket API key re-check failed", id.UserID, err)
 	} else if revoked {
 		return true
 	}
 	if revokedErr, lookupErr := tokenRevocationStatus(ctx, h.sessionStore, id); revokedErr != nil {
 		return true
 	} else if lookupErr != nil {
-		slog.Error("WebSocket API key user block re-check failed", "user_id", id.UserID, "error", lookupErr)
+		logRecheckError(ctx, "WebSocket API key user block re-check failed", id.UserID, lookupErr)
 	}
-	inactive, err := userInactive(h.userRepo, id.UserID)
+	inactive, err := userInactive(ctx, h.userRepo, id.UserID)
 	if err != nil {
-		slog.Error("WebSocket API key user re-check failed", "user_id", id.UserID, "error", err)
+		logRecheckError(ctx, "WebSocket API key user re-check failed", id.UserID, err)
 		return false
 	}
 	return inactive
+}
+
+// logRecheckError logs a failed re-check at error, or at debug when ctx was
+// cancelled (the client left). A passed deadline stays an error.
+func logRecheckError(ctx context.Context, msg, userID string, err error) {
+	if contextCancelled(ctx) {
+		slog.Debug(msg, "user_id", userID, "error", err)
+		return
+	}
+	slog.Error(msg, "user_id", userID, "error", err)
+}
+
+// contextCancelled reports whether ctx ended with a cancel, not a deadline.
+func contextCancelled(ctx context.Context) bool {
+	return errors.Is(ctx.Err(), context.Canceled)
 }
 
 // apiKeyRevoked reports whether the API key is deleted (not found) or
@@ -310,8 +325,12 @@ func (h *WebSocketHandler) checkSession(c *gin.Context, claims *middleware.Claim
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired token"})
 		return false
 	}
-	inactive, err := userInactive(h.userRepo, claims.UserID)
+	// The request context lives until the handler returns; it is not kept.
+	inactive, err := userInactive(c.Request.Context(), h.userRepo, claims.UserID)
 	if err != nil {
+		if respondCancelled(c, err) {
+			return false
+		}
 		slog.Error("WebSocket user lookup failed", "user_id", claims.UserID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return false
@@ -325,8 +344,8 @@ func (h *WebSocketHandler) checkSession(c *gin.Context, claims *middleware.Claim
 
 // userInactive reports whether the user is deleted (not found) or disabled.
 // Other lookup errors are returned.
-func userInactive(repo models.UserRepository, userID string) (bool, error) {
-	user, err := repo.FindByID(userID)
+func userInactive(ctx context.Context, repo models.UserRepository, userID string) (bool, error) {
+	user, err := repo.FindByID(ctx, userID)
 	if err != nil {
 		if isNotFoundError(err) {
 			return true, nil
@@ -364,7 +383,7 @@ func NewWebSocketRevocationChecker(store sessionstore.SessionStore, userRepo mod
 	return func(ctx context.Context, identities []websocket.ClientIdentity) []bool {
 		revoked := make([]bool, len(identities))
 		keys, err := loadSocketAPIKeys(ctx, apiKeyRepo, identities)
-		if errors.Is(err, context.Canceled) {
+		if err != nil && contextCancelled(ctx) {
 			// The hub shuts down.
 			slog.Debug("WebSocket revalidation cancelled", "identities", len(identities))
 			return revoked
@@ -393,7 +412,7 @@ func NewWebSocketRevocationChecker(store sessionstore.SessionStore, userRepo mod
 				continue
 			}
 			if lookupErr != nil {
-				if ctx.Err() != nil {
+				if contextCancelled(ctx) {
 					slog.Debug("WebSocket revalidation cancelled", "checked", i, "identities", len(identities))
 					return revoked
 				}
@@ -407,8 +426,12 @@ func NewWebSocketRevocationChecker(store sessionstore.SessionStore, userRepo mod
 			inactive, seen := inactiveUsers[id.UserID]
 			if !seen {
 				var err error
-				inactive, err = userInactive(userRepo, id.UserID)
+				inactive, err = userInactive(ctx, userRepo, id.UserID)
 				if err != nil {
+					if contextCancelled(ctx) {
+						slog.Debug("WebSocket revalidation cancelled", "checked", i, "identities", len(identities))
+						return revoked
+					}
 					slog.Error("WebSocket revalidation stopped: user lookup failed; the next run retries",
 						"user_id", id.UserID, "checked", i, "identities", len(identities), "error", err)
 					return revoked

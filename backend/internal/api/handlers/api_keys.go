@@ -87,8 +87,12 @@ func (h *APIKeyHandler) CreateAPIKey(c *gin.Context) {
 		return
 	}
 
+	// A client cancel must not turn a committed write into a 499 without an
+	// audit entry (#656); the pre-check uses the same context.
+	ctx := context.WithoutCancel(c.Request.Context())
+
 	// Verify the target user exists before generating a key for them.
-	if _, err := h.userRepo.FindByID(userID); err != nil {
+	if _, err := h.userRepo.FindByID(ctx, userID); err != nil {
 		status, message := mapError(err, "User")
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -171,9 +175,7 @@ func (h *APIKeyHandler) CreateAPIKey(c *gin.Context) {
 		ExpiresAt: expiresAt,
 	}
 
-	// A client cancel must not turn a committed write into a 499 without an
-	// audit entry (#656).
-	if err := h.apiKeyRepo.Create(context.WithoutCancel(c.Request.Context()), key); err != nil {
+	if err := h.apiKeyRepo.Create(ctx, key); err != nil {
 		status, message := mapError(err, "API key")
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -214,7 +216,7 @@ func (h *APIKeyHandler) ListAPIKeys(c *gin.Context) {
 	}
 
 	// Verify the target user exists.
-	if _, err := h.userRepo.FindByID(userID); err != nil {
+	if _, err := h.userRepo.FindByID(c.Request.Context(), userID); err != nil {
 		status, message := mapError(err, "User")
 		c.JSON(status, gin.H{"error": message})
 		return

@@ -91,37 +91,36 @@ func TestMySQLIntegration_UserRepository(t *testing.T) {
 	}
 
 	// Create
-	err := repo.Create(user)
+	err := repo.Create(context.Background(), user)
 	require.NoError(t, err)
 	assert.NotEmpty(t, user.ID)
 
 	// FindByID
-	found, err := repo.FindByID(user.ID)
+	found, err := repo.FindByID(context.Background(), user.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "testuser", found.Username)
 
 	// FindByUsername
-	found, err = repo.FindByUsername("testuser")
+	found, err = repo.FindByUsername(context.Background(), "testuser")
 	require.NoError(t, err)
 	assert.Equal(t, user.ID, found.ID)
 
-	// Update
-	user.Role = "admin"
-	err = repo.Update(user)
+	// Targeted update (UserRepository has no full-row update).
+	err = repo.UpdatePassword(context.Background(), user.ID, "newhash")
 	require.NoError(t, err)
-	found, err = repo.FindByID(user.ID)
+	found, err = repo.FindByID(context.Background(), user.ID)
 	require.NoError(t, err)
-	assert.Equal(t, "admin", found.Role)
+	assert.Equal(t, "newhash", found.PasswordHash)
 
 	// List
-	users, err := repo.List()
+	users, err := repo.List(context.Background())
 	require.NoError(t, err)
 	assert.Len(t, users, 1)
 
 	// Delete
-	err = repo.Delete(user.ID)
+	err = repo.Delete(context.Background(), user.ID)
 	require.NoError(t, err)
-	_, err = repo.FindByID(user.ID)
+	_, err = repo.FindByID(context.Background(), user.ID)
 	assert.Error(t, err)
 }
 

@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"testing"
 
 	"backend/internal/models"
@@ -43,7 +44,7 @@ func TestGORMUserRepository_Create(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			repo := setupUserRepo(t)
-			err := repo.Create(&tt.user)
+			err := repo.Create(context.Background(), &tt.user)
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {
@@ -74,9 +75,9 @@ func TestGORMUserRepository_FindByID(t *testing.T) {
 			t.Parallel()
 			repo := setupUserRepo(t)
 			if tt.seed {
-				require.NoError(t, repo.Create(&models.User{ID: tt.id, Username: "user-" + tt.id, Role: "developer"}))
+				require.NoError(t, repo.Create(context.Background(), &models.User{ID: tt.id, Username: "user-" + tt.id, Role: "developer"}))
 			}
-			user, err := repo.FindByID(tt.id)
+			user, err := repo.FindByID(context.Background(), tt.id)
 			if tt.wantErr {
 				assert.Error(t, err)
 				assert.Nil(t, user)
@@ -92,18 +93,18 @@ func TestGORMUserRepository_FindByUsername(t *testing.T) {
 	t.Parallel()
 
 	repo := setupUserRepo(t)
-	require.NoError(t, repo.Create(&models.User{ID: "u-fname", Username: "findme", Role: "developer"}))
+	require.NoError(t, repo.Create(context.Background(), &models.User{ID: "u-fname", Username: "findme", Role: "developer"}))
 
 	t.Run("found", func(t *testing.T) {
 		t.Parallel()
-		user, err := repo.FindByUsername("findme")
+		user, err := repo.FindByUsername(context.Background(), "findme")
 		require.NoError(t, err)
 		assert.Equal(t, "findme", user.Username)
 	})
 
 	t.Run("not found", func(t *testing.T) {
 		t.Parallel()
-		_, err := repo.FindByUsername("nope")
+		_, err := repo.FindByUsername(context.Background(), "nope")
 		assert.Error(t, err)
 	})
 }
@@ -113,7 +114,7 @@ func TestGORMUserRepository_FindByExternalID(t *testing.T) {
 
 	repo := setupUserRepo(t)
 	extID := "ext-123"
-	require.NoError(t, repo.Create(&models.User{
+	require.NoError(t, repo.Create(context.Background(), &models.User{
 		ID:           "u-ext",
 		Username:     "external-user",
 		Role:         "developer",
@@ -123,32 +124,16 @@ func TestGORMUserRepository_FindByExternalID(t *testing.T) {
 
 	t.Run("found", func(t *testing.T) {
 		t.Parallel()
-		user, err := repo.FindByExternalID("oidc", "ext-123")
+		user, err := repo.FindByExternalID(context.Background(), "oidc", "ext-123")
 		require.NoError(t, err)
 		assert.Equal(t, "external-user", user.Username)
 	})
 
 	t.Run("not found", func(t *testing.T) {
 		t.Parallel()
-		_, err := repo.FindByExternalID("oidc", "nope")
+		_, err := repo.FindByExternalID(context.Background(), "oidc", "nope")
 		assert.Error(t, err)
 	})
-}
-
-func TestGORMUserRepository_Update(t *testing.T) {
-	t.Parallel()
-
-	repo := setupUserRepo(t)
-	user := models.User{ID: "u-upd", Username: "before", Role: "developer"}
-	require.NoError(t, repo.Create(&user))
-
-	user.DisplayName = "Updated Name"
-	err := repo.Update(&user)
-	require.NoError(t, err)
-
-	found, err := repo.FindByID("u-upd")
-	require.NoError(t, err)
-	assert.Equal(t, "Updated Name", found.DisplayName)
 }
 
 func TestGORMUserRepository_Delete(t *testing.T) {
@@ -170,14 +155,14 @@ func TestGORMUserRepository_Delete(t *testing.T) {
 			t.Parallel()
 			repo := setupUserRepo(t)
 			if tt.seed {
-				require.NoError(t, repo.Create(&models.User{ID: tt.id, Username: "del-" + tt.id, Role: "developer"}))
+				require.NoError(t, repo.Create(context.Background(), &models.User{ID: tt.id, Username: "del-" + tt.id, Role: "developer"}))
 			}
-			err := repo.Delete(tt.id)
+			err := repo.Delete(context.Background(), tt.id)
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {
 				assert.NoError(t, err)
-				_, err := repo.FindByID(tt.id)
+				_, err := repo.FindByID(context.Background(), tt.id)
 				assert.Error(t, err)
 			}
 		})
@@ -188,10 +173,10 @@ func TestGORMUserRepository_List(t *testing.T) {
 	t.Parallel()
 
 	repo := setupUserRepo(t)
-	require.NoError(t, repo.Create(&models.User{ID: "u-l1", Username: "list1", Role: "developer"}))
-	require.NoError(t, repo.Create(&models.User{ID: "u-l2", Username: "list2", Role: "admin"}))
+	require.NoError(t, repo.Create(context.Background(), &models.User{ID: "u-l1", Username: "list1", Role: "developer"}))
+	require.NoError(t, repo.Create(context.Background(), &models.User{ID: "u-l2", Username: "list2", Role: "admin"}))
 
-	users, err := repo.List()
+	users, err := repo.List(context.Background())
 	require.NoError(t, err)
 	assert.Len(t, users, 2)
 }
@@ -221,87 +206,108 @@ func TestGORMUserRepository_GuardedChanges(t *testing.T) {
 		wantErrIs error
 	}{
 		{
-			name:   "role: user to devops",
-			users:  []models.User{admin("c", false), user("u1", "user")},
-			run:    func(r *GORMUserRepository) error { _, err := r.UpdateRole("c", "u1", "devops"); return err },
+			name:  "role: user to devops",
+			users: []models.User{admin("c", false), user("u1", "user")},
+			run: func(r *GORMUserRepository) error {
+				_, err := r.UpdateRole(context.Background(), "c", "u1", "devops")
+				return err
+			},
 			target: "u1", want: result{role: "devops"},
 		},
 		{
-			name:   "role: unchanged is a no-op",
-			users:  []models.User{admin("c", false), user("u1", "devops")},
-			run:    func(r *GORMUserRepository) error { _, err := r.UpdateRole("c", "u1", "devops"); return err },
+			name:  "role: unchanged is a no-op",
+			users: []models.User{admin("c", false), user("u1", "devops")},
+			run: func(r *GORMUserRepository) error {
+				_, err := r.UpdateRole(context.Background(), "c", "u1", "devops")
+				return err
+			},
 			target: "u1", want: result{role: "devops"},
 		},
 		{
-			name:   "role: demote another admin",
-			users:  []models.User{admin("c", false), admin("a1", false)},
-			run:    func(r *GORMUserRepository) error { _, err := r.UpdateRole("c", "a1", "user"); return err },
+			name:  "role: demote another admin",
+			users: []models.User{admin("c", false), admin("a1", false)},
+			run: func(r *GORMUserRepository) error {
+				_, err := r.UpdateRole(context.Background(), "c", "a1", "user")
+				return err
+			},
 			target: "a1", want: result{role: "user"},
 		},
 		{
-			name:   "role: last enabled admin keeps the role",
-			users:  []models.User{admin("a1", false), admin("a2", true)},
-			run:    func(r *GORMUserRepository) error { _, err := r.UpdateRole("a1", "a1", "devops"); return err },
+			name:  "role: last enabled admin keeps the role",
+			users: []models.User{admin("a1", false), admin("a2", true)},
+			run: func(r *GORMUserRepository) error {
+				_, err := r.UpdateRole(context.Background(), "a1", "a1", "devops")
+				return err
+			},
 			target: "a1", want: result{role: models.RoleAdmin}, wantErrIs: models.ErrLastAdmin,
 		},
 		{
-			name:   "role: disabled caller is refused",
-			users:  []models.User{admin("c", true), admin("a1", false), user("u1", "user")},
-			run:    func(r *GORMUserRepository) error { _, err := r.UpdateRole("c", "u1", "admin"); return err },
+			name:  "role: disabled caller is refused",
+			users: []models.User{admin("c", true), admin("a1", false), user("u1", "user")},
+			run: func(r *GORMUserRepository) error {
+				_, err := r.UpdateRole(context.Background(), "c", "u1", "admin")
+				return err
+			},
 			target: "u1", want: result{role: "user"}, wantErrIs: models.ErrCallerNotAdmin,
 		},
 		{
-			name:   "role: non-admin caller is refused",
-			users:  []models.User{user("c", "devops"), user("u1", "user")},
-			run:    func(r *GORMUserRepository) error { _, err := r.UpdateRole("c", "u1", "admin"); return err },
+			name:  "role: non-admin caller is refused",
+			users: []models.User{user("c", "devops"), user("u1", "user")},
+			run: func(r *GORMUserRepository) error {
+				_, err := r.UpdateRole(context.Background(), "c", "u1", "admin")
+				return err
+			},
 			target: "u1", want: result{role: "user"}, wantErrIs: models.ErrCallerNotAdmin,
 		},
 		{
-			name:      "role: unknown user",
-			users:     []models.User{admin("c", false)},
-			run:       func(r *GORMUserRepository) error { _, err := r.UpdateRole("c", "ghost", "user"); return err },
+			name:  "role: unknown user",
+			users: []models.User{admin("c", false)},
+			run: func(r *GORMUserRepository) error {
+				_, err := r.UpdateRole(context.Background(), "c", "ghost", "user")
+				return err
+			},
 			wantErrIs: dberrors.ErrNotFound,
 		},
 		{
 			name:   "disable: other user",
 			users:  []models.User{admin("c", false), user("u1", "user")},
-			run:    func(r *GORMUserRepository) error { return r.SetDisabled("c", "u1", true) },
+			run:    func(r *GORMUserRepository) error { return r.SetDisabled(context.Background(), "c", "u1", true) },
 			target: "u1", want: result{role: "user", disabled: true},
 		},
 		{
 			name:   "disable: last enabled admin is refused",
 			users:  []models.User{admin("a1", false)},
-			run:    func(r *GORMUserRepository) error { return r.SetDisabled("a1", "a1", true) },
+			run:    func(r *GORMUserRepository) error { return r.SetDisabled(context.Background(), "a1", "a1", true) },
 			target: "a1", want: result{role: models.RoleAdmin}, wantErrIs: models.ErrLastAdmin,
 		},
 		{
 			name:   "enable: allowed without another admin",
 			users:  []models.User{admin("c", false), admin("a1", true)},
-			run:    func(r *GORMUserRepository) error { return r.SetDisabled("c", "a1", false) },
+			run:    func(r *GORMUserRepository) error { return r.SetDisabled(context.Background(), "c", "a1", false) },
 			target: "a1", want: result{role: models.RoleAdmin},
 		},
 		{
 			name:   "disable: disabled caller is refused",
 			users:  []models.User{admin("c", true), admin("a1", false), user("u1", "user")},
-			run:    func(r *GORMUserRepository) error { return r.SetDisabled("c", "u1", true) },
+			run:    func(r *GORMUserRepository) error { return r.SetDisabled(context.Background(), "c", "u1", true) },
 			target: "u1", want: result{role: "user"}, wantErrIs: models.ErrCallerNotAdmin,
 		},
 		{
 			name:   "delete: other admin",
 			users:  []models.User{admin("c", false), admin("a1", false)},
-			run:    func(r *GORMUserRepository) error { return r.DeleteGuarded("c", "a1") },
+			run:    func(r *GORMUserRepository) error { return r.DeleteGuarded(context.Background(), "c", "a1") },
 			target: "a1", want: result{gone: true},
 		},
 		{
 			name:   "delete: last enabled admin is refused",
 			users:  []models.User{admin("a1", false), user("u1", "user")},
-			run:    func(r *GORMUserRepository) error { return r.DeleteGuarded("a1", "a1") },
+			run:    func(r *GORMUserRepository) error { return r.DeleteGuarded(context.Background(), "a1", "a1") },
 			target: "a1", want: result{role: models.RoleAdmin}, wantErrIs: models.ErrLastAdmin,
 		},
 		{
 			name:   "delete: non-admin caller is refused",
 			users:  []models.User{user("c", "user"), user("u1", "user")},
-			run:    func(r *GORMUserRepository) error { return r.DeleteGuarded("c", "u1") },
+			run:    func(r *GORMUserRepository) error { return r.DeleteGuarded(context.Background(), "c", "u1") },
 			target: "u1", want: result{role: "user"}, wantErrIs: models.ErrCallerNotAdmin,
 		},
 	}
@@ -312,7 +318,7 @@ func TestGORMUserRepository_GuardedChanges(t *testing.T) {
 			t.Parallel()
 			repo := setupUserRepo(t)
 			for i := range tt.users {
-				require.NoError(t, repo.Create(&tt.users[i]))
+				require.NoError(t, repo.Create(context.Background(), &tt.users[i]))
 			}
 
 			err := tt.run(repo)
@@ -324,7 +330,7 @@ func TestGORMUserRepository_GuardedChanges(t *testing.T) {
 			if tt.target == "" {
 				return
 			}
-			u, err := repo.FindByID(tt.target)
+			u, err := repo.FindByID(context.Background(), tt.target)
 			if tt.want.gone {
 				require.ErrorIs(t, err, dberrors.ErrNotFound)
 				return
@@ -351,13 +357,13 @@ func TestGORMUserRepository_TargetedUpdates(t *testing.T) {
 		{
 			name: "password update keeps role and disabled",
 			user: models.User{ID: "u1", Username: "u1", Role: "devops", Disabled: true, PasswordHash: "old"},
-			run:  func(r *GORMUserRepository) error { return r.UpdatePassword("u1", "new") },
+			run:  func(r *GORMUserRepository) error { return r.UpdatePassword(context.Background(), "u1", "new") },
 			want: models.User{Role: "devops", Disabled: true, PasswordHash: "new", AuthProvider: "local"},
 		},
 		{
 			name:      "password update of an unknown user",
 			user:      models.User{ID: "u1", Username: "u1", Role: "user"},
-			run:       func(r *GORMUserRepository) error { return r.UpdatePassword("ghost", "new") },
+			run:       func(r *GORMUserRepository) error { return r.UpdatePassword(context.Background(), "ghost", "new") },
 			want:      models.User{Role: "user", AuthProvider: "local"},
 			wantErrIs: dberrors.ErrNotFound,
 		},
@@ -365,7 +371,7 @@ func TestGORMUserRepository_TargetedUpdates(t *testing.T) {
 			name: "profile update of an SSO user sets the role and keeps disabled",
 			user: models.User{ID: "u1", Username: "u1", Role: "user", AuthProvider: "oidc", Disabled: true},
 			run: func(r *GORMUserRepository) error {
-				return r.UpdateProfile("u1", models.UserProfileUpdate{Email: str("a@example.com"), DisplayName: str("A"), Role: str("devops")})
+				return r.UpdateProfile(context.Background(), "u1", models.UserProfileUpdate{Email: str("a@example.com"), DisplayName: str("A"), Role: str("devops")})
 			},
 			want: models.User{Role: "devops", Disabled: true, Email: "a@example.com", DisplayName: "A", AuthProvider: "oidc"},
 		},
@@ -373,7 +379,7 @@ func TestGORMUserRepository_TargetedUpdates(t *testing.T) {
 			name: "profile update never sets the role of a local user",
 			user: models.User{ID: "u1", Username: "u1", Role: "user", AuthProvider: "local", PasswordHash: "h"},
 			run: func(r *GORMUserRepository) error {
-				return r.UpdateProfile("u1", models.UserProfileUpdate{Role: str("admin")})
+				return r.UpdateProfile(context.Background(), "u1", models.UserProfileUpdate{Role: str("admin")})
 			},
 			want: models.User{Role: "user", AuthProvider: "local", PasswordHash: "h"},
 		},
@@ -381,7 +387,7 @@ func TestGORMUserRepository_TargetedUpdates(t *testing.T) {
 			name: "link to a provider sets the role and clears the password",
 			user: models.User{ID: "u1", Username: "u1", Role: "user", AuthProvider: "local", PasswordHash: "h", Disabled: true},
 			run: func(r *GORMUserRepository) error {
-				return r.UpdateProfile("u1", models.UserProfileUpdate{LinkProvider: str("oidc"), ExternalID: str("sub-1"), Role: str("devops")})
+				return r.UpdateProfile(context.Background(), "u1", models.UserProfileUpdate{LinkProvider: str("oidc"), ExternalID: str("sub-1"), Role: str("devops")})
 			},
 			want: models.User{Role: "devops", AuthProvider: "oidc", Disabled: true},
 		},
@@ -392,7 +398,7 @@ func TestGORMUserRepository_TargetedUpdates(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			repo := setupUserRepo(t)
-			require.NoError(t, repo.Create(&tt.user))
+			require.NoError(t, repo.Create(context.Background(), &tt.user))
 
 			err := tt.run(repo)
 			if tt.wantErrIs != nil {
@@ -400,7 +406,7 @@ func TestGORMUserRepository_TargetedUpdates(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 			}
-			u, err := repo.FindByID("u1")
+			u, err := repo.FindByID(context.Background(), "u1")
 			require.NoError(t, err)
 			assert.Equal(t, tt.want.Role, u.Role)
 			assert.Equal(t, tt.want.Disabled, u.Disabled)

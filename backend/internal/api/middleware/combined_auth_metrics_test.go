@@ -41,7 +41,7 @@ type stubUserRepo struct {
 	err  error
 }
 
-func (s *stubUserRepo) FindByID(string) (*models.User, error) { return s.user, s.err }
+func (s *stubUserRepo) FindByID(context.Context, string) (*models.User, error) { return s.user, s.err }
 
 func apiKeyStatusCount(t *testing.T, reader sdkmetric.Reader, status string) int64 {
 	t.Helper()

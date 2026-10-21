@@ -124,7 +124,7 @@ func (h *InstanceHandler) enrichInstanceDetail(c *gin.Context, inst *models.Stac
 		return
 	}
 	inst.ValuesDrift = h.instanceValuesDrift(c.Request.Context(), inst)
-	h.setInstanceNames(inst)
+	h.setInstanceNames(c.Request.Context(), inst)
 	h.setFollowState(c, inst)
 }
 

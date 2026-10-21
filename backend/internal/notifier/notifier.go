@@ -269,7 +269,7 @@ func (n *Notifier) notifyWithTrigger(ctx context.Context, userID, notifType, tit
 			Timestamp:       notification.CreatedAt,
 			Title:           title,
 			Message:         message,
-			UserDisplayName: n.displayName(userID),
+			UserDisplayName: n.displayName(ctx, userID),
 			EntityType:      entityType,
 			EntityID:        entityID,
 		})
@@ -400,7 +400,7 @@ func (n *Notifier) NotifyInstance(ctx context.Context, target models.Notificatio
 	}
 
 	if n.channelDispatcher != nil {
-		n.enqueueDispatch(n.instancePayload(target, notifType, title, message, o))
+		n.enqueueDispatch(n.instancePayload(ctx, target, notifType, title, message, o))
 	}
 	return ownerErr
 }
@@ -413,7 +413,7 @@ func (n *Notifier) instanceTrigger(ctx context.Context, opt *hooks.Trigger) *hoo
 			opt = &t
 		}
 	}
-	return n.resolveTrigger(opt)
+	return n.resolveTrigger(ctx, opt)
 }
 
 // rowTrigger returns the trigger columns of a notification row for t.
@@ -425,8 +425,8 @@ func rowTrigger(t *hooks.Trigger) models.Trigger {
 }
 
 // instancePayload builds the channel payload of an instance event.
-func (n *Notifier) instancePayload(target models.NotificationTarget, notifType, title, message string, o InstanceOptions) channel.EventPayload {
-	owner := n.findUser(target.OwnerID)
+func (n *Notifier) instancePayload(ctx context.Context, target models.NotificationTarget, notifType, title, message string, o InstanceOptions) channel.EventPayload {
+	owner := n.findUser(ctx, target.OwnerID)
 	payload := channel.EventPayload{
 		EventType:  notifType,
 		Timestamp:  time.Now().UTC(),
@@ -434,7 +434,7 @@ func (n *Notifier) instancePayload(target models.NotificationTarget, notifType, 
 		Message:    message,
 		EntityType: EntityTypeStackInstance,
 		EntityID:   target.InstanceID,
-		Trigger:    n.resolveTrigger(o.Trigger),
+		Trigger:    n.resolveTrigger(ctx, o.Trigger),
 		Namespace:  target.Namespace,
 		Branch:     target.Branch,
 		ClusterID:  target.ClusterID,
@@ -462,13 +462,13 @@ const eventInstanceDeleted = "instance.deleted"
 
 // resolveTrigger returns a copy of t. A user trigger without a name gets the
 // username of its ID, when the user exists.
-func (n *Notifier) resolveTrigger(t *hooks.Trigger) *hooks.Trigger {
+func (n *Notifier) resolveTrigger(ctx context.Context, t *hooks.Trigger) *hooks.Trigger {
 	if t == nil || t.Type == "" {
 		return nil
 	}
 	cp := *t
 	if cp.Type == hooks.TriggerUser && cp.Name == "" && cp.ID != "" {
-		if u := n.findUser(cp.ID); u != nil {
+		if u := n.findUser(ctx, cp.ID); u != nil {
 			cp.Name = u.Username
 		}
 	}
@@ -477,11 +477,11 @@ func (n *Notifier) resolveTrigger(t *hooks.Trigger) *hooks.Trigger {
 
 // findUser returns the user, or nil without a user repository, for an empty
 // ID or on a lookup error.
-func (n *Notifier) findUser(userID string) *models.User {
+func (n *Notifier) findUser(ctx context.Context, userID string) *models.User {
 	if n.userRepo == nil || userID == "" {
 		return nil
 	}
-	user, err := n.userRepo.FindByID(userID)
+	user, err := n.userRepo.FindByID(ctx, userID)
 	if err != nil {
 		return nil
 	}
@@ -503,8 +503,8 @@ func (n *Notifier) disabledReceivers(ctx context.Context, notifType string, user
 	return disabled
 }
 
-func (n *Notifier) displayName(userID string) string {
-	if user := n.findUser(userID); user != nil {
+func (n *Notifier) displayName(ctx context.Context, userID string) string {
+	if user := n.findUser(ctx, userID); user != nil {
 		return user.DisplayName
 	}
 	return ""
@@ -521,16 +521,19 @@ func (n *Notifier) NotifySystem(ctx context.Context, notifType, title, message, 
 // NotifySystemForInstances is NotifySystem for an event about more than one
 // instance (for example a cleanup policy run). A channel with filters gets
 // the event when at least one of the instances matches; without instances,
-// only channels without filters get it.
+// only channels without filters get it. When the admin and devops list
+// fails, the channels still get the event and the error is returned.
 func (n *Notifier) NotifySystemForInstances(ctx context.Context, notifType, title, message, entityType, entityID string, instances []models.NotificationTarget) error {
 	if n.userRepo == nil {
 		slog.Warn("NotifySystem called without userRepo configured")
 		return nil
 	}
 
-	admins, err := n.userRepo.ListByRoles([]string{"admin", "devops"})
-	if err != nil {
-		return err
+	// A failed admin list must not stop the channel dispatch below.
+	admins, listErr := n.userRepo.ListByRoles(ctx, []string{"admin", "devops"})
+	if listErr != nil {
+		slog.Error("failed to list admin and devops users for a system notification", "type", notifType, "error", listErr)
+		admins = nil
 	}
 
 	// Each admin or devops user gets the event only when it is on in the
@@ -563,7 +566,7 @@ func (n *Notifier) NotifySystemForInstances(ctx context.Context, notifType, titl
 		})
 	}
 
-	return nil
+	return listErr
 }
 
 // MessageTypeNotificationNew is the WebSocket message type for new notifications.

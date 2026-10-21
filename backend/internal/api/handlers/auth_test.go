@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -82,7 +83,7 @@ func seedUser(t *testing.T, repo *MockUserRepository, id, username, password, ro
 		CreatedAt:    time.Now().UTC(),
 		UpdatedAt:    time.Now().UTC(),
 	}
-	require.NoError(t, repo.Create(u))
+	require.NoError(t, repo.Create(context.Background(), u))
 	return u
 }
 

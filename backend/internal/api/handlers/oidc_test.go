@@ -491,7 +491,7 @@ func TestOIDCCallback(t *testing.T) {
 		assert.Contains(t, location, "redirect=", "must include redirect path")
 
 		// Verify the user was provisioned in the repo.
-		users, err := userRepo.List()
+		users, err := userRepo.List(context.Background())
 		require.NoError(t, err)
 		require.Len(t, users, 1, "exactly one user must be provisioned")
 		assert.Equal(t, "oidc", users[0].AuthProvider)
@@ -518,7 +518,7 @@ func TestOIDCCallback(t *testing.T) {
 
 		require.Equal(t, http.StatusFound, w.Code)
 
-		users, err := userRepo.List()
+		users, err := userRepo.List(context.Background())
 		require.NoError(t, err)
 		require.Len(t, users, 1)
 		// Mock token returns roles:["k8s-stack-admin"], config AdminRoles:["k8s-stack-admin"] → "admin".
@@ -563,7 +563,7 @@ func TestOIDCCallback(t *testing.T) {
 			ExternalID:   stringPtr("oidc-user-001"), // matches mock token "sub"
 			Email:        "old@example.com",
 		}
-		require.NoError(t, userRepo.Create(existingUser))
+		require.NoError(t, userRepo.Create(context.Background(), existingUser))
 
 		_ = stateStore.SaveOIDCState(context.Background(), "valid-state-existing", sessionstore.OIDCStateData{
 			CodeVerifier: "test-verifier",
@@ -582,7 +582,7 @@ func TestOIDCCallback(t *testing.T) {
 		assert.Contains(t, w.Header().Get("Location"), "token=", "must include JWT token")
 
 		// Verify the existing user was updated in the repo.
-		updated, err := userRepo.FindByID("existing-user-001")
+		updated, err := userRepo.FindByID(context.Background(), "existing-user-001")
 		require.NoError(t, err)
 		assert.Equal(t, "oidcuser@example.com", updated.Email, "email should be updated from token claims")
 		assert.Equal(t, "admin", updated.Role, "role should be updated via role mapping")
@@ -839,7 +839,7 @@ func TestCallback_UpdateExistingUserFails(t *testing.T) {
 		ExternalID:   stringPtr("oidc-user-001"),
 		Email:        "old@example.com",
 	}
-	require.NoError(t, userRepo.Create(existingUser))
+	require.NoError(t, userRepo.Create(context.Background(), existingUser))
 
 	// Make Update fail.
 	userRepo.updateErr = errors.New("db write failed")

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -56,7 +57,7 @@ func runEnumLogin(t *testing.T, tt enumCase) (*httptest.ResponseRecorder, *recor
 	repo := &scriptedUserRepo{MockUserRepository: NewMockUserRepository(), byUsernameErr: tt.lookupErr}
 	if tt.user != nil {
 		u := *tt.user
-		require.NoError(t, repo.Create(&u))
+		require.NoError(t, repo.Create(context.Background(), &u))
 	}
 	cfg := testAuthConfig(false)
 	if tt.useCache {

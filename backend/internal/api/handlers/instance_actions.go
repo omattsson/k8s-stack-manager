@@ -491,7 +491,7 @@ func (h *InstanceHandler) ListActionRuns(c *gin.Context) {
 	for _, r := range runs {
 		userIDs = append(userIDs, r.UserID)
 	}
-	usernames := lookupUsernames(h.userRepo, userIDs)
+	usernames := lookupUsernames(c.Request.Context(), h.userRepo, userIDs)
 
 	resp.NextCursor = next
 	for _, r := range runs {

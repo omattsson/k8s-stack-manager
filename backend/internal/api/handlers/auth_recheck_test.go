@@ -30,9 +30,9 @@ type raceUserRepo struct {
 	gone        bool
 }
 
-func (r *raceUserRepo) FindByID(id string) (*models.User, error) {
+func (r *raceUserRepo) FindByID(ctx context.Context, id string) (*models.User, error) {
 	n := r.calls.Add(1)
-	u, err := r.MockUserRepository.FindByID(id)
+	u, err := r.MockUserRepository.FindByID(ctx, id)
 	if err != nil || r.disableFrom == 0 || n < r.disableFrom {
 		return u, err
 	}

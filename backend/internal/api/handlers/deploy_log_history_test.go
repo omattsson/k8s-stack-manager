@@ -124,8 +124,8 @@ func seedDeployLogHistory(t *testing.T) (*MockStackInstanceRepository, *MockDepl
 	seedInstance(t, instRepo, "i2", "stack-b", "d1", "uid-2", models.StackStatusRunning)
 
 	userRepo := NewMockUserRepository()
-	require.NoError(t, userRepo.Create(&models.User{ID: "uid-1", Username: "alice", Role: "user"}))
-	require.NoError(t, userRepo.Create(&models.User{ID: "uid-2", Username: "bob", Role: "devops"}))
+	require.NoError(t, userRepo.Create(context.Background(), &models.User{ID: "uid-1", Username: "alice", Role: "user"}))
+	require.NoError(t, userRepo.Create(context.Background(), &models.User{ID: "uid-2", Username: "bob", Role: "devops"}))
 
 	logRepo := NewMockDeploymentLogRepository()
 	base := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)

@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"backend/pkg/dberrors"
+
+	"github.com/gin-gonic/gin"
 )
 
 // Sentinel errors for domain-specific conditions (not database errors).
@@ -92,4 +94,15 @@ func cancelledRequestError(err error) (int, string, bool) {
 	}
 	slog.Debug("Request cancelled by the client", "error", err)
 	return statusClientClosedRequest, msgClientClosedRequest, true
+}
+
+// respondCancelled writes the 499 answer when err comes from a cancelled
+// request context and reports whether it did. Use it where a handler would
+// otherwise log the error and answer 500.
+func respondCancelled(c *gin.Context, err error) bool {
+	status, msg, ok := cancelledRequestError(err)
+	if ok {
+		c.JSON(status, gin.H{"error": msg})
+	}
+	return ok
 }

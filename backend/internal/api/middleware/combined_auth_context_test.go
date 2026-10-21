@@ -106,7 +106,7 @@ func TestAuthenticateAPIKey_CancelledLookup(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
-	rawKey, prefix, _, err := models.GenerateAPIKey()
+	rawKey, prefix, hash, err := models.GenerateAPIKey()
 	require.NoError(t, err)
 	argonHash, err := models.HashAPIKeyWithSalt(rawKey)
 	require.NoError(t, err)
@@ -114,9 +114,10 @@ func TestAuthenticateAPIKey_CancelledLookup(t *testing.T) {
 	cancel()
 
 	tests := []struct {
-		name    string
 		ctx     context.Context
 		repo    *stubAPIKeyRepo
+		userErr error
+		name    string
 		wantLog string
 	}{
 		{
@@ -139,6 +140,15 @@ func TestAuthenticateAPIKey_CancelledLookup(t *testing.T) {
 			}},
 			wantLog: `level=DEBUG msg="API key verify cancelled"`,
 		},
+		{
+			name: "user lookup cancelled",
+			ctx:  context.Background(),
+			repo: &stubAPIKeyRepo{records: []*models.APIKey{
+				{ID: "k-user-cancel", UserID: "u1", Prefix: prefix, KeyHash: hash},
+			}},
+			userErr: dberrors.NewDatabaseError("find_by_id", context.Canceled),
+			wantLog: `level=DEBUG msg="API key user lookup cancelled"`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -146,7 +156,7 @@ func TestAuthenticateAPIKey_CancelledLookup(t *testing.T) {
 			buf.Reset()
 			limiter := newVerifyLimiter(1, time.Millisecond)
 			key, user, failure := authenticateAPIKey(tt.ctx, tt.repo,
-				&stubUserRepo{user: &models.User{ID: "u1", Username: "svc", Role: "user"}},
+				&stubUserRepo{user: &models.User{ID: "u1", Username: "svc", Role: "user"}, err: tt.userErr},
 				"sk_"+rawKey, limiter)
 
 			assert.Nil(t, key)
@@ -160,4 +170,46 @@ func TestAuthenticateAPIKey_CancelledLookup(t *testing.T) {
 			assert.Empty(t, limiter.slots, "no verify slot is held")
 		})
 	}
+}
+
+// ctxUserRepo records the context of the API-key user lookup.
+type ctxUserRepo struct {
+	models.UserRepository
+	user *models.User
+	ctxs chan context.Context
+}
+
+func (r *ctxUserRepo) FindByID(ctx context.Context, _ string) (*models.User, error) {
+	r.ctxs <- ctx
+	return r.user, nil
+}
+
+// TestCombinedAuth_APIKeyUserLookupRequestContext checks that the user
+// lookup of the API-key auth runs with the request context (#656).
+func TestCombinedAuth_APIKeyUserLookupRequestContext(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	rawKey, prefix, hash, err := models.GenerateAPIKey()
+	require.NoError(t, err)
+	users := &ctxUserRepo{user: &models.User{ID: "u1", Username: "svc", Role: "user"}, ctxs: make(chan context.Context, 1)}
+	r := gin.New()
+	r.Use(CombinedAuth(APIKeyAuthDeps{
+		APIKeyRepo: &stubAPIKeyRepo{records: []*models.APIKey{{ID: "k-user-ctx-" + prefix, UserID: "u1", Prefix: prefix, KeyHash: hash}}},
+		UserRepo:   users,
+	}))
+	r.GET("/x", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	reqCtx, cancelReq := context.WithCancel(context.WithValue(context.Background(), requestCtxKey{}, "req-user"))
+	defer cancelReq()
+	req := httptest.NewRequest(http.MethodGet, "/x", nil).WithContext(reqCtx)
+	req.Header.Set("X-API-Key", "sk_"+rawKey)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	userCtx := <-users.ctxs
+	assert.Equal(t, "req-user", userCtx.Value(requestCtxKey{}), "the user lookup gets the request context")
+	cancelReq()
+	assert.ErrorIs(t, userCtx.Err(), context.Canceled, "the user lookup context follows the request cancel")
 }

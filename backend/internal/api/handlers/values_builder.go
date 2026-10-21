@@ -95,7 +95,12 @@ func (b *valuesBuilder) layers(ctx context.Context, inst *models.StackInstance, 
 	}
 
 	if ownerName == "" {
-		ownerName = resolveOwnerName(b.userRepo, inst.OwnerID)
+		ownerName = resolveOwnerName(ctx, b.userRepo, inst.OwnerID)
+		// A cancelled lookup falls back to the owner ID: fail closed instead
+		// of rendering a wrong Owner variable (#656).
+		if err := ctx.Err(); err != nil {
+			return nil, helm.TemplateVars{}, nil, fmt.Errorf("resolve owner name: %w", err)
+		}
 	}
 	templateVars := helm.TemplateVars{
 		Branch:       inst.Branch,

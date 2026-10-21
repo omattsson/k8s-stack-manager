@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -42,7 +43,7 @@ func setupChannelFilterRouter(t *testing.T) (*gin.Engine, *MockNotificationChann
 	gin.SetMode(gin.TestMode)
 	repo := NewMockNotificationChannelRepository()
 	users := NewMockUserRepository()
-	require.NoError(t, users.Create(&models.User{ID: "u1", Username: "alice", Role: "user"}))
+	require.NoError(t, users.Create(context.Background(), &models.User{ID: "u1", Username: "alice", Role: "user"}))
 	defs := NewMockStackDefinitionRepository()
 	require.NoError(t, defs.Create(&models.StackDefinition{ID: "d1", Name: "full-stack"}))
 	clusters := NewMockClusterRepository()

@@ -92,7 +92,7 @@ func setupActionRunsRouter(t *testing.T, registry *hooks.ActionRegistry, runs *M
 		users = NewMockUserRepository()
 	}
 	for id, name := range map[string]string{actionsOwnerID: "alice", "uid-admin": "root", "uid-devops": "ops"} {
-		require.NoError(t, users.Create(&models.User{ID: id, Username: name}))
+		require.NoError(t, users.Create(context.Background(), &models.User{ID: id, Username: name}))
 	}
 
 	h := NewInstanceHandler(instRepo, NewMockValueOverrideRepository(), NewMockChartBranchOverrideRepository(),

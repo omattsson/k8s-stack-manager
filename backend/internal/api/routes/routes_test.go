@@ -30,21 +30,29 @@ import (
 
 type stubUserRepo struct{}
 
-func (s *stubUserRepo) Create(_ *models.User) error                           { return nil }
-func (s *stubUserRepo) FindByID(_ string) (*models.User, error)               { return nil, nil }
-func (s *stubUserRepo) FindByIDs(_ []string) (map[string]*models.User, error) { return nil, nil }
-func (s *stubUserRepo) FindByUsername(_ string) (*models.User, error)         { return nil, nil }
-func (s *stubUserRepo) FindByExternalID(_, _ string) (*models.User, error)    { return nil, nil }
-func (s *stubUserRepo) Update(_ *models.User) error                           { return nil }
-func (s *stubUserRepo) Delete(_ string) error                                 { return nil }
-func (s *stubUserRepo) List() ([]models.User, error)                          { return nil, nil }
-func (s *stubUserRepo) Count() (int64, error)                                 { return 0, nil }
-func (s *stubUserRepo) ListByRoles(_ []string) ([]models.User, error)         { return nil, nil }
-func (s *stubUserRepo) UpdateRole(_, _, _ string) (string, error)             { return "", nil }
-func (s *stubUserRepo) SetDisabled(_, _ string, _ bool) error                 { return nil }
-func (s *stubUserRepo) DeleteGuarded(_, _ string) error                       { return nil }
-func (s *stubUserRepo) UpdatePassword(_, _ string) error                      { return nil }
-func (s *stubUserRepo) UpdateProfile(_ string, _ models.UserProfileUpdate) error {
+func (s *stubUserRepo) Create(_ context.Context, _ *models.User) error             { return nil }
+func (s *stubUserRepo) FindByID(_ context.Context, _ string) (*models.User, error) { return nil, nil }
+func (s *stubUserRepo) FindByIDs(_ context.Context, _ []string) (map[string]*models.User, error) {
+	return nil, nil
+}
+func (s *stubUserRepo) FindByUsername(_ context.Context, _ string) (*models.User, error) {
+	return nil, nil
+}
+func (s *stubUserRepo) FindByExternalID(_ context.Context, _, _ string) (*models.User, error) {
+	return nil, nil
+}
+func (s *stubUserRepo) Update(_ *models.User) error                   { return nil }
+func (s *stubUserRepo) Delete(_ context.Context, _ string) error      { return nil }
+func (s *stubUserRepo) List(_ context.Context) ([]models.User, error) { return nil, nil }
+func (s *stubUserRepo) Count(_ context.Context) (int64, error)        { return 0, nil }
+func (s *stubUserRepo) ListByRoles(_ context.Context, _ []string) ([]models.User, error) {
+	return nil, nil
+}
+func (s *stubUserRepo) UpdateRole(_ context.Context, _, _, _ string) (string, error) { return "", nil }
+func (s *stubUserRepo) SetDisabled(_ context.Context, _, _ string, _ bool) error     { return nil }
+func (s *stubUserRepo) DeleteGuarded(_ context.Context, _, _ string) error           { return nil }
+func (s *stubUserRepo) UpdatePassword(_ context.Context, _, _ string) error          { return nil }
+func (s *stubUserRepo) UpdateProfile(_ context.Context, _ string, _ models.UserProfileUpdate) error {
 	return nil
 }
 

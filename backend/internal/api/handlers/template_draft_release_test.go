@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -47,7 +48,7 @@ func newDraftReleaseEnv(t *testing.T) *draftReleaseEnv {
 		users:     NewMockUserRepository(),
 		instances: NewMockStackInstanceRepository(),
 	}
-	require.NoError(t, env.users.Create(&models.User{ID: "uid-dev", Username: "dana-devops", Role: "devops"}))
+	require.NoError(t, env.users.Create(context.Background(), &models.User{ID: "uid-dev", Username: "dana-devops", Role: "devops"}))
 
 	tx := &mockHandlerTxRunner{repos: database.TxRepos{
 		StackTemplate:   env.templates,

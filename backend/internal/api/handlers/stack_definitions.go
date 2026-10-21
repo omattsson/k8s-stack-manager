@@ -192,7 +192,7 @@ func (h *DefinitionHandler) ListDefinitions(c *gin.Context) {
 	for i := range defs {
 		ptrs[i] = &defs[i]
 	}
-	setDefinitionOwnerNames(h.userRepo, ptrs...)
+	setDefinitionOwnerNames(c.Request.Context(), h.userRepo, ptrs...)
 	h.setDefinitionChartCounts(defs)
 
 	c.JSON(http.StatusOK, gin.H{
@@ -273,7 +273,7 @@ func (h *DefinitionHandler) CreateDefinition(c *gin.Context) {
 		return
 	}
 
-	setDefinitionOwnerNames(h.userRepo, &def)
+	setDefinitionOwnerNames(c.Request.Context(), h.userRepo, &def)
 	c.JSON(http.StatusCreated, def)
 }
 
@@ -307,7 +307,7 @@ func (h *DefinitionHandler) GetDefinition(c *gin.Context) {
 		return
 	}
 
-	setDefinitionOwnerNames(h.userRepo, def)
+	setDefinitionOwnerNames(c.Request.Context(), h.userRepo, def)
 	c.JSON(http.StatusOK, DefinitionWithChartsResponse{
 		StackDefinition: *def,
 		Charts:          charts,
@@ -375,7 +375,7 @@ func (h *DefinitionHandler) UpdateDefinition(c *gin.Context) {
 		return
 	}
 
-	setDefinitionOwnerNames(h.userRepo, existing)
+	setDefinitionOwnerNames(c.Request.Context(), h.userRepo, existing)
 	c.JSON(http.StatusOK, existing)
 }
 

@@ -588,7 +588,9 @@ func buildHandlers(
 	}
 
 	// Auto-create admin user on startup.
-	authHandler.EnsureAdminUser()
+	adminCtx, cancelAdmin := context.WithTimeout(context.Background(), 30*time.Second)
+	authHandler.EnsureAdminUser(adminCtx)
+	cancelAdmin()
 
 	return &handlerSet{
 		Auth:                  authHandler,

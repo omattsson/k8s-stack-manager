@@ -439,7 +439,7 @@ func (h *InstanceHandler) ListInstances(c *gin.Context) {
 	if instances == nil {
 		instances = []models.StackInstance{}
 	}
-	h.setInstanceListNames(instances)
+	h.setInstanceListNames(c.Request.Context(), instances)
 
 	c.JSON(http.StatusOK, gin.H{
 		"data":     instances,
@@ -477,7 +477,7 @@ func (h *InstanceHandler) GetRecentInstances(c *gin.Context) {
 	if len(instances) > 5 {
 		instances = instances[:5]
 	}
-	h.setInstanceListNames(instances)
+	h.setInstanceListNames(c.Request.Context(), instances)
 
 	c.JSON(http.StatusOK, instances)
 }
@@ -679,7 +679,7 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 
 	h.deployManager.BroadcastInstanceCreated(inst.ID)
 
-	h.setInstanceNames(&inst)
+	h.setInstanceNames(c.Request.Context(), &inst)
 	c.JSON(http.StatusCreated, inst)
 }
 
@@ -958,7 +958,9 @@ func (h *InstanceHandler) deleteInstance(c *gin.Context, inst *models.StackInsta
 		return "", &instanceDeleteError{status: status, message: message}
 	}
 
-	h.afterInstanceDeleted(ctx, inst, followerIDs)
+	// The row is gone: a client that left must not cancel the hooks and the
+	// notification. WithoutCancel keeps the trigger value.
+	h.afterInstanceDeleted(context.WithoutCancel(ctx), inst, followerIDs)
 	return "", nil
 }
 
@@ -1390,7 +1392,7 @@ func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 
 	h.deployManager.BroadcastInstanceCreated(clone.ID)
 
-	h.setInstanceNames(clone)
+	h.setInstanceNames(c.Request.Context(), clone)
 	c.JSON(http.StatusCreated, CloneInstanceResponse{StackInstance: *clone, Warning: warning})
 }
 
@@ -1563,6 +1565,9 @@ func (h *InstanceHandler) ExportChartValues(c *gin.Context) {
 
 	valuesMap, _, err := h.buildChartValuesAndBranches(c.Request.Context(), inst, def, []models.ChartConfig{*chart})
 	if err != nil {
+		if respondCancelled(c, err) {
+			return
+		}
 		slog.Error("export chart values: failed to build values", logKeyInstanceID, instanceID, "chart_id", chartID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
@@ -1609,6 +1614,9 @@ func (h *InstanceHandler) ExportAllValues(c *gin.Context) {
 
 	layers, templateVars, _, err := h.chartValueLayers(c.Request.Context(), inst, def, charts)
 	if err != nil {
+		if respondCancelled(c, err) {
+			return
+		}
 		slog.Error("export values: failed to collect values layers", logKeyInstanceID, instanceID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
@@ -1685,13 +1693,6 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 		return
 	}
 
-	// Restart the TTL clock on deploy, but never make the expiry earlier: a
-	// redeploy of an instance that was extended keeps the later expiry.
-	if inst.TTLMinutes > 0 {
-		inst.ExpiresAt = deployExpiry(inst.ExpiresAt, inst.TTLMinutes, h.maxTTL(), time.Now().UTC())
-		_ = h.instanceRepo.Update(inst)
-	}
-
 	def, err := h.definitionRepo.FindByID(inst.StackDefinitionID)
 	if err != nil {
 		status, message := mapError(err, entityStackDefinition)
@@ -1717,14 +1718,26 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 		return
 	}
 
+	// The build runs before the first write, so a client that left gets 499
+	// and nothing changes (#656).
 	valuesMap, branchMap, err := h.buildChartValuesAndBranches(c.Request.Context(), inst, def, charts)
 	if err != nil {
+		if respondCancelled(c, err) {
+			return
+		}
 		slog.Error("Failed to build chart values",
 			logKeyInstanceID, id,
 			"error", err,
 		)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
+	}
+
+	// Restart the TTL clock on deploy, but never make the expiry earlier: a
+	// redeploy of an instance that was extended keeps the later expiry.
+	if inst.TTLMinutes > 0 {
+		inst.ExpiresAt = deployExpiry(inst.ExpiresAt, inst.TTLMinutes, h.maxTTL(), time.Now().UTC())
+		_ = h.instanceRepo.Update(inst)
 	}
 
 	var chartInfos []deployer.ChartDeployInfo
@@ -1816,6 +1829,9 @@ func (h *InstanceHandler) DeployPreview(c *gin.Context) {
 	// Build merged values for each chart.
 	valuesMap, err := h.buildChartValues(c.Request.Context(), inst, def, charts)
 	if err != nil {
+		if respondCancelled(c, err) {
+			return
+		}
 		slog.Error("deploy-preview: failed to build chart values", logKeyInstanceID, id, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
@@ -2143,7 +2159,7 @@ func (h *InstanceHandler) GetDeployLog(c *gin.Context) {
 			}
 		}
 	}
-	setDeployLogStartedBy(h.userRepo, rows)
+	setDeployLogStartedBy(c.Request.Context(), h.userRepo, rows)
 
 	c.JSON(http.StatusOK, result)
 }
@@ -2350,11 +2366,11 @@ func generateNameSuggestions(instanceName string) []string {
 	return suggestions
 }
 
-func resolveOwnerName(userRepo models.UserRepository, ownerID string) string {
+func resolveOwnerName(ctx context.Context, userRepo models.UserRepository, ownerID string) string {
 	if userRepo == nil {
 		return ownerID
 	}
-	user, err := userRepo.FindByID(ownerID)
+	user, err := userRepo.FindByID(ctx, ownerID)
 	if err != nil {
 		return ownerID
 	}
@@ -2641,20 +2657,26 @@ func (h *InstanceHandler) CompareInstances(c *gin.Context) {
 	// overrides), so compare shows what a deploy of each instance renders.
 	leftValuesMap, err := h.buildChartValues(c.Request.Context(), leftInst, leftDef, leftCharts)
 	if err != nil {
+		if respondCancelled(c, err) {
+			return
+		}
 		slog.Error("compare: failed to build left values", logKeyInstanceID, leftID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 	rightValuesMap, err := h.buildChartValues(c.Request.Context(), rightInst, rightDef, rightCharts)
 	if err != nil {
+		if respondCancelled(c, err) {
+			return
+		}
 		slog.Error("compare: failed to build right values", logKeyInstanceID, rightID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
 	// Resolve owner names for the summaries.
-	leftOwner := resolveOwnerName(h.userRepo, leftInst.OwnerID)
-	rightOwner := resolveOwnerName(h.userRepo, rightInst.OwnerID)
+	leftOwner := resolveOwnerName(c.Request.Context(), h.userRepo, leftInst.OwnerID)
+	rightOwner := resolveOwnerName(c.Request.Context(), h.userRepo, rightInst.OwnerID)
 
 	// Collect all chart names from both sides.
 	allChartNames := make(map[string]bool)
@@ -2954,7 +2976,7 @@ func (h *InstanceHandler) GetDeployLogEntry(c *gin.Context) {
 	// The values endpoint serves the values snapshot.
 	logEntry.ValuesSnapshot = ""
 	logEntry.ChartVersions = ""
-	setDeployLogStartedBy(h.userRepo, []*models.DeploymentLog{logEntry})
+	setDeployLogStartedBy(c.Request.Context(), h.userRepo, []*models.DeploymentLog{logEntry})
 
 	c.JSON(http.StatusOK, logEntry)
 }

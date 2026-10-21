@@ -3,6 +3,7 @@
 package database
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -31,12 +32,12 @@ type guardOp struct {
 func (o guardOp) run(r *GORMUserRepository) error {
 	switch o.kind {
 	case guardDemote:
-		_, err := r.UpdateRole(o.caller, o.targetID, models.RoleUser)
+		_, err := r.UpdateRole(context.Background(), o.caller, o.targetID, models.RoleUser)
 		return err
 	case guardDisable:
-		return r.SetDisabled(o.caller, o.targetID, true)
+		return r.SetDisabled(context.Background(), o.caller, o.targetID, true)
 	default:
-		return r.DeleteGuarded(o.caller, o.targetID)
+		return r.DeleteGuarded(context.Background(), o.caller, o.targetID)
 	}
 }
 
@@ -81,7 +82,7 @@ func TestDatabaseUserGuardedChangesConcurrent(t *testing.T) {
 			for round := 0; round < 10; round++ {
 				require.NoError(t, db.Exec("DELETE FROM users").Error)
 				for _, id := range tt.admins {
-					require.NoError(t, repo.Create(&models.User{ID: id, Username: id, Role: models.RoleAdmin}))
+					require.NoError(t, repo.Create(context.Background(), &models.User{ID: id, Username: id, Role: models.RoleAdmin}))
 				}
 
 				var wg sync.WaitGroup
@@ -109,7 +110,7 @@ func TestDatabaseUserGuardedChangesConcurrent(t *testing.T) {
 				}
 				assert.Equal(t, tt.wantSucceeded, succeeded, "round %d: errors %v", round, errs)
 
-				admins, err := repo.ListByRoles([]string{models.RoleAdmin})
+				admins, err := repo.ListByRoles(context.Background(), []string{models.RoleAdmin})
 				require.NoError(t, err)
 				enabled := 0
 				for _, a := range admins {
@@ -128,9 +129,9 @@ func TestDatabaseUserGuardedChangesConcurrent(t *testing.T) {
 func TestDatabaseUserIDCaseInsensitive(t *testing.T) {
 	db := setupMySQLTestDB(t)
 	repo := NewGORMUserRepository(db)
-	require.NoError(t, repo.Create(&models.User{ID: "user-abc", Username: "abc", Role: models.RoleUser}))
+	require.NoError(t, repo.Create(context.Background(), &models.User{ID: "user-abc", Username: "abc", Role: models.RoleUser}))
 
-	u, err := repo.FindByID("USER-ABC")
+	u, err := repo.FindByID(context.Background(), "USER-ABC")
 	require.NoError(t, err)
 	assert.Equal(t, "user-abc", u.ID)
 }
@@ -153,24 +154,24 @@ func TestDatabaseUserGuardedChangesNoDeadlock(t *testing.T) {
 		provider string
 	}{
 		{name: "delete", oldRole: user, provider: "local", run: func(r *GORMUserRepository, target string) error {
-			return r.DeleteGuarded(caller, target)
+			return r.DeleteGuarded(context.Background(), caller, target)
 		}},
 		{name: "promote", oldRole: user, provider: "local", run: func(r *GORMUserRepository, target string) error {
-			_, err := r.UpdateRole(caller, target, admin)
+			_, err := r.UpdateRole(context.Background(), caller, target, admin)
 			return err
 		}},
 		{name: "demote", oldRole: admin, provider: "local", run: func(r *GORMUserRepository, target string) error {
-			_, err := r.UpdateRole(caller, target, user)
+			_, err := r.UpdateRole(context.Background(), caller, target, user)
 			return err
 		}},
 		{name: "sso-promote", oldRole: user, provider: "oidc", run: func(r *GORMUserRepository, target string) error {
-			return r.UpdateProfile(target, models.UserProfileUpdate{Role: &admin})
+			return r.UpdateProfile(context.Background(), target, models.UserProfileUpdate{Role: &admin})
 		}},
 		{name: "sso-demote", oldRole: admin, provider: "oidc", run: func(r *GORMUserRepository, target string) error {
-			return r.UpdateProfile(target, models.UserProfileUpdate{Role: &user})
+			return r.UpdateProfile(context.Background(), target, models.UserProfileUpdate{Role: &user})
 		}},
 		{name: "create-admin", run: func(r *GORMUserRepository, target string) error {
-			return r.Create(&models.User{ID: target, Username: "new-" + target, Role: admin})
+			return r.Create(context.Background(), &models.User{ID: target, Username: "new-" + target, Role: admin})
 		}},
 	}
 
@@ -181,14 +182,14 @@ func TestDatabaseUserGuardedChangesNoDeadlock(t *testing.T) {
 	// Run until at least one deadlock was retried, so the test proves the retry path.
 	for round := 0; round < maxRounds && (round < minRounds || deadlockRetries.Load() == retriesBefore); round++ {
 		require.NoError(t, db.Exec("DELETE FROM users").Error)
-		require.NoError(t, repo.Create(&models.User{ID: caller, Username: caller, Role: admin}))
+		require.NoError(t, repo.Create(context.Background(), &models.User{ID: caller, Username: caller, Role: admin}))
 		// Random IDs as in production: the deadlock needs a promoted user whose ID sorts before the admin rows.
 		targets := make([]string, goroutines)
 		for i := range targets {
 			op := ops[i%len(ops)]
 			targets[i] = uuid.New().String()
 			if op.oldRole != "" {
-				require.NoError(t, repo.Create(&models.User{ID: targets[i], Username: fmt.Sprintf("u-%02d-%s", i, op.name),
+				require.NoError(t, repo.Create(context.Background(), &models.User{ID: targets[i], Username: fmt.Sprintf("u-%02d-%s", i, op.name),
 					Role: op.oldRole, AuthProvider: op.provider}))
 			}
 		}

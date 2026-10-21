@@ -19,7 +19,7 @@ type usersByID struct {
 	byID map[string]models.User
 }
 
-func (u *usersByID) FindByID(id string) (*models.User, error) {
+func (u *usersByID) FindByID(_ context.Context, id string) (*models.User, error) {
 	user, ok := u.byID[id]
 	if !ok {
 		return nil, errors.New("not found")

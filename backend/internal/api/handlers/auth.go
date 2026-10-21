@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -172,10 +173,17 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	const msgAccountDisabled = "Account disabled"
 	const msgLocalLoginRestricted = "Local login is restricted to service accounts. Please use SSO."
 
+	// The lookups use the request context: a client that left gets 499 and
+	// no "Login failed" line (#656).
+	ctx := c.Request.Context()
+
 	// Without the correct password, every answer is the same 401 after one bcrypt
 	// compare, so it does not show whether the user exists or its state (#632).
-	user, err := h.userRepo.FindByUsername(req.Username)
+	user, err := h.userRepo.FindByUsername(ctx, req.Username)
 	if err != nil {
+		if respondCancelled(c, err) {
+			return
+		}
 		// A lookup error other than "not found" is a server-side failure
 		// (500): a 401 would tell the client that the password is wrong.
 		if !isNotFoundError(err) {
@@ -234,8 +242,11 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	// cache hit can be up to LOGIN_CACHE_TTL old). The token and the checks
 	// use this record, so a disable, role change or password reset that
 	// commits during the login applies to it.
-	fresh, err := h.userRepo.FindByID(user.ID)
+	fresh, err := h.userRepo.FindByID(ctx, user.ID)
 	if err != nil {
+		if respondCancelled(c, err) {
+			return
+		}
 		if isNotFoundError(err) {
 			fail(loginFailure{reason: loginReasonRereadNotFound, status: "invalid", httpCode: http.StatusUnauthorized, userID: user.ID}, msgInvalidCredentials)
 		} else {
@@ -286,7 +297,10 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	// Close the disable race: re-read the user after signing and before the
 	// token or a refresh token leaves the server.
-	if err := recheckUserActive(h.userRepo, user.ID); err != nil {
+	if err := recheckUserActive(ctx, h.userRepo, user.ID); err != nil {
+		if respondCancelled(c, err) {
+			return
+		}
 		switch {
 		case errors.Is(err, errAccountDisabled):
 			fail(loginFailure{reason: loginReasonDisabled, status: "disabled", httpCode: http.StatusForbidden, userID: user.ID}, msgAccountDisabled)
@@ -393,7 +407,9 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		user.DisplayName = user.Username
 	}
 
-	if err := h.userRepo.Create(user); err != nil {
+	// Detached: a client cancel must not commit the user and then skip the
+	// audit entry (#656).
+	if err := h.userRepo.Create(context.WithoutCancel(c.Request.Context()), user); err != nil {
 		status, message := mapError(err, "User")
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -418,7 +434,7 @@ func (h *AuthHandler) GetCurrentUser(c *gin.Context) {
 		return
 	}
 
-	user, err := h.userRepo.FindByID(userID)
+	user, err := h.userRepo.FindByID(c.Request.Context(), userID)
 	if err != nil {
 		status, message := mapError(err, "User")
 		c.JSON(status, gin.H{"error": message})
@@ -429,14 +445,20 @@ func (h *AuthHandler) GetCurrentUser(c *gin.Context) {
 }
 
 // EnsureAdminUser creates the initial admin user if configured and not already present.
-func (h *AuthHandler) EnsureAdminUser() {
+func (h *AuthHandler) EnsureAdminUser(ctx context.Context) {
 	if h.cfg.AdminUsername == "" || h.cfg.AdminPassword == "" {
 		return
 	}
 
-	_, err := h.userRepo.FindByUsername(h.cfg.AdminUsername)
+	_, err := h.userRepo.FindByUsername(ctx, h.cfg.AdminUsername)
 	if err == nil {
 		return // Admin already exists.
+	}
+	// Only a missing user is created: a failed lookup (for example a
+	// timeout) must not try a second admin row.
+	if !isNotFoundError(err) {
+		slog.Error("Failed to look up the admin user; admin user not created", "error", err)
+		return
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(h.cfg.AdminPassword), passwordHashCost)
@@ -456,7 +478,7 @@ func (h *AuthHandler) EnsureAdminUser() {
 		UpdatedAt:      time.Now().UTC(),
 	}
 
-	if err := h.userRepo.Create(admin); err != nil {
+	if err := h.userRepo.Create(ctx, admin); err != nil {
 		slog.Error("Failed to create admin user", "error", err)
 		return
 	}
@@ -540,8 +562,11 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	}
 
 	// Look up user to get current role/username.
-	user, err := h.userRepo.FindByID(stored.UserID)
+	user, err := h.userRepo.FindByID(c.Request.Context(), stored.UserID)
 	if err != nil {
+		if respondCancelled(c, err) {
+			return
+		}
 		// A deleted or missing user is an expected invalid-session condition,
 		// not an operational failure — only real repository errors are.
 		if isNotFoundError(err) {
@@ -617,7 +642,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 
 	// Close the disable race (same as login): re-read the user after signing.
 	// On rejection revoke the rotated refresh token too.
-	if err := recheckUserActive(h.userRepo, user.ID); err != nil {
+	if err := recheckUserActive(c.Request.Context(), h.userRepo, user.ID); err != nil {
 		h.rejectRefreshAfterRecheck(c, user.ID, err)
 		return
 	}
@@ -674,7 +699,10 @@ func (h *AuthHandler) findRefreshToken(c *gin.Context, tokenHash string) (*model
 func (h *AuthHandler) refreshConsumedToken(c *gin.Context, stored *models.RefreshToken, now time.Time) {
 	family := stored.SessionFamily()
 	if h.withinReuseGrace(stored, now) {
-		user, err := h.userRepo.FindByID(stored.UserID)
+		user, err := h.userRepo.FindByID(c.Request.Context(), stored.UserID)
+		if err != nil && respondCancelled(c, err) {
+			return
+		}
 		if err != nil && !isNotFoundError(err) {
 			slog.Error("Failed to find user for refresh", "user_id", stored.UserID, "error", err)
 			middleware.RecordRefresh("failure")
@@ -728,7 +756,7 @@ func (h *AuthHandler) respondGraceRefresh(c *gin.Context, user *models.User, ses
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
-	if err := recheckUserActive(h.userRepo, user.ID); err != nil {
+	if err := recheckUserActive(c.Request.Context(), h.userRepo, user.ID); err != nil {
 		h.rejectRefreshAfterRecheck(c, user.ID, err)
 		return
 	}
@@ -789,8 +817,13 @@ func (h *AuthHandler) rejectRefreshAfterSessionCheck(c *gin.Context, userID, fam
 }
 
 // rejectRefreshAfterRecheck ends a refresh whose user re-check failed: it
-// revokes all refresh tokens of the user and clears the cookie.
+// revokes all refresh tokens of the user and clears the cookie. A cancelled
+// request gives 499 and revokes nothing: the token never leaves the server,
+// and a client that left is no reason to end the other sessions (#656).
 func (h *AuthHandler) rejectRefreshAfterRecheck(c *gin.Context, userID string, err error) {
+	if respondCancelled(c, err) {
+		return
+	}
 	_ = h.refreshTokenRepo.RevokeAllForUser(userID)
 	h.clearRefreshCookie(c)
 	switch {

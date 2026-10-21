@@ -178,7 +178,7 @@ func (h *TemplateHandler) ListTemplates(c *gin.Context) {
 		}
 	}
 
-	usernameMap := lookupUsernames(h.userRepo, ownerIDs)
+	usernameMap := lookupUsernames(c.Request.Context(), h.userRepo, ownerIDs)
 
 	items := make([]TemplateListItem, len(templates))
 	for i, t := range templates {
@@ -377,7 +377,7 @@ func (h *TemplateHandler) GetTemplate(c *gin.Context) {
 	if charts == nil {
 		charts = []models.TemplateChartConfig{}
 	}
-	tmpl.OwnerUsername = lookupUsernames(h.userRepo, []string{tmpl.OwnerID})[tmpl.OwnerID]
+	tmpl.OwnerUsername = lookupUsernames(c.Request.Context(), h.userRepo, []string{tmpl.OwnerID})[tmpl.OwnerID]
 	resp := TemplateDetailResponse{
 		StackTemplate:         *tmpl,
 		Charts:                charts,

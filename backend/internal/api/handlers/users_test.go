@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -43,10 +44,10 @@ func seedCallerAdmin(repo *MockUserRepository, callerID, callerRole string) {
 	if callerID == "" || callerRole != "admin" {
 		return
 	}
-	if _, err := repo.FindByID(callerID); err == nil {
+	if _, err := repo.FindByID(context.Background(), callerID); err == nil {
 		return
 	}
-	_ = repo.Create(&models.User{ID: callerID, Username: callerID + "-caller", Role: "admin"})
+	_ = repo.Create(context.Background(), &models.User{ID: callerID, Username: callerID + "-caller", Role: "admin"})
 }
 
 // ---- TestListUsers ----
@@ -92,7 +93,7 @@ func TestListUsers(t *testing.T) {
 			userRepo := NewMockUserRepository()
 			for i := range tt.seedUsers {
 				u := tt.seedUsers[i]
-				require.NoError(t, userRepo.Create(&u))
+				require.NoError(t, userRepo.Create(context.Background(), &u))
 			}
 
 			router := setupUserRouter(userRepo, "admin-caller", tt.callerRole)
@@ -248,7 +249,7 @@ func TestDisableUser(t *testing.T) {
 
 			assert.Equal(t, tt.wantStatus, w.Code)
 			if tt.wantStatus == http.StatusOK {
-				u, err := userRepo.FindByID(tt.targetID)
+				u, err := userRepo.FindByID(context.Background(), tt.targetID)
 				require.NoError(t, err)
 				assert.True(t, u.Disabled, "user should be disabled after PUT /disable")
 			}
@@ -274,7 +275,7 @@ func TestEnableUser(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	got, err := userRepo.FindByID("user-1")
+	got, err := userRepo.FindByID(context.Background(), "user-1")
 	require.NoError(t, err)
 	assert.False(t, got.Disabled, "user should be enabled after PUT /enable")
 }
@@ -388,7 +389,7 @@ func TestResetUserPassword(t *testing.T) {
 			assert.Equal(t, tt.wantStatus, w.Code)
 
 			if tt.wantChanged {
-				u, err := userRepo.FindByID(tt.targetID)
+				u, err := userRepo.FindByID(context.Background(), tt.targetID)
 				require.NoError(t, err)
 				assert.NotEqual(t, oldHash, u.PasswordHash, "password hash should have changed")
 				assert.NoError(t, bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte("newsecurepassword")))

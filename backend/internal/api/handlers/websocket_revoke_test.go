@@ -194,8 +194,8 @@ func TestHandleWebSocket_RevocationChecks(t *testing.T) {
 			defer hub.Shutdown()
 
 			userRepo := NewMockUserRepository()
-			require.NoError(t, userRepo.Create(&models.User{ID: "u-active", Username: "active"}))
-			require.NoError(t, userRepo.Create(&models.User{ID: "u-disabled", Username: "disabled", Disabled: true}))
+			require.NoError(t, userRepo.Create(context.Background(), &models.User{ID: "u-active", Username: "active"}))
+			require.NoError(t, userRepo.Create(context.Background(), &models.User{ID: "u-disabled", Username: "disabled", Disabled: true}))
 			if tt.userErr != nil {
 				userRepo.SetFindError(tt.userErr)
 			}
@@ -341,7 +341,7 @@ func TestUserHandler_ClosesWebSockets(t *testing.T) {
 			gin.SetMode(gin.TestMode)
 
 			userRepo := NewMockUserRepository()
-			require.NoError(t, userRepo.Create(&models.User{ID: "u-target", Username: "target"}))
+			require.NoError(t, userRepo.Create(context.Background(), &models.User{ID: "u-target", Username: "target"}))
 			revoker := &fakeRevoker{}
 			seedCallerAdmin(userRepo, "u-admin", "admin")
 			h := NewUserHandler(userRepo, nil, nil)
@@ -429,11 +429,11 @@ type countingUserRepo struct {
 	finds map[string]int
 }
 
-func (r *countingUserRepo) FindByID(id string) (*models.User, error) {
+func (r *countingUserRepo) FindByID(ctx context.Context, id string) (*models.User, error) {
 	r.mu.Lock()
 	r.finds[id]++
 	r.mu.Unlock()
-	return r.MockUserRepository.FindByID(id)
+	return r.MockUserRepository.FindByID(ctx, id)
 }
 
 func TestNewWebSocketRevocationChecker(t *testing.T) {
@@ -474,9 +474,9 @@ func TestNewWebSocketRevocationChecker(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			users := &countingUserRepo{MockUserRepository: NewMockUserRepository(), finds: map[string]int{}}
-			require.NoError(t, users.Create(&models.User{ID: "u-active", Username: "active"}))
-			require.NoError(t, users.Create(&models.User{ID: "u-blocked", Username: "blocked"}))
-			require.NoError(t, users.Create(&models.User{ID: "u-disabled", Username: "disabled", Disabled: true}))
+			require.NoError(t, users.Create(context.Background(), &models.User{ID: "u-active", Username: "active"}))
+			require.NoError(t, users.Create(context.Background(), &models.User{ID: "u-blocked", Username: "blocked"}))
+			require.NoError(t, users.Create(context.Background(), &models.User{ID: "u-disabled", Username: "disabled", Disabled: true}))
 			if tt.userErr != nil {
 				users.SetFindError(tt.userErr)
 			}

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -164,9 +165,14 @@ func (h *InstanceHandler) BulkDeploy(c *gin.Context) {
 		}
 
 		// Same values pipeline as DeployInstance: shared values, defaults,
-		// overrides, locked values and branch overrides. Fail closed.
+		// overrides, locked values and branch overrides. Fail closed. The
+		// build runs before the first write, so a cancel changes nothing (#656).
 		valuesMap, branchMap, err := h.buildChartValuesAndBranches(c.Request.Context(), inst, def, charts)
 		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				slog.Debug("bulk deploy: request cancelled during the values build", logKeyInstanceID, inst.ID, "error", err)
+				return "", fmt.Errorf("request cancelled")
+			}
 			slog.Error("bulk deploy: failed to build chart values", logKeyInstanceID, inst.ID, "error", err)
 			return "", fmt.Errorf("failed to generate values")
 		}

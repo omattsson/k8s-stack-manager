@@ -2,6 +2,7 @@ package database
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -56,7 +57,7 @@ func TestRetryOnDeadlock(t *testing.T) {
 			t.Parallel()
 
 			calls, waits := 0, 0
-			err := retryOnDeadlockWait("test", func() time.Duration { waits++; return 0 }, func() error {
+			err := retryOnDeadlockWait(context.Background(), "test", func() time.Duration { waits++; return 0 }, func() error {
 				calls++
 				if calls > len(tt.results) {
 					return nil
@@ -83,7 +84,7 @@ func TestRetryOnDeadlock_LogsAttempts(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
 	before := deadlockRetries.Load()
-	err := retryOnDeadlockWait("delete", func() time.Duration { return 0 }, func() error { return errFakeDeadlock })
+	err := retryOnDeadlockWait(context.Background(), "delete", func() time.Duration { return 0 }, func() error { return errFakeDeadlock })
 
 	require.ErrorIs(t, err, errFakeDeadlock)
 	assert.Equal(t, int64(2), deadlockRetries.Load()-before, "two attempts ran again")
@@ -127,11 +128,11 @@ func TestGuardedAdminChange_RetriesTransaction(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			repo := setupUserRepo(t)
-			require.NoError(t, repo.Create(&models.User{ID: "admin-1", Username: "admin-1", Role: models.RoleAdmin}))
-			require.NoError(t, repo.Create(&models.User{ID: "user-1", Username: "user-1", DisplayName: "target", Role: models.RoleUser}))
+			require.NoError(t, repo.Create(context.Background(), &models.User{ID: "admin-1", Username: "admin-1", Role: models.RoleAdmin}))
+			require.NoError(t, repo.Create(context.Background(), &models.User{ID: "user-1", Username: "user-1", DisplayName: "target", Role: models.RoleUser}))
 
 			calls := 0
-			err := repo.guardedAdminChange("test", "admin-1", "user-1", func(tx *gorm.DB, g guardTarget) error {
+			err := repo.guardedAdminChange(context.Background(), "test", "admin-1", "user-1", func(tx *gorm.DB, g guardTarget) error {
 				calls++
 				display := fmt.Sprintf("attempt-%d", calls)
 				if err := updateUserColumns(tx, "test", g.user.ID, map[string]interface{}{"display_name": display}); err != nil {
@@ -146,7 +147,7 @@ func TestGuardedAdminChange_RetriesTransaction(t *testing.T) {
 				assert.NoError(t, err)
 			}
 			assert.Equal(t, tt.wantCalls, calls)
-			u, err := repo.FindByID("user-1")
+			u, err := repo.FindByID(context.Background(), "user-1")
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantDisplay, u.DisplayName, "only the committed attempt writes")
 		})

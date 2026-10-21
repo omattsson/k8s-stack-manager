@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -238,8 +239,10 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 		return
 	}
 
-	// Provision or update local user.
-	user, err := h.provisionUser(oidcUser)
+	// Provision or update local user. Detached from here on: a client cancel
+	// must not leave the user sync or link half done (#656).
+	ctx := context.WithoutCancel(c.Request.Context())
+	user, err := h.provisionUser(ctx, oidcUser)
 	if err != nil {
 		slog.Error("OIDC user provisioning failed", "error", err)
 		// Policy rejections are expected outcomes, not operational failures;
@@ -320,7 +323,7 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 
 	// Close the disable race: re-read the user after signing and before any
 	// token is stored, returned, or a refresh token is persisted.
-	if err := recheckUserActive(h.userRepo, user.ID); err != nil {
+	if err := recheckUserActive(ctx, h.userRepo, user.ID); err != nil {
 		switch {
 		case errors.Is(err, errAccountDisabled):
 			loginOutcome = "disabled"
@@ -552,11 +555,11 @@ func (h *OIDCHandler) CLIToken(c *gin.Context) {
 	})
 }
 
-func (h *OIDCHandler) provisionUser(oidcUser *auth.OIDCUser) (*models.User, error) {
+func (h *OIDCHandler) provisionUser(ctx context.Context, oidcUser *auth.OIDCUser) (*models.User, error) {
 	// Try to find existing user by external ID.
-	user, err := h.userRepo.FindByExternalID("oidc", oidcUser.Subject)
+	user, err := h.userRepo.FindByExternalID(ctx, "oidc", oidcUser.Subject)
 	if err == nil && user != nil {
-		return h.updateExistingOIDCUser(user, oidcUser)
+		return h.updateExistingOIDCUser(ctx, user, oidcUser)
 	}
 
 	// Distinguish "not found" from unexpected DB errors — only proceed
@@ -568,9 +571,9 @@ func (h *OIDCHandler) provisionUser(oidcUser *auth.OIDCUser) (*models.User, erro
 
 	// Check if a local user with the same username already exists — link it to OIDC.
 	username := deriveOIDCUsername(oidcUser)
-	existing, err := h.userRepo.FindByUsername(username)
+	existing, err := h.userRepo.FindByUsername(ctx, username)
 	if err == nil && existing != nil {
-		return h.linkLocalUserToOIDC(existing, oidcUser)
+		return h.linkLocalUserToOIDC(ctx, existing, oidcUser)
 	}
 	if err != nil && !isNotFoundError(err) {
 		slog.Error("Failed to look up user by username", "username", username, "error", err)
@@ -582,12 +585,12 @@ func (h *OIDCHandler) provisionUser(oidcUser *auth.OIDCUser) (*models.User, erro
 		return nil, errNoAccount
 	}
 
-	return h.createOIDCUser(oidcUser)
+	return h.createOIDCUser(ctx, oidcUser)
 }
 
 // updateExistingOIDCUser syncs changed fields (email, display name, role) from the
 // IdP response into the local user record.
-func (h *OIDCHandler) updateExistingOIDCUser(user *models.User, oidcUser *auth.OIDCUser) (*models.User, error) {
+func (h *OIDCHandler) updateExistingOIDCUser(ctx context.Context, user *models.User, oidcUser *auth.OIDCUser) (*models.User, error) {
 	if user.Disabled {
 		return nil, errAccountDisabled
 	}
@@ -612,7 +615,7 @@ func (h *OIDCHandler) updateExistingOIDCUser(user *models.User, oidcUser *auth.O
 		changed = true
 	}
 	if changed {
-		if updateErr := h.userRepo.UpdateProfile(user.ID, upd); updateErr != nil {
+		if updateErr := h.userRepo.UpdateProfile(ctx, user.ID, upd); updateErr != nil {
 			slog.Error("Failed to update OIDC user", "user_id", user.ID, "error", updateErr)
 			// Abort authentication to avoid issuing a token with
 			// unpersisted changes (e.g., elevated role or new email).
@@ -623,7 +626,7 @@ func (h *OIDCHandler) updateExistingOIDCUser(user *models.User, oidcUser *auth.O
 }
 
 // linkLocalUserToOIDC converts a local user to an OIDC-linked user.
-func (h *OIDCHandler) linkLocalUserToOIDC(user *models.User, oidcUser *auth.OIDCUser) (*models.User, error) {
+func (h *OIDCHandler) linkLocalUserToOIDC(ctx context.Context, user *models.User, oidcUser *auth.OIDCUser) (*models.User, error) {
 	if user.Disabled {
 		return nil, errAccountDisabled
 	}
@@ -642,7 +645,7 @@ func (h *OIDCHandler) linkLocalUserToOIDC(user *models.User, oidcUser *auth.OIDC
 	upd.Role = &user.Role
 	user.PasswordHash = ""
 
-	if err := h.userRepo.UpdateProfile(user.ID, upd); err != nil {
+	if err := h.userRepo.UpdateProfile(ctx, user.ID, upd); err != nil {
 		slog.Error("Failed to link local user to OIDC", "user_id", user.ID, "error", err)
 		return nil, fmt.Errorf(errMsgAuthFailed)
 	}
@@ -651,7 +654,7 @@ func (h *OIDCHandler) linkLocalUserToOIDC(user *models.User, oidcUser *auth.OIDC
 }
 
 // createOIDCUser provisions a new local user from the OIDC identity.
-func (h *OIDCHandler) createOIDCUser(oidcUser *auth.OIDCUser) (*models.User, error) {
+func (h *OIDCHandler) createOIDCUser(ctx context.Context, oidcUser *auth.OIDCUser) (*models.User, error) {
 	username := deriveOIDCUsername(oidcUser)
 
 	newUser := &models.User{
@@ -664,11 +667,11 @@ func (h *OIDCHandler) createOIDCUser(oidcUser *auth.OIDCUser) (*models.User, err
 		Email:        oidcUser.Email,
 	}
 
-	if createErr := h.userRepo.Create(newUser); createErr != nil {
+	if createErr := h.userRepo.Create(ctx, newUser); createErr != nil {
 		// Race condition: another request created the user between our check and create.
 		// Retry the lookup to return the existing user.
 		if isDuplicateError(createErr) {
-			user, err := h.userRepo.FindByExternalID("oidc", oidcUser.Subject)
+			user, err := h.userRepo.FindByExternalID(ctx, "oidc", oidcUser.Subject)
 			if err == nil && user != nil {
 				return user, nil
 			}

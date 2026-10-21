@@ -128,8 +128,8 @@ func TestGORMUserRepository_DeleteRemovesFollows(t *testing.T) {
 		name   string
 		delete func(r *GORMUserRepository) error
 	}{
-		{name: "Delete", delete: func(r *GORMUserRepository) error { return r.Delete("u1") }},
-		{name: "DeleteGuarded", delete: func(r *GORMUserRepository) error { return r.DeleteGuarded("admin", "u1") }},
+		{name: "Delete", delete: func(r *GORMUserRepository) error { return r.Delete(context.Background(), "u1") }},
+		{name: "DeleteGuarded", delete: func(r *GORMUserRepository) error { return r.DeleteGuarded(context.Background(), "admin", "u1") }},
 	}
 	for _, tt := range tests {
 		tt := tt
@@ -139,8 +139,8 @@ func TestGORMUserRepository_DeleteRemovesFollows(t *testing.T) {
 			users := NewGORMUserRepository(db)
 			followers := NewGORMInstanceFollowerRepository(db)
 			seedFollowInstances(t, db, "i1")
-			require.NoError(t, users.Create(&models.User{ID: "admin", Username: "admin", PasswordHash: "x", Role: "admin"}))
-			require.NoError(t, users.Create(&models.User{ID: "u1", Username: "u1", PasswordHash: "x", Role: "user"}))
+			require.NoError(t, users.Create(context.Background(), &models.User{ID: "admin", Username: "admin", PasswordHash: "x", Role: "admin"}))
+			require.NoError(t, users.Create(context.Background(), &models.User{ID: "u1", Username: "u1", PasswordHash: "x", Role: "user"}))
 			require.NoError(t, followers.Follow(ctx, "u1", "i1"))
 			require.NoError(t, followers.Follow(ctx, "u2", "i1"))
 

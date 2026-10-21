@@ -82,7 +82,7 @@ func StartBusinessMetrics(
 		return err
 	}
 
-	_, err = meter.RegisterCallback(func(_ context.Context, o metric.Observer) error {
+	_, err = meter.RegisterCallback(func(ctx context.Context, o metric.Observer) error {
 		// Each KPI group is observed independently: use projected aggregate
 		// count queries (never List(), which loads heavy TEXT fields and
 		// decrypts cluster secrets on every scrape), and let one failing query
@@ -103,8 +103,8 @@ func StartBusinessMetrics(
 		}
 
 		// Users.
-		if users, userErr := userRepo.Count(); userErr != nil {
-			slog.Warn("business metrics: failed to count users", "error", userErr)
+		if users, userErr := userRepo.Count(ctx); userErr != nil {
+			slog.WarnContext(ctx, "business metrics: failed to count users", "error", userErr)
 		} else {
 			o.ObserveInt64(businessMetrics.usersTotal, users)
 		}
