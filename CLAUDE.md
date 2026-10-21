@@ -252,7 +252,7 @@ backend/
     database/repository.go       # NewRepository() factory; repository_factory.go wires all domain repositories
     database/*_repository.go     # One GORM repository per domain model
     database/instance_delete.go  # DeleteInstanceRecord (overrides, quota override, followers, action runs), DeleteInstanceWithOwnedDefinition
-    database/lock_retry.go       # retryOnDeadlock: runs a transaction again on MySQL 1213 (deadlock), 3 attempts
+    database/lock_retry.go       # retryOnDeadlock: runs a transaction or one statement again on MySQL 1213 (deadlock), 3 attempts
     database/migrations.go       # Versioned migrations through schema.Migrator, run on startup
     database/errors.go           # Re-exports from pkg/dberrors (single source of truth)
     database/schema/             # Migrator and versioned migration structs
