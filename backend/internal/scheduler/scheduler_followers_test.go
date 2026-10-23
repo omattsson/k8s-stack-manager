@@ -63,7 +63,7 @@ func TestScheduler_PolicyRunNotifications(t *testing.T) {
 			p := newTestPolicy("p1", "0 2 * * *")
 			p.Action = tt.action
 			p.DryRun = tt.dryRun
-			require.NoError(t, policyRepo.Create(p))
+			require.NoError(t, policyRepo.Create(context.Background(), p))
 			instanceRepo := &mockInstanceRepo{instances: []models.StackInstance{
 				{ID: "i1", Name: "team-a-1", OwnerID: "u1", StackDefinitionID: "d1", ClusterID: "c1", Namespace: "stack-team-a-1-u1", Branch: "main", Status: models.StackStatusStopped},
 				{ID: "i2", Name: "running", OwnerID: "u2", Status: models.StackStatusRunning},

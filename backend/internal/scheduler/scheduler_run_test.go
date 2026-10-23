@@ -39,11 +39,11 @@ func TestScheduler_ReloadWhenInactiveDoesNothing(t *testing.T) {
 	t.Parallel()
 
 	policyRepo := newMockPolicyRepo()
-	require.NoError(t, policyRepo.Create(newTestPolicy("p1", "0 2 * * *")))
+	require.NoError(t, policyRepo.Create(context.Background(), newTestPolicy("p1", "0 2 * * *")))
 	s := NewScheduler(policyRepo, &mockInstanceRepo{}, &mockAuditRepo{}, nil, nil)
 
 	// A replica that is not the leader handles the policy change request.
-	require.NoError(t, s.Reload())
+	require.NoError(t, s.Reload(context.Background()))
 	assert.False(t, s.Active())
 	assert.Equal(t, 0, s.entryCount(), "an inactive scheduler must not add cron entries")
 }
@@ -52,7 +52,7 @@ func TestScheduler_RunReloadsPeriodicallyAndRestarts(t *testing.T) {
 	t.Parallel()
 
 	policyRepo := newMockPolicyRepo()
-	require.NoError(t, policyRepo.Create(newTestPolicy("p1", "0 2 * * *")))
+	require.NoError(t, policyRepo.Create(context.Background(), newTestPolicy("p1", "0 2 * * *")))
 	s := NewScheduler(policyRepo, &mockInstanceRepo{}, &mockAuditRepo{}, nil, nil).
 		WithReloadInterval(20 * time.Millisecond)
 
@@ -69,9 +69,9 @@ func TestScheduler_RunReloadsPeriodicallyAndRestarts(t *testing.T) {
 		if term == 0 {
 			// A policy change handled by another replica reaches the
 			// leader with the periodic reload.
-			require.NoError(t, policyRepo.Create(newTestPolicy("p2", "0 3 * * *")))
+			require.NoError(t, policyRepo.Create(context.Background(), newTestPolicy("p2", "0 3 * * *")))
 			require.Eventually(t, func() bool { return s.entryCount() == 2 }, time.Second, 5*time.Millisecond)
-			require.NoError(t, policyRepo.Delete("p2"))
+			require.NoError(t, policyRepo.Delete(context.Background(), "p2"))
 			require.Eventually(t, func() bool { return s.entryCount() == 1 }, time.Second, 5*time.Millisecond)
 		}
 
@@ -91,7 +91,7 @@ func TestScheduler_ReloadKeepsEntriesWhenSchedulesUnchanged(t *testing.T) {
 
 	policyRepo := newMockPolicyRepo()
 	p1 := newTestPolicy("p1", "0 2 * * *")
-	require.NoError(t, policyRepo.Create(p1))
+	require.NoError(t, policyRepo.Create(context.Background(), p1))
 	s := NewScheduler(policyRepo, &mockInstanceRepo{}, &mockAuditRepo{}, nil, nil)
 	require.NoError(t, s.Start())
 	defer s.Stop()
@@ -101,13 +101,13 @@ func TestScheduler_ReloadKeepsEntriesWhenSchedulesUnchanged(t *testing.T) {
 
 	// Same schedule (other fields changed): no new cron entry.
 	p1.Condition = "idle_days:3"
-	require.NoError(t, s.Reload())
+	require.NoError(t, s.Reload(context.Background()))
 	same, _ := s.entryID("p1")
 	assert.Equal(t, before, same)
 
 	// New schedule: new cron entry.
 	p1.Schedule = "0 4 * * *"
-	require.NoError(t, s.Reload())
+	require.NoError(t, s.Reload(context.Background()))
 	after, _ := s.entryID("p1")
 	assert.NotEqual(t, before, after)
 }
@@ -123,7 +123,7 @@ func TestScheduler_ScheduledRunReadsCurrentPolicy(t *testing.T) {
 	}{
 		{name: "enabled policy runs", mutate: func(*mockPolicyRepo, *models.CleanupPolicy) {}, wantLastRun: true},
 		{name: "disabled after scheduling is skipped", mutate: func(_ *mockPolicyRepo, p *models.CleanupPolicy) { p.Enabled = false }},
-		{name: "deleted after scheduling is skipped", mutate: func(r *mockPolicyRepo, p *models.CleanupPolicy) { _ = r.Delete(p.ID) }},
+		{name: "deleted after scheduling is skipped", mutate: func(r *mockPolicyRepo, p *models.CleanupPolicy) { _ = r.Delete(context.Background(), p.ID) }},
 		{name: "ended term is skipped", mutate: func(*mockPolicyRepo, *models.CleanupPolicy) {}, cancelled: true},
 	}
 	for _, tt := range tests {
@@ -132,7 +132,7 @@ func TestScheduler_ScheduledRunReadsCurrentPolicy(t *testing.T) {
 			t.Parallel()
 			policyRepo := newMockPolicyRepo()
 			p := newTestPolicy("p1", "0 2 * * *")
-			require.NoError(t, policyRepo.Create(p))
+			require.NoError(t, policyRepo.Create(context.Background(), p))
 			s := NewScheduler(policyRepo, &mockInstanceRepo{}, &mockAuditRepo{}, nil, nil)
 			tt.mutate(policyRepo, p)
 
@@ -174,7 +174,7 @@ func TestScheduler_OnlyActiveSchedulerRunsCronJobs(t *testing.T) {
 	policyRepo := newMockPolicyRepo()
 	p := newTestPolicy("p1", "@every 1s")
 	p.Condition = "status:stopped"
-	require.NoError(t, policyRepo.Create(p))
+	require.NoError(t, policyRepo.Create(context.Background(), p))
 	instanceRepo := &mockInstanceRepo{instances: []models.StackInstance{
 		{ID: "i1", Name: "one", Status: models.StackStatusStopped},
 	}}
@@ -190,7 +190,7 @@ func TestScheduler_OnlyActiveSchedulerRunsCronJobs(t *testing.T) {
 		leader.Run(ctx)
 	}()
 	// The follower handles a policy change request.
-	require.NoError(t, follower.Reload())
+	require.NoError(t, follower.Reload(context.Background()))
 
 	require.Eventually(t, func() bool { return leaderExec.calls.Load() >= 1 }, 3*time.Second, 10*time.Millisecond)
 	cancel()
@@ -245,7 +245,7 @@ func TestScheduler_InterruptedRunStopsWithoutSideEffects(t *testing.T) {
 
 	policyRepo := newMockPolicyRepo()
 	p := newTestPolicy("p1", "0 2 * * *")
-	require.NoError(t, policyRepo.Create(p))
+	require.NoError(t, policyRepo.Create(context.Background(), p))
 	instanceRepo := &mockInstanceRepo{instances: []models.StackInstance{
 		{ID: "i1", Name: "one", Status: models.StackStatusStopped},
 		{ID: "i2", Name: "two", Status: models.StackStatusStopped},
@@ -313,7 +313,7 @@ func TestScheduler_CatchUpAtActivation(t *testing.T) {
 			p.LastRunAt = tt.lastRunAt
 			p.CreatedAt = tt.createdAt
 			p.DryRun = tt.dryRun
-			require.NoError(t, policyRepo.Create(p))
+			require.NoError(t, policyRepo.Create(context.Background(), p))
 			instanceRepo := &mockInstanceRepo{instances: []models.StackInstance{
 				{ID: "i1", Name: "one", Status: models.StackStatusStopped},
 			}}
@@ -404,7 +404,7 @@ func TestScheduler_CatchUpBoundaryWithClock(t *testing.T) {
 			t.Parallel()
 			policyRepo := newMockPolicyRepo()
 			p := newTestPolicy("p1", "17 3 1 1 *")
-			require.NoError(t, policyRepo.Create(p))
+			require.NoError(t, policyRepo.Create(context.Background(), p))
 			exec := &countingExecutor{}
 			s := NewScheduler(policyRepo, &mockInstanceRepo{instances: []models.StackInstance{
 				{ID: "i1", Name: "one", Status: models.StackStatusStopped},

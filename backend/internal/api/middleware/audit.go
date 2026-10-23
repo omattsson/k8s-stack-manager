@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -19,7 +20,7 @@ import (
 // AuditLogger allows the audit middleware to persist audit entries.
 // models.AuditLogRepository satisfies this interface.
 type AuditLogger interface {
-	Create(log *models.AuditLog) error
+	Create(ctx context.Context, log *models.AuditLog) error
 }
 
 // bodyLogWriter wraps gin.ResponseWriter to capture the response body.
@@ -85,9 +86,10 @@ func NewAuditMiddleware(repo AuditLogger) gin.HandlerFunc {
 		}
 
 		// Fire and forget — audit failures must not affect the response.
+		ctx := context.WithoutCancel(c.Request.Context())
 		go func() {
 			for _, entry := range entries {
-				if err := repo.Create(entry); err != nil {
+				if err := repo.Create(ctx, entry); err != nil {
 					slog.Error("failed to create audit log", "error", err)
 				}
 			}

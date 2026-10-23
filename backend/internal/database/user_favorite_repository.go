@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -25,16 +26,16 @@ func NewGORMUserFavoriteRepository(db *gorm.DB) *GORMUserFavoriteRepository {
 }
 
 // List returns all favorites for a user.
-func (r *GORMUserFavoriteRepository) List(userID string) ([]*models.UserFavorite, error) {
+func (r *GORMUserFavoriteRepository) List(ctx context.Context, userID string) ([]*models.UserFavorite, error) {
 	var favorites []*models.UserFavorite
-	if err := r.db.Where("user_id = ?", userID).Order("created_at DESC").Find(&favorites).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("user_id = ?", userID).Order("created_at DESC").Find(&favorites).Error; err != nil {
 		return nil, dberrors.NewDatabaseError("list", err)
 	}
 	return favorites, nil
 }
 
 // Add creates a new favorite. Duplicate key errors are treated as idempotent success.
-func (r *GORMUserFavoriteRepository) Add(fav *models.UserFavorite) error {
+func (r *GORMUserFavoriteRepository) Add(ctx context.Context, fav *models.UserFavorite) error {
 	if err := fav.Validate(); err != nil {
 		return dberrors.NewDatabaseError("add", fmt.Errorf("%w: %s", dberrors.ErrValidation, err.Error()))
 	}
@@ -44,7 +45,7 @@ func (r *GORMUserFavoriteRepository) Add(fav *models.UserFavorite) error {
 	}
 	fav.CreatedAt = time.Now().UTC()
 
-	if err := r.db.Create(fav).Error; err != nil {
+	if err := r.db.WithContext(ctx).Create(fav).Error; err != nil {
 		// Handle duplicate gracefully — treat as success.
 		if isDuplicateKeyError(err) {
 			return nil
@@ -55,8 +56,8 @@ func (r *GORMUserFavoriteRepository) Add(fav *models.UserFavorite) error {
 }
 
 // Remove deletes a favorite by user_id, entity_type, and entity_id.
-func (r *GORMUserFavoriteRepository) Remove(userID, entityType, entityID string) error {
-	result := r.db.Where("user_id = ? AND entity_type = ? AND entity_id = ?", userID, entityType, entityID).
+func (r *GORMUserFavoriteRepository) Remove(ctx context.Context, userID, entityType, entityID string) error {
+	result := r.db.WithContext(ctx).Where("user_id = ? AND entity_type = ? AND entity_id = ?", userID, entityType, entityID).
 		Delete(&models.UserFavorite{})
 	if result.Error != nil {
 		return dberrors.NewDatabaseError("remove", result.Error)
@@ -68,9 +69,9 @@ func (r *GORMUserFavoriteRepository) Remove(userID, entityType, entityID string)
 }
 
 // IsFavorite checks whether a specific entity is favorited by a user.
-func (r *GORMUserFavoriteRepository) IsFavorite(userID, entityType, entityID string) (bool, error) {
+func (r *GORMUserFavoriteRepository) IsFavorite(ctx context.Context, userID, entityType, entityID string) (bool, error) {
 	var count int64
-	if err := r.db.Model(&models.UserFavorite{}).
+	if err := r.db.WithContext(ctx).Model(&models.UserFavorite{}).
 		Where("user_id = ? AND entity_type = ? AND entity_id = ?", userID, entityType, entityID).
 		Count(&count).Error; err != nil {
 		return false, dberrors.NewDatabaseError("is_favorite", err)

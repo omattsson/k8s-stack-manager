@@ -655,8 +655,8 @@ func (s *stubDeploymentLogRepo) ListRecentGlobal(_ context.Context, _ int) ([]mo
 
 type stubAuditLogRepo struct{}
 
-func (s *stubAuditLogRepo) Create(_ *models.AuditLog) error { return nil }
-func (s *stubAuditLogRepo) List(_ models.AuditLogFilters) (*models.AuditLogResult, error) {
+func (s *stubAuditLogRepo) Create(ctx context.Context, _ *models.AuditLog) error { return nil }
+func (s *stubAuditLogRepo) List(ctx context.Context, _ models.AuditLogFilters) (*models.AuditLogResult, error) {
 	return nil, nil
 }
 
@@ -691,12 +691,22 @@ func (s *stubInstanceQuotaOverrideRepo) ListByInstanceIDs(_ context.Context, _ [
 
 type stubCleanupPolicyRepo struct{}
 
-func (s *stubCleanupPolicyRepo) Create(_ *models.CleanupPolicy) error             { return nil }
-func (s *stubCleanupPolicyRepo) FindByID(_ string) (*models.CleanupPolicy, error) { return nil, nil }
-func (s *stubCleanupPolicyRepo) Update(_ *models.CleanupPolicy) error             { return nil }
-func (s *stubCleanupPolicyRepo) Delete(_ string) error                            { return nil }
-func (s *stubCleanupPolicyRepo) List() ([]models.CleanupPolicy, error)            { return nil, nil }
-func (s *stubCleanupPolicyRepo) ListEnabled() ([]models.CleanupPolicy, error)     { return nil, nil }
+func (s *stubCleanupPolicyRepo) Create(ctx context.Context, _ *models.CleanupPolicy) error {
+	return nil
+}
+func (s *stubCleanupPolicyRepo) FindByID(_ context.Context, _ string) (*models.CleanupPolicy, error) {
+	return nil, nil
+}
+func (s *stubCleanupPolicyRepo) Update(ctx context.Context, _ *models.CleanupPolicy) error {
+	return nil
+}
+func (s *stubCleanupPolicyRepo) Delete(_ context.Context, _ string) error { return nil }
+func (s *stubCleanupPolicyRepo) List(ctx context.Context) ([]models.CleanupPolicy, error) {
+	return nil, nil
+}
+func (s *stubCleanupPolicyRepo) ListEnabled(ctx context.Context) ([]models.CleanupPolicy, error) {
+	return nil, nil
+}
 
 // ---- stubNotificationRepo ----
 
@@ -912,10 +922,14 @@ func (s *stubTemplateVersionRepo) GetLatestByTemplate(_ context.Context, _ strin
 
 type stubUserFavoriteRepo struct{}
 
-func (s *stubUserFavoriteRepo) List(_ string) ([]*models.UserFavorite, error) { return nil, nil }
-func (s *stubUserFavoriteRepo) Add(_ *models.UserFavorite) error              { return nil }
-func (s *stubUserFavoriteRepo) Remove(_, _, _ string) error                   { return nil }
-func (s *stubUserFavoriteRepo) IsFavorite(_, _, _ string) (bool, error)       { return false, nil }
+func (s *stubUserFavoriteRepo) List(_ context.Context, _ string) ([]*models.UserFavorite, error) {
+	return nil, nil
+}
+func (s *stubUserFavoriteRepo) Add(ctx context.Context, _ *models.UserFavorite) error { return nil }
+func (s *stubUserFavoriteRepo) Remove(_ context.Context, _, _, _ string) error        { return nil }
+func (s *stubUserFavoriteRepo) IsFavorite(_ context.Context, _, _, _ string) (bool, error) {
+	return false, nil
+}
 
 // ---- stubRefreshTokenRepo ----
 
@@ -1550,4 +1564,8 @@ func TestBuildHandlers_UniqueInstanceNamesNeedsNameLookup(t *testing.T) {
 	_, err = buildHandlers(cfg, repos, svc, sessStore, hub)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "UNIQUE_INSTANCE_NAMES")
+}
+
+func (s *stubCleanupPolicyRepo) SetLastRunAt(_ context.Context, _ string, _ time.Time) error {
+	return nil
 }

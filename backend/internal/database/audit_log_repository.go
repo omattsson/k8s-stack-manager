@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"strings"
@@ -27,14 +28,14 @@ func NewGORMAuditLogRepository(db *gorm.DB) *GORMAuditLogRepository {
 }
 
 // Create inserts a new audit log record.
-func (r *GORMAuditLogRepository) Create(log *models.AuditLog) error {
+func (r *GORMAuditLogRepository) Create(ctx context.Context, log *models.AuditLog) error {
 	if log.ID == "" {
 		log.ID = uuid.New().String()
 	}
 	if log.Timestamp.IsZero() {
 		log.Timestamp = time.Now().UTC()
 	}
-	if err := r.db.Create(log).Error; err != nil {
+	if err := r.db.WithContext(ctx).Create(log).Error; err != nil {
 		return dberrors.NewDatabaseError("create", err)
 	}
 	return nil
@@ -44,8 +45,8 @@ func (r *GORMAuditLogRepository) Create(log *models.AuditLog) error {
 // When filters.Cursor is set, keyset (cursor-based) pagination is used for
 // efficient traversal of large datasets. Otherwise, traditional OFFSET
 // pagination is used for backward compatibility.
-func (r *GORMAuditLogRepository) List(filters models.AuditLogFilters) (*models.AuditLogResult, error) {
-	query := r.db.Model(&models.AuditLog{})
+func (r *GORMAuditLogRepository) List(ctx context.Context, filters models.AuditLogFilters) (*models.AuditLogResult, error) {
+	query := r.db.WithContext(ctx).Model(&models.AuditLog{})
 
 	if filters.Action != "" {
 		query = query.Where("action = ?", filters.Action)
@@ -119,7 +120,7 @@ func (r *GORMAuditLogRepository) List(filters models.AuditLogFilters) (*models.A
 		// For unfiltered queries, try MySQL table stats estimate (~O(1)) instead
 		// of COUNT(*). Falls back to exact count for non-MySQL dialects (SQLite).
 		estimated := false
-		row := r.db.Raw("SELECT table_rows FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'audit_logs'").Row()
+		row := r.db.WithContext(ctx).Raw("SELECT table_rows FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'audit_logs'").Row()
 		if row.Err() == nil {
 			if err := row.Scan(&total); err == nil && total > 0 {
 				estimated = true

@@ -150,7 +150,7 @@ func (r *Reaper) processExpired(ctx context.Context) {
 			} else {
 				// Stop initiated; async process handles status transitions.
 				slog.Info("Expired instance stop initiated via deployer", "instance_id", inst.ID)
-				r.logExpiry(inst)
+				r.logExpiry(ctx, inst)
 				r.notifyExpired(inst, "is being stopped")
 				rMetrics.expiredTotal.Add(ctx, 1)
 				continue
@@ -168,7 +168,7 @@ func (r *Reaper) processExpired(ctx context.Context) {
 			continue
 		}
 
-		r.logExpiry(inst)
+		r.logExpiry(ctx, inst)
 		r.notifyExpired(inst, "was stopped")
 		rMetrics.expiredTotal.Add(ctx, 1)
 
@@ -207,7 +207,7 @@ func (r *Reaper) notifyExpired(inst *models.StackInstance, outcome string) {
 }
 
 // logExpiry creates an audit log entry and broadcasts a WebSocket message for an expired instance.
-func (r *Reaper) logExpiry(inst *models.StackInstance) {
+func (r *Reaper) logExpiry(ctx context.Context, inst *models.StackInstance) {
 	if r.auditRepo != nil {
 		auditEntry := &models.AuditLog{
 			UserID:     "system",
@@ -218,7 +218,7 @@ func (r *Reaper) logExpiry(inst *models.StackInstance) {
 			Details:    "Instance expired after TTL",
 			Timestamp:  time.Now().UTC(),
 		}
-		if auditErr := r.auditRepo.Create(auditEntry); auditErr != nil {
+		if auditErr := r.auditRepo.Create(context.WithoutCancel(ctx), auditEntry); auditErr != nil {
 			slog.Error("Failed to create audit log for expired instance", "instance_id", inst.ID, "error", auditErr)
 		}
 	}

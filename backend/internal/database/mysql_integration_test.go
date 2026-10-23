@@ -353,17 +353,17 @@ func TestMySQLIntegration_AuditLogRepository(t *testing.T) {
 		Details:    "Created stack instance",
 	}
 
-	err := repo.Create(entry)
+	err := repo.Create(context.Background(), entry)
 	require.NoError(t, err)
 
-	result, err := repo.List(models.AuditLogFilters{Action: "create", Limit: 10})
+	result, err := repo.List(context.Background(), models.AuditLogFilters{Action: "create", Limit: 10})
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), result.Total)
 	assert.Len(t, result.Data, 1)
 	assert.Equal(t, "create", result.Data[0].Action)
 
 	// Filter by entity type
-	result, err = repo.List(models.AuditLogFilters{EntityType: "stack_instance", Limit: 10})
+	result, err = repo.List(context.Background(), models.AuditLogFilters{EntityType: "stack_instance", Limit: 10})
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), result.Total)
 	assert.Len(t, result.Data, 1)
@@ -430,14 +430,14 @@ func TestMySQLIntegration_CleanupPolicyRepository(t *testing.T) {
 		Enabled:   true,
 	}
 
-	err := repo.Create(policy)
+	err := repo.Create(context.Background(), policy)
 	require.NoError(t, err)
 
-	enabled, err := repo.ListEnabled()
+	enabled, err := repo.ListEnabled(context.Background())
 	require.NoError(t, err)
 	assert.Len(t, enabled, 1)
 
-	all, err := repo.List()
+	all, err := repo.List(context.Background())
 	require.NoError(t, err)
 	assert.Len(t, all, 1)
 }
@@ -451,21 +451,21 @@ func TestMySQLIntegration_UserFavoriteRepository(t *testing.T) {
 		EntityType: "template",
 		EntityID:   "tmpl1",
 	}
-	err := repo.Add(fav)
+	err := repo.Add(context.Background(), fav)
 	require.NoError(t, err)
 
-	isFav, err := repo.IsFavorite("user1", "template", "tmpl1")
+	isFav, err := repo.IsFavorite(context.Background(), "user1", "template", "tmpl1")
 	require.NoError(t, err)
 	assert.True(t, isFav)
 
-	favorites, err := repo.List("user1")
+	favorites, err := repo.List(context.Background(), "user1")
 	require.NoError(t, err)
 	assert.Len(t, favorites, 1)
 
-	err = repo.Remove("user1", "template", "tmpl1")
+	err = repo.Remove(context.Background(), "user1", "template", "tmpl1")
 	require.NoError(t, err)
 
-	isFav, err = repo.IsFavorite("user1", "template", "tmpl1")
+	isFav, err = repo.IsFavorite(context.Background(), "user1", "template", "tmpl1")
 	require.NoError(t, err)
 	assert.False(t, isFav)
 }

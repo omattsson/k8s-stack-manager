@@ -22,7 +22,10 @@ func newMockPolicyRepo() *mockPolicyRepo {
 	return &mockPolicyRepo{policies: make(map[string]*models.CleanupPolicy)}
 }
 
-func (r *mockPolicyRepo) Create(p *models.CleanupPolicy) error {
+func (r *mockPolicyRepo) Create(ctx context.Context, p *models.CleanupPolicy) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if p.ID == "" {
@@ -32,7 +35,10 @@ func (r *mockPolicyRepo) Create(p *models.CleanupPolicy) error {
 	return nil
 }
 
-func (r *mockPolicyRepo) FindByID(id string) (*models.CleanupPolicy, error) {
+func (r *mockPolicyRepo) FindByID(ctx context.Context, id string) (*models.CleanupPolicy, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	p, ok := r.policies[id]
@@ -42,21 +48,30 @@ func (r *mockPolicyRepo) FindByID(id string) (*models.CleanupPolicy, error) {
 	return p, nil
 }
 
-func (r *mockPolicyRepo) Update(p *models.CleanupPolicy) error {
+func (r *mockPolicyRepo) Update(ctx context.Context, p *models.CleanupPolicy) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.policies[p.ID] = p
 	return nil
 }
 
-func (r *mockPolicyRepo) Delete(id string) error {
+func (r *mockPolicyRepo) Delete(ctx context.Context, id string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.policies, id)
 	return nil
 }
 
-func (r *mockPolicyRepo) List() ([]models.CleanupPolicy, error) {
+func (r *mockPolicyRepo) List(ctx context.Context) ([]models.CleanupPolicy, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var result []models.CleanupPolicy
@@ -66,7 +81,10 @@ func (r *mockPolicyRepo) List() ([]models.CleanupPolicy, error) {
 	return result, nil
 }
 
-func (r *mockPolicyRepo) ListEnabled() ([]models.CleanupPolicy, error) {
+func (r *mockPolicyRepo) ListEnabled(ctx context.Context) ([]models.CleanupPolicy, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var result []models.CleanupPolicy
@@ -172,14 +190,17 @@ type mockAuditRepo struct {
 	entries []models.AuditLog
 }
 
-func (r *mockAuditRepo) Create(log *models.AuditLog) error {
+func (r *mockAuditRepo) Create(ctx context.Context, log *models.AuditLog) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.entries = append(r.entries, *log)
 	return nil
 }
 
-func (r *mockAuditRepo) List(_ models.AuditLogFilters) (*models.AuditLogResult, error) {
+func (r *mockAuditRepo) List(ctx context.Context, _ models.AuditLogFilters) (*models.AuditLogResult, error) {
 	return &models.AuditLogResult{
 		Data:  r.entries,
 		Total: int64(len(r.entries)),
@@ -234,7 +255,7 @@ func TestSchedulerStartStop(t *testing.T) {
 	t.Parallel()
 
 	policyRepo := newMockPolicyRepo()
-	_ = policyRepo.Create(&models.CleanupPolicy{
+	_ = policyRepo.Create(context.Background(), &models.CleanupPolicy{
 		ID:        "p1",
 		Name:      "test-policy",
 		Schedule:  "0 2 * * *",
@@ -260,7 +281,7 @@ func TestSchedulerReload(t *testing.T) {
 	t.Parallel()
 
 	policyRepo := newMockPolicyRepo()
-	_ = policyRepo.Create(&models.CleanupPolicy{
+	_ = policyRepo.Create(context.Background(), &models.CleanupPolicy{
 		ID:        "p1",
 		Name:      "first",
 		Schedule:  "0 2 * * *",
@@ -279,7 +300,7 @@ func TestSchedulerReload(t *testing.T) {
 	defer s.Stop()
 
 	// Add another policy and reload.
-	_ = policyRepo.Create(&models.CleanupPolicy{
+	_ = policyRepo.Create(context.Background(), &models.CleanupPolicy{
 		ID:        "p2",
 		Name:      "second",
 		Schedule:  "0 3 * * *",
@@ -289,7 +310,7 @@ func TestSchedulerReload(t *testing.T) {
 		Enabled:   true,
 	})
 
-	err = s.Reload()
+	err = s.Reload(context.Background())
 	assert.NoError(t, err)
 	assert.Len(t, s.entryMap, 2)
 }
@@ -300,7 +321,7 @@ func TestRunPolicyDryRun(t *testing.T) {
 	tenDaysAgo := time.Now().Add(-10 * 24 * time.Hour)
 
 	policyRepo := newMockPolicyRepo()
-	_ = policyRepo.Create(&models.CleanupPolicy{
+	_ = policyRepo.Create(context.Background(), &models.CleanupPolicy{
 		ID:        "p1",
 		Name:      "stop-idle",
 		Schedule:  "0 2 * * *",
@@ -323,7 +344,7 @@ func TestRunPolicyDryRun(t *testing.T) {
 	assert.NoError(t, err)
 	defer s.Stop()
 
-	results, err := s.RunPolicy("p1", true)
+	results, err := s.RunPolicy(context.Background(), "p1", true)
 	assert.NoError(t, err)
 	assert.Len(t, results, 1)
 	assert.Equal(t, "i1", results[0].InstanceID)
@@ -337,7 +358,7 @@ func TestRunPolicyWithExecutor(t *testing.T) {
 	tenDaysAgo := time.Now().Add(-10 * 24 * time.Hour)
 
 	policyRepo := newMockPolicyRepo()
-	_ = policyRepo.Create(&models.CleanupPolicy{
+	_ = policyRepo.Create(context.Background(), &models.CleanupPolicy{
 		ID:        "p1",
 		Name:      "stop-idle",
 		Schedule:  "0 2 * * *",
@@ -360,7 +381,7 @@ func TestRunPolicyWithExecutor(t *testing.T) {
 	assert.NoError(t, err)
 	defer s.Stop()
 
-	results, err := s.RunPolicy("p1", false)
+	results, err := s.RunPolicy(context.Background(), "p1", false)
 	assert.NoError(t, err)
 	assert.Len(t, results, 1)
 	assert.Equal(t, "success", results[0].Status)
@@ -377,7 +398,7 @@ func TestRunPolicyCleanAction(t *testing.T) {
 	tenDaysAgo := time.Now().Add(-10 * 24 * time.Hour)
 
 	policyRepo := newMockPolicyRepo()
-	_ = policyRepo.Create(&models.CleanupPolicy{
+	_ = policyRepo.Create(context.Background(), &models.CleanupPolicy{
 		ID:        "p1",
 		Name:      "clean-old",
 		Schedule:  "0 2 * * *",
@@ -401,7 +422,7 @@ func TestRunPolicyCleanAction(t *testing.T) {
 	assert.NoError(t, err)
 	defer s.Stop()
 
-	results, err := s.RunPolicy("p1", false)
+	results, err := s.RunPolicy(context.Background(), "p1", false)
 	assert.NoError(t, err)
 	assert.Len(t, results, 1)
 	assert.Equal(t, "i1", results[0].InstanceID)
@@ -413,7 +434,7 @@ func TestRunPolicyDeleteAction(t *testing.T) {
 	t.Parallel()
 
 	policyRepo := newMockPolicyRepo()
-	_ = policyRepo.Create(&models.CleanupPolicy{
+	_ = policyRepo.Create(context.Background(), &models.CleanupPolicy{
 		ID:        "p1",
 		Name:      "delete-expired",
 		Schedule:  "0 2 * * *",
@@ -437,7 +458,7 @@ func TestRunPolicyDeleteAction(t *testing.T) {
 	assert.NoError(t, err)
 	defer s.Stop()
 
-	results, err := s.RunPolicy("p1", false)
+	results, err := s.RunPolicy(context.Background(), "p1", false)
 	assert.NoError(t, err)
 	assert.Len(t, results, 1)
 	assert.Equal(t, "delete", results[0].Action)
@@ -450,7 +471,7 @@ func TestRunPolicyByCluster(t *testing.T) {
 	tenDaysAgo := time.Now().Add(-10 * 24 * time.Hour)
 
 	policyRepo := newMockPolicyRepo()
-	_ = policyRepo.Create(&models.CleanupPolicy{
+	_ = policyRepo.Create(context.Background(), &models.CleanupPolicy{
 		ID:        "p1",
 		Name:      "stop-cluster1",
 		Schedule:  "0 2 * * *",
@@ -473,7 +494,7 @@ func TestRunPolicyByCluster(t *testing.T) {
 	assert.NoError(t, err)
 	defer s.Stop()
 
-	results, err := s.RunPolicy("p1", true)
+	results, err := s.RunPolicy(context.Background(), "p1", true)
 	assert.NoError(t, err)
 	assert.Len(t, results, 1)
 	assert.Equal(t, "i1", results[0].InstanceID)
@@ -485,7 +506,7 @@ func TestRunPolicyExecutorError(t *testing.T) {
 	tenDaysAgo := time.Now().Add(-10 * 24 * time.Hour)
 
 	policyRepo := newMockPolicyRepo()
-	_ = policyRepo.Create(&models.CleanupPolicy{
+	_ = policyRepo.Create(context.Background(), &models.CleanupPolicy{
 		ID:        "p1",
 		Name:      "stop-idle",
 		Schedule:  "0 2 * * *",
@@ -508,7 +529,7 @@ func TestRunPolicyExecutorError(t *testing.T) {
 	assert.NoError(t, err)
 	defer s.Stop()
 
-	results, err := s.RunPolicy("p1", false)
+	results, err := s.RunPolicy(context.Background(), "p1", false)
 	assert.NoError(t, err)
 	assert.Len(t, results, 1)
 	assert.Equal(t, "error", results[0].Status)
@@ -527,10 +548,24 @@ func TestRunPolicyNotFound(t *testing.T) {
 	assert.NoError(t, err)
 	defer s.Stop()
 
-	_, err = s.RunPolicy("nonexistent", true)
+	_, err = s.RunPolicy(context.Background(), "nonexistent", true)
 	assert.Error(t, err)
 }
 
 func (*mockInstanceRepo) CountByStatuses(ctx context.Context, statuses []string) (int, error) {
 	return 0, ctx.Err()
+}
+
+func (r *mockPolicyRepo) SetLastRunAt(ctx context.Context, id string, t time.Time) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	p, ok := r.policies[id]
+	if !ok {
+		return errors.New("not found")
+	}
+	p.LastRunAt = &t
+	return nil
 }

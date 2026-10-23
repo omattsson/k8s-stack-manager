@@ -73,7 +73,7 @@ func TestFavoriteHandler_ListFavorites(t *testing.T) {
 			router, repo := setupFavoriteRouter()
 
 			for _, fav := range tt.seed {
-				_ = repo.Add(fav)
+				_ = repo.Add(context.Background(), fav)
 			}
 
 			w := httptest.NewRecorder()
@@ -229,7 +229,7 @@ func TestFavoriteHandler_RemoveFavorite(t *testing.T) {
 			router, repo := setupFavoriteRouter()
 
 			if tt.seed {
-				_ = repo.Add(&models.UserFavorite{
+				_ = repo.Add(context.Background(), &models.UserFavorite{
 					UserID: "user-1", EntityType: tt.entityType, EntityID: tt.entityID,
 				})
 			}
@@ -288,7 +288,7 @@ func TestFavoriteHandler_CheckFavorite(t *testing.T) {
 			router, repo := setupFavoriteRouter()
 
 			if tt.seed {
-				_ = repo.Add(&models.UserFavorite{
+				_ = repo.Add(context.Background(), &models.UserFavorite{
 					UserID: "user-1", EntityType: "instance", EntityID: "inst-1",
 				})
 			}
@@ -448,7 +448,7 @@ func TestFavoriteHandler_AddFavorite_RepoError(t *testing.T) {
 func TestFavoriteHandler_RemoveFavorite_RepoError(t *testing.T) {
 	t.Parallel()
 	router, repo := setupFavoriteRouter()
-	_ = repo.Add(&models.UserFavorite{UserID: "user-1", EntityType: "instance", EntityID: "inst-1"})
+	_ = repo.Add(context.Background(), &models.UserFavorite{UserID: "user-1", EntityType: "instance", EntityID: "inst-1"})
 	repo.SetError(errors.New("delete failure"))
 
 	w := httptest.NewRecorder()

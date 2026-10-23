@@ -1,6 +1,7 @@
 package models
 
 import (
+	"context"
 	"errors"
 	"time"
 )
@@ -45,8 +46,8 @@ func (f *UserFavorite) Validate() error {
 
 // UserFavoriteRepository defines data access operations for user favorites.
 type UserFavoriteRepository interface {
-	List(userID string) ([]*UserFavorite, error)
-	Add(fav *UserFavorite) error
-	Remove(userID, entityType, entityID string) error
-	IsFavorite(userID, entityType, entityID string) (bool, error)
+	List(ctx context.Context, userID string) ([]*UserFavorite, error)
+	Add(ctx context.Context, fav *UserFavorite) error
+	Remove(ctx context.Context, userID, entityType, entityID string) error
+	IsFavorite(ctx context.Context, userID, entityType, entityID string) (bool, error)
 }

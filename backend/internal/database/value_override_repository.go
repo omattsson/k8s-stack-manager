@@ -38,17 +38,17 @@ func (r *GORMValueOverrideRepository) Create(ctx context.Context, override *mode
 		override.ID = uuid.New().String()
 	}
 	override.UpdatedAt = time.Now().UTC()
-	return r.withContext(ctx).Create(override)
+	return r.BaseRepository.Create(ctx, override)
 }
 
 // FindByID returns a value override by ID.
 func (r *GORMValueOverrideRepository) FindByID(ctx context.Context, id string) (*models.ValueOverride, error) {
-	return r.withContext(ctx).FindByID(id)
+	return r.BaseRepository.FindByID(ctx, id)
 }
 
 // Delete deletes a value override by ID.
 func (r *GORMValueOverrideRepository) Delete(ctx context.Context, id string) error {
-	return r.withContext(ctx).Delete(id)
+	return r.BaseRepository.Delete(ctx, id)
 }
 
 // FindByInstanceAndChart returns the value override for a specific instance and chart config.
@@ -67,7 +67,7 @@ func (r *GORMValueOverrideRepository) FindByInstanceAndChart(ctx context.Context
 // Update persists changes to an existing value override record.
 func (r *GORMValueOverrideRepository) Update(ctx context.Context, override *models.ValueOverride) error {
 	override.UpdatedAt = time.Now().UTC()
-	return r.withContext(ctx).Save(override)
+	return r.BaseRepository.Save(ctx, override)
 }
 
 // ListByInstance returns all value overrides for a given stack instance.

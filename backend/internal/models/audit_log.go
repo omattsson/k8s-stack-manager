@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // MaxAuditEntityIDLen is the size of audit_logs.entity_id: the RFC 1123
 // label maximum (a namespace name). A UUID has 36 characters.
@@ -49,6 +52,6 @@ type AuditLogResult struct {
 
 // AuditLogRepository defines data access operations for audit logs.
 type AuditLogRepository interface {
-	Create(log *AuditLog) error
-	List(filters AuditLogFilters) (*AuditLogResult, error)
+	Create(ctx context.Context, log *AuditLog) error
+	List(ctx context.Context, filters AuditLogFilters) (*AuditLogResult, error)
 }

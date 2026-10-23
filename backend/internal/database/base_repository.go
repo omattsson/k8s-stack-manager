@@ -13,22 +13,19 @@ import (
 // ID primary keys. Embed it in concrete repository structs to eliminate
 // duplicated FindByID / Delete / Create / Save boilerplate.
 //
+// Every method takes the context and runs its query with it.
+//
 // Methods that vary between repositories (List with filters, domain-specific
 // queries, validation, encryption, etc.) should remain on the concrete type.
 type BaseRepository[T any] struct {
 	DB *gorm.DB
 }
 
-// withContext returns a copy whose queries run with ctx.
-func (r *BaseRepository[T]) withContext(ctx context.Context) *BaseRepository[T] {
-	return &BaseRepository[T]{DB: r.DB.WithContext(ctx)}
-}
-
 // FindByID returns a single record by primary key.
 // Returns a DatabaseError wrapping ErrNotFound when no row matches.
-func (r *BaseRepository[T]) FindByID(id string) (*T, error) {
+func (r *BaseRepository[T]) FindByID(ctx context.Context, id string) (*T, error) {
 	var entity T
-	if err := r.DB.Where("id = ?", id).First(&entity).Error; err != nil {
+	if err := r.DB.WithContext(ctx).Where("id = ?", id).First(&entity).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, dberrors.NewDatabaseError("find_by_id", dberrors.ErrNotFound)
 		}
@@ -40,9 +37,9 @@ func (r *BaseRepository[T]) FindByID(id string) (*T, error) {
 // Delete deletes a record by primary key. GORM will soft-delete if the model
 // embeds gorm.DeletedAt; otherwise it performs a hard delete.
 // Returns a DatabaseError wrapping ErrNotFound when no row was affected.
-func (r *BaseRepository[T]) Delete(id string) error {
+func (r *BaseRepository[T]) Delete(ctx context.Context, id string) error {
 	var zero T
-	result := r.DB.Where("id = ?", id).Delete(&zero)
+	result := r.DB.WithContext(ctx).Where("id = ?", id).Delete(&zero)
 	if result.Error != nil {
 		return dberrors.NewDatabaseError("delete", result.Error)
 	}
@@ -54,8 +51,8 @@ func (r *BaseRepository[T]) Delete(id string) error {
 
 // Create inserts a new record. Duplicate key constraint violations are
 // mapped to ErrDuplicateKey.
-func (r *BaseRepository[T]) Create(entity *T) error {
-	if err := r.DB.Create(entity).Error; err != nil {
+func (r *BaseRepository[T]) Create(ctx context.Context, entity *T) error {
+	if err := r.DB.WithContext(ctx).Create(entity).Error; err != nil {
 		if isDuplicateKeyError(err) {
 			return dberrors.NewDatabaseError("create", dberrors.ErrDuplicateKey)
 		}
@@ -66,8 +63,8 @@ func (r *BaseRepository[T]) Create(entity *T) error {
 
 // Save persists all fields of the record (upsert-style via GORM Save).
 // Duplicate key constraint violations are mapped to ErrDuplicateKey.
-func (r *BaseRepository[T]) Save(entity *T) error {
-	if err := r.DB.Save(entity).Error; err != nil {
+func (r *BaseRepository[T]) Save(ctx context.Context, entity *T) error {
+	if err := r.DB.WithContext(ctx).Save(entity).Error; err != nil {
 		if isDuplicateKeyError(err) {
 			return dberrors.NewDatabaseError("update", dberrors.ErrDuplicateKey)
 		}

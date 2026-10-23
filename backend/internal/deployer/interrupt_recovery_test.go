@@ -168,14 +168,17 @@ type fakeAuditRepo struct {
 	entries []models.AuditLog
 }
 
-func (f *fakeAuditRepo) Create(l *models.AuditLog) error {
+func (f *fakeAuditRepo) Create(ctx context.Context, l *models.AuditLog) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.entries = append(f.entries, *l)
 	return nil
 }
 
-func (f *fakeAuditRepo) List(models.AuditLogFilters) (*models.AuditLogResult, error) {
+func (f *fakeAuditRepo) List(_ context.Context, _ models.AuditLogFilters) (*models.AuditLogResult, error) {
 	return &models.AuditLogResult{}, nil
 }
 

@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // CleanupPolicy defines an automated maintenance policy for stack instances.
 type CleanupPolicy struct {
@@ -19,10 +22,12 @@ type CleanupPolicy struct {
 
 // CleanupPolicyRepository defines data access operations for cleanup policies.
 type CleanupPolicyRepository interface {
-	Create(policy *CleanupPolicy) error
-	FindByID(id string) (*CleanupPolicy, error)
-	Update(policy *CleanupPolicy) error
-	Delete(id string) error
-	List() ([]CleanupPolicy, error)
-	ListEnabled() ([]CleanupPolicy, error)
+	Create(ctx context.Context, policy *CleanupPolicy) error
+	FindByID(ctx context.Context, id string) (*CleanupPolicy, error)
+	Update(ctx context.Context, policy *CleanupPolicy) error
+	Delete(ctx context.Context, id string) error
+	// SetLastRunAt writes last_run_at only, so a concurrent edit of the other fields stays.
+	SetLastRunAt(ctx context.Context, id string, t time.Time) error
+	List(ctx context.Context) ([]CleanupPolicy, error)
+	ListEnabled(ctx context.Context) ([]CleanupPolicy, error)
 }

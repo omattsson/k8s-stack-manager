@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"testing"
 
 	"backend/internal/models"
@@ -27,7 +28,7 @@ func TestGORMAuditLogRepository_Create(t *testing.T) {
 		EntityID:   "si-1",
 		Details:    "created instance",
 	}
-	err := repo.Create(log)
+	err := repo.Create(context.Background(), log)
 	require.NoError(t, err)
 	assert.NotEmpty(t, log.ID)
 	assert.False(t, log.Timestamp.IsZero())
@@ -114,10 +115,10 @@ func TestGORMAuditLogRepository_List(t *testing.T) {
 			t.Parallel()
 			repo := setupAuditLogRepo(t)
 			for i := range tt.seedLogs {
-				require.NoError(t, repo.Create(&tt.seedLogs[i]))
+				require.NoError(t, repo.Create(context.Background(), &tt.seedLogs[i]))
 			}
 
-			result, err := repo.List(tt.filters)
+			result, err := repo.List(context.Background(), tt.filters)
 			require.NoError(t, err)
 			assert.Len(t, result.Data, tt.wantCount)
 			assert.Equal(t, tt.wantTotal, result.Total)

@@ -35,17 +35,17 @@ func (r *GORMSharedValuesRepository) Create(ctx context.Context, sv *models.Shar
 	now := time.Now().UTC()
 	sv.CreatedAt = now
 	sv.UpdatedAt = now
-	return r.withContext(ctx).Create(sv)
+	return r.BaseRepository.Create(ctx, sv)
 }
 
 // FindByID returns a shared values record by ID.
 func (r *GORMSharedValuesRepository) FindByID(ctx context.Context, id string) (*models.SharedValues, error) {
-	return r.withContext(ctx).FindByID(id)
+	return r.BaseRepository.FindByID(ctx, id)
 }
 
 // Delete deletes a shared values record by ID.
 func (r *GORMSharedValuesRepository) Delete(ctx context.Context, id string) error {
-	return r.withContext(ctx).Delete(id)
+	return r.BaseRepository.Delete(ctx, id)
 }
 
 // FindByClusterAndID returns a shared values record matching both cluster ID and record ID.
@@ -63,7 +63,7 @@ func (r *GORMSharedValuesRepository) FindByClusterAndID(ctx context.Context, clu
 // Update persists changes to an existing shared values record.
 func (r *GORMSharedValuesRepository) Update(ctx context.Context, sv *models.SharedValues) error {
 	sv.UpdatedAt = time.Now().UTC()
-	return r.withContext(ctx).Save(sv)
+	return r.BaseRepository.Save(ctx, sv)
 }
 
 // ListByCluster returns all shared values for a given cluster in merge order

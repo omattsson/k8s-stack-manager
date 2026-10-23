@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 
@@ -46,8 +47,11 @@ type addFavoriteRequest struct {
 func (h *FavoriteHandler) ListFavorites(c *gin.Context) {
 	userID := middleware.GetUserIDFromContext(c)
 
-	favorites, err := h.favoriteRepo.List(userID)
+	favorites, err := h.favoriteRepo.List(c.Request.Context(), userID)
 	if err != nil {
+		if respondCancelled(c, err) {
+			return
+		}
 		slog.Error("Failed to list favorites", "error", err, logKeyFavUserID, userID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
@@ -94,7 +98,7 @@ func (h *FavoriteHandler) AddFavorite(c *gin.Context) {
 		EntityID:   req.EntityID,
 	}
 
-	if err := h.favoriteRepo.Add(fav); err != nil {
+	if err := h.favoriteRepo.Add(context.WithoutCancel(c.Request.Context()), fav); err != nil {
 		status, message := mapError(err, "Favorite")
 		if status >= http.StatusInternalServerError {
 			slog.Error("Failed to add favorite", "error", err, logKeyFavUserID, userID)
@@ -134,7 +138,7 @@ func (h *FavoriteHandler) RemoveFavorite(c *gin.Context) {
 		return
 	}
 
-	if err := h.favoriteRepo.Remove(userID, entityType, entityID); err != nil {
+	if err := h.favoriteRepo.Remove(context.WithoutCancel(c.Request.Context()), userID, entityType, entityID); err != nil {
 		status, message := mapError(err, "Favorite")
 		if status >= http.StatusInternalServerError {
 			slog.Error("Failed to remove favorite", "error", err, logKeyFavUserID, userID)
@@ -174,8 +178,11 @@ func (h *FavoriteHandler) CheckFavorite(c *gin.Context) {
 		return
 	}
 
-	isFav, err := h.favoriteRepo.IsFavorite(userID, entityType, entityID)
+	isFav, err := h.favoriteRepo.IsFavorite(c.Request.Context(), userID, entityType, entityID)
 	if err != nil {
+		if respondCancelled(c, err) {
+			return
+		}
 		slog.Error("Failed to check favorite", "error", err, logKeyFavUserID, userID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return

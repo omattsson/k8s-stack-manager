@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 
@@ -37,8 +38,11 @@ func NewCleanupPolicyHandler(repo models.CleanupPolicyRepository, sched *schedul
 // @Router      /api/v1/admin/cleanup-policies [get]
 // @Security    BearerAuth
 func (h *CleanupPolicyHandler) ListCleanupPolicies(c *gin.Context) {
-	policies, err := h.repo.List()
+	policies, err := h.repo.List(c.Request.Context())
 	if err != nil {
+		if respondCancelled(c, err) {
+			return
+		}
 		slog.Error("Failed to list cleanup policies", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
@@ -75,14 +79,14 @@ func (h *CleanupPolicyHandler) CreateCleanupPolicy(c *gin.Context) {
 		return
 	}
 
-	if err := h.repo.Create(&policy); err != nil {
+	if err := h.repo.Create(context.WithoutCancel(c.Request.Context()), &policy); err != nil {
 		status, msg := mapError(err, entityCleanupPolicy)
 		c.JSON(status, gin.H{"error": msg})
 		return
 	}
 
 	if h.scheduler != nil {
-		if err := h.scheduler.Reload(); err != nil {
+		if err := h.scheduler.Reload(context.WithoutCancel(c.Request.Context())); err != nil {
 			slog.Error("Failed to reload scheduler after create", "error", err)
 		}
 	}
@@ -151,7 +155,7 @@ func (h *CleanupPolicyHandler) UpdateCleanupPolicy(c *gin.Context) {
 		return
 	}
 
-	existing, err := h.repo.FindByID(id)
+	existing, err := h.repo.FindByID(c.Request.Context(), id)
 	if err != nil {
 		status, msg := mapError(err, entityCleanupPolicy)
 		c.JSON(status, gin.H{"error": msg})
@@ -178,14 +182,14 @@ func (h *CleanupPolicyHandler) UpdateCleanupPolicy(c *gin.Context) {
 		return
 	}
 
-	if err := h.repo.Update(policy); err != nil {
+	if err := h.repo.Update(context.WithoutCancel(c.Request.Context()), policy); err != nil {
 		status, msg := mapError(err, entityCleanupPolicy)
 		c.JSON(status, gin.H{"error": msg})
 		return
 	}
 
 	if h.scheduler != nil {
-		if err := h.scheduler.Reload(); err != nil {
+		if err := h.scheduler.Reload(context.WithoutCancel(c.Request.Context())); err != nil {
 			slog.Error("Failed to reload scheduler after update", "error", err)
 		}
 	}
@@ -210,14 +214,14 @@ func (h *CleanupPolicyHandler) DeleteCleanupPolicy(c *gin.Context) {
 		return
 	}
 
-	if err := h.repo.Delete(id); err != nil {
+	if err := h.repo.Delete(context.WithoutCancel(c.Request.Context()), id); err != nil {
 		status, msg := mapError(err, entityCleanupPolicy)
 		c.JSON(status, gin.H{"error": msg})
 		return
 	}
 
 	if h.scheduler != nil {
-		if err := h.scheduler.Reload(); err != nil {
+		if err := h.scheduler.Reload(context.WithoutCancel(c.Request.Context())); err != nil {
 			slog.Error("Failed to reload scheduler after delete", "error", err)
 		}
 	}
@@ -252,7 +256,7 @@ func (h *CleanupPolicyHandler) RunCleanupPolicy(c *gin.Context) {
 		return
 	}
 
-	results, err := h.scheduler.RunPolicy(id, dryRun)
+	results, err := h.scheduler.RunPolicy(c.Request.Context(), id, dryRun)
 	if err != nil {
 		status, msg := mapError(err, entityCleanupPolicy)
 		c.JSON(status, gin.H{"error": msg})

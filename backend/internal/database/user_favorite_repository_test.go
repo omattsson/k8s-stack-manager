@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"testing"
 
 	"backend/internal/models"
@@ -25,11 +26,11 @@ func TestGORMUserFavoriteRepository_AddAndList(t *testing.T) {
 		EntityType: "template",
 		EntityID:   "tmpl-1",
 	}
-	err := repo.Add(fav)
+	err := repo.Add(context.Background(), fav)
 	require.NoError(t, err)
 	assert.NotEmpty(t, fav.ID)
 
-	favs, err := repo.List("u1")
+	favs, err := repo.List(context.Background(), "u1")
 	require.NoError(t, err)
 	assert.Len(t, favs, 1)
 	assert.Equal(t, "template", favs[0].EntityType)
@@ -53,7 +54,7 @@ func TestGORMUserFavoriteRepository_Add_ValidationError(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			repo := setupUserFavoriteRepo(t)
-			err := repo.Add(&tt.fav)
+			err := repo.Add(context.Background(), &tt.fav)
 			assert.Error(t, err)
 		})
 	}
@@ -64,12 +65,12 @@ func TestGORMUserFavoriteRepository_Add_DuplicateIsIdempotent(t *testing.T) {
 
 	repo := setupUserFavoriteRepo(t)
 	fav := &models.UserFavorite{UserID: "u1", EntityType: "instance", EntityID: "i1"}
-	require.NoError(t, repo.Add(fav))
+	require.NoError(t, repo.Add(context.Background(), fav))
 
 	// Adding the same combination again should not error (idempotent).
 	// Note: SQLite uses "UNIQUE constraint failed" which the repo handles.
 	fav2 := &models.UserFavorite{UserID: "u1", EntityType: "instance", EntityID: "i1"}
-	err := repo.Add(fav2)
+	err := repo.Add(context.Background(), fav2)
 	assert.NoError(t, err)
 }
 
@@ -91,9 +92,9 @@ func TestGORMUserFavoriteRepository_Remove(t *testing.T) {
 			t.Parallel()
 			repo := setupUserFavoriteRepo(t)
 			if tt.seed {
-				require.NoError(t, repo.Add(&models.UserFavorite{UserID: "u-rem", EntityType: "definition", EntityID: "d1"}))
+				require.NoError(t, repo.Add(context.Background(), &models.UserFavorite{UserID: "u-rem", EntityType: "definition", EntityID: "d1"}))
 			}
-			err := repo.Remove("u-rem", "definition", "d1")
+			err := repo.Remove(context.Background(), "u-rem", "definition", "d1")
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {
@@ -107,7 +108,7 @@ func TestGORMUserFavoriteRepository_IsFavorite(t *testing.T) {
 	t.Parallel()
 
 	repo := setupUserFavoriteRepo(t)
-	require.NoError(t, repo.Add(&models.UserFavorite{UserID: "u-fav", EntityType: "template", EntityID: "t1"}))
+	require.NoError(t, repo.Add(context.Background(), &models.UserFavorite{UserID: "u-fav", EntityType: "template", EntityID: "t1"}))
 
 	tests := []struct {
 		name       string
@@ -123,7 +124,7 @@ func TestGORMUserFavoriteRepository_IsFavorite(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			isFav, err := repo.IsFavorite("u-fav", tt.entityType, tt.entityID)
+			isFav, err := repo.IsFavorite(context.Background(), "u-fav", tt.entityType, tt.entityID)
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, isFav)
 		})
@@ -134,7 +135,7 @@ func TestGORMUserFavoriteRepository_List_Empty(t *testing.T) {
 	t.Parallel()
 
 	repo := setupUserFavoriteRepo(t)
-	favs, err := repo.List("nonexistent")
+	favs, err := repo.List(context.Background(), "nonexistent")
 	require.NoError(t, err)
 	assert.Len(t, favs, 0)
 }
