@@ -302,7 +302,7 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 		if inst.ClusterID == "" {
 			resolved, resolveErr := h.registry.ResolveClusterID("")
 			if resolveErr != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "No default cluster configured; specify cluster_id"})
+				respondDefaultClusterError(c, resolveErr)
 				return
 			}
 			inst.ClusterID = resolved

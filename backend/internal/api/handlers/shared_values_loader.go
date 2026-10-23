@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -42,6 +43,7 @@ type clusterIDResolver interface {
 //
 // A nil repo (shared values not wired) yields no shared values.
 func loadSharedValues(
+	ctx context.Context,
 	repo models.SharedValuesRepository,
 	resolver clusterIDResolver,
 	clusterRepo models.ClusterRepository,
@@ -64,7 +66,7 @@ func loadSharedValues(
 			}
 			clusterID = resolved
 		case clusterRepo != nil:
-			def, err := clusterRepo.FindDefault()
+			def, err := clusterRepo.FindDefault(ctx)
 			if err != nil {
 				if errors.Is(err, dberrors.ErrNotFound) {
 					return nil, nil

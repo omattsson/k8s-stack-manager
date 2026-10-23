@@ -70,6 +70,8 @@ type Registry struct {
 	// inClusterAvailable reports whether the in-cluster config can be
 	// loaded (k8s.InClusterAvailable); a variable for tests.
 	inClusterAvailable func() bool
+	// loadTimeout bounds each cluster-row read (zero: registryLoadTimeout).
+	loadTimeout time.Duration
 
 	// Factories for testability.
 	k8sFactory  K8sClientFactory
@@ -89,10 +91,38 @@ func NewRegistry(cfg RegistryOptions) *Registry {
 
 		inClusterFallback:  cfg.InClusterFallbackKubeconfig,
 		inClusterAvailable: k8s.InClusterAvailable,
+		loadTimeout:        registryLoadTimeout,
 		helmFactory: func(binaryPath, kubeconfig string, timeout time.Duration) deployer.HelmExecutor {
 			return deployer.NewHelmClient(binaryPath, kubeconfig, timeout)
 		},
 	}
+}
+
+// registryLoadTimeout bounds each cluster-row read, also FindDefault under the write lock.
+const registryLoadTimeout = 10 * time.Second
+
+// loadCtx is the registry-owned context of a cluster-row read, so one request
+// cancel cannot fail a shared load (#656).
+func (r *Registry) loadCtx() (context.Context, context.CancelFunc) {
+	timeout := r.loadTimeout
+	if timeout <= 0 {
+		timeout = registryLoadTimeout
+	}
+	return context.WithTimeout(context.Background(), timeout)
+}
+
+// findByID reads a cluster row on a registry load context.
+func (r *Registry) findByID(clusterID string) (*models.Cluster, error) {
+	ctx, cancel := r.loadCtx()
+	defer cancel()
+	return r.clusterRepo.FindByID(ctx, clusterID)
+}
+
+// findDefault reads the default cluster row on a registry load context.
+func (r *Registry) findDefault() (*models.Cluster, error) {
+	ctx, cancel := r.loadCtx()
+	defer cancel()
+	return r.clusterRepo.FindDefault(ctx)
 }
 
 // HasAccessBinding reports whether in-cluster clients apply an access
@@ -114,7 +144,7 @@ func (r *Registry) GetClients(clusterID string) (*ClusterClients, error) {
 	// Fetch cluster metadata and build clients outside the lock to avoid
 	// blocking concurrent readers/writers during potentially slow I/O
 	// (DB fetch, kubeconfig parsing, temp-file creation).
-	clusterModel, err := r.clusterRepo.FindByID(clusterID)
+	clusterModel, err := r.findByID(clusterID)
 	if err != nil {
 		return nil, fmt.Errorf("cluster %s: %w", clusterID, err)
 	}
@@ -165,16 +195,18 @@ func (r *Registry) GetDefaultClients() (*ClusterClients, error) {
 		return r.GetClients(id)
 	}
 
-	cluster, err := r.clusterRepo.FindDefault()
+	cluster, err := r.findDefault()
 	if err != nil {
 		// Only cache the "no default" state for definitive not-found errors.
 		// Transient failures (DB down, network) should allow retries.
 		if isNotFoundError(err) {
 			r.defaultResolved = true
 			r.defaultID = ""
+			r.mu.Unlock()
+			return nil, fmt.Errorf("no default cluster configured: %w", err)
 		}
 		r.mu.Unlock()
-		return nil, fmt.Errorf("no default cluster configured: %w", err)
+		return nil, fmt.Errorf("find default cluster: %w", err)
 	}
 
 	r.defaultResolved = true
@@ -217,7 +249,7 @@ func (r *Registry) ResolveClusterID(clusterID string) (string, error) {
 		return id, nil
 	}
 
-	cluster, err := r.clusterRepo.FindDefault()
+	cluster, err := r.findDefault()
 	if err != nil {
 		if isNotFoundError(err) {
 			r.defaultResolved = true
@@ -226,7 +258,7 @@ func (r *Registry) ResolveClusterID(clusterID string) (string, error) {
 			return "", fmt.Errorf("%w: %w", ErrNoDefaultCluster, err)
 		}
 		r.mu.Unlock()
-		return "", fmt.Errorf("no default cluster configured: %w", err)
+		return "", fmt.Errorf("find default cluster: %w", err)
 	}
 
 	r.defaultResolved = true
@@ -288,7 +320,7 @@ func (r *Registry) GetRegistryConfig(clusterID string) (*models.RegistryConfig, 
 		if !resolved {
 			r.mu.Lock()
 			if !r.defaultResolved {
-				cluster, err := r.clusterRepo.FindDefault()
+				cluster, err := r.findDefault()
 				if err != nil {
 					r.mu.Unlock()
 					return nil, nil // no default cluster, no registry
@@ -307,7 +339,7 @@ func (r *Registry) GetRegistryConfig(clusterID string) (*models.RegistryConfig, 
 		clusterID = id
 	}
 
-	cluster, err := r.clusterRepo.FindByID(clusterID)
+	cluster, err := r.findByID(clusterID)
 	if err != nil {
 		return nil, fmt.Errorf("cluster %s: %w", clusterID, err)
 	}
@@ -377,19 +409,24 @@ func (r *Registry) HealthCheck(ctx context.Context) error {
 		return nil
 	}
 
-	clusters, err := repo.List()
+	// Overall budget so that readiness latency stays bounded regardless of
+	// the number of registered clusters.
+	overallCtx, overallCancel := context.WithTimeout(ctx, healthCheckOverallTimeout)
+	defer overallCancel()
+
+	clusters, err := repo.List(overallCtx)
 	if err != nil {
-		slog.Error("health check: failed to list clusters", "error", err)
+		if ctx.Err() != nil {
+			// The probe caller left; the check still fails.
+			slog.DebugContext(ctx, "health check: cancelled", "error", err)
+		} else {
+			slog.Error("health check: failed to list clusters", "error", err)
+		}
 		return fmt.Errorf("cluster registry unavailable")
 	}
 	if len(clusters) == 0 {
 		return nil
 	}
-
-	// Overall budget so that readiness latency stays bounded regardless of
-	// the number of registered clusters.
-	overallCtx, overallCancel := context.WithTimeout(ctx, healthCheckOverallTimeout)
-	defer overallCancel()
 
 	var lastErr error
 	for i := range clusters {
@@ -441,7 +478,7 @@ func pingCluster(ctx context.Context, client *k8s.Client) error {
 // Only a definitive not-found returns false; transient backend failures
 // conservatively report true to avoid misclassifying existing clusters.
 func (r *Registry) ClusterExists(clusterID string) bool {
-	_, err := r.clusterRepo.FindByID(clusterID)
+	_, err := r.findByID(clusterID)
 	if err == nil {
 		return true
 	}

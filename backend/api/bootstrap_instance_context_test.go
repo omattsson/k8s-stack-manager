@@ -99,10 +99,11 @@ users:
 `), 0o600))
 	instances := &ctxRecordingInstanceRepo{mockInstanceRepo: newMockInstanceRepo()}
 	require.NoError(t, instances.Create(context.Background(), &models.StackInstance{ID: "i1", Name: "one"}))
+	clusters := &ctxRecordingClusterRepo{mockClusterRepo: newMockClusterRepo()}
 	cfg := &config.Config{Deployment: config.DeploymentConfig{KubeconfigPath: kubeconfigPath}}
 
 	start := time.Now()
-	ensureDefaultCluster(newMockClusterRepo(), instances, cfg)
+	ensureDefaultCluster(clusters, instances, cfg)
 
 	got, err := instances.FindByID(context.Background(), "i1")
 	require.NoError(t, err)
@@ -110,6 +111,40 @@ users:
 	listCtx := instances.ctx("List")
 	assertStartupContext(t, listCtx, start, instanceBackfillTimeout)
 	assert.Same(t, listCtx, instances.ctx("Update"), "list and update share the startup context")
+	assert.Same(t, listCtx, clusters.ctx("List"), "the cluster check uses the startup context")
+	assert.Same(t, listCtx, clusters.ctx("Create"), "the cluster create uses the startup context")
+}
+
+// ctxRecordingClusterRepo records the contexts of the startup cluster queries.
+type ctxRecordingClusterRepo struct {
+	*mockClusterRepo
+	mu   sync.Mutex
+	ctxs map[string]context.Context
+}
+
+func (r *ctxRecordingClusterRepo) record(method string, ctx context.Context) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.ctxs == nil {
+		r.ctxs = map[string]context.Context{}
+	}
+	r.ctxs[method] = ctx
+}
+
+func (r *ctxRecordingClusterRepo) ctx(method string) context.Context {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.ctxs[method]
+}
+
+func (r *ctxRecordingClusterRepo) List(ctx context.Context) ([]models.Cluster, error) {
+	r.record("List", ctx)
+	return r.mockClusterRepo.List(ctx)
+}
+
+func (r *ctxRecordingClusterRepo) Create(ctx context.Context, c *models.Cluster) error {
+	r.record("Create", ctx)
+	return r.mockClusterRepo.Create(ctx, c)
 }
 
 // TestBuildHandlers_DuplicateNamesStartupContext checks that the startup

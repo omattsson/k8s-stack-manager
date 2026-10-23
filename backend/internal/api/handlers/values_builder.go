@@ -67,7 +67,7 @@ func (b *valuesBuilder) layers(ctx context.Context, inst *models.StackInstance, 
 		return nil, helm.TemplateVars{}, nil, fmt.Errorf("build locked values: %w", err)
 	}
 
-	sharedValues, err := loadSharedValues(b.sharedValuesRepo, b.resolver, b.clusterRepo, inst)
+	sharedValues, err := loadSharedValues(ctx, b.sharedValuesRepo, b.resolver, b.clusterRepo, inst)
 	if err != nil {
 		return nil, helm.TemplateVars{}, nil, fmt.Errorf("load shared values: %w", err)
 	}

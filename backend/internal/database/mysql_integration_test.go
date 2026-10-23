@@ -240,11 +240,11 @@ func TestMySQLIntegration_ClusterRepository(t *testing.T) {
 		IsDefault:    true,
 	}
 
-	err := repo.Create(cluster)
+	err := repo.Create(context.Background(), cluster)
 	require.NoError(t, err)
 	assert.NotEmpty(t, cluster.ID)
 
-	found, err := repo.FindDefault()
+	found, err := repo.FindDefault(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, cluster.ID, found.ID)
 
@@ -254,17 +254,17 @@ func TestMySQLIntegration_ClusterRepository(t *testing.T) {
 		Description:  "Second cluster",
 		APIServerURL: "https://k8s2.example.com",
 	}
-	err = repo.Create(cluster2)
+	err = repo.Create(context.Background(), cluster2)
 	require.NoError(t, err)
 
-	err = repo.SetDefault(cluster2.ID)
+	err = repo.SetDefault(context.Background(), cluster2.ID)
 	require.NoError(t, err)
 
-	found, err = repo.FindDefault()
+	found, err = repo.FindDefault(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, cluster2.ID, found.ID)
 
-	clusters, err := repo.List()
+	clusters, err := repo.List(context.Background())
 	require.NoError(t, err)
 	assert.Len(t, clusters, 2)
 }

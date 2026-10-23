@@ -36,24 +36,41 @@ type instanceNameGuard struct {
 	registry     *cluster.Registry
 }
 
-// defaultClusterID returns the ID of the default cluster, or "" when there
-// is no registry or no default cluster.
-func (g instanceNameGuard) defaultClusterID() string {
+// defaultClusterID returns "" when there is no registry or no default cluster.
+// It returns other resolve errors, so the guard never skips unassigned instances (#656).
+func (g instanceNameGuard) defaultClusterID() (string, error) {
 	if g.registry == nil {
-		return ""
+		return "", nil
 	}
 	id, err := g.registry.ResolveClusterID("")
-	if err != nil {
-		return ""
+	if errors.Is(err, cluster.ErrNoDefaultCluster) {
+		return "", nil
 	}
-	return id
+	if err != nil {
+		return "", fmt.Errorf("resolve default cluster: %w", err)
+	}
+	return id, nil
+}
+
+// respondDefaultClusterError answers a failed default-cluster resolve: 400
+// only when no default cluster exists, else 500 (#656).
+func respondDefaultClusterError(c *gin.Context, err error) {
+	if errors.Is(err, cluster.ErrNoDefaultCluster) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No default cluster configured; specify cluster_id"})
+		return
+	}
+	slog.ErrorContext(c.Request.Context(), "Failed to resolve the default cluster", "error", err)
+	c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 }
 
 // nameHolder returns an instance other than excludeID that uses name on
 // clusterID, or nil. An empty clusterID means the default cluster. On the
 // default cluster, the instances without a cluster count too.
 func (g instanceNameGuard) nameHolder(ctx context.Context, name, clusterID, excludeID string) (*models.StackInstance, error) {
-	def := g.defaultClusterID()
+	def, err := g.defaultClusterID()
+	if err != nil {
+		return nil, err
+	}
 	if clusterID == "" {
 		clusterID = def
 	}

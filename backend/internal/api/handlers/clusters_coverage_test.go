@@ -145,9 +145,9 @@ func TestCreateCluster_SetDefaultError(t *testing.T) {
 		ID: "existing-1", Name: "existing", KubeconfigPath: "/path",
 		IsDefault: true, HealthStatus: models.ClusterHealthy,
 	}
-	_ = clusterRepo.Create(existing)
+	_ = clusterRepo.Create(context.Background(), existing)
 	// Set it as default.
-	_ = clusterRepo.SetDefault("existing-1")
+	_ = clusterRepo.SetDefault(context.Background(), "existing-1")
 
 	r := setupClusterRouter(clusterRepo, instanceRepo, nil, "admin")
 
@@ -285,12 +285,12 @@ func TestUpdateCluster_FieldUpdates(t *testing.T) {
 
 			// Mark as default for the "cannot unset" and "set as default" tests.
 			if tt.update.IsDefault != nil {
-				_ = clusterRepo.SetDefault(cl.ID)
+				_ = clusterRepo.SetDefault(context.Background(), cl.ID)
 				// Update the stored cluster to reflect default status since the mock
 				// SetDefault only records the ID, not the IsDefault flag on the model.
-				stored, _ := clusterRepo.FindByID(cl.ID)
+				stored, _ := clusterRepo.FindByID(context.Background(), cl.ID)
 				stored.IsDefault = true
-				_ = clusterRepo.Update(stored)
+				_ = clusterRepo.Update(context.Background(), stored)
 			}
 
 			r := setupClusterRouter(clusterRepo, instanceRepo, nil, "admin")

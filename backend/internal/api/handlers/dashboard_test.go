@@ -137,7 +137,7 @@ func TestDashboard_BasicUserGetsNoK8sMetrics(t *testing.T) {
 	t.Parallel()
 
 	clusterRepo := NewMockClusterRepository()
-	_ = clusterRepo.Create(&models.Cluster{ID: "c1", Name: "dev", HealthStatus: "healthy"})
+	_ = clusterRepo.Create(context.Background(), &models.Cluster{ID: "c1", Name: "dev", HealthStatus: "healthy"})
 
 	instanceRepo := NewMockStackInstanceRepository()
 	deployLogRepo := &dashboardMockDeployLogRepo{}
@@ -160,7 +160,7 @@ func TestDashboard_AdminGetsClusterData(t *testing.T) {
 	t.Parallel()
 
 	clusterRepo := NewMockClusterRepository()
-	_ = clusterRepo.Create(&models.Cluster{ID: "c1", Name: "prod", HealthStatus: "healthy"})
+	_ = clusterRepo.Create(context.Background(), &models.Cluster{ID: "c1", Name: "prod", HealthStatus: "healthy"})
 
 	instanceRepo := NewMockStackInstanceRepository()
 	deployLogRepo := &dashboardMockDeployLogRepo{}
@@ -294,7 +294,7 @@ func TestDashboard_PartialFailure_DeployLogs(t *testing.T) {
 	t.Parallel()
 
 	clusterRepo := NewMockClusterRepository()
-	_ = clusterRepo.Create(&models.Cluster{ID: "c1", Name: "dev", HealthStatus: "healthy"})
+	_ = clusterRepo.Create(context.Background(), &models.Cluster{ID: "c1", Name: "dev", HealthStatus: "healthy"})
 
 	instanceRepo := NewMockStackInstanceRepository()
 	deployLogRepo := &dashboardMockDeployLogRepo{}

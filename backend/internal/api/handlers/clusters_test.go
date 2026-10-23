@@ -97,7 +97,7 @@ func seedCluster(repo *MockClusterRepository, id, name string) *models.Cluster {
 		Region:         "eastus",
 		HealthStatus:   models.ClusterHealthy,
 	}
-	_ = repo.Create(cl)
+	_ = repo.Create(context.Background(), cl)
 	return cl
 }
 
@@ -135,7 +135,7 @@ func TestListClusters(t *testing.T) {
 			Region:         "eastus",
 			HealthStatus:   models.ClusterHealthy,
 		}
-		_ = clusterRepo.Create(cl)
+		_ = clusterRepo.Create(context.Background(), cl)
 
 		router := setupClusterRouter(clusterRepo, instanceRepo, nil, "admin")
 		w := httptest.NewRecorder()
@@ -392,7 +392,7 @@ func TestDeleteCluster(t *testing.T) {
 		assert.Equal(t, http.StatusNoContent, w.Code)
 
 		// Verify it's deleted.
-		_, err := clusterRepo.FindByID("cl-1")
+		_, err := clusterRepo.FindByID(context.Background(), "cl-1")
 		assert.Error(t, err)
 	})
 
@@ -419,7 +419,7 @@ func TestDeleteCluster(t *testing.T) {
 		assert.Equal(t, http.StatusConflict, w.Code)
 
 		// Verify cluster still exists.
-		_, err := clusterRepo.FindByID("cl-1")
+		_, err := clusterRepo.FindByID(context.Background(), "cl-1")
 		assert.NoError(t, err)
 	})
 
@@ -693,7 +693,7 @@ func TestDeleteCluster_ErrorPaths(t *testing.T) {
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 
 		// Cluster should still exist.
-		_, err := clusterRepo.FindByID("cl-1")
+		_, err := clusterRepo.FindByID(context.Background(), "cl-1")
 		assert.NoError(t, err)
 	})
 
@@ -733,7 +733,7 @@ func TestDeleteCluster_ErrorPaths(t *testing.T) {
 		assert.Equal(t, http.StatusNoContent, w.Code)
 
 		// Verify cluster was deleted from repository.
-		_, err := clusterRepo.FindByID("cl-1")
+		_, err := clusterRepo.FindByID(context.Background(), "cl-1")
 		assert.Error(t, err)
 	})
 }
@@ -755,7 +755,7 @@ func TestGetCluster_Security(t *testing.T) {
 			Region:         "eastus",
 			HealthStatus:   models.ClusterHealthy,
 		}
-		_ = clusterRepo.Create(cl)
+		_ = clusterRepo.Create(context.Background(), cl)
 
 		router := setupClusterRouter(clusterRepo, instanceRepo, nil, "admin")
 		w := httptest.NewRecorder()
@@ -779,7 +779,7 @@ func TestListClusters_FieldRestriction(t *testing.T) {
 
 	seedRepo := func() *MockClusterRepository {
 		repo := NewMockClusterRepository()
-		_ = repo.Create(&models.Cluster{
+		_ = repo.Create(context.Background(), &models.Cluster{
 			ID:           "cl-1",
 			Name:         "production",
 			APIServerURL: "https://k8s.prod.example.com",
@@ -857,7 +857,7 @@ func TestGetCluster_FieldRestriction(t *testing.T) {
 			t.Parallel()
 			clusterRepo := NewMockClusterRepository()
 			instanceRepo := NewMockStackInstanceRepository()
-			_ = clusterRepo.Create(&models.Cluster{
+			_ = clusterRepo.Create(context.Background(), &models.Cluster{
 				ID:           "cl-1",
 				Name:         "production",
 				APIServerURL: "https://k8s.prod.example.com",
@@ -944,7 +944,7 @@ func TestSetDefaultCluster(t *testing.T) {
 		assert.Equal(t, "Default cluster updated", result["message"])
 
 		// Verify the default was set in the repo.
-		def, err := clusterRepo.FindDefault()
+		def, err := clusterRepo.FindDefault(context.Background())
 		require.NoError(t, err)
 		assert.Equal(t, "cl-1", def.ID)
 	})

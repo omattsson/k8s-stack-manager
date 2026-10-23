@@ -152,7 +152,7 @@ func TestNotifyInstance_ChannelPayload(t *testing.T) {
 func TestNotifier_WithClusterName(t *testing.T) {
 	t.Parallel()
 
-	resolver := hooks.NewClusterNameResolver(func(ids []string) (map[string]string, error) {
+	resolver := hooks.NewClusterNameResolver(func(_ context.Context, ids []string) (map[string]string, error) {
 		return map[string]string{"c-1": "prod"}, nil
 	})
 	t.Cleanup(resolver.Stop)

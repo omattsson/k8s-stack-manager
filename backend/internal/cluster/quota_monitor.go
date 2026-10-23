@@ -124,7 +124,8 @@ func (m *QuotaMonitor) Run(ctx context.Context) {
 	}
 }
 
-// check runs one cycle. The instance queries run with ctx, the worker context.
+// check runs one cycle. The cluster and instance queries run with ctx, the
+// worker context.
 func (m *QuotaMonitor) check(ctx context.Context) {
 	if m.quotaRepo == nil || m.notifier == nil {
 		return
@@ -132,8 +133,12 @@ func (m *QuotaMonitor) check(ctx context.Context) {
 
 	m.pruneCooldowns()
 
-	clusters, err := m.clusterRepo.List()
+	clusters, err := m.clusterRepo.List(ctx)
 	if err != nil {
+		if ctx.Err() != nil {
+			slog.DebugContext(ctx, "quota monitor: cycle cancelled", "error", err)
+			return
+		}
 		slog.Error("quota monitor: failed to list clusters", "error", err)
 		return
 	}
@@ -163,6 +168,10 @@ func (m *QuotaMonitor) checkCluster(ctx context.Context, cl *models.Cluster) {
 
 	instances, err := m.instanceRepo.FindByCluster(ctx, cl.ID)
 	if err != nil {
+		if ctx.Err() != nil {
+			slog.DebugContext(ctx, "quota monitor: cycle cancelled", "cluster_id", cl.ID, "error", err)
+			return
+		}
 		slog.Error("quota monitor: failed to list instances", "cluster_id", cl.ID, "error", err)
 		return
 	}

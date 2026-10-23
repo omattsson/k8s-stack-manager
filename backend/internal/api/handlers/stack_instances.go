@@ -562,7 +562,7 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 		if inst.ClusterID == "" {
 			resolved, resolveErr := h.registry.ResolveClusterID("")
 			if resolveErr != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "No default cluster configured; specify cluster_id"})
+				respondDefaultClusterError(c, resolveErr)
 				return
 			}
 			inst.ClusterID = resolved
@@ -575,8 +575,21 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 	// Look up per-user instance limit from the cluster config (if any).
 	var maxInstancesPerUser int
 	if h.clusterRepo != nil && inst.ClusterID != "" {
-		cl, clErr := h.clusterRepo.FindByID(inst.ClusterID)
-		if clErr == nil && cl.MaxInstancesPerUser > 0 {
+		cl, clErr := h.clusterRepo.FindByID(c.Request.Context(), inst.ClusterID)
+		if clErr != nil {
+			// A failed lookup must not skip the instance limit (#656).
+			if respondCancelled(c, clErr) {
+				return
+			}
+			if errors.Is(clErr, dberrors.ErrNotFound) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Unknown cluster_id"})
+				return
+			}
+			slog.Error("Failed to read the cluster of a new instance", "cluster_id", inst.ClusterID, "error", clErr)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+			return
+		}
+		if cl.MaxInstancesPerUser > 0 {
 			maxInstancesPerUser = cl.MaxInstancesPerUser
 		}
 	}

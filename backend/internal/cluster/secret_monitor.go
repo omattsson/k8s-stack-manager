@@ -119,7 +119,8 @@ func (m *SecretMonitor) Run(ctx context.Context) {
 	}
 }
 
-// scan runs one cycle. The instance queries run with ctx, the worker context.
+// scan runs one cycle. The cluster and instance queries run with ctx, the
+// worker context.
 func (m *SecretMonitor) scan(ctx context.Context) {
 	if m.notifier == nil {
 		return
@@ -127,8 +128,12 @@ func (m *SecretMonitor) scan(ctx context.Context) {
 
 	m.pruneWarned()
 
-	clusters, err := m.clusterRepo.List()
+	clusters, err := m.clusterRepo.List(ctx)
 	if err != nil {
+		if ctx.Err() != nil {
+			slog.DebugContext(ctx, "secret monitor: cycle cancelled", "error", err)
+			return
+		}
 		slog.Error("secret monitor: failed to list clusters", "error", err)
 		return
 	}

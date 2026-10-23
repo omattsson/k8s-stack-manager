@@ -19,20 +19,24 @@ const clusterNameCacheTTL = time.Minute
 // gate). After the timeout the envelope has no cluster_name.
 const clusterNameLookupTimeout = 2 * time.Second
 
+// clusterNameQueryTimeout bounds the lookup query, which outlives the caller's wait (#656).
+const clusterNameQueryTimeout = 10 * time.Second
+
 // ClusterNameLookup returns the name of each cluster in ids that exists,
-// keyed by cluster ID, with one query (for example
+// keyed by cluster ID, with one query that runs with ctx (for example
 // models.ClusterRepository.NamesByIDs, the lookup that the API uses for
 // cluster_name).
-type ClusterNameLookup func(ids []string) (map[string]string, error)
+type ClusterNameLookup func(ctx context.Context, ids []string) (map[string]string, error)
 
 // ClusterNameResolver gives the cluster names for hook envelopes and action
 // requests. It keeps the names in a short-lived cache and bounds the wait for
 // a lookup. It is safe for concurrent use.
 type ClusterNameResolver struct {
-	lookup   ClusterNameLookup
-	cache    *cache.TTLCache[string]
-	timeout  time.Duration
-	stopOnce sync.Once
+	lookup       ClusterNameLookup
+	cache        *cache.TTLCache[string]
+	timeout      time.Duration
+	queryTimeout time.Duration
+	stopOnce     sync.Once
 }
 
 // NewClusterNameResolver returns a resolver that uses lookup. Call Stop to
@@ -42,9 +46,10 @@ func NewClusterNameResolver(lookup ClusterNameLookup) *ClusterNameResolver {
 		return nil
 	}
 	return &ClusterNameResolver{
-		lookup:  lookup,
-		cache:   cache.New[string](clusterNameCacheTTL, clusterNameCacheTTL),
-		timeout: clusterNameLookupTimeout,
+		lookup:       lookup,
+		cache:        cache.New[string](clusterNameCacheTTL, clusterNameCacheTTL),
+		timeout:      clusterNameLookupTimeout,
+		queryTimeout: clusterNameQueryTimeout,
 	}
 }
 
@@ -86,12 +91,8 @@ type lookupResult struct {
 	err   error
 }
 
-// names returns the name of each ID in ids ("" when unknown). IDs in the
-// cache need no query; the others are looked up together. The wait ends at
-// the resolver timeout or when ctx ends; a lookup that answers later still
-// fills the cache. A missing cluster is cached as an empty name, so a
-// deleted cluster does not cause a query per event. A failed lookup is not
-// cached.
+// names returns the name of each ID in ids ("" when unknown); one query reads the uncached IDs.
+// The wait ends at the timeout or ctx end; the query keeps ctx values, not its cancel (#656).
 func (r *ClusterNameResolver) names(ctx context.Context, ids []string) map[string]string {
 	out := make(map[string]string, len(ids))
 	var missing []string
@@ -111,8 +112,10 @@ func (r *ClusterNameResolver) names(ctx context.Context, ids []string) map[strin
 	}
 
 	done := make(chan lookupResult, 1)
+	queryCtx, cancelQuery := context.WithTimeout(context.WithoutCancel(ctx), r.queryTimeout)
 	go func() {
-		found, err := r.lookup(missing)
+		defer cancelQuery()
+		found, err := r.lookup(queryCtx, missing)
 		if err == nil {
 			for _, id := range missing {
 				r.cache.Set(id, found[id])

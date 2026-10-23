@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -106,7 +107,7 @@ func (r *GORMClusterRepository) decryptRegistryPassword(cluster *models.Cluster)
 }
 
 // Create inserts a new cluster record.
-func (r *GORMClusterRepository) Create(cluster *models.Cluster) error {
+func (r *GORMClusterRepository) Create(ctx context.Context, cluster *models.Cluster) error {
 	if cluster.ID == "" {
 		cluster.ID = uuid.New().String()
 	}
@@ -129,7 +130,7 @@ func (r *GORMClusterRepository) Create(cluster *models.Cluster) error {
 		return err
 	}
 
-	dbErr := r.db.Create(cluster).Error
+	dbErr := r.db.WithContext(ctx).Create(cluster).Error
 
 	// Restore plaintext so the caller's struct is not mutated.
 	if originalKC != "" {
@@ -138,6 +139,10 @@ func (r *GORMClusterRepository) Create(cluster *models.Cluster) error {
 	cluster.RegistryPassword = originalRP
 
 	if dbErr != nil {
+		// Create can run in a default transaction: keep the context error (#656).
+		if ctx.Err() != nil {
+			return withContextErr(ctx, "create", dbErr)
+		}
 		if isDuplicateKeyError(dbErr) {
 			return dberrors.NewDatabaseError("create", dberrors.ErrDuplicateKey)
 		}
@@ -147,9 +152,9 @@ func (r *GORMClusterRepository) Create(cluster *models.Cluster) error {
 }
 
 // FindByID returns a cluster by its ID.
-func (r *GORMClusterRepository) FindByID(id string) (*models.Cluster, error) {
+func (r *GORMClusterRepository) FindByID(ctx context.Context, id string) (*models.Cluster, error) {
 	var cluster models.Cluster
-	if err := r.db.Where("id = ?", id).First(&cluster).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&cluster).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, dberrors.NewDatabaseError("find_by_id", dberrors.ErrNotFound)
 		}
@@ -165,7 +170,7 @@ func (r *GORMClusterRepository) FindByID(id string) (*models.Cluster, error) {
 }
 
 // Update persists changes to an existing cluster record.
-func (r *GORMClusterRepository) Update(cluster *models.Cluster) error {
+func (r *GORMClusterRepository) Update(ctx context.Context, cluster *models.Cluster) error {
 	cluster.UpdatedAt = time.Now().UTC()
 
 	originalKC, err := r.encryptKubeconfig(cluster)
@@ -180,7 +185,7 @@ func (r *GORMClusterRepository) Update(cluster *models.Cluster) error {
 		return err
 	}
 
-	dbErr := r.db.Save(cluster).Error
+	dbErr := r.db.WithContext(ctx).Save(cluster).Error
 
 	// Restore plaintext so the caller's struct is not mutated.
 	if originalKC != "" {
@@ -189,6 +194,10 @@ func (r *GORMClusterRepository) Update(cluster *models.Cluster) error {
 	cluster.RegistryPassword = originalRP
 
 	if dbErr != nil {
+		// Save can run in a default transaction: keep the context error (#656).
+		if ctx.Err() != nil {
+			return withContextErr(ctx, "update", dbErr)
+		}
 		if isDuplicateKeyError(dbErr) {
 			return dberrors.NewDatabaseError("update", dberrors.ErrDuplicateKey)
 		}
@@ -198,9 +207,13 @@ func (r *GORMClusterRepository) Update(cluster *models.Cluster) error {
 }
 
 // Delete removes a cluster by ID.
-func (r *GORMClusterRepository) Delete(id string) error {
-	result := r.db.Where("id = ?", id).Delete(&models.Cluster{})
+func (r *GORMClusterRepository) Delete(ctx context.Context, id string) error {
+	result := r.db.WithContext(ctx).Where("id = ?", id).Delete(&models.Cluster{})
 	if result.Error != nil {
+		// Delete can run in a default transaction: keep the context error (#656).
+		if ctx.Err() != nil {
+			return withContextErr(ctx, "delete", result.Error)
+		}
 		return dberrors.NewDatabaseError("delete", result.Error)
 	}
 	if result.RowsAffected == 0 {
@@ -212,14 +225,14 @@ func (r *GORMClusterRepository) Delete(id string) error {
 // NamesByIDs returns the name of each cluster in ids that exists, keyed by
 // ID. It selects only the id and name columns, so it does not decrypt the
 // kubeconfig or the registry password.
-func (r *GORMClusterRepository) NamesByIDs(ids []string) (map[string]string, error) {
-	return namesByIDs(r.db, &models.Cluster{}, ids)
+func (r *GORMClusterRepository) NamesByIDs(ctx context.Context, ids []string) (map[string]string, error) {
+	return namesByIDs(r.db.WithContext(ctx), &models.Cluster{}, ids)
 }
 
 // List returns all clusters.
-func (r *GORMClusterRepository) List() ([]models.Cluster, error) {
+func (r *GORMClusterRepository) List(ctx context.Context) ([]models.Cluster, error) {
 	var clusters []models.Cluster
-	if err := r.db.Find(&clusters).Error; err != nil {
+	if err := r.db.WithContext(ctx).Find(&clusters).Error; err != nil {
 		return nil, dberrors.NewDatabaseError("list", err)
 	}
 	for i := range clusters {
@@ -235,9 +248,9 @@ func (r *GORMClusterRepository) List() ([]models.Cluster, error) {
 
 // CountAll returns the total number of clusters using a projected aggregate
 // query, so it does not load or decrypt cluster secrets like List() does.
-func (r *GORMClusterRepository) CountAll() (int, error) {
+func (r *GORMClusterRepository) CountAll(ctx context.Context) (int, error) {
 	var count int64
-	if err := r.db.Model(&models.Cluster{}).Count(&count).Error; err != nil {
+	if err := r.db.WithContext(ctx).Model(&models.Cluster{}).Count(&count).Error; err != nil {
 		return 0, dberrors.NewDatabaseError("count_all", err)
 	}
 	return int(count), nil
@@ -245,9 +258,9 @@ func (r *GORMClusterRepository) CountAll() (int, error) {
 
 // CountByHealthStatus returns the number of clusters with the given health
 // status using a projected aggregate query (no secret decryption).
-func (r *GORMClusterRepository) CountByHealthStatus(status string) (int, error) {
+func (r *GORMClusterRepository) CountByHealthStatus(ctx context.Context, status string) (int, error) {
 	var count int64
-	if err := r.db.Model(&models.Cluster{}).
+	if err := r.db.WithContext(ctx).Model(&models.Cluster{}).
 		Where("health_status = ?", status).
 		Count(&count).Error; err != nil {
 		return 0, dberrors.NewDatabaseError("count_by_health_status", err)
@@ -256,9 +269,9 @@ func (r *GORMClusterRepository) CountByHealthStatus(status string) (int, error) 
 }
 
 // FindDefault returns the cluster marked as default.
-func (r *GORMClusterRepository) FindDefault() (*models.Cluster, error) {
+func (r *GORMClusterRepository) FindDefault(ctx context.Context) (*models.Cluster, error) {
 	var cluster models.Cluster
-	if err := r.db.Where("is_default = ?", true).First(&cluster).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("is_default = ?", true).First(&cluster).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, dberrors.NewDatabaseError("find_default", dberrors.ErrNotFound)
 		}
@@ -274,8 +287,8 @@ func (r *GORMClusterRepository) FindDefault() (*models.Cluster, error) {
 }
 
 // SetDefault unsets all existing defaults and marks the given cluster as default.
-func (r *GORMClusterRepository) SetDefault(id string) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
+func (r *GORMClusterRepository) SetDefault(ctx context.Context, id string) error {
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Lock existing default rows to prevent concurrent SetDefault races.
 		var existing []models.Cluster
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
@@ -307,4 +320,5 @@ func (r *GORMClusterRepository) SetDefault(id string) error {
 		}
 		return nil
 	})
+	return withContextErr(ctx, "set_default", err)
 }

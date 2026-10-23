@@ -299,7 +299,12 @@ func gracefulShutdown(srvs *servers, timeout time.Duration, deps shutdownDeps) {
 // when no clusters exist yet. This provides a migration path for existing
 // single-cluster setups.
 func ensureDefaultCluster(clusterRepo models.ClusterRepository, instanceRepo models.StackInstanceRepository, cfg *config.Config) {
-	clusters, err := clusterRepo.List()
+	// One bounded startup context for the cluster check, the create and the
+	// backfill (#656).
+	ctx, cancel := context.WithTimeout(context.Background(), instanceBackfillTimeout)
+	defer cancel()
+
+	clusters, err := clusterRepo.List(ctx)
 	if err != nil {
 		slog.Error("Failed to list clusters for default cluster check", "error", err)
 		return
@@ -329,7 +334,7 @@ func ensureDefaultCluster(clusterRepo models.ClusterRepository, instanceRepo mod
 		IsDefault:      true,
 		HealthStatus:   models.ClusterUnreachable,
 	}
-	if createErr := clusterRepo.Create(defaultCluster); createErr != nil {
+	if createErr := clusterRepo.Create(ctx, defaultCluster); createErr != nil {
 		slog.Error("Failed to auto-create default cluster", "error", createErr)
 		return
 	}
@@ -342,13 +347,11 @@ func ensureDefaultCluster(clusterRepo models.ClusterRepository, instanceRepo mod
 	// Backfill: persist the new default cluster ID onto any existing
 	// StackInstance records that have an empty ClusterID, so they won't
 	// implicitly follow whatever happens to be the default later.
-	backfillCtx, cancelBackfill := context.WithTimeout(context.Background(), instanceBackfillTimeout)
-	backfillInstanceClusterIDs(backfillCtx, instanceRepo, defaultCluster.ID)
-	cancelBackfill()
+	backfillInstanceClusterIDs(ctx, instanceRepo, defaultCluster.ID)
 }
 
-// instanceBackfillTimeout bounds the startup backfill of the default cluster
-// ID (#656).
+// instanceBackfillTimeout bounds the startup default cluster check, its
+// create and the backfill of the default cluster ID (#656).
 const instanceBackfillTimeout = 2 * time.Minute
 
 // backfillInstanceClusterIDs sets the given clusterID on all stack instances

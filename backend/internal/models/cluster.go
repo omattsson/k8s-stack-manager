@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // Cluster health status constants.
 const (
@@ -61,17 +64,18 @@ type RegistryConfig struct {
 }
 
 // ClusterRepository defines data access operations for clusters.
+// Every method runs its queries with ctx (#656).
 type ClusterRepository interface {
-	Create(cluster *Cluster) error
-	FindByID(id string) (*Cluster, error)
-	Update(cluster *Cluster) error
-	Delete(id string) error
-	List() ([]Cluster, error)
+	Create(ctx context.Context, cluster *Cluster) error
+	FindByID(ctx context.Context, id string) (*Cluster, error)
+	Update(ctx context.Context, cluster *Cluster) error
+	Delete(ctx context.Context, id string) error
+	List(ctx context.Context) ([]Cluster, error)
 	// NamesByIDs returns the name of each cluster in ids that exists, keyed
 	// by ID, in one query.
-	NamesByIDs(ids []string) (map[string]string, error)
-	CountAll() (int, error)
-	CountByHealthStatus(status string) (int, error)
-	FindDefault() (*Cluster, error)
-	SetDefault(id string) error
+	NamesByIDs(ctx context.Context, ids []string) (map[string]string, error)
+	CountAll(ctx context.Context) (int, error)
+	CountByHealthStatus(ctx context.Context, status string) (int, error)
+	FindDefault(ctx context.Context) (*Cluster, error)
+	SetDefault(ctx context.Context, id string) error
 }

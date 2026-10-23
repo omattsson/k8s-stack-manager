@@ -96,15 +96,21 @@ func (r *SecretRefresher) Run(ctx context.Context) {
 	}
 }
 
-// refresh runs one cycle. The instance queries run with ctx, the worker context.
+// refresh runs one cycle. The cluster and instance queries run with ctx, the
+// worker context.
 func (r *SecretRefresher) refresh(ctx context.Context) {
 	if r.registry == nil {
 		return
 	}
 
 	start := time.Now()
-	clusters, err := r.clusterRepo.List()
+	clusters, err := r.clusterRepo.List(ctx)
 	if err != nil {
+		if ctx.Err() != nil {
+			// A leader change or a shutdown is not a failed refresh.
+			slog.DebugContext(ctx, "secret refresher: cycle cancelled", "error", err)
+			return
+		}
 		slog.Error("secret refresher: failed to list clusters", "error", err)
 		recordSecretRefreshResult("failure", time.Since(start))
 		return
@@ -121,6 +127,10 @@ func (r *SecretRefresher) refresh(ctx context.Context) {
 		refreshed, failed := r.refreshClusterSecrets(ctx, cl, regCfg)
 		totalRefreshed += refreshed
 		totalFailed += failed
+	}
+	if ctx.Err() != nil {
+		// A partial cycle records nothing.
+		return
 	}
 	recordSecretRefreshResult(secretRefreshStatus(totalRefreshed, totalFailed), time.Since(start))
 }
@@ -146,6 +156,10 @@ const secretRefreshTimeout = 30 * time.Second
 func (r *SecretRefresher) refreshClusterSecrets(ctx context.Context, cl *models.Cluster, regCfg *models.RegistryConfig) (refreshed, failed int) {
 	instances, err := r.instanceRepo.FindByCluster(ctx, cl.ID)
 	if err != nil {
+		if ctx.Err() != nil {
+			slog.DebugContext(ctx, "secret refresher: cycle cancelled", "cluster_id", cl.ID, "error", err)
+			return 0, 0
+		}
 		slog.Error("secret refresher: failed to list instances",
 			"cluster_id", cl.ID, "error", err)
 		return 0, 1

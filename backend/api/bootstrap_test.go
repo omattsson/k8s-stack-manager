@@ -430,13 +430,48 @@ func TestInitRepositories_RequiresMySQL(t *testing.T) {
 
 type stubClusterRepo struct{}
 
-func (s *stubClusterRepo) Create(_ *models.Cluster) error             { return nil }
-func (s *stubClusterRepo) FindByID(_ string) (*models.Cluster, error) { return nil, nil }
-func (s *stubClusterRepo) Update(_ *models.Cluster) error             { return nil }
-func (s *stubClusterRepo) Delete(_ string) error                      { return nil }
-func (s *stubClusterRepo) List() ([]models.Cluster, error)            { return nil, nil }
-func (s *stubClusterRepo) FindDefault() (*models.Cluster, error)      { return nil, nil }
-func (s *stubClusterRepo) SetDefault(_ string) error                  { return nil }
+func (s *stubClusterRepo) Create(ctx context.Context, _ *models.Cluster) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return nil
+}
+func (s *stubClusterRepo) FindByID(ctx context.Context, _ string) (*models.Cluster, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return nil, nil
+}
+func (s *stubClusterRepo) Update(ctx context.Context, _ *models.Cluster) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return nil
+}
+func (s *stubClusterRepo) Delete(ctx context.Context, _ string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return nil
+}
+func (s *stubClusterRepo) List(ctx context.Context) ([]models.Cluster, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return nil, nil
+}
+func (s *stubClusterRepo) FindDefault(ctx context.Context) (*models.Cluster, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return nil, nil
+}
+func (s *stubClusterRepo) SetDefault(ctx context.Context, _ string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return nil
+}
 
 // ---- stubStackInstanceRepo ----
 
@@ -1362,10 +1397,23 @@ func (*stubStackInstanceRepo) CountByStatuses(ctx context.Context, statuses []st
 	return 0, ctx.Err()
 }
 
-func (*stubClusterRepo) CountAll() (int, error) { return 0, nil }
+func (*stubClusterRepo) CountAll(ctx context.Context) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	return 0, nil
+}
 
-func (*stubClusterRepo) CountByHealthStatus(status string) (int, error) { return 0, nil }
-func (*stubClusterRepo) NamesByIDs(_ []string) (map[string]string, error) {
+func (*stubClusterRepo) CountByHealthStatus(ctx context.Context, status string) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	return 0, nil
+}
+func (*stubClusterRepo) NamesByIDs(ctx context.Context, _ []string) (map[string]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return map[string]string{}, nil
 }
 

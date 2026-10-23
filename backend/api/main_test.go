@@ -287,7 +287,10 @@ func newMockClusterRepo() *mockClusterRepo {
 	return &mockClusterRepo{}
 }
 
-func (m *mockClusterRepo) Create(c *models.Cluster) error {
+func (m *mockClusterRepo) Create(ctx context.Context, c *models.Cluster) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -298,7 +301,10 @@ func (m *mockClusterRepo) Create(c *models.Cluster) error {
 	return nil
 }
 
-func (m *mockClusterRepo) FindByID(id string) (*models.Cluster, error) {
+func (m *mockClusterRepo) FindByID(ctx context.Context, id string) (*models.Cluster, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, c := range m.clusters {
@@ -309,7 +315,10 @@ func (m *mockClusterRepo) FindByID(id string) (*models.Cluster, error) {
 	return nil, fmt.Errorf("not found")
 }
 
-func (m *mockClusterRepo) Update(c *models.Cluster) error {
+func (m *mockClusterRepo) Update(ctx context.Context, c *models.Cluster) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for i, existing := range m.clusters {
@@ -322,7 +331,10 @@ func (m *mockClusterRepo) Update(c *models.Cluster) error {
 	return fmt.Errorf("not found")
 }
 
-func (m *mockClusterRepo) Delete(id string) error {
+func (m *mockClusterRepo) Delete(ctx context.Context, id string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for i, c := range m.clusters {
@@ -334,7 +346,10 @@ func (m *mockClusterRepo) Delete(id string) error {
 	return fmt.Errorf("not found")
 }
 
-func (m *mockClusterRepo) List() ([]models.Cluster, error) {
+func (m *mockClusterRepo) List(ctx context.Context) ([]models.Cluster, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -347,7 +362,10 @@ func (m *mockClusterRepo) List() ([]models.Cluster, error) {
 	return out, nil
 }
 
-func (m *mockClusterRepo) FindDefault() (*models.Cluster, error) {
+func (m *mockClusterRepo) FindDefault(ctx context.Context) (*models.Cluster, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, c := range m.clusters {
@@ -358,7 +376,10 @@ func (m *mockClusterRepo) FindDefault() (*models.Cluster, error) {
 	return nil, fmt.Errorf("not found")
 }
 
-func (m *mockClusterRepo) SetDefault(id string) error {
+func (m *mockClusterRepo) SetDefault(ctx context.Context, id string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, c := range m.clusters {
@@ -635,7 +656,7 @@ users:
 	ensureDefaultCluster(clusterRepo, instanceRepo, cfg)
 
 	// Verify a default cluster was created.
-	clusters, err := clusterRepo.List()
+	clusters, err := clusterRepo.List(context.Background())
 	require.NoError(t, err)
 	require.Len(t, clusters, 1)
 	assert.Equal(t, "default", clusters[0].Name)
@@ -664,7 +685,7 @@ func TestEnsureDefaultCluster_ClustersAlreadyExist(t *testing.T) {
 	ensureDefaultCluster(clusterRepo, instanceRepo, cfg)
 
 	// Should not create a new cluster.
-	clusters, err := clusterRepo.List()
+	clusters, err := clusterRepo.List(context.Background())
 	require.NoError(t, err)
 	assert.Len(t, clusters, 1)
 	assert.Equal(t, "existing", clusters[0].Name)
@@ -684,7 +705,7 @@ func TestEnsureDefaultCluster_NoKubeconfigPath(t *testing.T) {
 	ensureDefaultCluster(clusterRepo, instanceRepo, cfg)
 
 	// Should not create a cluster when no kubeconfig path is set.
-	clusters, err := clusterRepo.List()
+	clusters, err := clusterRepo.List(context.Background())
 	require.NoError(t, err)
 	assert.Empty(t, clusters)
 }
@@ -722,7 +743,7 @@ func TestEnsureDefaultCluster_InvalidKubeconfig(t *testing.T) {
 	ensureDefaultCluster(clusterRepo, instanceRepo, cfg)
 
 	// Should not create a cluster when API server URL cannot be determined.
-	clusters, err := clusterRepo.List()
+	clusters, err := clusterRepo.List(context.Background())
 	require.NoError(t, err)
 	assert.Empty(t, clusters)
 }
@@ -771,19 +792,48 @@ users:
 // failOnCreateClusterRepo returns empty list but errors on Create.
 type failOnCreateClusterRepo struct{}
 
-func (f *failOnCreateClusterRepo) Create(_ *models.Cluster) error {
+func (f *failOnCreateClusterRepo) Create(ctx context.Context, _ *models.Cluster) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	return fmt.Errorf("create failed")
 }
-func (f *failOnCreateClusterRepo) FindByID(_ string) (*models.Cluster, error) {
+func (f *failOnCreateClusterRepo) FindByID(ctx context.Context, _ string) (*models.Cluster, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return nil, fmt.Errorf("not found")
 }
-func (f *failOnCreateClusterRepo) Update(_ *models.Cluster) error  { return nil }
-func (f *failOnCreateClusterRepo) Delete(_ string) error           { return nil }
-func (f *failOnCreateClusterRepo) List() ([]models.Cluster, error) { return nil, nil }
-func (f *failOnCreateClusterRepo) FindDefault() (*models.Cluster, error) {
+func (f *failOnCreateClusterRepo) Update(ctx context.Context, _ *models.Cluster) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return nil
+}
+func (f *failOnCreateClusterRepo) Delete(ctx context.Context, _ string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return nil
+}
+func (f *failOnCreateClusterRepo) List(ctx context.Context) ([]models.Cluster, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return nil, nil
+}
+func (f *failOnCreateClusterRepo) FindDefault(ctx context.Context) (*models.Cluster, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return nil, fmt.Errorf("not found")
 }
-func (f *failOnCreateClusterRepo) SetDefault(_ string) error { return nil }
+func (f *failOnCreateClusterRepo) SetDefault(ctx context.Context, _ string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return nil
+}
 
 // ---- backfillInstanceClusterIDs tests ----
 
@@ -1046,16 +1096,42 @@ func (*mockInstanceRepo) CountByStatuses(ctx context.Context, statuses []string)
 	return 0, ctx.Err()
 }
 
-func (*mockClusterRepo) CountAll() (int, error) { return 0, nil }
+func (*mockClusterRepo) CountAll(ctx context.Context) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	return 0, nil
+}
 
-func (*mockClusterRepo) CountByHealthStatus(status string) (int, error) { return 0, nil }
-func (*mockClusterRepo) NamesByIDs(_ []string) (map[string]string, error) {
+func (*mockClusterRepo) CountByHealthStatus(ctx context.Context, status string) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	return 0, nil
+}
+func (*mockClusterRepo) NamesByIDs(ctx context.Context, _ []string) (map[string]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return map[string]string{}, nil
 }
 
-func (*failOnCreateClusterRepo) CountAll() (int, error) { return 0, nil }
+func (*failOnCreateClusterRepo) CountAll(ctx context.Context) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	return 0, nil
+}
 
-func (*failOnCreateClusterRepo) CountByHealthStatus(status string) (int, error) { return 0, nil }
-func (*failOnCreateClusterRepo) NamesByIDs(_ []string) (map[string]string, error) {
+func (*failOnCreateClusterRepo) CountByHealthStatus(ctx context.Context, status string) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	return 0, nil
+}
+func (*failOnCreateClusterRepo) NamesByIDs(ctx context.Context, _ []string) (map[string]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return map[string]string{}, nil
 }

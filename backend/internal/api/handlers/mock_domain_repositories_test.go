@@ -2063,7 +2063,10 @@ func NewMockClusterRepository() *MockClusterRepository {
 	return &MockClusterRepository{clusters: make(map[string]*models.Cluster)}
 }
 
-func (m *MockClusterRepository) Create(cl *models.Cluster) error {
+func (m *MockClusterRepository) Create(ctx context.Context, cl *models.Cluster) error {
+	if err := ctxDone(ctx, "create"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -2081,7 +2084,10 @@ func (m *MockClusterRepository) Create(cl *models.Cluster) error {
 	return nil
 }
 
-func (m *MockClusterRepository) FindByID(id string) (*models.Cluster, error) {
+func (m *MockClusterRepository) FindByID(ctx context.Context, id string) (*models.Cluster, error) {
+	if err := ctxDone(ctx, "find_by_id"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.fetchErr != nil {
@@ -2095,7 +2101,10 @@ func (m *MockClusterRepository) FindByID(id string) (*models.Cluster, error) {
 	return &cp, nil
 }
 
-func (m *MockClusterRepository) Update(cl *models.Cluster) error {
+func (m *MockClusterRepository) Update(ctx context.Context, cl *models.Cluster) error {
+	if err := ctxDone(ctx, "update"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -2109,7 +2118,10 @@ func (m *MockClusterRepository) Update(cl *models.Cluster) error {
 	return nil
 }
 
-func (m *MockClusterRepository) Delete(id string) error {
+func (m *MockClusterRepository) Delete(ctx context.Context, id string) error {
+	if err := ctxDone(ctx, "delete"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -2122,7 +2134,10 @@ func (m *MockClusterRepository) Delete(id string) error {
 	return nil
 }
 
-func (m *MockClusterRepository) List() ([]models.Cluster, error) {
+func (m *MockClusterRepository) List(ctx context.Context) ([]models.Cluster, error) {
+	if err := ctxDone(ctx, "list"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -2135,7 +2150,10 @@ func (m *MockClusterRepository) List() ([]models.Cluster, error) {
 	return out, nil
 }
 
-func (m *MockClusterRepository) CountAll() (int, error) {
+func (m *MockClusterRepository) CountAll(ctx context.Context) (int, error) {
+	if err := ctxDone(ctx, "count_all"); err != nil {
+		return 0, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -2144,8 +2162,11 @@ func (m *MockClusterRepository) CountAll() (int, error) {
 	return len(m.clusters), nil
 }
 
-func (m *MockClusterRepository) NamesByIDs(ids []string) (map[string]string, error) {
+func (m *MockClusterRepository) NamesByIDs(ctx context.Context, ids []string) (map[string]string, error) {
 	m.namesCalls.Add(1)
+	if err := ctxDone(ctx, "names_by_ids"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -2160,7 +2181,10 @@ func (m *MockClusterRepository) NamesByIDs(ids []string) (map[string]string, err
 	return out, nil
 }
 
-func (m *MockClusterRepository) CountByHealthStatus(status string) (int, error) {
+func (m *MockClusterRepository) CountByHealthStatus(ctx context.Context, status string) (int, error) {
+	if err := ctxDone(ctx, "count_by_health_status"); err != nil {
+		return 0, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -2175,7 +2199,10 @@ func (m *MockClusterRepository) CountByHealthStatus(status string) (int, error) 
 	return count, nil
 }
 
-func (m *MockClusterRepository) FindDefault() (*models.Cluster, error) {
+func (m *MockClusterRepository) FindDefault(ctx context.Context) (*models.Cluster, error) {
+	if err := ctxDone(ctx, "find_default"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.defaultErr != nil {
@@ -2192,7 +2219,10 @@ func (m *MockClusterRepository) FindDefault() (*models.Cluster, error) {
 	return &cp, nil
 }
 
-func (m *MockClusterRepository) SetDefault(id string) error {
+func (m *MockClusterRepository) SetDefault(ctx context.Context, id string) error {
+	if err := ctxDone(ctx, "set_default"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {

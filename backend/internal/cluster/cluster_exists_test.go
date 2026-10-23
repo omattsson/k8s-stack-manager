@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -121,39 +122,77 @@ type transientErrorClusterRepo struct {
 	err error
 }
 
-func (r *transientErrorClusterRepo) Create(_ *models.Cluster) error             { return nil }
-func (r *transientErrorClusterRepo) FindByID(_ string) (*models.Cluster, error) { return nil, r.err }
-func (r *transientErrorClusterRepo) Update(_ *models.Cluster) error             { return nil }
-func (r *transientErrorClusterRepo) Delete(_ string) error                      { return nil }
-func (r *transientErrorClusterRepo) List() ([]models.Cluster, error)            { return nil, nil }
-func (r *transientErrorClusterRepo) FindDefault() (*models.Cluster, error)      { return nil, r.err }
-func (r *transientErrorClusterRepo) SetDefault(_ string) error                  { return nil }
+func (r *transientErrorClusterRepo) Create(ctx context.Context, _ *models.Cluster) error {
+	return ctx.Err()
+}
+func (r *transientErrorClusterRepo) FindByID(ctx context.Context, _ string) (*models.Cluster, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return nil, r.err
+}
+func (r *transientErrorClusterRepo) Update(ctx context.Context, _ *models.Cluster) error {
+	return ctx.Err()
+}
+func (r *transientErrorClusterRepo) Delete(ctx context.Context, _ string) error { return ctx.Err() }
+func (r *transientErrorClusterRepo) List(ctx context.Context) ([]models.Cluster, error) {
+	return nil, ctx.Err()
+}
+func (r *transientErrorClusterRepo) FindDefault(ctx context.Context) (*models.Cluster, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return nil, r.err
+}
+func (r *transientErrorClusterRepo) SetDefault(ctx context.Context, _ string) error { return ctx.Err() }
 
 // notFoundClusterRepo returns a dberrors-wrapped not-found error from FindByID.
 type notFoundClusterRepo struct{}
 
-func (r *notFoundClusterRepo) Create(_ *models.Cluster) error { return nil }
-func (r *notFoundClusterRepo) FindByID(_ string) (*models.Cluster, error) {
+func (r *notFoundClusterRepo) Create(ctx context.Context, _ *models.Cluster) error {
+	return ctx.Err()
+}
+func (r *notFoundClusterRepo) FindByID(ctx context.Context, _ string) (*models.Cluster, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return nil, dberrors.NewDatabaseError("FindByID", dberrors.ErrNotFound)
 }
-func (r *notFoundClusterRepo) Update(_ *models.Cluster) error  { return nil }
-func (r *notFoundClusterRepo) Delete(_ string) error           { return nil }
-func (r *notFoundClusterRepo) List() ([]models.Cluster, error) { return nil, nil }
-func (r *notFoundClusterRepo) FindDefault() (*models.Cluster, error) {
+func (r *notFoundClusterRepo) Update(ctx context.Context, _ *models.Cluster) error {
+	return ctx.Err()
+}
+func (r *notFoundClusterRepo) Delete(ctx context.Context, _ string) error { return ctx.Err() }
+func (r *notFoundClusterRepo) List(ctx context.Context) ([]models.Cluster, error) {
+	return nil, ctx.Err()
+}
+func (r *notFoundClusterRepo) FindDefault(ctx context.Context) (*models.Cluster, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return nil, dberrors.ErrNotFound
 }
-func (r *notFoundClusterRepo) SetDefault(_ string) error { return nil }
+func (r *notFoundClusterRepo) SetDefault(ctx context.Context, _ string) error { return ctx.Err() }
 
-func (*transientErrorClusterRepo) CountAll() (int, error) { return 0, nil }
+func (*transientErrorClusterRepo) CountAll(ctx context.Context) (int, error) { return 0, ctx.Err() }
 
-func (*transientErrorClusterRepo) NamesByIDs(_ []string) (map[string]string, error) {
+func (*transientErrorClusterRepo) NamesByIDs(ctx context.Context, _ []string) (map[string]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return map[string]string{}, nil
 }
-func (*transientErrorClusterRepo) CountByHealthStatus(status string) (int, error) { return 0, nil }
+func (*transientErrorClusterRepo) CountByHealthStatus(ctx context.Context, status string) (int, error) {
+	return 0, ctx.Err()
+}
 
-func (*notFoundClusterRepo) CountAll() (int, error) { return 0, nil }
+func (*notFoundClusterRepo) CountAll(ctx context.Context) (int, error) { return 0, ctx.Err() }
 
-func (*notFoundClusterRepo) NamesByIDs(_ []string) (map[string]string, error) {
+func (*notFoundClusterRepo) NamesByIDs(ctx context.Context, _ []string) (map[string]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return map[string]string{}, nil
 }
-func (*notFoundClusterRepo) CountByHealthStatus(status string) (int, error) { return 0, nil }
+func (*notFoundClusterRepo) CountByHealthStatus(ctx context.Context, status string) (int, error) {
+	return 0, ctx.Err()
+}

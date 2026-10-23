@@ -43,7 +43,7 @@ func NewSharedValuesHandler(repo models.SharedValuesRepository, clusterRepo mode
 func (h *SharedValuesHandler) ListSharedValues(c *gin.Context) {
 	clusterID := c.Param("id")
 
-	if _, err := h.clusterRepo.FindByID(clusterID); err != nil {
+	if _, err := h.clusterRepo.FindByID(c.Request.Context(), clusterID); err != nil {
 		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -76,7 +76,7 @@ func (h *SharedValuesHandler) ListSharedValues(c *gin.Context) {
 func (h *SharedValuesHandler) CreateSharedValues(c *gin.Context) {
 	clusterID := c.Param("id")
 
-	if _, err := h.clusterRepo.FindByID(clusterID); err != nil {
+	if _, err := h.clusterRepo.FindByID(c.Request.Context(), clusterID); err != nil {
 		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -125,7 +125,7 @@ func (h *SharedValuesHandler) UpdateSharedValues(c *gin.Context) {
 	clusterID := c.Param("id")
 	valueID := c.Param("valueId")
 
-	if _, err := h.clusterRepo.FindByID(clusterID); err != nil {
+	if _, err := h.clusterRepo.FindByID(c.Request.Context(), clusterID); err != nil {
 		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return
