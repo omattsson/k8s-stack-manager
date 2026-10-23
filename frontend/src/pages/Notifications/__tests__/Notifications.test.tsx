@@ -335,6 +335,69 @@ describe('Notifications Page', () => {
     });
   });
 
+  describe('capped unread count (#654)', () => {
+    const listMock = () => notificationService.list as ReturnType<typeof vi.fn>;
+
+    it('shows "Unread (1000+)" and clears it on mark all read', async () => {
+      listMock().mockResolvedValue({
+        notifications: mockNotifications,
+        total: 1000,
+        total_capped: true,
+        unread_count: 1000,
+        unread_count_capped: true,
+      });
+      const user = userEvent.setup();
+      render(
+        <MemoryRouter>
+          <Notifications />
+        </MemoryRouter>,
+      );
+
+      expect(await screen.findByRole('button', { name: 'Unread (1000+)' })).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: /mark all read/i }));
+
+      expect(await screen.findByRole('button', { name: 'Unread' })).toBeInTheDocument();
+      expect(screen.queryByText(/\+\)/)).not.toBeInTheDocument();
+    });
+
+    it('keeps the "+" when one notification is read', async () => {
+      listMock().mockResolvedValue({
+        notifications: mockNotifications,
+        total: 1000,
+        total_capped: true,
+        unread_count: 1000,
+        unread_count_capped: true,
+      });
+      const user = userEvent.setup();
+      render(
+        <MemoryRouter>
+          <Notifications />
+        </MemoryRouter>,
+      );
+
+      await screen.findByRole('button', { name: 'Unread (1000+)' });
+      await user.click(screen.getByText(mockNotifications[0].title));
+
+      expect(await screen.findByRole('button', { name: 'Unread (999+)' })).toBeInTheDocument();
+    });
+
+    it('shows the exact unread count without unread_count_capped', async () => {
+      listMock().mockResolvedValue({
+        notifications: mockNotifications,
+        total: 30,
+        unread_count: 1000,
+      });
+      render(
+        <MemoryRouter>
+          <Notifications />
+        </MemoryRouter>,
+      );
+
+      expect(await screen.findByRole('button', { name: 'Unread (1000)' })).toBeInTheDocument();
+    });
+  });
+
   it('shows who did the action under each notification (#652)', async () => {
     (notificationService.list as ReturnType<typeof vi.fn>).mockResolvedValue({
       notifications: triggerNotifications,
