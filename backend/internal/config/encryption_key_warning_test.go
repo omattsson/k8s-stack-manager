@@ -20,7 +20,7 @@ func TestValidateEncryptionKeyWarning(t *testing.T) {
 		want    []string
 		notWant []string
 	}{
-		{"no key", "", []string{"is not set", "refuses cluster credentials", "kubeconfig_path"}, []string{"weak"}},
+		{"no key", "", []string{"is not set", "refuses cluster credentials", "notification channel secrets", "kubeconfig_path"}, []string{"weak"}},
 		{"short key", "short-key", []string{"shorter than 16", "weak", "32 or more"}, []string{"refuses", "not be encrypted"}},
 		{"long key", "a-long-random-key-0123456789abcdef", nil, []string{"KUBECONFIG_ENCRYPTION_KEY"}},
 	}

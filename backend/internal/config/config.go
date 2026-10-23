@@ -513,7 +513,7 @@ func (c *Config) Validate() error {
 
 	switch key := c.Deployment.KubeconfigEncryptionKey; {
 	case key == "":
-		slog.Warn("KUBECONFIG_ENCRYPTION_KEY is not set: the backend refuses cluster credentials (kubeconfig_data, registry_password); use kubeconfig_path")
+		slog.Warn("KUBECONFIG_ENCRYPTION_KEY is not set: the backend refuses cluster credentials (kubeconfig_data, registry_password) and notification channel secrets; use kubeconfig_path")
 	case len(key) < 16:
 		slog.Warn("KUBECONFIG_ENCRYPTION_KEY is shorter than 16 characters: the backend uses it, but it is weak; use 32 or more random characters")
 	}

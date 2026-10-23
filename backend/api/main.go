@@ -329,6 +329,36 @@ func warnPlaintextRegistryPasswords(clusterRepo models.ClusterRepository) {
 	}
 }
 
+// channelSecretCounter is implemented by the notification channel repository.
+type channelSecretCounter interface {
+	CountSecretsWithoutKey(ctx context.Context) (cleartext, encrypted int, err error)
+}
+
+// warnPlaintextChannelSecrets logs how many notification channels store a
+// secret that the backend cannot use without KUBECONFIG_ENCRYPTION_KEY. It
+// never logs the values.
+func warnPlaintextChannelSecrets(channelRepo models.NotificationChannelRepository) {
+	counter, ok := channelRepo.(channelSecretCounter)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), instanceBackfillTimeout)
+	defer cancel()
+	cleartext, encrypted, err := counter.CountSecretsWithoutKey(ctx)
+	if err != nil {
+		slog.Warn("Could not check for plaintext notification channel secrets", "error", err)
+		return
+	}
+	if cleartext > 0 {
+		slog.Warn("Notification channels store a secret in plaintext or in an older encrypted format. Set KUBECONFIG_ENCRYPTION_KEY, then set the secret of these channels again. A secret that the backend cannot decrypt is ignored, and the channel sends nothing.",
+			"channels", cleartext)
+	}
+	if encrypted > 0 {
+		slog.Warn("Notification channels store an encrypted secret, but KUBECONFIG_ENCRYPTION_KEY is not set. These channels send nothing. Set the same key again, or set the secrets again.",
+			"channels", encrypted)
+	}
+}
+
 // ensureDefaultCluster auto-creates a default cluster from KUBECONFIG_PATH
 // when no clusters exist yet. This provides a migration path for existing
 // single-cluster setups.

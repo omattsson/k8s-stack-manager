@@ -25,6 +25,9 @@ const (
 	msgChannelIDRequired      = "Channel ID is required"
 	msgWebhookURLNotHTTPS     = "Webhook URL must start with https://"
 	msgWebhookURLInvalid      = "Webhook URL is not a valid URL"
+	// The stored value cannot be decrypted (wrong or missing KUBECONFIG_ENCRYPTION_KEY).
+	msgChannelSecretUnreadable = "The stored secret cannot be read. Set secret again, or remove it (send an empty secret)."
+	msgChannelURLUnreadable    = "The stored webhook URL cannot be read. Set webhook_url again, or delete the channel."
 )
 
 // webhookURLError checks the webhook URL of a notification channel.
@@ -192,7 +195,7 @@ func (h *NotificationChannelHandler) ListChannels(c *gin.Context) {
 
 // CreateChannel godoc
 // @Summary     Create a notification channel
-// @Description Creates a new notification channel. format sets the body of the webhook request: "generic" (default, the event JSON) or "teams" (a Microsoft Teams Adaptive Card envelope for a Teams workflow made from the template "Post to a channel when a webhook request is received"). An unknown format gives 400. Optional filters limit the channel to some stack instances: instance_name_patterns (globs, path.Match syntax, case-insensitive), owner_ids, definition_ids and cluster_ids. Each set filter must match (AND); one value of a filter is enough (OR); empty filters match all instances. Events without an instance go only to channels without filters; a cleanup policy run goes to a channel when at least one affected instance matches. An invalid pattern gives 400. An ID that does not exist gives a warning in the response; the channel is saved.
+// @Description Creates a new notification channel. A secret (HMAC signing key) needs KUBECONFIG_ENCRYPTION_KEY: without it a non-empty secret gives 400. The webhook URL is encrypted at rest when the key is set. format sets the body of the webhook request: "generic" (default, the event JSON) or "teams" (a Microsoft Teams Adaptive Card envelope for a Teams workflow made from the template "Post to a channel when a webhook request is received"). An unknown format gives 400. Optional filters limit the channel to some stack instances: instance_name_patterns (globs, path.Match syntax, case-insensitive), owner_ids, definition_ids and cluster_ids. Each set filter must match (AND); one value of a filter is enough (OR); empty filters match all instances. Events without an instance go only to channels without filters; a cleanup policy run goes to a channel when at least one affected instance matches. An invalid pattern gives 400. An ID that does not exist gives a warning in the response; the channel is saved.
 // @Tags        notification-channels
 // @Accept      json
 // @Produce     json
@@ -294,7 +297,7 @@ func (h *NotificationChannelHandler) GetChannel(c *gin.Context) {
 
 // UpdateChannel godoc
 // @Summary     Update a notification channel
-// @Description Updates an existing notification channel. Only the fields in the body change. format ("generic" or "teams") replaces the body format; omit it to keep the format; an unknown format gives 400. filters replaces the channel filters (omit it to keep them, send {} to remove them); the rules are the same as for create. An ID that does not exist gives a warning in the response.
+// @Description Updates an existing notification channel. Only the fields in the body change. A new secret needs KUBECONFIG_ENCRYPTION_KEY (400 without it); an unchanged stored legacy secret passes. A channel whose stored secret or URL cannot be decrypted gives 400 until the request sets it again (or clears the secret). format ("generic" or "teams") replaces the body format; omit it to keep the format; an unknown format gives 400. filters replaces the channel filters (omit it to keep them, send {} to remove them); the rules are the same as for create. An ID that does not exist gives a warning in the response.
 // @Tags        notification-channels
 // @Accept      json
 // @Produce     json
@@ -331,6 +334,14 @@ func (h *NotificationChannelHandler) UpdateChannel(c *gin.Context) {
 
 	req.Name = strings.TrimSpace(req.Name)
 	req.WebhookURL = strings.TrimSpace(req.WebhookURL)
+	if existing.WebhookURLUnreadable && req.WebhookURL == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgChannelURLUnreadable})
+		return
+	}
+	if existing.SecretUnreadable && req.Secret == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgChannelSecretUnreadable})
+		return
+	}
 	if req.Name != "" {
 		existing.Name = req.Name
 	}
@@ -564,6 +575,10 @@ func (h *NotificationChannelHandler) TestChannel(c *gin.Context) {
 	msg := "Test notification sent successfully"
 	switch {
 	case success:
+	case channel.WebhookURLUnreadable:
+		msg = "The stored webhook URL cannot be read. Set it again."
+	case channel.SecretUnreadable:
+		msg = "The stored secret cannot be read. Set it again, or remove it."
 	case statusCode == 0 && webhookURLError(channel.WebhookURL) != "":
 		// A URL stored before the check (or written to the database directly).
 		msg = "Invalid webhook URL"

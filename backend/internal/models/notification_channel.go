@@ -17,7 +17,7 @@ type NotificationChannel struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 	ID         string    `json:"id" gorm:"primaryKey;size:36"`
 	Name       string    `json:"name" gorm:"size:255;uniqueIndex;not null"`
-	WebhookURL string    `json:"webhook_url" gorm:"size:2048;not null"`
+	WebhookURL string    `json:"webhook_url" gorm:"type:text;not null"`
 	Secret     string    `json:"-" gorm:"type:text"`
 	// Format is the body format of the webhook request:
 	// NotificationChannelFormatGeneric (the event JSON) or
@@ -32,6 +32,12 @@ type NotificationChannel struct {
 	// handler sets true when the request omits it; the column keeps its
 	// database default (migration 40).
 	Enabled bool `json:"enabled"`
+	// SecretUnreadable and WebhookURLUnreadable are set by the repository when
+	// the stored value cannot be decrypted. The value is then empty, the
+	// channel sends nothing, and a save keeps the stored value unless the
+	// caller sets a new one.
+	SecretUnreadable     bool `json:"-" gorm:"-"`
+	WebhookURLUnreadable bool `json:"-" gorm:"-"`
 }
 
 // Body formats of a notification channel (NotificationChannel.Format).

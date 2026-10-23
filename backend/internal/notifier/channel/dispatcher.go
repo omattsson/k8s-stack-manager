@@ -31,6 +31,14 @@ const (
 // request. The text has no URL, because the URL can hold a token.
 var errInvalidWebhookURL = errors.New("creating request: invalid webhook URL")
 
+// Errors of a channel whose stored secret or URL cannot be decrypted. The
+// delivery sends nothing: a request with the ciphertext as the signing key,
+// or without a signature, would be wrong. The texts have no URL and no secret.
+var (
+	errSecretUnreadable = errors.New("channel secret cannot be decrypted; set it again")
+	errURLUnreadable    = errors.New("channel webhook URL cannot be decrypted; set it again")
+)
+
 // Dispatcher sends notification payloads to subscribed external channels.
 // Each channel has its own worker and queue (workers.go). Call Stop at
 // shutdown when Dispatch was used.
@@ -149,8 +157,9 @@ func (d *Dispatcher) deliver(ctx context.Context, ch *models.NotificationChannel
 		return "success", statusCode, ""
 	}
 
-	// An invalid URL gives the same error again, so it gets no retry.
-	if isRetryable(statusCode) && !errors.Is(err, errInvalidWebhookURL) {
+	// An invalid URL or an unreadable value gives the same error again, so it gets no retry.
+	if isRetryable(statusCode) && !errors.Is(err, errInvalidWebhookURL) &&
+		!errors.Is(err, errSecretUnreadable) && !errors.Is(err, errURLUnreadable) {
 		select {
 		case <-ctx.Done():
 			return "failed", 0, "context cancelled"
@@ -169,6 +178,12 @@ func (d *Dispatcher) deliver(ctx context.Context, ch *models.NotificationChannel
 }
 
 func (d *Dispatcher) post(ctx context.Context, ch *models.NotificationChannel, eventType string, body []byte) (int, error) {
+	if ch.WebhookURLUnreadable {
+		return 0, errURLUnreadable
+	}
+	if ch.SecretUnreadable {
+		return 0, errSecretUnreadable
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ch.WebhookURL, bytes.NewReader(body))
 	if err != nil {
 		// The parse error contains the webhook URL (it can hold a token).

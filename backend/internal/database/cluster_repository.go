@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -87,11 +86,11 @@ func (r *GORMClusterRepository) encryptRegistryPassword(cluster *models.Cluster)
 	if len(r.encryptionKey) == 0 {
 		return "", errRegistryPasswordNoKey()
 	}
-	encrypted, err := crypto.Encrypt([]byte(original), r.encryptionKey)
+	sealed, err := sealValue(original, r.encryptionKey)
 	if err != nil {
 		return "", dberrors.NewDatabaseError("encrypt registry password", err)
 	}
-	cluster.RegistryPassword = encryptedPrefix + base64.StdEncoding.EncodeToString(encrypted)
+	cluster.RegistryPassword = sealed
 	return original, nil
 }
 
@@ -104,13 +103,6 @@ func errRegistryPasswordNoKey() error {
 	return dberrors.NewDatabaseError("validation",
 		fmt.Errorf("registry_password cannot be stored without KUBECONFIG_ENCRYPTION_KEY configured: %w", dberrors.ErrValidation))
 }
-
-// encryptedPrefix marks a registry password that this version encrypted.
-// An unprefixed value is legacy plaintext, or ciphertext of an older version.
-const encryptedPrefix = "enc:v1:"
-
-// minCiphertextLen is the AES-GCM nonce plus the tag: a shorter value is not ciphertext.
-const minCiphertextLen = 12 + 16
 
 // storedRegistryPassword reads the stored (not decrypted) registry password.
 func (r *GORMClusterRepository) storedRegistryPassword(ctx context.Context, id string) (string, error) {
@@ -140,32 +132,12 @@ func (r *GORMClusterRepository) keepLegacyPassword(ctx context.Context, cluster 
 // A value that cannot be decrypted never fails the read and is never returned
 // as a password: the password is empty and RegistryPasswordUnreadable is set.
 func (r *GORMClusterRepository) decryptRegistryPassword(cluster *models.Cluster) error {
-	stored := cluster.RegistryPassword
-	if stored == "" {
+	plain, unreadable := openValue(cluster.RegistryPassword, r.encryptionKey, true)
+	if unreadable != "" {
+		r.markUnreadable(cluster, unreadable)
 		return nil
 	}
-	prefixed := strings.HasPrefix(stored, encryptedPrefix)
-	if len(r.encryptionKey) == 0 {
-		if prefixed {
-			r.markUnreadable(cluster, "no encryption key")
-		}
-		// Unprefixed without a key: legacy plaintext.
-		return nil
-	}
-	decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(stored, encryptedPrefix))
-	if err != nil || (!prefixed && len(decoded) < minCiphertextLen) {
-		if prefixed {
-			r.markUnreadable(cluster, "invalid encoding")
-		}
-		// Not ciphertext; legacy plaintext from before the key was required.
-		return nil
-	}
-	decrypted, err := crypto.Decrypt(decoded, r.encryptionKey)
-	if err != nil {
-		r.markUnreadable(cluster, "decryption failed")
-		return nil
-	}
-	cluster.RegistryPassword = string(decrypted)
+	cluster.RegistryPassword = plain
 	return nil
 }
 

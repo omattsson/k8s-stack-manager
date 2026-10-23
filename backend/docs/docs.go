@@ -357,7 +357,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Creates a new notification channel. format sets the body of the webhook request: \"generic\" (default, the event JSON) or \"teams\" (a Microsoft Teams Adaptive Card envelope for a Teams workflow made from the template \"Post to a channel when a webhook request is received\"). An unknown format gives 400. Optional filters limit the channel to some stack instances: instance_name_patterns (globs, path.Match syntax, case-insensitive), owner_ids, definition_ids and cluster_ids. Each set filter must match (AND); one value of a filter is enough (OR); empty filters match all instances. Events without an instance go only to channels without filters; a cleanup policy run goes to a channel when at least one affected instance matches. An invalid pattern gives 400. An ID that does not exist gives a warning in the response; the channel is saved.",
+                "description": "Creates a new notification channel. A secret (HMAC signing key) needs KUBECONFIG_ENCRYPTION_KEY: without it a non-empty secret gives 400. The webhook URL is encrypted at rest when the key is set. format sets the body of the webhook request: \"generic\" (default, the event JSON) or \"teams\" (a Microsoft Teams Adaptive Card envelope for a Teams workflow made from the template \"Post to a channel when a webhook request is received\"). An unknown format gives 400. Optional filters limit the channel to some stack instances: instance_name_patterns (globs, path.Match syntax, case-insensitive), owner_ids, definition_ids and cluster_ids. Each set filter must match (AND); one value of a filter is enough (OR); empty filters match all instances. Events without an instance go only to channels without filters; a cleanup policy run goes to a channel when at least one affected instance matches. An invalid pattern gives 400. An ID that does not exist gives a warning in the response; the channel is saved.",
                 "consumes": [
                     "application/json"
                 ],
@@ -526,7 +526,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Updates an existing notification channel. Only the fields in the body change. format (\"generic\" or \"teams\") replaces the body format; omit it to keep the format; an unknown format gives 400. filters replaces the channel filters (omit it to keep them, send {} to remove them); the rules are the same as for create. An ID that does not exist gives a warning in the response.",
+                "description": "Updates an existing notification channel. Only the fields in the body change. A new secret needs KUBECONFIG_ENCRYPTION_KEY (400 without it); an unchanged stored legacy secret passes. A channel whose stored secret or URL cannot be decrypted gives 400 until the request sets it again (or clears the secret). format (\"generic\" or \"teams\") replaces the body format; omit it to keep the format; an unknown format gives 400. filters replaces the channel filters (omit it to keep them, send {} to remove them); the rules are the same as for create. An ID that does not exist gives a warning in the response.",
                 "consumes": [
                     "application/json"
                 ],
