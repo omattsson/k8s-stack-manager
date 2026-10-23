@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -26,7 +27,7 @@ func NewGORMChartConfigRepository(db *gorm.DB) *GORMChartConfigRepository {
 }
 
 // Create inserts a new chart config record.
-func (r *GORMChartConfigRepository) Create(config *models.ChartConfig) error {
+func (r *GORMChartConfigRepository) Create(ctx context.Context, config *models.ChartConfig) error {
 	if err := config.Validate(); err != nil {
 		return dberrors.NewDatabaseError("create", fmt.Errorf("%w: %s", dberrors.ErrValidation, err.Error()))
 	}
@@ -35,16 +36,16 @@ func (r *GORMChartConfigRepository) Create(config *models.ChartConfig) error {
 		config.ID = uuid.New().String()
 	}
 	config.CreatedAt = time.Now().UTC()
-	if err := r.db.Create(config).Error; err != nil {
+	if err := r.db.WithContext(ctx).Create(config).Error; err != nil {
 		return dberrors.NewDatabaseError("create", err)
 	}
 	return nil
 }
 
 // FindByID returns a chart config by its ID.
-func (r *GORMChartConfigRepository) FindByID(id string) (*models.ChartConfig, error) {
+func (r *GORMChartConfigRepository) FindByID(ctx context.Context, id string) (*models.ChartConfig, error) {
 	var config models.ChartConfig
-	if err := r.db.Where("id = ?", id).First(&config).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&config).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, dberrors.NewDatabaseError("find_by_id", dberrors.ErrNotFound)
 		}
@@ -54,19 +55,19 @@ func (r *GORMChartConfigRepository) FindByID(id string) (*models.ChartConfig, er
 }
 
 // Update persists changes to an existing chart config record.
-func (r *GORMChartConfigRepository) Update(config *models.ChartConfig) error {
+func (r *GORMChartConfigRepository) Update(ctx context.Context, config *models.ChartConfig) error {
 	if err := config.Validate(); err != nil {
 		return dberrors.NewDatabaseError("update", fmt.Errorf("%w: %s", dberrors.ErrValidation, err.Error()))
 	}
-	if err := r.db.Save(config).Error; err != nil {
+	if err := r.db.WithContext(ctx).Save(config).Error; err != nil {
 		return dberrors.NewDatabaseError("update", err)
 	}
 	return nil
 }
 
 // Delete removes a chart config by ID.
-func (r *GORMChartConfigRepository) Delete(id string) error {
-	result := r.db.Where("id = ?", id).Delete(&models.ChartConfig{})
+func (r *GORMChartConfigRepository) Delete(ctx context.Context, id string) error {
+	result := r.db.WithContext(ctx).Where("id = ?", id).Delete(&models.ChartConfig{})
 	if result.Error != nil {
 		return dberrors.NewDatabaseError("delete", result.Error)
 	}
@@ -77,9 +78,9 @@ func (r *GORMChartConfigRepository) Delete(id string) error {
 }
 
 // ListByDefinition returns all chart configs for a given stack definition.
-func (r *GORMChartConfigRepository) ListByDefinition(definitionID string) ([]models.ChartConfig, error) {
+func (r *GORMChartConfigRepository) ListByDefinition(ctx context.Context, definitionID string) ([]models.ChartConfig, error) {
 	var configs []models.ChartConfig
-	if err := r.db.Where("stack_definition_id = ?", definitionID).
+	if err := r.db.WithContext(ctx).Where("stack_definition_id = ?", definitionID).
 		Order("deploy_order ASC").
 		Find(&configs).Error; err != nil {
 		return nil, dberrors.NewDatabaseError("list_by_definition", err)
@@ -89,7 +90,7 @@ func (r *GORMChartConfigRepository) ListByDefinition(definitionID string) ([]mod
 
 // CountByDefinitionIDs returns the number of chart configs per definition in
 // one grouped query. Definitions without charts are not in the map.
-func (r *GORMChartConfigRepository) CountByDefinitionIDs(definitionIDs []string) (map[string]int, error) {
+func (r *GORMChartConfigRepository) CountByDefinitionIDs(ctx context.Context, definitionIDs []string) (map[string]int, error) {
 	result := make(map[string]int, len(definitionIDs))
 	if len(definitionIDs) == 0 {
 		return result, nil
@@ -98,7 +99,7 @@ func (r *GORMChartConfigRepository) CountByDefinitionIDs(definitionIDs []string)
 		StackDefinitionID string
 		Count             int
 	}
-	if err := r.db.Model(&models.ChartConfig{}).
+	if err := r.db.WithContext(ctx).Model(&models.ChartConfig{}).
 		Select("stack_definition_id, COUNT(*) as count").
 		Where("stack_definition_id IN ?", definitionIDs).
 		Group("stack_definition_id").
@@ -112,8 +113,8 @@ func (r *GORMChartConfigRepository) CountByDefinitionIDs(definitionIDs []string)
 }
 
 // DeleteByDefinition deletes all chart configs of a definition in one statement.
-func (r *GORMChartConfigRepository) DeleteByDefinition(definitionID string) error {
-	if err := r.db.Where("stack_definition_id = ?", definitionID).Delete(&models.ChartConfig{}).Error; err != nil {
+func (r *GORMChartConfigRepository) DeleteByDefinition(ctx context.Context, definitionID string) error {
+	if err := r.db.WithContext(ctx).Where("stack_definition_id = ?", definitionID).Delete(&models.ChartConfig{}).Error; err != nil {
 		return dberrors.NewDatabaseError("delete_by_definition", err)
 	}
 	return nil

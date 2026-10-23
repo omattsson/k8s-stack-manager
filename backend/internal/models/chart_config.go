@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // ChartConfig represents a Helm chart configuration within a stack definition.
 type ChartConfig struct {
@@ -19,15 +22,15 @@ type ChartConfig struct {
 
 // ChartConfigRepository defines data access operations for chart configs.
 type ChartConfigRepository interface {
-	Create(config *ChartConfig) error
-	FindByID(id string) (*ChartConfig, error)
-	Update(config *ChartConfig) error
-	Delete(id string) error
-	ListByDefinition(definitionID string) ([]ChartConfig, error)
+	Create(ctx context.Context, config *ChartConfig) error
+	FindByID(ctx context.Context, id string) (*ChartConfig, error)
+	Update(ctx context.Context, config *ChartConfig) error
+	Delete(ctx context.Context, id string) error
+	ListByDefinition(ctx context.Context, definitionID string) ([]ChartConfig, error)
 	// CountByDefinitionIDs returns the number of chart configs per definition
 	// in one query. Definitions without charts are not in the map.
-	CountByDefinitionIDs(definitionIDs []string) (map[string]int, error)
+	CountByDefinitionIDs(ctx context.Context, definitionIDs []string) (map[string]int, error)
 	// DeleteByDefinition deletes all chart configs of a definition (no error
 	// when there are none).
-	DeleteByDefinition(definitionID string) error
+	DeleteByDefinition(ctx context.Context, definitionID string) error
 }

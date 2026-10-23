@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"testing"
 
 	"backend/internal/models"
@@ -25,12 +26,12 @@ func TestGORMChartBranchOverrideRepository_SetAndGet(t *testing.T) {
 		ChartConfigID:   "cc-1",
 		Branch:          "feature/test",
 	}
-	err := repo.Set(override)
+	err := repo.Set(context.Background(), override)
 	require.NoError(t, err)
 	assert.NotEmpty(t, override.ID)
 
 	// Get
-	found, err := repo.Get("si-1", "cc-1")
+	found, err := repo.Get(context.Background(), "si-1", "cc-1")
 	require.NoError(t, err)
 	assert.Equal(t, "feature/test", found.Branch)
 }
@@ -41,21 +42,21 @@ func TestGORMChartBranchOverrideRepository_Set_Upsert(t *testing.T) {
 	repo := setupChartBranchOverrideRepo(t)
 
 	// Create initial
-	require.NoError(t, repo.Set(&models.ChartBranchOverride{
+	require.NoError(t, repo.Set(context.Background(), &models.ChartBranchOverride{
 		StackInstanceID: "si-ups",
 		ChartConfigID:   "cc-ups",
 		Branch:          "old-branch",
 	}))
 
 	// Upsert
-	err := repo.Set(&models.ChartBranchOverride{
+	err := repo.Set(context.Background(), &models.ChartBranchOverride{
 		StackInstanceID: "si-ups",
 		ChartConfigID:   "cc-ups",
 		Branch:          "new-branch",
 	})
 	require.NoError(t, err)
 
-	found, err := repo.Get("si-ups", "cc-ups")
+	found, err := repo.Get(context.Background(), "si-ups", "cc-ups")
 	require.NoError(t, err)
 	assert.Equal(t, "new-branch", found.Branch)
 }
@@ -66,7 +67,7 @@ func TestGORMChartBranchOverrideRepository_Set_ValidationError(t *testing.T) {
 	repo := setupChartBranchOverrideRepo(t)
 
 	// Missing required fields should fail validation.
-	err := repo.Set(&models.ChartBranchOverride{
+	err := repo.Set(context.Background(), &models.ChartBranchOverride{
 		StackInstanceID: "",
 		ChartConfigID:   "cc-1",
 		Branch:          "main",
@@ -78,7 +79,7 @@ func TestGORMChartBranchOverrideRepository_Get_NotFound(t *testing.T) {
 	t.Parallel()
 
 	repo := setupChartBranchOverrideRepo(t)
-	_, err := repo.Get("si-nope", "cc-nope")
+	_, err := repo.Get(context.Background(), "si-nope", "cc-nope")
 	assert.Error(t, err)
 }
 
@@ -86,11 +87,11 @@ func TestGORMChartBranchOverrideRepository_List(t *testing.T) {
 	t.Parallel()
 
 	repo := setupChartBranchOverrideRepo(t)
-	require.NoError(t, repo.Set(&models.ChartBranchOverride{StackInstanceID: "si-list", ChartConfigID: "cc-1", Branch: "b1"}))
-	require.NoError(t, repo.Set(&models.ChartBranchOverride{StackInstanceID: "si-list", ChartConfigID: "cc-2", Branch: "b2"}))
-	require.NoError(t, repo.Set(&models.ChartBranchOverride{StackInstanceID: "si-other", ChartConfigID: "cc-1", Branch: "b3"}))
+	require.NoError(t, repo.Set(context.Background(), &models.ChartBranchOverride{StackInstanceID: "si-list", ChartConfigID: "cc-1", Branch: "b1"}))
+	require.NoError(t, repo.Set(context.Background(), &models.ChartBranchOverride{StackInstanceID: "si-list", ChartConfigID: "cc-2", Branch: "b2"}))
+	require.NoError(t, repo.Set(context.Background(), &models.ChartBranchOverride{StackInstanceID: "si-other", ChartConfigID: "cc-1", Branch: "b3"}))
 
-	overrides, err := repo.List("si-list")
+	overrides, err := repo.List(context.Background(), "si-list")
 	require.NoError(t, err)
 	assert.Len(t, overrides, 2)
 }
@@ -113,9 +114,9 @@ func TestGORMChartBranchOverrideRepository_Delete(t *testing.T) {
 			t.Parallel()
 			repo := setupChartBranchOverrideRepo(t)
 			if tt.seed {
-				require.NoError(t, repo.Set(&models.ChartBranchOverride{StackInstanceID: "si-del", ChartConfigID: "cc-del", Branch: "main"}))
+				require.NoError(t, repo.Set(context.Background(), &models.ChartBranchOverride{StackInstanceID: "si-del", ChartConfigID: "cc-del", Branch: "main"}))
 			}
-			err := repo.Delete("si-del", "cc-del")
+			err := repo.Delete(context.Background(), "si-del", "cc-del")
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {
@@ -129,13 +130,13 @@ func TestGORMChartBranchOverrideRepository_DeleteByInstance(t *testing.T) {
 	t.Parallel()
 
 	repo := setupChartBranchOverrideRepo(t)
-	require.NoError(t, repo.Set(&models.ChartBranchOverride{StackInstanceID: "si-delall", ChartConfigID: "cc-1", Branch: "b1"}))
-	require.NoError(t, repo.Set(&models.ChartBranchOverride{StackInstanceID: "si-delall", ChartConfigID: "cc-2", Branch: "b2"}))
+	require.NoError(t, repo.Set(context.Background(), &models.ChartBranchOverride{StackInstanceID: "si-delall", ChartConfigID: "cc-1", Branch: "b1"}))
+	require.NoError(t, repo.Set(context.Background(), &models.ChartBranchOverride{StackInstanceID: "si-delall", ChartConfigID: "cc-2", Branch: "b2"}))
 
-	err := repo.DeleteByInstance("si-delall")
+	err := repo.DeleteByInstance(context.Background(), "si-delall")
 	require.NoError(t, err)
 
-	overrides, err := repo.List("si-delall")
+	overrides, err := repo.List(context.Background(), "si-delall")
 	require.NoError(t, err)
 	assert.Len(t, overrides, 0)
 }

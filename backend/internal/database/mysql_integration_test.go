@@ -281,11 +281,11 @@ func TestMySQLIntegration_ChartConfigRepository(t *testing.T) {
 		DeployOrder:       1,
 	}
 
-	err := repo.Create(cfg)
+	err := repo.Create(context.Background(), cfg)
 	require.NoError(t, err)
 	assert.NotEmpty(t, cfg.ID)
 
-	configs, err := repo.ListByDefinition("def1")
+	configs, err := repo.ListByDefinition(context.Background(), "def1")
 	require.NoError(t, err)
 	assert.Len(t, configs, 1)
 	assert.Equal(t, "nginx", configs[0].ChartName)
@@ -496,35 +496,35 @@ func TestMySQLIntegration_ChartBranchOverrideRepository(t *testing.T) {
 	db := setupMySQLTestDB(t)
 	repo := NewGORMChartBranchOverrideRepository(db)
 
-	err := repo.Set(&models.ChartBranchOverride{
+	err := repo.Set(context.Background(), &models.ChartBranchOverride{
 		StackInstanceID: "inst1",
 		ChartConfigID:   "chart1",
 		Branch:          "feature-branch",
 	})
 	require.NoError(t, err)
 
-	override, err := repo.Get("inst1", "chart1")
+	override, err := repo.Get(context.Background(), "inst1", "chart1")
 	require.NoError(t, err)
 	assert.Equal(t, "feature-branch", override.Branch)
 
-	overrides, err := repo.List("inst1")
+	overrides, err := repo.List(context.Background(), "inst1")
 	require.NoError(t, err)
 	assert.Len(t, overrides, 1)
 
 	// Upsert
-	err = repo.Set(&models.ChartBranchOverride{
+	err = repo.Set(context.Background(), &models.ChartBranchOverride{
 		StackInstanceID: "inst1",
 		ChartConfigID:   "chart1",
 		Branch:          "develop",
 	})
 	require.NoError(t, err)
-	override, err = repo.Get("inst1", "chart1")
+	override, err = repo.Get(context.Background(), "inst1", "chart1")
 	require.NoError(t, err)
 	assert.Equal(t, "develop", override.Branch)
 
-	err = repo.DeleteByInstance("inst1")
+	err = repo.DeleteByInstance(context.Background(), "inst1")
 	require.NoError(t, err)
-	overrides, err = repo.List("inst1")
+	overrides, err = repo.List(context.Background(), "inst1")
 	require.NoError(t, err)
 	assert.Len(t, overrides, 0)
 }

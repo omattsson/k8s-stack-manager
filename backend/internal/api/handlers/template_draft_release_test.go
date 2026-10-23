@@ -395,7 +395,7 @@ func TestDraftRelease_UsersGetLatestSnapshot(t *testing.T) {
 				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 				assert.Equal(t, "1.0.0", resp.Definition.SourceTemplateVersion)
 				assert.Equal(t, "main", resp.Instance.Branch)
-				charts, err := e.defCharts.ListByDefinition(resp.Definition.ID)
+				charts, err := e.defCharts.ListByDefinition(context.Background(), resp.Definition.ID)
 				require.NoError(t, err)
 				require.Len(t, charts, 1)
 				assert.Equal(t, "replicas: 1", charts[0].DefaultValues)
@@ -1088,7 +1088,7 @@ func TestDraftRelease_SecondReview(t *testing.T) {
 				require.NoError(t, e.defs.Create(context.Background(), &models.StackDefinition{
 					ID: "d1", Name: "d1", OwnerID: "uid-dev", SourceTemplateID: "t1", SourceTemplateVersion: "1.0.0",
 				}))
-				require.NoError(t, e.defCharts.Create(&models.ChartConfig{
+				require.NoError(t, e.defCharts.Create(context.Background(), &models.ChartConfig{
 					ID: "cc1", StackDefinitionID: "d1", ChartName: "web", RepositoryURL: "oci://charts/web",
 					DefaultValues: "replicas: 1", ChartVersion: "3.1.0", ChartPath: "charts/web", DeployOrder: 1,
 				}))

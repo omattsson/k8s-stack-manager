@@ -183,7 +183,7 @@ func requireInstanceChart(c *gin.Context, repo models.ChartConfigRepository, ins
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return nil, false
 	}
-	chart, err := repo.FindByID(chartID)
+	chart, err := repo.FindByID(c.Request.Context(), chartID)
 	if err != nil {
 		status, message := mapError(err, entityChartConfig)
 		if status == http.StatusNotFound {
@@ -347,7 +347,7 @@ func (h *InstanceHandler) checkLockedValues(ctx context.Context, inst *models.St
 	}
 
 	// Look up the chart config to get its ChartName.
-	chart, err := h.chartConfigRepo.FindByID(chartID)
+	chart, err := h.chartConfigRepo.FindByID(ctx, chartID)
 	if isNotFoundError(err) {
 		return nil
 	}

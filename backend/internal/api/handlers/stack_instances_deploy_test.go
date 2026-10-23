@@ -437,7 +437,7 @@ func TestDeployInstance(t *testing.T) {
 			setup: func(instRepo *MockStackInstanceRepository, defRepo *MockStackDefinitionRepository, ccRepo *MockChartConfigRepository) {
 				seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusDraft)
 				seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
-				require.NoError(t, ccRepo.Create(&models.ChartConfig{
+				require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{
 					ID:                "c1",
 					StackDefinitionID: "d1",
 					ChartName:         "nginx",
@@ -496,7 +496,7 @@ func TestDeployInstance(t *testing.T) {
 			setup: func(instRepo *MockStackInstanceRepository, defRepo *MockStackDefinitionRepository, ccRepo *MockChartConfigRepository) {
 				seedInstance(t, instRepo, "i5", "stack-e", "d1", "uid-1", models.StackStatusStopped)
 				seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
-				require.NoError(t, ccRepo.Create(&models.ChartConfig{
+				require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{
 					ID:                "c2",
 					StackDefinitionID: "d1",
 					ChartName:         "redis",
@@ -512,7 +512,7 @@ func TestDeployInstance(t *testing.T) {
 			setup: func(instRepo *MockStackInstanceRepository, defRepo *MockStackDefinitionRepository, ccRepo *MockChartConfigRepository) {
 				seedInstance(t, instRepo, "i6", "stack-f", "d1", "uid-1", models.StackStatusError)
 				seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
-				require.NoError(t, ccRepo.Create(&models.ChartConfig{
+				require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{
 					ID:                "c3",
 					StackDefinitionID: "d1",
 					ChartName:         "app",

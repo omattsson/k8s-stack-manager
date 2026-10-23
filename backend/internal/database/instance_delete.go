@@ -80,7 +80,7 @@ func cleanupOwnedDefinitionIfOwned(ctx context.Context, runner TxRunner, inst *m
 // atomic. Repositories that are not set in repos are skipped.
 func DeleteInstanceRecord(ctx context.Context, repos TxRepos, inst *models.StackInstance) error {
 	if repos.BranchOverride != nil {
-		if err := repos.BranchOverride.DeleteByInstance(inst.ID); err != nil {
+		if err := repos.BranchOverride.DeleteByInstance(ctx, inst.ID); err != nil {
 			return err
 		}
 	}
@@ -157,7 +157,7 @@ func CleanupOwnedDefinition(ctx context.Context, repos TxRepos, inst *models.Sta
 		return nil
 	}
 	if repos.ChartConfig != nil {
-		if err := repos.ChartConfig.DeleteByDefinition(def.ID); err != nil {
+		if err := repos.ChartConfig.DeleteByDefinition(ctx, def.ID); err != nil {
 			return fmt.Errorf("deleting charts: %w", err)
 		}
 	}

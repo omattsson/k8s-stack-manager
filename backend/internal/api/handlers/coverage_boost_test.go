@@ -212,7 +212,7 @@ func TestExportAllValues(t *testing.T) {
 			setup: func(instRepo *MockStackInstanceRepository, defRepo *MockStackDefinitionRepository, ccRepo *MockChartConfigRepository, _ *MockTemplateChartConfigRepository) {
 				seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusRunning)
 				seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
-				require.NoError(t, ccRepo.Create(&models.ChartConfig{
+				require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{
 					ID:                "c1",
 					StackDefinitionID: "d1",
 					ChartName:         "nginx",
@@ -271,7 +271,7 @@ func TestExportAllValues(t *testing.T) {
 				def := seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
 				def.SourceTemplateID = "tmpl-1"
 				require.NoError(t, defRepo.Update(context.Background(), def))
-				require.NoError(t, ccRepo.Create(&models.ChartConfig{
+				require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{
 					ID:                "c1",
 					StackDefinitionID: "d1",
 					ChartName:         "nginx",
@@ -380,7 +380,7 @@ func TestDeployInstance_ErrorPaths(t *testing.T) {
 				}
 				require.NoError(t, instRepo.Create(context.Background(), inst))
 				seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
-				require.NoError(t, ccRepo.Create(&models.ChartConfig{
+				require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{
 					ID:                "c1",
 					StackDefinitionID: "d1",
 					ChartName:         "nginx",
@@ -555,7 +555,7 @@ func TestDeleteInstance_WithBranchOverrides(t *testing.T) {
 		instRepo := NewMockStackInstanceRepository()
 		branchRepo := NewMockChartBranchOverrideRepository()
 		seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusDraft)
-		require.NoError(t, branchRepo.Set(&models.ChartBranchOverride{
+		require.NoError(t, branchRepo.Set(context.Background(), &models.ChartBranchOverride{
 			ID:              "bo1",
 			StackInstanceID: "i1",
 			ChartConfigID:   "c1",
@@ -588,7 +588,7 @@ func TestDeleteInstance_WithBranchOverrides(t *testing.T) {
 		assert.Equal(t, http.StatusNoContent, w.Code)
 
 		// Verify branch overrides were deleted.
-		overrides, err := branchRepo.List("i1")
+		overrides, err := branchRepo.List(context.Background(), "i1")
 		require.NoError(t, err)
 		assert.Empty(t, overrides)
 	})

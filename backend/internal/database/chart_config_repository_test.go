@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"testing"
 
 	"backend/internal/models"
@@ -28,27 +29,27 @@ func TestGORMChartConfigRepository_CRUD(t *testing.T) {
 		RepositoryURL:     "https://charts.example.com",
 		DeployOrder:       1,
 	}
-	err := repo.Create(cfg)
+	err := repo.Create(context.Background(), cfg)
 	require.NoError(t, err)
 	assert.False(t, cfg.CreatedAt.IsZero())
 
 	// FindByID
-	found, err := repo.FindByID("cc-1")
+	found, err := repo.FindByID(context.Background(), "cc-1")
 	require.NoError(t, err)
 	assert.Equal(t, "nginx", found.ChartName)
 
 	// Update
 	found.ChartVersion = "1.2.3"
-	err = repo.Update(found)
+	err = repo.Update(context.Background(), found)
 	require.NoError(t, err)
-	updated, err := repo.FindByID("cc-1")
+	updated, err := repo.FindByID(context.Background(), "cc-1")
 	require.NoError(t, err)
 	assert.Equal(t, "1.2.3", updated.ChartVersion)
 
 	// Delete
-	err = repo.Delete("cc-1")
+	err = repo.Delete(context.Background(), "cc-1")
 	require.NoError(t, err)
-	_, err = repo.FindByID("cc-1")
+	_, err = repo.FindByID(context.Background(), "cc-1")
 	assert.Error(t, err)
 }
 
@@ -56,7 +57,7 @@ func TestGORMChartConfigRepository_FindByID_NotFound(t *testing.T) {
 	t.Parallel()
 
 	repo := setupChartConfigRepo(t)
-	_, err := repo.FindByID("nonexistent")
+	_, err := repo.FindByID(context.Background(), "nonexistent")
 	assert.Error(t, err)
 }
 
@@ -64,7 +65,7 @@ func TestGORMChartConfigRepository_Delete_NotFound(t *testing.T) {
 	t.Parallel()
 
 	repo := setupChartConfigRepo(t)
-	err := repo.Delete("nonexistent")
+	err := repo.Delete(context.Background(), "nonexistent")
 	assert.Error(t, err)
 }
 
@@ -72,11 +73,11 @@ func TestGORMChartConfigRepository_ListByDefinition(t *testing.T) {
 	t.Parallel()
 
 	repo := setupChartConfigRepo(t)
-	require.NoError(t, repo.Create(&models.ChartConfig{ID: "cc-l1", StackDefinitionID: "def-a", ChartName: "chart1", DeployOrder: 2}))
-	require.NoError(t, repo.Create(&models.ChartConfig{ID: "cc-l2", StackDefinitionID: "def-a", ChartName: "chart2", DeployOrder: 1}))
-	require.NoError(t, repo.Create(&models.ChartConfig{ID: "cc-l3", StackDefinitionID: "def-b", ChartName: "chart3", DeployOrder: 1}))
+	require.NoError(t, repo.Create(context.Background(), &models.ChartConfig{ID: "cc-l1", StackDefinitionID: "def-a", ChartName: "chart1", DeployOrder: 2}))
+	require.NoError(t, repo.Create(context.Background(), &models.ChartConfig{ID: "cc-l2", StackDefinitionID: "def-a", ChartName: "chart2", DeployOrder: 1}))
+	require.NoError(t, repo.Create(context.Background(), &models.ChartConfig{ID: "cc-l3", StackDefinitionID: "def-b", ChartName: "chart3", DeployOrder: 1}))
 
-	configs, err := repo.ListByDefinition("def-a")
+	configs, err := repo.ListByDefinition(context.Background(), "def-a")
 	require.NoError(t, err)
 	assert.Len(t, configs, 2)
 	// Should be ordered by deploy_order ASC.

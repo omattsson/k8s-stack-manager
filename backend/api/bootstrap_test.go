@@ -593,16 +593,24 @@ func (s *stubStackDefinitionRepo) NamesByIDs(ctx context.Context, _ []string) (m
 
 type stubChartConfigRepo struct{}
 
-func (s *stubChartConfigRepo) Create(_ *models.ChartConfig) error             { return nil }
-func (s *stubChartConfigRepo) FindByID(_ string) (*models.ChartConfig, error) { return nil, nil }
-func (s *stubChartConfigRepo) Update(_ *models.ChartConfig) error             { return nil }
-func (s *stubChartConfigRepo) Delete(_ string) error                          { return nil }
-func (s *stubChartConfigRepo) DeleteByDefinition(_ string) error              { return nil }
-func (s *stubChartConfigRepo) ListByDefinition(_ string) ([]models.ChartConfig, error) {
-	return nil, nil
+func (s *stubChartConfigRepo) Create(ctx context.Context, _ *models.ChartConfig) error {
+	return ctx.Err()
 }
-func (s *stubChartConfigRepo) CountByDefinitionIDs(_ []string) (map[string]int, error) {
-	return nil, nil
+func (s *stubChartConfigRepo) FindByID(ctx context.Context, _ string) (*models.ChartConfig, error) {
+	return nil, ctx.Err()
+}
+func (s *stubChartConfigRepo) Update(ctx context.Context, _ *models.ChartConfig) error {
+	return ctx.Err()
+}
+func (s *stubChartConfigRepo) Delete(ctx context.Context, _ string) error { return ctx.Err() }
+func (s *stubChartConfigRepo) DeleteByDefinition(ctx context.Context, _ string) error {
+	return ctx.Err()
+}
+func (s *stubChartConfigRepo) ListByDefinition(ctx context.Context, _ string) ([]models.ChartConfig, error) {
+	return nil, ctx.Err()
+}
+func (s *stubChartConfigRepo) CountByDefinitionIDs(ctx context.Context, _ []string) (map[string]int, error) {
+	return nil, ctx.Err()
 }
 
 // ---- stubDeploymentLogRepo ----
@@ -799,15 +807,21 @@ func (s *stubValueOverrideRepo) ListByInstance(_ string) ([]models.ValueOverride
 
 type stubChartBranchOverrideRepo struct{}
 
-func (s *stubChartBranchOverrideRepo) List(_ string) ([]*models.ChartBranchOverride, error) {
-	return nil, nil
+func (s *stubChartBranchOverrideRepo) List(ctx context.Context, _ string) ([]*models.ChartBranchOverride, error) {
+	return nil, ctx.Err()
 }
-func (s *stubChartBranchOverrideRepo) Get(_, _ string) (*models.ChartBranchOverride, error) {
-	return nil, nil
+func (s *stubChartBranchOverrideRepo) Get(ctx context.Context, _, _ string) (*models.ChartBranchOverride, error) {
+	return nil, ctx.Err()
 }
-func (s *stubChartBranchOverrideRepo) Set(_ *models.ChartBranchOverride) error { return nil }
-func (s *stubChartBranchOverrideRepo) Delete(_, _ string) error                { return nil }
-func (s *stubChartBranchOverrideRepo) DeleteByInstance(_ string) error         { return nil }
+func (s *stubChartBranchOverrideRepo) Set(ctx context.Context, _ *models.ChartBranchOverride) error {
+	return ctx.Err()
+}
+func (s *stubChartBranchOverrideRepo) Delete(ctx context.Context, _, _ string) error {
+	return ctx.Err()
+}
+func (s *stubChartBranchOverrideRepo) DeleteByInstance(ctx context.Context, _ string) error {
+	return ctx.Err()
+}
 
 // ---- stubAPIKeyRepo ----
 

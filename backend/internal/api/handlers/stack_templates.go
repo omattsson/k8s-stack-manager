@@ -968,7 +968,7 @@ func (h *TemplateHandler) InstantiateTemplate(c *gin.Context) {
 		if err := repos.StackDefinition.Create(wctx, def); err != nil {
 			return err
 		}
-		ccs, copyErr := copyTemplateChartsToDefinitionTx(releaseCharts, def.ID, now, repos)
+		ccs, copyErr := copyTemplateChartsToDefinitionTx(wctx, releaseCharts, def.ID, now, repos)
 		if copyErr != nil {
 			return copyErr
 		}
@@ -989,7 +989,7 @@ func (h *TemplateHandler) InstantiateTemplate(c *gin.Context) {
 
 // copyTemplateChartsToDefinitionTx creates definition chart configs from the
 // given (released) template charts within a transaction.
-func copyTemplateChartsToDefinitionTx(templateCharts []models.TemplateChartConfig, defID string, now time.Time, repos database.TxRepos) ([]models.ChartConfig, error) {
+func copyTemplateChartsToDefinitionTx(ctx context.Context, templateCharts []models.TemplateChartConfig, defID string, now time.Time, repos database.TxRepos) ([]models.ChartConfig, error) {
 	chartConfigs := make([]models.ChartConfig, 0, len(templateCharts))
 	for _, tc := range templateCharts {
 		cc := models.ChartConfig{
@@ -1005,7 +1005,7 @@ func copyTemplateChartsToDefinitionTx(templateCharts []models.TemplateChartConfi
 			DeployOrder:       tc.DeployOrder,
 			CreatedAt:         now,
 		}
-		if err := repos.ChartConfig.Create(&cc); err != nil {
+		if err := repos.ChartConfig.Create(ctx, &cc); err != nil {
 			return nil, err
 		}
 		chartConfigs = append(chartConfigs, cc)

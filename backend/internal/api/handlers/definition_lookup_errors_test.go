@@ -373,7 +373,7 @@ func TestDeleteChartConfig_DefinitionReadLogs(t *testing.T) {
 			seedDefinition(t, defRepo, "d1", "def-1", "uid-1")
 			defRepo.SetFetchError(tt.fetchErr)
 			chartRepo := NewMockChartConfigRepository()
-			require.NoError(t, chartRepo.Create(&models.ChartConfig{ID: "c1", StackDefinitionID: "d1", ChartName: "web", RepositoryURL: "oci://charts/web"}))
+			require.NoError(t, chartRepo.Create(context.Background(), &models.ChartConfig{ID: "c1", StackDefinitionID: "d1", ChartName: "web", RepositoryURL: "oci://charts/web"}))
 			h := NewDefinitionHandler(defRepo, chartRepo, NewMockStackInstanceRepository(), NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository())
 			r := gin.New()
 			r.Use(injectAuthContext("uid-1", "devops"))
@@ -384,7 +384,7 @@ func TestDeleteChartConfig_DefinitionReadLogs(t *testing.T) {
 			r.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, "/api/v1/stack-definitions/d1/charts/c1", nil).WithContext(tt.ctx()))
 
 			assert.Equal(t, tt.wantStatus, w.Code, w.Body.String())
-			_, err := chartRepo.FindByID("c1")
+			_, err := chartRepo.FindByID(context.Background(), "c1")
 			assert.NoError(t, err, "the chart stays")
 			out := logs()
 			if tt.wantErrorLog {

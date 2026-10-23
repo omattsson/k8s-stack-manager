@@ -96,12 +96,12 @@ func newSVFixture(t *testing.T, clusterID string) *svFixture {
 	inst.ClusterID = clusterID
 	require.NoError(t, f.instRepo.Update(context.Background(), inst))
 	seedDefinition(t, f.defRepo, "d1", "My Def", "uid-1")
-	require.NoError(t, f.ccRepo.Create(&models.ChartConfig{
+	require.NoError(t, f.ccRepo.Create(context.Background(), &models.ChartConfig{
 		ID: "c1", StackDefinitionID: "d1", ChartName: "app", DeployOrder: 1,
 		RepositoryURL: "oci://example.com/charts/app",
 		DefaultValues: "fromDefault: app\ndefaultBeatsShared: default\n",
 	}))
-	require.NoError(t, f.ccRepo.Create(&models.ChartConfig{
+	require.NoError(t, f.ccRepo.Create(context.Background(), &models.ChartConfig{
 		ID: "c2", StackDefinitionID: "d1", ChartName: "worker", DeployOrder: 2,
 		RepositoryURL: "oci://example.com/charts/worker",
 	}))
@@ -406,7 +406,7 @@ func TestExportAndCompare_IncludeSharedValues(t *testing.T) {
 			f := newSVFixture(t, "cl-1")
 			f.addShared(t, "sv-1", "cl-1", 0, "sharedValuesOnly: shared\nsharedValuesTest: from-shared\n")
 			seedValueOverride(t, f.ovRepo, "ov-1", "inst-1", "c1", "sharedValuesTest: from-instance\n")
-			require.NoError(t, f.ccRepo.Create(&models.ChartConfig{ID: "c-foreign", StackDefinitionID: "d-other", ChartName: "foreign"}))
+			require.NoError(t, f.ccRepo.Create(context.Background(), &models.ChartConfig{ID: "c-foreign", StackDefinitionID: "d-other", ChartName: "foreign"}))
 			h := f.handler(t, f.svRepo, nil, nil)
 
 			r := svRouter(http.MethodGet, tt.route, tt.get(h))

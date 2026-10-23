@@ -85,7 +85,7 @@ func (b *valuesBuilder) layers(ctx context.Context, inst *models.StackInstance, 
 
 	branchMap := make(map[string]string)
 	if b.branchOverrideRepo != nil {
-		branchOverrides, err := b.branchOverrideRepo.List(inst.ID)
+		branchOverrides, err := b.branchOverrideRepo.List(ctx, inst.ID)
 		if err != nil {
 			return nil, helm.TemplateVars{}, nil, fmt.Errorf("list branch overrides: %w", err)
 		}

@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // ChartBranchOverride holds a per-chart branch override for a stack instance.
 // When set, the chart uses this branch instead of the instance-level Branch.
@@ -14,9 +17,9 @@ type ChartBranchOverride struct {
 
 // ChartBranchOverrideRepository defines data access operations for per-chart branch overrides.
 type ChartBranchOverrideRepository interface {
-	List(instanceID string) ([]*ChartBranchOverride, error)
-	Get(instanceID, chartConfigID string) (*ChartBranchOverride, error)
-	Set(override *ChartBranchOverride) error
-	Delete(instanceID, chartConfigID string) error
-	DeleteByInstance(instanceID string) error
+	List(ctx context.Context, instanceID string) ([]*ChartBranchOverride, error)
+	Get(ctx context.Context, instanceID, chartConfigID string) (*ChartBranchOverride, error)
+	Set(ctx context.Context, override *ChartBranchOverride) error
+	Delete(ctx context.Context, instanceID, chartConfigID string) error
+	DeleteByInstance(ctx context.Context, instanceID string) error
 }

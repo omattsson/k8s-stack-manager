@@ -453,7 +453,7 @@ func TestCheckUpgrade(t *testing.T) {
 					ID: "d1", Name: "My Def", OwnerID: "u1",
 					SourceTemplateID: "t1", SourceTemplateVersion: "1.0",
 				})
-				ccRepo.Create(&models.ChartConfig{ID: "cc1", StackDefinitionID: "d1", ChartName: "frontend", DefaultValues: "port: 80"})
+				ccRepo.Create(context.Background(), &models.ChartConfig{ID: "cc1", StackDefinitionID: "d1", ChartName: "frontend", DefaultValues: "port: 80"})
 				snap := makeSnapshotJSON(t, models.TemplateSnapshotData{Name: "T", Version: "2.0"}, []models.TemplateChartSnapshotData{
 					{ChartName: "frontend", DefaultValues: "port: 8080"},
 					{ChartName: "new-service"},
@@ -544,12 +544,12 @@ func TestApplyUpgrade(t *testing.T) {
 					ID: "d1", Name: "My Def", OwnerID: "u1",
 					SourceTemplateID: "t1", SourceTemplateVersion: "1.0",
 				})
-				ccRepo.Create(&models.ChartConfig{
+				ccRepo.Create(context.Background(), &models.ChartConfig{
 					ID: "cc1", StackDefinitionID: "d1", ChartName: "frontend",
 					RepositoryURL: "https://old.example.com", DefaultValues: "port: 80",
 				})
 				// User-added chart not in template should be preserved.
-				ccRepo.Create(&models.ChartConfig{
+				ccRepo.Create(context.Background(), &models.ChartConfig{
 					ID: "cc2", StackDefinitionID: "d1", ChartName: "user-custom",
 					DefaultValues: "custom: true",
 				})

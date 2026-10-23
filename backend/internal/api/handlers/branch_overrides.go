@@ -76,7 +76,7 @@ func (h *BranchOverrideHandler) ListBranchOverrides(c *gin.Context) {
 		return
 	}
 
-	overrides, err := h.overrideRepo.List(instanceID)
+	overrides, err := h.overrideRepo.List(c.Request.Context(), instanceID)
 	if err != nil {
 		status, message := mapError(err, "Branch overrides")
 		if status == http.StatusInternalServerError {
@@ -123,7 +123,7 @@ func (h *BranchOverrideHandler) GetBranchOverride(c *gin.Context) {
 		return
 	}
 
-	override, err := h.overrideRepo.Get(instanceID, chartID)
+	override, err := h.overrideRepo.Get(c.Request.Context(), instanceID, chartID)
 	if err == nil && override == nil {
 		err = dberrors.NewDatabaseError("get", dberrors.ErrNotFound)
 	}
@@ -208,9 +208,12 @@ func (h *BranchOverrideHandler) SetBranchOverride(c *gin.Context) {
 	}
 
 	// Check if one already exists to preserve the ID.
-	existing, err := h.overrideRepo.Get(instanceID, chartID)
+	existing, err := h.overrideRepo.Get(c.Request.Context(), instanceID, chartID)
 	if err != nil {
 		if !errors.Is(err, dberrors.ErrNotFound) {
+			if respondCancelled(c, err) {
+				return
+			}
 			slog.Error("failed to check existing branch override", logKeyBOInstanceID, instanceID, logKeyBOChartID, chartID, "error", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 			return
@@ -220,7 +223,8 @@ func (h *BranchOverrideHandler) SetBranchOverride(c *gin.Context) {
 		override.ID = existing.ID
 	}
 
-	if err := h.overrideRepo.Set(override); err != nil {
+	// The audit entry follows the commit: a client that leaves must not cancel the write (#656).
+	if err := h.overrideRepo.Set(writeCtx(c), override); err != nil {
 		status, message := mapError(err, entityBranchOverride)
 		if status == http.StatusInternalServerError {
 			slog.Error("failed to set branch override", logKeyBOInstanceID, instanceID, logKeyBOChartID, chartID, "error", err)
@@ -265,7 +269,7 @@ func (h *BranchOverrideHandler) DeleteBranchOverride(c *gin.Context) {
 		return
 	}
 
-	if err := h.overrideRepo.Delete(instanceID, chartID); err != nil {
+	if err := h.overrideRepo.Delete(writeCtx(c), instanceID, chartID); err != nil {
 		if isNotFoundError(err) {
 			// No override: tell an unknown chart apart from a missing override.
 			if _, ok := requireInstanceChart(c, h.chartConfigRepo, inst, chartID); !ok {

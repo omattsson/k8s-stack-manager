@@ -158,9 +158,9 @@ func (h *InstanceHandler) instanceValuesDrift(ctx context.Context, inst *models.
 		logLookupError(ctx, "values drift: definition lookup failed", err, logKeyInstanceID, inst.ID)
 		return false
 	}
-	charts, err := h.chartConfigRepo.ListByDefinition(def.ID)
+	charts, err := h.chartConfigRepo.ListByDefinition(ctx, def.ID)
 	if err != nil {
-		slog.Warn("values drift: chart lookup failed", logKeyInstanceID, inst.ID, "error", err)
+		logLookupError(ctx, "values drift: chart lookup failed", err, logKeyInstanceID, inst.ID)
 		return false
 	}
 	pending, err := h.buildChartValues(ctx, inst, def, charts)

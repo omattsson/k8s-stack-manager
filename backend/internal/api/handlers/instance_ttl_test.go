@@ -193,7 +193,7 @@ func newTTLTestEnv(t *testing.T, defaultTTL int) *ttlTestEnv {
 	overrideRepo := NewMockValueOverrideRepository()
 	boRepo := NewMockChartBranchOverrideRepository()
 	seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
-	require.NoError(t, ccRepo.Create(&models.ChartConfig{
+	require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{
 		ID: "c1", StackDefinitionID: "d1", ChartName: "nginx", RepositoryURL: "oci://example.com/charts/nginx", DeployOrder: 1,
 	}))
 

@@ -256,6 +256,8 @@ func (r ctxQuotaOverrideRepo) Delete(ctx context.Context, instanceID string) err
 type writeCtxFixture struct {
 	inst      *hookInstanceRepo
 	def       *hookDefinitionRepo
+	charts    *hookChartConfigRepo
+	branches  *hookBranchOverrideRepo
 	logs      *MockDeploymentLogRepository
 	ov        *MockValueOverrideRepository
 	followers *MockInstanceFollowerRepository
@@ -280,10 +282,11 @@ func newWriteCtxFixture(t *testing.T) *writeCtxFixture {
 	}
 	f.def = &hookDefinitionRepo{MockStackDefinitionRepository: NewMockStackDefinitionRepository(), hooks: f.inst}
 	def := f.def
-	cc := NewMockChartConfigRepository()
-	bo := NewMockChartBranchOverrideRepository()
+	f.charts = newHookChartConfigRepo(f.inst)
+	f.branches = newHookBranchOverrideRepo(f.inst)
+	cc, bo := f.charts, f.branches
 	seedDefinition(t, def.MockStackDefinitionRepository, "d1", "def-1", "uid-1")
-	require.NoError(t, cc.Create(&models.ChartConfig{ID: "cc1", StackDefinitionID: "d1", ChartName: "web", DefaultValues: "replicas: 1\n"}))
+	require.NoError(t, cc.Create(context.Background(), &models.ChartConfig{ID: "cc1", StackDefinitionID: "d1", ChartName: "web", DefaultValues: "replicas: 1\n"}))
 	expires := time.Now().UTC().Add(30 * time.Minute)
 	for _, s := range []struct {
 		expiresAt *time.Time
@@ -420,21 +423,21 @@ func TestInstanceWrites_CancelledAfterReadsStillCommit(t *testing.T) {
 		},
 		{
 			name: "stop", method: http.MethodPost, path: "/api/v1/stack-instances/run-1/stop",
-			cancelAt: "after:Definition.FindByID", wantStatus: http.StatusAccepted,
+			cancelAt: "after:Chart.ListByDefinition", wantStatus: http.StatusAccepted,
 			check: func(t *testing.T, f *writeCtxFixture, _ *httptest.ResponseRecorder) {
 				assert.Equal(t, []string{models.DeployActionStop}, f.logActions(t, "run-1"))
 			},
 		},
 		{
 			name: "clean", method: http.MethodPost, path: "/api/v1/stack-instances/stopped-1/clean",
-			cancelAt: "after:Definition.FindByID", wantStatus: http.StatusAccepted,
+			cancelAt: "after:Chart.ListByDefinition", wantStatus: http.StatusAccepted,
 			check: func(t *testing.T, f *writeCtxFixture, _ *httptest.ResponseRecorder) {
 				assert.Equal(t, []string{models.DeployActionClean}, f.logActions(t, "stopped-1"))
 			},
 		},
 		{
 			name: "rollback", method: http.MethodPost, path: "/api/v1/stack-instances/run-1/rollback",
-			cancelAt: "after:Definition.FindByID", wantStatus: http.StatusAccepted,
+			cancelAt: "after:Chart.ListByDefinition", wantStatus: http.StatusAccepted,
 			check: func(t *testing.T, f *writeCtxFixture, _ *httptest.ResponseRecorder) {
 				assert.Equal(t, []string{models.DeployActionRollback}, f.logActions(t, "run-1"))
 			},
@@ -490,7 +493,7 @@ func TestInstanceWrites_CancelledAfterReadsStillCommit(t *testing.T) {
 		},
 		{
 			name: "bulk clean", method: http.MethodPost, path: "/api/v1/stack-instances/bulk/clean",
-			body: `{"instance_ids":["stopped-1"]}`, cancelAt: "after:Definition.FindByID", wantStatus: http.StatusOK,
+			body: `{"instance_ids":["stopped-1"]}`, cancelAt: "after:Chart.ListByDefinition", wantStatus: http.StatusOK,
 			check: func(t *testing.T, f *writeCtxFixture, w *httptest.ResponseRecorder) {
 				results := bulkResults(t, w)
 				require.Len(t, results, 1)
@@ -500,7 +503,7 @@ func TestInstanceWrites_CancelledAfterReadsStillCommit(t *testing.T) {
 		},
 		{
 			name: "bulk stop", method: http.MethodPost, path: "/api/v1/stack-instances/bulk/stop",
-			body: `{"instance_ids":["run-1"]}`, cancelAt: "after:Definition.FindByID", wantStatus: http.StatusOK,
+			body: `{"instance_ids":["run-1"]}`, cancelAt: "after:Chart.ListByDefinition", wantStatus: http.StatusOK,
 			check: func(t *testing.T, f *writeCtxFixture, w *httptest.ResponseRecorder) {
 				results := bulkResults(t, w)
 				require.Len(t, results, 1)
@@ -836,7 +839,7 @@ func valuesCancelRouterFor(t *testing.T, instRepo *MockStackInstanceRepository) 
 	defRepo := NewMockStackDefinitionRepository()
 	ccRepo := NewMockChartConfigRepository()
 	seedDefinition(t, defRepo, "d1", "def-1", "uid-1")
-	require.NoError(t, ccRepo.Create(&models.ChartConfig{ID: "cc1", StackDefinitionID: "d1", ChartName: "web"}))
+	require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{ID: "cc1", StackDefinitionID: "d1", ChartName: "web"}))
 	h := NewInstanceHandler(instRepo, NewMockValueOverrideRepository(), NewMockChartBranchOverrideRepository(),
 		defRepo, ccRepo, NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
 		helm.NewValuesGenerator(), NewMockUserRepository(), 0)

@@ -34,7 +34,7 @@ func newTemplateLinkEnv(t *testing.T) *draftReleaseEnv {
 	require.NoError(t, e.defs.Create(context.Background(), &models.StackDefinition{
 		ID: "d1", Name: "Imported", OwnerID: "uid-owner", DefaultBranch: "master", CreatedAt: now, UpdatedAt: now,
 	}))
-	require.NoError(t, e.defCharts.Create(&models.ChartConfig{
+	require.NoError(t, e.defCharts.Create(context.Background(), &models.ChartConfig{
 		ID: "c1", StackDefinitionID: "d1", ChartName: "web", RepositoryURL: "oci://charts/web",
 		ChartVersion: "0.9.0", DefaultValues: "replicas: 3", DeployOrder: 1, CreatedAt: now,
 	}))
@@ -101,7 +101,7 @@ func TestSetTemplateLink(t *testing.T) {
 				def.SourceTemplateID, def.SourceTemplateVersion = "t1", "1.0.0"
 				require.NoError(t, e.defs.Update(context.Background(), def))
 			}
-			chartsBefore, err := e.defCharts.ListByDefinition("d1")
+			chartsBefore, err := e.defCharts.ListByDefinition(context.Background(), "d1")
 			require.NoError(t, err)
 
 			w := serve(templateLinkRouter(e, tt.userID, tt.role), http.MethodPut,
@@ -127,7 +127,7 @@ func TestSetTemplateLink(t *testing.T) {
 			assert.Equal(t, tt.wantVersion, stored.SourceTemplateVersion)
 
 			// The link never changes the charts or the values.
-			chartsAfter, err := e.defCharts.ListByDefinition("d1")
+			chartsAfter, err := e.defCharts.ListByDefinition(context.Background(), "d1")
 			require.NoError(t, err)
 			assert.Equal(t, chartsBefore, chartsAfter)
 

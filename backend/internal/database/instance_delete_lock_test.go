@@ -99,7 +99,7 @@ func TestDeleteInstanceWithOwnedDefinition_LocksOnlyOwnedDefinitions(t *testing.
 			instRepo := NewGORMStackInstanceRepository(db)
 			if tt.owner != "-" {
 				require.NoError(t, defRepo.Create(context.Background(), &models.StackDefinition{ID: "d1", Name: "qd", OwnerID: "u1", OwnerInstanceID: tt.owner}))
-				require.NoError(t, ccRepo.Create(&models.ChartConfig{ID: "c1", StackDefinitionID: "d1", ChartName: "web"}))
+				require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{ID: "c1", StackDefinitionID: "d1", ChartName: "web"}))
 			}
 			inst := &models.StackInstance{ID: "i1", StackDefinitionID: "d1", Name: "qd", Namespace: "stack-qd-u1", OwnerID: "u1", Status: models.StackStatusDraft}
 			require.NoError(t, instRepo.Create(context.Background(), inst))
@@ -115,7 +115,7 @@ func TestDeleteInstanceWithOwnedDefinition_LocksOnlyOwnedDefinitions(t *testing.
 			}
 			_, err = defRepo.FindByID(context.Background(), "d1")
 			assert.Equal(t, tt.wantDefKept, err == nil)
-			charts, err := ccRepo.ListByDefinition("d1")
+			charts, err := ccRepo.ListByDefinition(context.Background(), "d1")
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantDefKept, len(charts) == 1)
 		})

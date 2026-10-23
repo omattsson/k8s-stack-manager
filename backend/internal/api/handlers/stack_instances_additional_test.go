@@ -105,7 +105,7 @@ func setupInstanceRouterFull(
 // seedChartConfigForTest is a helper to create chart configs for tests in this file.
 func seedChartConfigForTest(t *testing.T, repo *MockChartConfigRepository, id, defID, chartName string) {
 	t.Helper()
-	require.NoError(t, repo.Create(&models.ChartConfig{
+	require.NoError(t, repo.Create(context.Background(), &models.ChartConfig{
 		ID:                id,
 		StackDefinitionID: defID,
 		ChartName:         chartName,
@@ -485,14 +485,14 @@ func TestExportChartValues_Additional(t *testing.T) {
 		seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
 		seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusDraft)
 
-		require.NoError(t, ccRepo.Create(&models.ChartConfig{
+		require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{
 			ID:                "c1",
 			StackDefinitionID: "d1",
 			ChartName:         "backend",
 			DefaultValues:     "branch: \"{{.Branch}}\"",
 		}))
 
-		require.NoError(t, branchRepo.Set(&models.ChartBranchOverride{
+		require.NoError(t, branchRepo.Set(context.Background(), &models.ChartBranchOverride{
 			StackInstanceID: "i1",
 			ChartConfigID:   "c1",
 			Branch:          "feature/test",
@@ -1086,7 +1086,7 @@ func TestDeployInstance_Additional(t *testing.T) {
 		seedChartConfigForTest(t, ccRepo, "cc1", "d1", "backend")
 		seedInstance(t, instRepo, "i-bo", "branch-stack", "d1", "uid-1", models.StackStatusDraft)
 
-		require.NoError(t, branchRepo.Set(&models.ChartBranchOverride{
+		require.NoError(t, branchRepo.Set(context.Background(), &models.ChartBranchOverride{
 			StackInstanceID: "i-bo",
 			ChartConfigID:   "cc1",
 			Branch:          "feature/branch-deploy",

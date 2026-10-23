@@ -19,13 +19,22 @@ import (
 // noopBranchOverrideRepo satisfies ChartBranchOverrideRepository with no-ops.
 type noopBranchOverrideRepo struct{}
 
-func (noopBranchOverrideRepo) List(string) ([]*models.ChartBranchOverride, error) { return nil, nil }
-func (noopBranchOverrideRepo) Get(string, string) (*models.ChartBranchOverride, error) {
+func (noopBranchOverrideRepo) List(ctx context.Context, _ string) ([]*models.ChartBranchOverride, error) {
+	return nil, ctx.Err()
+}
+func (noopBranchOverrideRepo) Get(ctx context.Context, _, _ string) (*models.ChartBranchOverride, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return nil, fmt.Errorf("not found")
 }
-func (noopBranchOverrideRepo) Set(*models.ChartBranchOverride) error { return nil }
-func (noopBranchOverrideRepo) Delete(string, string) error           { return nil }
-func (noopBranchOverrideRepo) DeleteByInstance(string) error         { return nil }
+func (noopBranchOverrideRepo) Set(ctx context.Context, _ *models.ChartBranchOverride) error {
+	return ctx.Err()
+}
+func (noopBranchOverrideRepo) Delete(ctx context.Context, _, _ string) error { return ctx.Err() }
+func (noopBranchOverrideRepo) DeleteByInstance(ctx context.Context, _ string) error {
+	return ctx.Err()
+}
 
 // txRunnerWithBranchOverride extends mockTxRunner to include a BranchOverride repo,
 // needed for tests that exercise the delete-after-clean path.

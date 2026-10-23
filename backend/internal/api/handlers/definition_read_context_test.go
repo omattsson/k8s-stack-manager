@@ -57,7 +57,7 @@ func TestInstanceReads_CancelledAtDefinitionRead(t *testing.T) {
 		wantRead int
 	}{
 		{name: "export all values", path: "/api/v1/stack-instances/i1/values", cancelAt: "after:FindByID", n: 1, wantRead: 1},
-		{name: "export chart values", path: "/api/v1/stack-instances/i1/values/cc1", cancelAt: "after:FindByID", n: 1, wantRead: 1},
+		{name: "export chart values", path: "/api/v1/stack-instances/i1/values/cc1", cancelAt: "after:Chart.FindByID", n: 1, wantRead: 1},
 		{name: "deploy preview", path: "/api/v1/stack-instances/i1/deploy-preview", cancelAt: "after:FindByID", n: 1, wantRead: 1},
 		{name: "compare, left definition", path: "/api/v1/stack-instances/compare?left=i1&right=i2", cancelAt: "after:FindByID", n: 2, wantRead: 1},
 		{name: "compare, right definition", path: "/api/v1/stack-instances/compare?left=i1&right=i2", cancelAt: "after:Definition.FindByID", n: 1, wantRead: 2},
@@ -70,8 +70,8 @@ func TestInstanceReads_CancelledAtDefinitionRead(t *testing.T) {
 			inst := newHookInstanceRepo()
 			def := &hookDefinitionRepo{MockStackDefinitionRepository: NewMockStackDefinitionRepository(), hooks: inst}
 			seedDefinition(t, def.MockStackDefinitionRepository, "d1", "def-1", "uid-1")
-			cc := NewMockChartConfigRepository()
-			require.NoError(t, cc.Create(&models.ChartConfig{ID: "cc1", StackDefinitionID: "d1", ChartName: "web"}))
+			cc := newHookChartConfigRepo(inst)
+			require.NoError(t, cc.Create(context.Background(), &models.ChartConfig{ID: "cc1", StackDefinitionID: "d1", ChartName: "web"}))
 			seedInstance(t, inst.MockStackInstanceRepository, "i1", "one", "d1", "uid-1", models.StackStatusRunning)
 			seedInstance(t, inst.MockStackInstanceRepository, "i2", "two", "d1", "uid-1", models.StackStatusRunning)
 			h := NewInstanceHandler(inst, NewMockValueOverrideRepository(), NewMockChartBranchOverrideRepository(),
@@ -214,7 +214,7 @@ func TestChartConfigWrites_DefinitionReadStopsTheWrite(t *testing.T) {
 			defRepo := NewMockStackDefinitionRepository()
 			seedDefinition(t, defRepo, "d1", "def-1", "uid-1")
 			chartRepo := NewMockChartConfigRepository()
-			require.NoError(t, chartRepo.Create(&models.ChartConfig{ID: "c1", StackDefinitionID: "d1", ChartName: "web", RepositoryURL: "oci://charts/web", DefaultValues: "replicas: 1"}))
+			require.NoError(t, chartRepo.Create(context.Background(), &models.ChartConfig{ID: "c1", StackDefinitionID: "d1", ChartName: "web", RepositoryURL: "oci://charts/web", DefaultValues: "replicas: 1"}))
 			if tt.fetchErr != nil {
 				defRepo.SetFetchError(tt.fetchErr)
 			}
@@ -230,7 +230,7 @@ func TestChartConfigWrites_DefinitionReadStopsTheWrite(t *testing.T) {
 			r.ServeHTTP(w, req)
 
 			assert.Equal(t, tt.wantStatus, w.Code, w.Body.String())
-			charts, err := chartRepo.ListByDefinition("d1")
+			charts, err := chartRepo.ListByDefinition(context.Background(), "d1")
 			require.NoError(t, err)
 			require.Len(t, charts, 1, "no chart is added")
 			assert.Equal(t, "replicas: 1", charts[0].DefaultValues, "the chart is not changed")
@@ -245,11 +245,11 @@ type chartFindFailsAt struct {
 	n     int32
 }
 
-func (r *chartFindFailsAt) FindByID(id string) (*models.ChartConfig, error) {
+func (r *chartFindFailsAt) FindByID(ctx context.Context, id string) (*models.ChartConfig, error) {
 	if r.calls.Add(1) == r.n {
 		return nil, errors.New("db down")
 	}
-	return r.MockChartConfigRepository.FindByID(id)
+	return r.MockChartConfigRepository.FindByID(ctx, id)
 }
 
 // TestSetOverride_LockedValuesReadsFailClosed checks the reads of the locked
@@ -271,6 +271,11 @@ func TestSetOverride_LockedValuesReadsFailClosed(t *testing.T) {
 	}{
 		{
 			name: "chart read fails", chartFail: 2, wantStatus: http.StatusInternalServerError,
+		},
+		{
+			// No version repository: the chart read is the last ctx-aware read.
+			name: "chart read cancelled", cancelAt: "after:Definition.FindByID",
+			wantStatus: statusClientClosedRequest,
 		},
 		{
 			name: "template chart read fails", wantStatus: http.StatusInternalServerError,
