@@ -2719,7 +2719,9 @@ export const notificationService = {
    * @param unreadOnly - If `true`, only return unread notifications
    * @param limit - Maximum number of notifications to return
    * @param offset - Number of notifications to skip (for pagination)
-   * @returns Paginated notification response with unread count
+   * @returns Paginated notification response: `notifications`, `total`, `total_capped`
+   *   (true when more than `total` notifications exist, so `total` is a lower bound;
+   *   missing on older backends, which means false) and the exact `unread_count`
    * @see GET /api/v1/notifications
    */
   list: async (unreadOnly?: boolean, limit?: number, offset?: number): Promise<NotificationListResponse> => {

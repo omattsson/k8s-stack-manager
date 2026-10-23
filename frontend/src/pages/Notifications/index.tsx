@@ -31,6 +31,8 @@ const Notifications = () => {
 
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [total, setTotal] = useState(0);
+  // True when the backend stopped counting: more than `total` notifications exist.
+  const [totalCapped, setTotalCapped] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -49,6 +51,7 @@ const Notifications = () => {
       );
       setNotifications(data.notifications || []);
       setTotal(data.total);
+      setTotalCapped(data.total_capped === true);
       setUnreadCount(data.unread_count);
     } catch {
       setError('Failed to load notifications');
@@ -162,6 +165,9 @@ const Notifications = () => {
             setPage(0);
           }}
           rowsPerPageOptions={PAGE_SIZE_OPTIONS}
+          labelDisplayedRows={({ from, to, count }) =>
+            `${from}–${to} of ${totalCapped ? `${count}+` : count}`
+          }
         />
       </Paper>
     );

@@ -269,6 +269,72 @@ describe('Notifications Page', () => {
     });
   });
 
+  describe('capped total (#654)', () => {
+    const listMock = () => notificationService.list as ReturnType<typeof vi.fn>;
+
+    it('shows "of 1000+" for a capped count and pages forward', async () => {
+      listMock().mockImplementation(
+        async (_unread: boolean, _limit: number, offset: number) => ({
+          notifications: mockNotifications,
+          total: offset + 1000,
+          total_capped: true,
+          unread_count: 7,
+        }),
+      );
+      const user = userEvent.setup();
+      render(
+        <MemoryRouter>
+          <Notifications />
+        </MemoryRouter>,
+      );
+
+      expect(await screen.findByText('1–25 of 1000+')).toBeInTheDocument();
+      const next = screen.getByRole('button', { name: /next page/i });
+      expect(next).toBeEnabled();
+
+      await user.click(next);
+
+      await waitFor(() => {
+        expect(notificationService.list).toHaveBeenLastCalledWith(false, 25, 25);
+      });
+      expect(await screen.findByText('26–50 of 1025+')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /next page/i })).toBeEnabled();
+    });
+
+    it('shows the exact count when the total is not capped', async () => {
+      listMock().mockResolvedValue({
+        notifications: mockNotifications,
+        total: 30,
+        total_capped: false,
+        unread_count: 1,
+      });
+      render(
+        <MemoryRouter>
+          <Notifications />
+        </MemoryRouter>,
+      );
+
+      expect(await screen.findByText('1–25 of 30')).toBeInTheDocument();
+      expect(screen.queryByText(/of 30\+/)).not.toBeInTheDocument();
+    });
+
+    it('treats a response without total_capped as not capped', async () => {
+      listMock().mockResolvedValue({
+        notifications: mockNotifications,
+        total: 1000,
+        unread_count: 1,
+      });
+      render(
+        <MemoryRouter>
+          <Notifications />
+        </MemoryRouter>,
+      );
+
+      expect(await screen.findByText('1–25 of 1000')).toBeInTheDocument();
+      expect(screen.queryByText(/of 1000\+/)).not.toBeInTheDocument();
+    });
+  });
+
   it('shows who did the action under each notification (#652)', async () => {
     (notificationService.list as ReturnType<typeof vi.fn>).mockResolvedValue({
       notifications: triggerNotifications,

@@ -2317,6 +2317,17 @@ describe('notificationService', () => {
     expect(result).toEqual(data);
   });
 
+  it('list returns total_capped of a capped count (#654)', async () => {
+    const api = mockApi;
+    const data = { notifications: [], total: 1000, total_capped: true, unread_count: 7 };
+    api.get.mockResolvedValueOnce(mockResponse(data));
+
+    const result = await notificationService.list(false, 25, 0);
+    expect(result.total).toBe(1000);
+    expect(result.total_capped).toBe(true);
+    expect(result.unread_count).toBe(7);
+  });
+
   it('list sends GET without optional params', async () => {
     const api = mockApi;
     const data = { notifications: [], total: 0, unread_count: 0 };

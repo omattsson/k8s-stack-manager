@@ -713,7 +713,13 @@ export interface NotificationPreference {
 
 export interface NotificationListResponse {
   notifications: Notification[];
+  /** Number of matching notifications. Exact unless `total_capped` is true. */
   total: number;
+  /**
+   * True when more than `total` notifications exist: the backend stops counting
+   * at `offset + 1000`. Older backends omit it; treat a missing value as false.
+   */
+  total_capped?: boolean;
   unread_count: number;
 }
 
