@@ -37,11 +37,13 @@ type Trigger struct {
 	TriggerName string `json:"name,omitempty" gorm:"size:255;default:null"`
 }
 
-// NotificationTotalCap is the number of notifications after the requested
-// offset that the notification list counts at most (#654). The list counts
-// at most offset + NotificationTotalCap + 1 rows, not every notification of
-// the user. A larger total gives offset + NotificationTotalCap and
-// PaginatedNotifications.TotalCapped.
+// NotificationTotalCap is the count cap of the notification counts (#654),
+// so a count never reads every notification of the user:
+//   - The list total counts at most offset + NotificationTotalCap + 1 rows.
+//     A larger total gives offset + NotificationTotalCap and
+//     PaginatedNotifications.TotalCapped.
+//   - The unread count counts at most NotificationTotalCap + 1 rows. A
+//     larger count gives NotificationTotalCap and UnreadCountCapped.
 const NotificationTotalCap = 1000
 
 // PaginatedNotifications wraps a page of notification results with metadata.
@@ -51,12 +53,28 @@ type PaginatedNotifications struct {
 	// total_capped is true; then it is offset + 1000, and at least
 	// total + 1 notifications match.
 	Total int64 `json:"total"`
-	// UnreadCount is the exact number of unread notifications of the user.
+	// UnreadCount is the number of unread notifications of the user. It is
+	// exact unless unread_count_capped is true; then it is 1000, and the
+	// user has at least 1001 unread notifications.
 	UnreadCount int64 `json:"unread_count"`
 	// TotalCapped (total_capped) is true when more than offset + 1000
 	// notifications match. total is then offset + 1000, a lower bound: at
 	// least total + 1 notifications exist.
 	TotalCapped bool `json:"total_capped"`
+	// UnreadCountCapped (unread_count_capped) is true when the user has more
+	// than 1000 unread notifications. unread_count is then 1000.
+	UnreadCountCapped bool `json:"unread_count_capped"`
+}
+
+// UnreadNotificationCount is the response of GET /notifications/count.
+type UnreadNotificationCount struct {
+	// UnreadCount is the number of unread notifications of the user. It is
+	// exact unless unread_count_capped is true; then it is 1000, and the
+	// user has at least 1001 unread notifications.
+	UnreadCount int64 `json:"unread_count"`
+	// UnreadCountCapped (unread_count_capped) is true when the user has more
+	// than 1000 unread notifications.
+	UnreadCountCapped bool `json:"unread_count_capped"`
 }
 
 // NotificationRepository defines data access operations for notifications.
@@ -67,7 +85,10 @@ type NotificationRepository interface {
 	// offset + NotificationTotalCap rows: when more rows match, total is
 	// offset + NotificationTotalCap and capped is true.
 	ListByUser(ctx context.Context, userID string, unreadOnly bool, limit, offset int) (page []Notification, total int64, capped bool, err error)
-	CountUnread(ctx context.Context, userID string) (int64, error)
+	// CountUnread returns the number of unread notifications of the user,
+	// at most NotificationTotalCap: when more are unread, count is
+	// NotificationTotalCap and capped is true.
+	CountUnread(ctx context.Context, userID string) (count int64, capped bool, err error)
 	MarkAsRead(ctx context.Context, id string, userID string) error
 	MarkAllAsRead(ctx context.Context, userID string) error
 	GetPreferences(ctx context.Context, userID string) ([]NotificationPreference, error)

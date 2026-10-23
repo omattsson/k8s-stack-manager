@@ -107,3 +107,53 @@ func TestGORMNotificationRepository_ListByUser_CountError(t *testing.T) {
 	assert.Zero(t, total)
 	assert.False(t, capped)
 }
+
+// TestGORMNotificationRepository_CountUnread_Cap checks the capped unread
+// count (#654): exact up to the cap, then the cap with capped = true. The
+// cap is lowered to 5.
+func TestGORMNotificationRepository_CountUnread_Cap(t *testing.T) {
+	t.Parallel()
+
+	const testCap = 5
+	tests := []struct {
+		name       string
+		unread     int
+		read       int
+		want       int64
+		wantCapped bool
+	}{
+		{name: "no rows", want: 0},
+		{name: "below the cap is exact", unread: 3, read: 10, want: 3},
+		{name: "exactly at the cap is exact", unread: 5, read: 1, want: 5},
+		{name: "one above the cap is capped", unread: 6, want: 5, wantCapped: true},
+		{name: "far above the cap is capped", unread: 20, read: 20, want: 5, wantCapped: true},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			repo := setupNotificationRepo(t)
+			repo.totalCap = testCap
+			ctx := context.Background()
+
+			for i := 0; i < tt.unread+tt.read; i++ {
+				require.NoError(t, repo.Create(ctx, &models.Notification{
+					ID: fmt.Sprintf("n-%d", i), UserID: "u-cap", Type: "deployment.success", Title: "t",
+					IsRead: i >= tt.unread,
+				}))
+			}
+			// Unread rows of another user never count.
+			for i := 0; i < 2*testCap; i++ {
+				require.NoError(t, repo.Create(ctx, &models.Notification{
+					ID: fmt.Sprintf("o-%d", i), UserID: "u-other", Type: "deployment.success", Title: "t",
+				}))
+			}
+
+			count, capped, err := repo.CountUnread(ctx, "u-cap")
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, count)
+			assert.Equal(t, tt.wantCapped, capped)
+		})
+	}
+}

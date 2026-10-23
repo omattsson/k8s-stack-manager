@@ -217,9 +217,10 @@ func TestGORMNotificationRepository_CountUnread(t *testing.T) {
 				require.NoError(t, repo.Create(ctx, &tt.seedNotifs[i]))
 			}
 
-			count, err := repo.CountUnread(ctx, tt.userID)
+			count, capped, err := repo.CountUnread(ctx, tt.userID)
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, count)
+			assert.False(t, capped)
 		})
 	}
 }
@@ -288,7 +289,7 @@ func TestGORMNotificationRepository_MarkAllAsRead(t *testing.T) {
 		err := repo.MarkAllAsRead(ctx, "u-mar")
 		require.NoError(t, err)
 
-		count, err := repo.CountUnread(ctx, "u-mar")
+		count, _, err := repo.CountUnread(ctx, "u-mar")
 		require.NoError(t, err)
 		assert.Equal(t, int64(0), count)
 	})

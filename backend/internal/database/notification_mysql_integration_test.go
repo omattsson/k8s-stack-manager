@@ -95,7 +95,7 @@ func TestDatabaseNotificationCreateMarkAllReadNoDeadlock(t *testing.T) {
 
 		// A final mark all read leaves no unread notification.
 		require.NoError(t, repo.MarkAllAsRead(ctx, userID))
-		unread, err := repo.CountUnread(ctx, userID)
+		unread, _, err := repo.CountUnread(ctx, userID)
 		require.NoError(t, err)
 		assert.Zero(t, unread, "round %d", round)
 	}

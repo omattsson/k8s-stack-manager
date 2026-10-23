@@ -77,15 +77,29 @@ const errorSchema = `{
 }`
 
 // notificationListSchema is the contract of GET /notifications: total,
-// unread_count and total_capped are always present (#654).
+// unread_count, total_capped and unread_count_capped are always present
+// (#654).
 const notificationListSchema = `{
 "type": "object",
-"required": ["notifications", "total", "unread_count", "total_capped"],
+"required": ["notifications", "total", "unread_count", "total_capped", "unread_count_capped"],
 "additionalProperties": false,
 "properties": {
 "notifications": {"type": ["array", "null"], "items": {"type": "object", "required": ["id", "user_id", "type", "title", "is_read", "created_at"]}},
 "total": {"type": "integer", "minimum": 0},
 "unread_count": {"type": "integer", "minimum": 0},
-"total_capped": {"type": "boolean"}
+"total_capped": {"type": "boolean"},
+"unread_count_capped": {"type": "boolean"}
+}
+}`
+
+// unreadNotificationCountSchema is the contract of GET /notifications/count
+// (#654).
+const unreadNotificationCountSchema = `{
+"type": "object",
+"required": ["unread_count", "unread_count_capped"],
+"additionalProperties": false,
+"properties": {
+"unread_count": {"type": "integer", "minimum": 0},
+"unread_count_capped": {"type": "boolean"}
 }
 }`

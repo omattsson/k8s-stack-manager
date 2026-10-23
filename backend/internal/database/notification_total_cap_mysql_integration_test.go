@@ -134,9 +134,11 @@ func TestDatabaseMySQL_NotificationTotalCap(t *testing.T) {
 			}
 		})
 	}
-	unreadCount, err := repo.CountUnread(ctx, listUser)
+	// CountUnread is capped the same way: 1500 unread rows give the cap.
+	unreadCount, unreadCapped, err := repo.CountUnread(ctx, listUser)
 	require.NoError(t, err)
-	assert.Equal(t, int64(unread), unreadCount, "CountUnread stays exact")
+	assert.Equal(t, int64(capN), unreadCount, "CountUnread is capped")
+	assert.True(t, unreadCapped)
 
 	var repoCount string
 	for _, r := range h.all() {
@@ -164,7 +166,7 @@ func TestDatabaseMySQL_NotificationTotalCap(t *testing.T) {
 		{"old count", "SELECT count(*) FROM notifications WHERE user_id = ?", []any{listUser}},
 		{"new count", notificationCountAll, []any{listUser, window}},
 		{"new count, unread only", notificationCountUnread, []any{listUser, false, window}},
-		{"CountUnread", "SELECT count(*) FROM notifications WHERE user_id = ? AND is_read = ?", []any{listUser, false}},
+		{"old CountUnread", "SELECT count(*) FROM notifications WHERE user_id = ? AND is_read = ?", []any{listUser, false}},
 	}
 	reads := map[string]int64{}
 	for _, q := range queries {
@@ -184,6 +186,7 @@ func TestDatabaseMySQL_NotificationTotalCap(t *testing.T) {
 	assert.GreaterOrEqual(t, reads["old count"], int64(unread+read), "the old count reads every row of the user")
 	assert.LessOrEqual(t, reads["new count"], window+5, "the windowed count reads about cap + 1 index rows")
 	assert.LessOrEqual(t, reads["new count, unread only"], window+5, "the windowed unread count reads about cap + 1 index rows")
-	// unread_count stays exact (#654): CountUnread reads every unread row.
-	assert.GreaterOrEqual(t, reads["CountUnread"], int64(unread), "CountUnread reads every unread row of the user")
+	// CountUnread runs the windowed unread count above; the old exact count
+	// read every unread row of the user.
+	assert.GreaterOrEqual(t, reads["old CountUnread"], int64(unread), "the old CountUnread reads every unread row of the user")
 }

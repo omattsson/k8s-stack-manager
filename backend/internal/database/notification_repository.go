@@ -18,7 +18,8 @@ var _ models.NotificationRepository = (*GORMNotificationRepository)(nil)
 // GORMNotificationRepository implements NotificationRepository using GORM.
 type GORMNotificationRepository struct {
 	db *gorm.DB
-	// totalCap is the count cap of ListByUser (models.NotificationTotalCap).
+	// totalCap is the count cap of ListByUser and CountUnread
+	// (models.NotificationTotalCap).
 	// Same-package tests lower it.
 	totalCap int
 }
@@ -112,16 +113,11 @@ func (r *GORMNotificationRepository) countWindow(ctx context.Context, userID str
 	return n, false, nil
 }
 
-// CountUnread returns the number of unread notifications for a user.
-func (r *GORMNotificationRepository) CountUnread(ctx context.Context, userID string) (int64, error) {
-	var count int64
-	if err := r.db.WithContext(ctx).
-		Model(&models.Notification{}).
-		Where("user_id = ? AND is_read = ?", userID, false).
-		Count(&count).Error; err != nil {
-		return 0, dberrors.NewDatabaseError("count_unread", err)
-	}
-	return count, nil
+// CountUnread returns the number of unread notifications of the user, at
+// most totalCap (#654): it counts at most totalCap + 1 rows, not every
+// unread row. When more are unread, count is totalCap and capped is true.
+func (r *GORMNotificationRepository) CountUnread(ctx context.Context, userID string) (int64, bool, error) {
+	return r.countWindow(ctx, userID, true, 0)
 }
 
 // MarkAsRead sets is_read=true for a specific notification owned by the user.

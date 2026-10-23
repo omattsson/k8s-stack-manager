@@ -712,9 +712,11 @@ func (s *stubNotificationRepo) Create(_ context.Context, _ *models.Notification)
 func (s *stubNotificationRepo) ListByUser(_ context.Context, _ string, _ bool, _, _ int) ([]models.Notification, int64, bool, error) {
 	return nil, 0, false, nil
 }
-func (s *stubNotificationRepo) CountUnread(_ context.Context, _ string) (int64, error) { return 0, nil }
-func (s *stubNotificationRepo) MarkAsRead(_ context.Context, _, _ string) error        { return nil }
-func (s *stubNotificationRepo) MarkAllAsRead(_ context.Context, _ string) error        { return nil }
+func (s *stubNotificationRepo) CountUnread(_ context.Context, _ string) (int64, bool, error) {
+	return 0, false, nil
+}
+func (s *stubNotificationRepo) MarkAsRead(_ context.Context, _, _ string) error { return nil }
+func (s *stubNotificationRepo) MarkAllAsRead(_ context.Context, _ string) error { return nil }
 func (s *stubNotificationRepo) GetPreferences(_ context.Context, _ string) ([]models.NotificationPreference, error) {
 	return nil, nil
 }
