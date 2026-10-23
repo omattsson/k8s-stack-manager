@@ -1,11 +1,15 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"sort"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -323,6 +327,10 @@ var templateReadCases = []struct {
 	},
 	{name: "delete chart at the chart read", method: http.MethodDelete, path: "/api/v1/templates/t1/charts/tc-web", readAt: "TemplateChart.FindByID"},
 	{name: "instantiate", method: http.MethodPost, path: "/api/v1/templates/t1/instantiate", body: `{"name":"from-template"}`, readAt: "Template.FindByID"},
+	{
+		name: "instantiate at the working copy chart read", method: http.MethodPost, path: "/api/v1/templates/t1/instantiate",
+		body: `{"name":"from-template","chart_overrides":{"no-such-chart":"a: 1"}}`, readAt: "TemplateChart.ListByTemplate",
+	},
 }
 
 // TestTemplateRequests_CancelledReadChangesNothing checks that a client that
@@ -520,4 +528,101 @@ func TestQuickDeploy_CancelledTemplateReadChangesNothing(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, defs, "no definition is created")
 	assert.Empty(t, audit.snapshot(), "no audit entry")
+}
+
+// TestAnalyticsTemplateReads_CancelledAnswers499 checks that a client that
+// leaves at the template count or list of the analytics gets 499, not 500
+// (#656).
+func TestAnalyticsTemplateReads_CancelledAnswers499(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		path   string
+		readAt string
+	}{
+		{name: "overview", path: "/api/v1/analytics/overview", readAt: "Template.Count"},
+		{name: "template stats", path: "/api/v1/analytics/templates", readAt: "Template.List"},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f := newDefCtxFixture(t)
+			ah := NewAnalyticsHandler(f.templates, f.def, f.hooks, newMockDeployLogRepo(), NewMockUserRepository())
+			r := gin.New()
+			r.Use(injectAuthContext("admin-1", "admin"))
+			r.GET("/api/v1/analytics/overview", ah.GetOverview)
+			r.GET("/api/v1/analytics/templates", ah.GetTemplateStats)
+			req, cancel := liveRequest(t, http.MethodGet, tt.path, "")
+			readCtx := firstCtxErrAt("after:" + tt.readAt)
+			cancelFirst := cancelAt("before:"+tt.readAt, 1, cancel)
+			f.hooks.setHook(func(point string, ctx context.Context) {
+				cancelFirst(point, ctx)
+				readCtx.record(point, ctx)
+			})
+
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			assert.Equal(t, statusClientClosedRequest, w.Code, w.Body.String())
+			readCtx.assertCancelled(t)
+		})
+	}
+}
+
+// captureSlog replaces the default logger with a debug-level text logger
+// and returns a function that gives the captured lines. Tests that use it
+// are not parallel.
+func captureSlog(t *testing.T) func() string {
+	t.Helper()
+	var buf bytes.Buffer
+	var mu sync.Mutex
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&lockedWriter{mu: &mu, w: &buf}, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		return buf.String()
+	}
+}
+
+// TestTemplateLookupLogs_CancelLogsAtDebug checks that a client that leaves
+// at the source template lookup of an export or an import logs at debug, not
+// at warn (#656). Not parallel: it replaces the default slog logger.
+func TestTemplateLookupLogs_CancelLogsAtDebug(t *testing.T) {
+	tests := []struct {
+		name       string
+		method     string
+		path       string
+		body       string
+		wantStatus int
+		wantLog    string
+	}{
+		{
+			name: "export", method: http.MethodGet, path: "/api/v1/stack-definitions/d1/export",
+			wantStatus: http.StatusOK, wantLog: `level=DEBUG msg="export: failed to read source template"`,
+		},
+		{
+			name: "import", method: http.MethodPost, path: "/api/v1/stack-definitions/import",
+			body:       `{"schema_version":"1.0","definition":{"name":"imported","source_template":{"id":"t1","version":"1.0.0"}},"charts":[{"chart_name":"web","repository_url":"oci://charts/web"}]}`,
+			wantStatus: statusClientClosedRequest, wantLog: `level=DEBUG msg="import: template lookup failed"`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logs := captureSlog(t)
+			f := newDefCtxFixture(t)
+			req, cancel := liveRequest(t, tt.method, tt.path, tt.body)
+			f.hooks.setHook(cancelAt("before:Template.FindByID", 1, cancel))
+
+			w := httptest.NewRecorder()
+			f.router.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.wantStatus, w.Code, w.Body.String())
+			assert.Equal(t, 1, strings.Count(logs(), tt.wantLog), logs())
+			assert.NotContains(t, logs(), "level=WARN")
+		})
+	}
 }

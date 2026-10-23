@@ -176,7 +176,7 @@ func (h *DefinitionHandler) importTemplateLink(ctx context.Context, src *SourceT
 		if _, err := h.templateRepo.FindByID(ctx, id); err == nil {
 			templateID = id
 		} else if !isNotFoundError(err) {
-			slog.Warn("import: template lookup failed", "template_id", id, "error", err)
+			logLookupError(ctx, "import: template lookup failed", err, "template_id", id)
 			return "", "", fmt.Sprintf("The source template %q could not be checked; the definition is not linked", label)
 		}
 	}
@@ -185,7 +185,7 @@ func (h *DefinitionHandler) importTemplateLink(ctx context.Context, src *SourceT
 		// same name do not make the name ambiguous.
 		matches, _, err := h.templateRepo.ListPublishedPaged(ctx, 2, 0, name)
 		if err != nil {
-			slog.Warn("import: template lookup by name failed", "template_name", name, "error", err)
+			logLookupError(ctx, "import: template lookup by name failed", err, "template_name", name)
 			return "", "", fmt.Sprintf("The source template %q could not be checked; the definition is not linked", label)
 		}
 		if len(matches) > 1 {
@@ -205,7 +205,7 @@ func (h *DefinitionHandler) importTemplateLink(ctx context.Context, src *SourceT
 		if errors.As(err, &linkErr) {
 			return "", "", fmt.Sprintf("The definition is not linked to template %q: %s", label, linkErr.message)
 		}
-		slog.Warn("import: template link check failed", "template_id", templateID, "error", err)
+		logLookupError(ctx, "import: template link check failed", err, "template_id", templateID)
 		return "", "", fmt.Sprintf("The source template %q could not be checked; the definition is not linked", label)
 	}
 	return tmpl.ID, resolved, ""
