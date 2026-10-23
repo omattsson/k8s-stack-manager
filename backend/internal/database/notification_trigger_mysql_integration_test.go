@@ -106,7 +106,7 @@ func TestDatabaseMySQL_NotificationTrigger(t *testing.T) {
 			Count(&nulls).Error)
 		assert.Equal(t, int64(1), nulls)
 
-		list, _, err := NewGORMNotificationRepository(db).ListByUser(ctx, "u-old", false, 10, 0)
+		list, _, _, err := NewGORMNotificationRepository(db).ListByUser(ctx, "u-old", false, 10, 0)
 		require.NoError(t, err)
 		require.Len(t, list, 1)
 		assert.Equal(t, models.Trigger{}, list[0].Trigger, "an old row has no trigger")
@@ -129,7 +129,7 @@ func TestDatabaseMySQL_NotificationTrigger(t *testing.T) {
 			require.NoError(t, repo.Create(ctx, &rows[i]))
 		}
 
-		list, total, err := repo.ListByUser(ctx, "u-new", false, 10, 0)
+		list, total, _, err := repo.ListByUser(ctx, "u-new", false, 10, 0)
 		require.NoError(t, err)
 		require.Equal(t, int64(4), total)
 		got := map[string]models.Trigger{}

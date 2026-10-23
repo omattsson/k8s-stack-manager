@@ -3593,7 +3593,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "List the authenticated user's notifications with optional filters and pagination",
+                "description": "List the authenticated user's notifications (newest first) with optional filters and pagination. The total counts at most offset + 1000 notifications: it is exact unless total_capped is true; then total is offset + 1000 and at least total + 1 notifications match. unread_count is always exact.",
                 "produces": [
                     "application/json"
                 ],
@@ -3665,7 +3665,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns the unread notification count for badge display",
+                "description": "Returns the unread notification count for badge display. The count is exact unless unread_count_capped is true; then it is 1000, and at least 1001 notifications are unread.",
                 "produces": [
                     "application/json"
                 ],
@@ -3677,11 +3677,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "integer",
-                                "format": "int64"
-                            }
+                            "$ref": "#/definitions/models.UnreadNotificationCount"
                         }
                     },
                     "401": {
@@ -14030,10 +14026,20 @@ const docTemplate = `{
                     }
                 },
                 "total": {
+                    "description": "Total is the number of matching notifications. It is exact unless\ntotal_capped is true; then it is offset + 1000, and at least\ntotal + 1 notifications match.",
                     "type": "integer"
                 },
+                "total_capped": {
+                    "description": "TotalCapped (total_capped) is true when more than offset + 1000\nnotifications match. total is then offset + 1000, a lower bound: at\nleast total + 1 notifications exist.",
+                    "type": "boolean"
+                },
                 "unread_count": {
+                    "description": "UnreadCount is the number of unread notifications of the user. It is\nexact unless unread_count_capped is true; then it is 1000, and the\nuser has at least 1001 unread notifications.",
                     "type": "integer"
+                },
+                "unread_count_capped": {
+                    "description": "UnreadCountCapped (unread_count_capped) is true when the user has more\nthan 1000 unread notifications. unread_count is then 1000.",
+                    "type": "boolean"
                 }
             }
         },
@@ -14440,6 +14446,19 @@ const docTemplate = `{
                         "cleanup-policy",
                         "ttl"
                     ]
+                }
+            }
+        },
+        "models.UnreadNotificationCount": {
+            "type": "object",
+            "properties": {
+                "unread_count": {
+                    "description": "UnreadCount is the number of unread notifications of the user. It is\nexact unless unread_count_capped is true; then it is 1000, and the\nuser has at least 1001 unread notifications.",
+                    "type": "integer"
+                },
+                "unread_count_capped": {
+                    "description": "UnreadCountCapped (unread_count_capped) is true when the user has more\nthan 1000 unread notifications.",
+                    "type": "boolean"
                 }
             }
         },

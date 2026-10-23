@@ -713,8 +713,28 @@ export interface NotificationPreference {
 
 export interface NotificationListResponse {
   notifications: Notification[];
+  /** Number of matching notifications. Exact unless `total_capped` is true. */
   total: number;
+  /**
+   * True when more than `total` notifications exist: the backend stops counting
+   * at `offset + 1000`. Older backends omit it; treat a missing value as false.
+   */
+  total_capped?: boolean;
+  /** Number of unread notifications. Exact unless `unread_count_capped` is true. */
   unread_count: number;
+  /**
+   * True when more than `unread_count` notifications are unread: the backend
+   * stops counting at 1000. Older backends omit it; treat a missing value as false.
+   */
+  unread_count_capped?: boolean;
+}
+
+/** Response of `GET /api/v1/notifications/count`. */
+export interface UnreadNotificationCount {
+  /** Number of unread notifications. Exact unless `unread_count_capped` is true. */
+  unread_count: number;
+  /** True when more than `unread_count` (1000) notifications are unread. Missing means false. */
+  unread_count_capped?: boolean;
 }
 
 /** Source template of an exported definition. The import looks it up by id, else by name. */

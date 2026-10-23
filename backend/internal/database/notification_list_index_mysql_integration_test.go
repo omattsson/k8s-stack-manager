@@ -122,10 +122,11 @@ func TestDatabaseMySQL_NotificationListIndex(t *testing.T) {
 	// The SQL of the repository, with its values (debug mode logs them).
 	log, h := newRecordingLogger(slog.LevelDebug)
 	repo := NewGORMNotificationRepository(gdb.Session(&gorm.Session{Logger: newSlogGormLogger(log, true)}))
-	list, total, err := repo.ListByUser(context.Background(), listUser, false, 20, 0)
+	list, total, capped, err := repo.ListByUser(context.Background(), listUser, false, 20, 0)
 	require.NoError(t, err)
 	assert.Len(t, list, 20)
-	assert.Equal(t, int64(3000), total, "the exact total stays")
+	assert.Equal(t, int64(models.NotificationTotalCap), total, "the total counts at most offset + cap rows")
+	assert.True(t, capped, "3000 rows are more than the cap")
 	for _, r := range h.all() {
 		if s := recordAttrs(r)["sql"].String(); strings.Contains(s, "ORDER BY") {
 			queries["repository query"] = s
@@ -152,15 +153,26 @@ func TestDatabaseMySQL_NotificationListIndex(t *testing.T) {
 
 // listRowReads runs query on one connection and returns the InnoDB handler
 // row reads of the session (Handler_read_*).
-func listRowReads(t *testing.T, db *gorm.DB, query string) int64 {
+func listRowReads(t *testing.T, db *gorm.DB, query string, args ...any) int64 {
 	t.Helper()
 	var total int64
+	for _, v := range handlerReadStats(t, db, query, args...) {
+		total += v
+	}
+	return total
+}
+
+// handlerReadStats runs query on one connection and returns the handler
+// read counters of the session (Handler_read_*) by name.
+func handlerReadStats(t *testing.T, db *gorm.DB, query string, args ...any) map[string]int64 {
+	t.Helper()
+	out := map[string]int64{}
 	require.NoError(t, db.Connection(func(conn *gorm.DB) error {
 		if err := conn.Exec("FLUSH STATUS").Error; err != nil {
 			return err
 		}
-		var out []map[string]any
-		if err := conn.Raw(query).Scan(&out).Error; err != nil {
+		var rows []map[string]any
+		if err := conn.Raw(query, args...).Scan(&rows).Error; err != nil {
 			return err
 		}
 		var stats []struct {
@@ -171,11 +183,11 @@ func listRowReads(t *testing.T, db *gorm.DB, query string) int64 {
 			return err
 		}
 		for _, s := range stats {
-			total += s.Value
+			out[s.VariableName] = s.Value
 		}
 		return nil
 	}))
-	return total
+	return out
 }
 
 func formatExplain(row map[string]string) string {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -27,6 +28,34 @@ type MockNotificationRepository struct {
 	notifications []models.Notification
 	preferences   []models.NotificationPreference
 	err           error
+	// countUnreadErr fails only CountUnread.
+	countUnreadErr error
+	// totalCap is the ListByUser and CountUnread count cap
+	// (0: models.NotificationTotalCap).
+	totalCap int
+	// countUnreadCalls counts the CountUnread calls.
+	countUnreadCalls int
+}
+
+// SetTotalCap sets the count cap of ListByUser and CountUnread.
+func (m *MockNotificationRepository) SetTotalCap(n int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.totalCap = n
+}
+
+// SetCountUnreadError makes CountUnread (only) return err.
+func (m *MockNotificationRepository) SetCountUnreadError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.countUnreadErr = err
+}
+
+// CountUnreadCalls returns the number of CountUnread calls.
+func (m *MockNotificationRepository) CountUnreadCalls() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.countUnreadCalls
 }
 
 func NewMockNotificationRepository() *MockNotificationRepository {
@@ -55,11 +84,11 @@ func (m *MockNotificationRepository) Create(_ context.Context, n *models.Notific
 	return nil
 }
 
-func (m *MockNotificationRepository) ListByUser(_ context.Context, userID string, unreadOnly bool, limit, offset int) ([]models.Notification, int64, error) {
+func (m *MockNotificationRepository) ListByUser(_ context.Context, userID string, unreadOnly bool, limit, offset int) ([]models.Notification, int64, bool, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
-		return nil, 0, m.err
+		return nil, 0, false, m.err
 	}
 
 	var filtered []models.Notification
@@ -74,6 +103,14 @@ func (m *MockNotificationRepository) ListByUser(_ context.Context, userID string
 	}
 
 	total := int64(len(filtered))
+	capN := m.totalCap
+	if capN == 0 {
+		capN = models.NotificationTotalCap
+	}
+	capped := false
+	if offset <= math.MaxInt64-capN && total > int64(offset)+int64(capN) {
+		total, capped = int64(offset)+int64(capN), true
+	}
 
 	if offset > len(filtered) {
 		offset = len(filtered)
@@ -83,14 +120,18 @@ func (m *MockNotificationRepository) ListByUser(_ context.Context, userID string
 		filtered = filtered[:limit]
 	}
 
-	return filtered, total, nil
+	return filtered, total, capped, nil
 }
 
-func (m *MockNotificationRepository) CountUnread(_ context.Context, userID string) (int64, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+func (m *MockNotificationRepository) CountUnread(_ context.Context, userID string) (int64, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.countUnreadCalls++
 	if m.err != nil {
-		return 0, m.err
+		return 0, false, m.err
+	}
+	if m.countUnreadErr != nil {
+		return 0, false, m.countUnreadErr
 	}
 
 	var count int64
@@ -99,7 +140,14 @@ func (m *MockNotificationRepository) CountUnread(_ context.Context, userID strin
 			count++
 		}
 	}
-	return count, nil
+	capN := int64(m.totalCap)
+	if capN == 0 {
+		capN = models.NotificationTotalCap
+	}
+	if count > capN {
+		return capN, true, nil
+	}
+	return count, false, nil
 }
 
 func (m *MockNotificationRepository) MarkAsRead(_ context.Context, id string, userID string) error {
@@ -384,10 +432,11 @@ func TestNotificationHandler_CountUnread(t *testing.T) {
 
 			assert.Equal(t, http.StatusOK, w.Code)
 
-			var result map[string]int64
+			var result models.UnreadNotificationCount
 			err := json.Unmarshal(w.Body.Bytes(), &result)
 			require.NoError(t, err)
-			assert.Equal(t, tt.expectedCount, result["unread_count"])
+			assert.Equal(t, tt.expectedCount, result.UnreadCount)
+			assert.False(t, result.UnreadCountCapped)
 		})
 	}
 }
@@ -480,7 +529,7 @@ func TestNotificationHandler_MarkAllAsRead(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	// Verify all are now read.
-	count, err := repo.CountUnread(context.Background(), "user-1")
+	count, _, err := repo.CountUnread(context.Background(), "user-1")
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), count)
 }

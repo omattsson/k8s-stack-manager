@@ -384,14 +384,14 @@ func TestMySQLIntegration_NotificationRepository(t *testing.T) {
 	err := repo.Create(ctx, notif)
 	require.NoError(t, err)
 
-	count, err := repo.CountUnread(ctx, "user1")
+	count, _, err := repo.CountUnread(ctx, "user1")
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), count)
 
 	err = repo.MarkAsRead(ctx, notif.ID, "user1")
 	require.NoError(t, err)
 
-	count, err = repo.CountUnread(ctx, "user1")
+	count, _, err = repo.CountUnread(ctx, "user1")
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), count)
 }

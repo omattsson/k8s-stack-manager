@@ -31,7 +31,11 @@ const Notifications = () => {
 
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [total, setTotal] = useState(0);
+  // True when the backend stopped counting: more than `total` notifications exist.
+  const [totalCapped, setTotalCapped] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
+  // True when the backend stopped counting: more than `unreadCount` are unread.
+  const [unreadCapped, setUnreadCapped] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'unread'>('all');
@@ -49,7 +53,9 @@ const Notifications = () => {
       );
       setNotifications(data.notifications || []);
       setTotal(data.total);
+      setTotalCapped(data.total_capped === true);
       setUnreadCount(data.unread_count);
+      setUnreadCapped(data.unread_count_capped === true);
     } catch {
       setError('Failed to load notifications');
     } finally {
@@ -92,6 +98,7 @@ const Notifications = () => {
       await notificationService.markAllAsRead();
       setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
       setUnreadCount(0);
+      setUnreadCapped(false);
     } catch {
       setError('Failed to mark all as read');
     }
@@ -162,6 +169,9 @@ const Notifications = () => {
             setPage(0);
           }}
           rowsPerPageOptions={PAGE_SIZE_OPTIONS}
+          labelDisplayedRows={({ from, to, count }) =>
+            `${from}–${to} of ${totalCapped ? `${count}+` : count}`
+          }
         />
       </Paper>
     );
@@ -182,7 +192,7 @@ const Notifications = () => {
           >
             <ToggleButton value="all">All</ToggleButton>
             <ToggleButton value="unread">
-              Unread{unreadCount > 0 ? ` (${unreadCount})` : ''}
+              Unread{unreadCount > 0 ? ` (${unreadCount}${unreadCapped ? '+' : ''})` : ''}
             </ToggleButton>
           </ToggleButtonGroup>
           {unreadCount > 0 && (

@@ -2506,9 +2506,28 @@ definitions:
           $ref: '#/definitions/models.Notification'
         type: array
       total:
+        description: |-
+          Total is the number of matching notifications. It is exact unless
+          total_capped is true; then it is offset + 1000, and at least
+          total + 1 notifications match.
         type: integer
+      total_capped:
+        description: |-
+          TotalCapped (total_capped) is true when more than offset + 1000
+          notifications match. total is then offset + 1000, a lower bound: at
+          least total + 1 notifications exist.
+        type: boolean
       unread_count:
+        description: |-
+          UnreadCount is the number of unread notifications of the user. It is
+          exact unless unread_count_capped is true; then it is 1000, and the
+          user has at least 1001 unread notifications.
         type: integer
+      unread_count_capped:
+        description: |-
+          UnreadCountCapped (unread_count_capped) is true when the user has more
+          than 1000 unread notifications. unread_count is then 1000.
+        type: boolean
     type: object
   models.ResourceQuotaConfig:
     properties:
@@ -2823,6 +2842,20 @@ definitions:
         - cleanup-policy
         - ttl
         type: string
+    type: object
+  models.UnreadNotificationCount:
+    properties:
+      unread_count:
+        description: |-
+          UnreadCount is the number of unread notifications of the user. It is
+          exact unless unread_count_capped is true; then it is 1000, and the
+          user has at least 1001 unread notifications.
+        type: integer
+      unread_count_capped:
+        description: |-
+          UnreadCountCapped (unread_count_capped) is true when the user has more
+          than 1000 unread notifications.
+        type: boolean
     type: object
   models.User:
     properties:
@@ -5322,8 +5355,10 @@ paths:
       - git
   /api/v1/notifications:
     get:
-      description: List the authenticated user's notifications with optional filters
-        and pagination
+      description: 'List the authenticated user''s notifications (newest first) with
+        optional filters and pagination. The total counts at most offset + 1000 notifications:
+        it is exact unless total_capped is true; then total is offset + 1000 and at
+        least total + 1 notifications match. unread_count is always exact.'
       parameters:
       - description: Only return unread notifications
         in: query
@@ -5416,17 +5451,16 @@ paths:
       - notifications
   /api/v1/notifications/count:
     get:
-      description: Returns the unread notification count for badge display
+      description: Returns the unread notification count for badge display. The count
+        is exact unless unread_count_capped is true; then it is 1000, and at least
+        1001 notifications are unread.
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties:
-              format: int64
-              type: integer
-            type: object
+            $ref: '#/definitions/models.UnreadNotificationCount'
         "401":
           description: Unauthorized
           schema:
