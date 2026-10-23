@@ -193,7 +193,7 @@ Developers use this application to configure, store and deploy multi-service Hel
 - `sessionstore` holds the revoked access-token `jti` values and the blocked users. `RefreshTokenRepository` holds the revoked refresh tokens. JWT auth and the `/ws` upgrade check the blocklist. Every auth path (login, refresh, OIDC, API key) rejects `User.Disabled`.
 - `RedactWSToken` removes `?token=` from `/ws` URLs before logging, metrics and tracing. Keep it first after RequestID.
 - Outbound hooks carry an HMAC signature (`X-StackManager-Signature`) when a subscription has a secret. A subscription without a secret is sent unsigned. Never log hook secrets or provider tokens.
-- Kubeconfig data is encrypted at rest with AES-GCM (`KUBECONFIG_ENCRYPTION_KEY`).
+- Kubeconfig data and registry passwords are encrypted at rest with AES-GCM (`KUBECONFIG_ENCRYPTION_KEY`). Without the key, the backend refuses `kubeconfig_data` and `registry_password` (400).
 - Helm runs with the backend identity. On shared clusters: keep `ALLOWED_CHART_REPOS` set, keep `backend.rbac.scope: namespace` and its admission policy, and never give a role `user` path a way to change a chart source.
 
 ## Scalability Rules

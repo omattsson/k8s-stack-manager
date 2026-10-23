@@ -299,6 +299,36 @@ func gracefulShutdown(srvs *servers, timeout time.Duration, deps shutdownDeps) {
 	slog.Info("Server exited gracefully")
 }
 
+// registryPasswordCounter is implemented by the cluster repository.
+type registryPasswordCounter interface {
+	CountRegistryPasswordsWithoutKey(ctx context.Context) (cleartext, encrypted int, err error)
+}
+
+// warnPlaintextRegistryPasswords logs how many clusters store a registry
+// password that the backend cannot use without KUBECONFIG_ENCRYPTION_KEY. It
+// never logs the values.
+func warnPlaintextRegistryPasswords(clusterRepo models.ClusterRepository) {
+	counter, ok := clusterRepo.(registryPasswordCounter)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), instanceBackfillTimeout)
+	defer cancel()
+	cleartext, encrypted, err := counter.CountRegistryPasswordsWithoutKey(ctx)
+	if err != nil {
+		slog.Warn("Could not check for plaintext registry passwords", "error", err)
+		return
+	}
+	if cleartext > 0 {
+		slog.Warn("Clusters store a registry password in plaintext or in an older encrypted format. Set KUBECONFIG_ENCRYPTION_KEY, then set the registry password of these clusters again. A value that the backend cannot decrypt is ignored.",
+			"clusters", cleartext)
+	}
+	if encrypted > 0 {
+		slog.Warn("Clusters store an encrypted registry password, but KUBECONFIG_ENCRYPTION_KEY is not set. The backend ignores these passwords. Set the same key again, or set the passwords again.",
+			"clusters", encrypted)
+	}
+}
+
 // ensureDefaultCluster auto-creates a default cluster from KUBECONFIG_PATH
 // when no clusters exist yet. This provides a migration path for existing
 // single-cluster setups.

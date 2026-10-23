@@ -21,6 +21,8 @@ services:
       # Auth
       - JWT_SECRET=${JWT_SECRET:-dev-secret-change-in-production-minimum-16-chars}
       - JWT_EXPIRATION=${JWT_EXPIRATION:-24h}
+      # Development value. Set a long random key outside development.
+      - KUBECONFIG_ENCRYPTION_KEY=${KUBECONFIG_ENCRYPTION_KEY:-dev-only-encryption-key-do-not-use-in-production}
       - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
       # Development setting: every signed-in user can create local accounts.

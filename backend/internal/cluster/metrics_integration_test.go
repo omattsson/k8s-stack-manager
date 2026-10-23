@@ -375,7 +375,7 @@ func TestWorkers_InstanceReadCancel(t *testing.T) {
 	var tests []testCase
 	refresher := func(ctx context.Context, instances *mockInstanceRepo) {
 		repo := newMockClusterRepo()
-		repo.clusters["c1"] = &models.Cluster{ID: "c1", Name: "dev", RegistryURL: "registry.example.com"}
+		repo.clusters["c1"] = &models.Cluster{ID: "c1", Name: "dev", RegistryURL: "registry.example.com", RegistryUsername: "u", RegistryPassword: "p"}
 		NewSecretRefresher(SecretRefresherConfig{ClusterRepo: repo, InstanceRepo: instances, Registry: &Registry{}}).refresh(ctx)
 	}
 	quota := func(ctx context.Context, instances *mockInstanceRepo) {

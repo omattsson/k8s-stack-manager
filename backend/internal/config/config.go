@@ -511,8 +511,11 @@ func (c *Config) Validate() error {
 			c.Deployment.K8sClientQPS, c.Deployment.K8sClientBurst)
 	}
 
-	if c.Deployment.KubeconfigEncryptionKey == "" || len(c.Deployment.KubeconfigEncryptionKey) < 16 {
-		slog.Warn("KUBECONFIG_ENCRYPTION_KEY is not set or too short, kubeconfig data will not be encrypted at rest")
+	switch key := c.Deployment.KubeconfigEncryptionKey; {
+	case key == "":
+		slog.Warn("KUBECONFIG_ENCRYPTION_KEY is not set: the backend refuses cluster credentials (kubeconfig_data, registry_password); use kubeconfig_path")
+	case len(key) < 16:
+		slog.Warn("KUBECONFIG_ENCRYPTION_KEY is shorter than 16 characters: the backend uses it, but it is weak; use 32 or more random characters")
 	}
 
 	if c.OIDC.Enabled {

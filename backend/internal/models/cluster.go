@@ -27,20 +27,24 @@ type Cluster struct {
 	// Registry fields for automatic image pull secret provisioning.
 	// When RegistryURL is non-empty, a docker-registry secret is created/refreshed
 	// in each stack namespace before chart installs.
-	RegistryURL         string `json:"registry_url" gorm:"size:500"`
-	RegistryUsername    string `json:"registry_username" gorm:"size:255"`
-	RegistryPassword    string `json:"-" gorm:"type:text"`
-	ImagePullSecretName string `json:"image_pull_secret_name" gorm:"size:255"`
-	MaxNamespaces       int    `json:"max_namespaces"`
-	MaxInstancesPerUser int    `json:"max_instances_per_user" gorm:"default:0"` // 0 = unlimited
-	IsDefault           bool   `json:"is_default"`
-	UseInCluster        bool   `json:"use_in_cluster"`
+	RegistryURL      string `json:"registry_url" gorm:"size:500"`
+	RegistryUsername string `json:"registry_username" gorm:"size:255"`
+	RegistryPassword string `json:"-" gorm:"type:text"`
+	// RegistryPasswordUnreadable is set by the repository when the stored
+	// password cannot be decrypted. RegistryPassword is then empty, and a save
+	// keeps the stored value unless the caller sets a new one.
+	RegistryPasswordUnreadable bool   `json:"-" gorm:"-"`
+	ImagePullSecretName        string `json:"image_pull_secret_name" gorm:"size:255"`
+	MaxNamespaces              int    `json:"max_namespaces"`
+	MaxInstancesPerUser        int    `json:"max_instances_per_user" gorm:"default:0"` // 0 = unlimited
+	IsDefault                  bool   `json:"is_default"`
+	UseInCluster               bool   `json:"use_in_cluster"`
 }
 
 // RegistryConfig returns the registry configuration for this cluster, or nil
 // if no registry is configured.
 func (c *Cluster) RegistryConfig() *RegistryConfig {
-	if c.RegistryURL == "" {
+	if c.RegistryURL == "" || c.RegistryPassword == "" {
 		return nil
 	}
 	secretName := c.ImagePullSecretName
@@ -84,4 +88,11 @@ type ClusterRepository interface {
 	CountByHealthStatus(ctx context.Context, status string) (int, error)
 	FindDefault(ctx context.Context) (*Cluster, error)
 	SetDefault(ctx context.Context, id string) error
+}
+
+// ClusterCredentialChecker is implemented by a repository that can refuse
+// credentials it cannot store (no encryption key). The handler calls it before
+// a write with side effects, such as SetDefault.
+type ClusterCredentialChecker interface {
+	CheckCredentialsStorable(ctx context.Context, cluster *Cluster) error
 }
