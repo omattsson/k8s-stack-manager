@@ -134,6 +134,9 @@ func (r *transientErrorClusterRepo) FindByID(ctx context.Context, _ string) (*mo
 func (r *transientErrorClusterRepo) Update(ctx context.Context, _ *models.Cluster) error {
 	return ctx.Err()
 }
+func (r *transientErrorClusterRepo) UpdateHealthStatus(ctx context.Context, _, _ string) error {
+	return ctx.Err()
+}
 func (r *transientErrorClusterRepo) Delete(ctx context.Context, _ string) error { return ctx.Err() }
 func (r *transientErrorClusterRepo) List(ctx context.Context) ([]models.Cluster, error) {
 	return nil, ctx.Err()
@@ -159,6 +162,9 @@ func (r *notFoundClusterRepo) FindByID(ctx context.Context, _ string) (*models.C
 	return nil, dberrors.NewDatabaseError("FindByID", dberrors.ErrNotFound)
 }
 func (r *notFoundClusterRepo) Update(ctx context.Context, _ *models.Cluster) error {
+	return ctx.Err()
+}
+func (r *notFoundClusterRepo) UpdateHealthStatus(ctx context.Context, _, _ string) error {
 	return ctx.Err()
 }
 func (r *notFoundClusterRepo) Delete(ctx context.Context, _ string) error { return ctx.Err() }

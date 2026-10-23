@@ -42,6 +42,9 @@ var clusterRepoCalls = []struct {
 			HealthStatus: models.ClusterHealthy, CreatedAt: time.Now().UTC().Add(-time.Hour),
 		})
 	}},
+	{name: "UpdateHealthStatus", call: func(ctx context.Context, r *GORMClusterRepository) error {
+		return r.UpdateHealthStatus(ctx, "cl-2", models.ClusterHealthy)
+	}},
 	{name: "Delete", call: func(ctx context.Context, r *GORMClusterRepository) error {
 		return r.Delete(ctx, "cl-2")
 	}},

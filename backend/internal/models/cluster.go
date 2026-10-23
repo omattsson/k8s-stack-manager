@@ -68,7 +68,13 @@ type RegistryConfig struct {
 type ClusterRepository interface {
 	Create(ctx context.Context, cluster *Cluster) error
 	FindByID(ctx context.Context, id string) (*Cluster, error)
+	// Update writes the cluster row except is_default (SetDefault writes it)
+	// and health_status (UpdateHealthStatus writes it).
 	Update(ctx context.Context, cluster *Cluster) error
+	// UpdateHealthStatus writes health_status and updated_at only, so a
+	// concurrent admin edit of the other columns stays (#678). It returns
+	// ErrNotFound when the cluster no longer exists.
+	UpdateHealthStatus(ctx context.Context, id, status string) error
 	Delete(ctx context.Context, id string) error
 	List(ctx context.Context) ([]Cluster, error)
 	// NamesByIDs returns the name of each cluster in ids that exists, keyed

@@ -137,10 +137,16 @@ func (p *HealthPoller) poll(ctx context.Context) {
 
 		oldStatus := cl.HealthStatus
 		cl.HealthStatus = newStatus
-		if updateErr := p.clusterRepo.Update(ctx, cl); updateErr != nil {
+		// A targeted write: the row read at the start of the cycle can be
+		// stale (#678).
+		if updateErr := p.clusterRepo.UpdateHealthStatus(ctx, cl.ID, newStatus); updateErr != nil {
 			if ctx.Err() != nil {
 				slog.DebugContext(ctx, "health poller: cycle cancelled", "error", updateErr)
 				return
+			}
+			if isNotFoundError(updateErr) {
+				slog.DebugContext(ctx, "health poller: cluster deleted during the cycle", "cluster_id", cl.ID)
+				continue
 			}
 			slog.Error("health poller: failed to update cluster health",
 				"cluster_id", cl.ID,

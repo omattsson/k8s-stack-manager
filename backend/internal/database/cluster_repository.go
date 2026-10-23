@@ -169,7 +169,9 @@ func (r *GORMClusterRepository) FindByID(ctx context.Context, id string) (*model
 	return &cluster, nil
 }
 
-// Update persists changes to an existing cluster record.
+// Update persists changes to an existing cluster record. It never writes
+// is_default or health_status: SetDefault and UpdateHealthStatus own them, so
+// a stale full row cannot undo their writes (#678).
 func (r *GORMClusterRepository) Update(ctx context.Context, cluster *models.Cluster) error {
 	cluster.UpdatedAt = time.Now().UTC()
 
@@ -185,7 +187,7 @@ func (r *GORMClusterRepository) Update(ctx context.Context, cluster *models.Clus
 		return err
 	}
 
-	dbErr := r.db.WithContext(ctx).Save(cluster).Error
+	dbErr := r.db.WithContext(ctx).Omit("is_default", "health_status").Save(cluster).Error
 
 	// Restore plaintext so the caller's struct is not mutated.
 	if originalKC != "" {
@@ -202,6 +204,22 @@ func (r *GORMClusterRepository) Update(ctx context.Context, cluster *models.Clus
 			return dberrors.NewDatabaseError("update", dberrors.ErrDuplicateKey)
 		}
 		return dberrors.NewDatabaseError("update", dbErr)
+	}
+	return nil
+}
+
+// UpdateHealthStatus writes health_status and updated_at of one cluster.
+func (r *GORMClusterRepository) UpdateHealthStatus(ctx context.Context, id, status string) error {
+	result := r.db.WithContext(ctx).Model(&models.Cluster{}).Where("id = ?", id).
+		UpdateColumns(map[string]any{"health_status": status, "updated_at": time.Now().UTC()})
+	if result.Error != nil {
+		if ctx.Err() != nil {
+			return withContextErr(ctx, "update_health_status", result.Error)
+		}
+		return dberrors.NewDatabaseError("update_health_status", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return dberrors.NewDatabaseError("update_health_status", dberrors.ErrNotFound)
 	}
 	return nil
 }

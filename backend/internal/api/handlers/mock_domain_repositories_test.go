@@ -2214,6 +2214,24 @@ func (m *MockClusterRepository) Update(ctx context.Context, cl *models.Cluster) 
 	return nil
 }
 
+func (m *MockClusterRepository) UpdateHealthStatus(ctx context.Context, id, status string) error {
+	if err := ctxDone(ctx, "update_health_status"); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	cl, ok := m.clusters[id]
+	if !ok {
+		return dberrors.NewDatabaseError("UpdateHealthStatus", dberrors.ErrNotFound)
+	}
+	cl.HealthStatus = status
+	cl.UpdatedAt = time.Now()
+	return nil
+}
+
 func (m *MockClusterRepository) Delete(ctx context.Context, id string) error {
 	if err := ctxDone(ctx, "delete"); err != nil {
 		return err

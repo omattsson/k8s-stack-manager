@@ -76,6 +76,23 @@ func (m *mockClusterRepo) Update(ctx context.Context, cluster *models.Cluster) e
 	return nil
 }
 
+func (m *mockClusterRepo) UpdateHealthStatus(ctx context.Context, id, status string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.updateErr != nil {
+		return m.updateErr
+	}
+	c, ok := m.clusters[id]
+	if !ok {
+		return dberrors.NewDatabaseError("update_health_status", dberrors.ErrNotFound)
+	}
+	c.HealthStatus = status
+	return nil
+}
+
 func (m *mockClusterRepo) Delete(ctx context.Context, id string) error {
 	if err := ctx.Err(); err != nil {
 		return err

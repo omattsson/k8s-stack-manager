@@ -115,6 +115,9 @@ func (m *mockClusterRepoForSV) Create(ctx context.Context, c *models.Cluster) er
 func (m *mockClusterRepoForSV) Update(ctx context.Context, c *models.Cluster) error {
 	return ctxDone(ctx, "update")
 }
+func (m *mockClusterRepoForSV) UpdateHealthStatus(ctx context.Context, _, _ string) error {
+	return ctxDone(ctx, "update_health_status")
+}
 func (m *mockClusterRepoForSV) Delete(ctx context.Context, id string) error {
 	return ctxDone(ctx, "delete")
 }

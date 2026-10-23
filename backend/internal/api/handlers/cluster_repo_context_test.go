@@ -50,6 +50,12 @@ func (r *hookClusterRepo) Update(ctx context.Context, cl *models.Cluster) error 
 	return r.MockClusterRepository.Update(ctx, cl)
 }
 
+func (r *hookClusterRepo) UpdateHealthStatus(ctx context.Context, id, status string) error {
+	r.hooks.run("before:Cluster.UpdateHealthStatus", ctx)
+	defer r.hooks.run("after:Cluster.UpdateHealthStatus", ctx)
+	return r.MockClusterRepository.UpdateHealthStatus(ctx, id, status)
+}
+
 func (r *hookClusterRepo) Delete(ctx context.Context, id string) error {
 	r.hooks.run("before:Cluster.Delete", ctx)
 	defer r.hooks.run("after:Cluster.Delete", ctx)

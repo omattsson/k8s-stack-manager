@@ -441,6 +441,9 @@ func (s *stubClusterRepo) Update(ctx context.Context, _ *models.Cluster) error {
 	}
 	return nil
 }
+func (s *stubClusterRepo) UpdateHealthStatus(ctx context.Context, _, _ string) error {
+	return ctx.Err()
+}
 func (s *stubClusterRepo) Delete(ctx context.Context, _ string) error {
 	if err := ctx.Err(); err != nil {
 		return err
