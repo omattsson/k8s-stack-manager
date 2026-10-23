@@ -80,7 +80,7 @@ All configuration uses environment variables with a `.env` fallback (godotenv). 
 - `DEFAULT_INSTANCE_TTL_MINUTES` (default 0): TTL of a create request without `ttl_minutes`. `MAX_INSTANCE_TTL_DAYS` (default 30, 1 to 365; another value stops the start): maximum TTL and stop-time distance (`config/instance_ttl.go`, `handlers/instance_ttl.go`).
 - `STACK_ACCESS_CLUSTER_ROLE`, `STACK_ACCESS_SERVICE_ACCOUNT` (`<namespace>/<name>`): namespace-scoped access (`k8s.AccessBinding`, in-cluster clusters only). Set both or neither. The leader worker `stack-access-reconcile` applies it to existing namespaces.
 - `GIN_MODE`: wins when set. Otherwise the mode is debug when `APP_DEBUG` is true, and release when it is false. The code default of `APP_DEBUG` is `true`. The Helm chart sets `false`.
-- `ENABLE_SWAGGER` (default false), `PPROF_ENABLED`, `PPROF_ADDR`.
+- `ENABLE_SWAGGER` (default false), `PPROF_ENABLED`, `PPROF_ADDR`, `PPROF_MUTEX_FRACTION` (default 0 = off), `PPROF_BLOCK_RATE` (nanoseconds, default 0 = off; both read only when pprof is on).
 - `HOOKS_CONFIG_FILE`.
 - `APP_PUBLIC_URL`: public base URL of the web UI (an https URL with a host; http, a same-origin path, user info, a query or a fragment stop the start; `config.ParsePublicURL`, trailing slash removed). `notifier.WithPublicURL` (wired in `api/bootstrap.go`) sets `instance_url` = `<APP_PUBLIC_URL>/stack-instances/<id>` in the notification channel payload (not for `instance.deleted`). Empty (default): no `instance_url` and no "Stack Manager" button on Teams cards.
 - `OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, `OTEL_TRACE_SAMPLE_RATE`, `METRICS_ENABLED`, `METRICS_ADDR`.

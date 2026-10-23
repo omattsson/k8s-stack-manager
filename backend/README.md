@@ -112,6 +112,8 @@ The backend reads all configuration from environment variables. It also reads a 
 | `GIN_MODE` | not set | Gin mode (`debug`, `release`, `test`). It wins over `APP_DEBUG`. |
 | `HEALTH_VERBOSE` | `false` | Show details in the readiness response |
 | `PPROF_ENABLED`, `PPROF_ADDR` | `false`, `127.0.0.1:6060` | Serve Go pprof on a separate address |
+| `PPROF_MUTEX_FRACTION` | `0` | Sample 1 in N mutex contention events (`/debug/pprof/mutex`); `0` is off |
+| `PPROF_BLOCK_RATE` | `0` | Block profile rate in nanoseconds (`/debug/pprof/block`); `0` is off |
 | `DEFAULT_INSTANCE_TTL_MINUTES` | `0` | TTL for a new instance that does not set one. `0` means no TTL. |
 
 ### Database

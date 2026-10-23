@@ -12,7 +12,8 @@ Usage: loadtest/capture-resources.sh [options] [-- command [args...]]
 Record the RSS and the CPU use of the backend every INTERVAL seconds, and the
 goroutine count every GOROUTINE_EVERY samples. Take heap, goroutine and CPU
 profiles at the start, each time the RSS grows by the margin (-m), and at the
-end.
+end. The end capture also takes the mutex and block profiles (empty unless
+PPROF_MUTEX_FRACTION and PPROF_BLOCK_RATE are set on the backend).
 
 Without a command, the script stops when the backend exits, after -d seconds,
 or on Ctrl-C. With a command after "--" (for example a k6 run), the script
@@ -23,6 +24,9 @@ Options:
   -p PID       Backend PID (default: the running process of
                backend/tmp/loadtest-backend.pid or backend/tmp/loadtest-mysql.pid)
   -a ADDR      pprof address (default: PPROF_ADDR, else 127.0.0.1:6060)
+  -A ADDR      pprof address of a second backend (replica). The script takes
+               the profiles of its end capture too, with the suffix
+               "-replica". No RSS or CPU samples.
   -i SECONDS   Sample interval (default: 5)
   -c SECONDS   Length of each CPU profile, 0 for no CPU profile (default: 30)
   -m PERCENT   Take the peak profiles again when the RSS passes the RSS of
@@ -43,6 +47,7 @@ repo_dir=$(cd "$script_dir/.." && pwd)
 
 pid=""
 addr="${PPROF_ADDR:-127.0.0.1:6060}"
+addr2=""
 interval=5
 cpu_seconds=30
 margin=10
@@ -55,10 +60,11 @@ warn() { echo "WARNING: $*" >&2; }
 die() { echo "ERROR: $*" >&2; exit 1; }
 is_uint() { case "$1" in '' | *[!0-9]*) return 1 ;; esac; }
 
-while getopts ":p:a:i:c:m:g:t:d:o:h" opt; do
+while getopts ":p:a:A:i:c:m:g:t:d:o:h" opt; do
   case "$opt" in
     p) pid=$OPTARG ;;
     a) addr=$OPTARG ;;
+    A) addr2=$OPTARG ;;
     i) interval=$OPTARG ;;
     c) cpu_seconds=$OPTARG ;;
     m) margin=$OPTARG ;;
@@ -95,6 +101,14 @@ case "$addr" in
   0.0.0.0:*) addr="127.0.0.1:${addr#0.0.0.0:}" ;;
 esac
 pprof_url="http://$addr/debug/pprof"
+pprof_url2=""
+if [ -n "$addr2" ]; then
+  case "$addr2" in
+    :*) addr2="127.0.0.1$addr2" ;;
+    0.0.0.0:*) addr2="127.0.0.1:${addr2#0.0.0.0:}" ;;
+  esac
+  pprof_url2="http://$addr2/debug/pprof"
+fi
 
 ts=$(date +%Y%m%d-%H%M%S)
 mkdir -p "$out_dir" || die "cannot create $out_dir"
@@ -166,10 +180,10 @@ goroutines() {
   is_uint "$first" && echo "$first"
 }
 
-# fetch NAME PATH TIMEOUT: download one profile into the profile folder.
+# fetch NAME PATH TIMEOUT [BASE_URL]: download one profile into the profile folder.
 fetch() {
-  local code rc
-  code=$(curl -s --max-time "$3" -o "$prof_dir/$1.tmp" -w '%{http_code}' "$pprof_url/$2")
+  local code rc base=${4:-$pprof_url}
+  code=$(curl -s --max-time "$3" -o "$prof_dir/$1.tmp" -w '%{http_code}' "$base/$2")
   rc=$?
   if [ "$rc" = 0 ] && [ "$code" = 200 ]; then
     mv "$prof_dir/$1.tmp" "$prof_dir/$1"
@@ -307,6 +321,14 @@ sampler() {
       echo "Taking the end profiles..."
     fi
     capture end "$elapsed" "${rss:-0}"
+    fetch "mutex-end.pb.gz" mutex 30
+    fetch "block-end.pb.gz" block 30
+    if [ -n "$pprof_url2" ]; then
+      fetch "heap-end-replica.pb.gz" heap 30 "$pprof_url2"
+      fetch "goroutine-end-replica.pb.gz" goroutine 30 "$pprof_url2"
+      fetch "mutex-end-replica.pb.gz" mutex 30 "$pprof_url2"
+      fetch "block-end-replica.pb.gz" block 30 "$pprof_url2"
+    fi
   fi
   print_summary
 }

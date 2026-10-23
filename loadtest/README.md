@@ -46,6 +46,18 @@ Note: `make seed` calls the API, so a backend must run. For example, run it afte
 | `CAPTURE_ARGS` | (empty) | Options of `loadtest/capture-resources.sh`, for example `-i 2 -c 20`. |
 | `OTEL_TRACE_SAMPLE_RATE` | `0.05` | Trace sample rate when OpenTelemetry is on. |
 | `PPROF_ADDR` | `127.0.0.1:6060` | pprof address of the backend. |
+| `PPROF_MUTEX_FRACTION` | `5` | Mutex profile: 1 in N contention events. `0`: off. |
+| `PPROF_BLOCK_RATE` | `1000000` | Block profile rate in nanoseconds. `0`: off. |
+| `LOADTEST_K8S` | (empty) | `1`: `k6-users.js` deploys the chart `loadtest/chart/loadtest-tiny` to a local cluster. |
+| `LOADTEST_KUBE_CONTEXT` | `rancher-desktop` | kubectl context for `loadtest-k8s-config`. |
+| `LOADTEST_FANOUT` | (empty) | `1`: WebSocket fan-out on, and a second backend (replica). |
+| `LOADTEST_PORT_2` | `8082` | Port of the replica. |
+| `LOADTEST_PPROF_ADDR_2` | `127.0.0.1:6061` | pprof address of the replica. |
+| `LOADTEST_K6_EXTRA` | (empty) | Extra k6 options, for example `--summary-export FILE`. |
+| `LOADTEST_STATS_DIR` | `loadtest/results` | Folder of the MySQL report (`loadtest-mysql-stats`). |
+| `LOADTEST_STACKCTL` | `1` when `stackctl` is installed | `1`: `loadtest-full` runs the stackctl workers next to k6. |
+| `STACKCTL_WORKERS` | `10` | Number of stackctl workers. |
+| `STACKCTL_DURATION` | `330` | Run time of the stackctl workers in seconds. |
 | `RATE_LIMIT`, `LOGIN_RATE_LIMIT` | `1000000` | Rate limits (requests each minute for each IP address). |
 
 Example: a backend on port 18081 with a MySQL server on port 3307:
@@ -209,6 +221,150 @@ The Makefile starts the backend with `RATE_LIMIT=1000000`. So the `rate-limit` s
 
 The `make` targets start the backend with `ADMIN_USERNAME=admin` and `ADMIN_PASSWORD=admin` (unless your shell sets them).
 
+## Many Users with API Keys (k6-users.js)
+
+`loadtest/backend/k6-users.js` simulates many users. `setup()` creates the users and gives each user an API key. The virtual users then call the API with `X-API-Key`. Each scenario has its own users, so the scenarios do not share a user.
+
+Note: new API keys have a SHA-256 hash, so their check is cheap. Each API key request still reads the key (by its prefix) and its user from the database, with no cache. Keys with an older Argon2id hash (`$argon2id$...`) cost 64 MiB and run at most 4 at the same time (`maxConcurrentArgon2Verifies` in `middleware/combined_auth.go`); a request that waits more than 100 ms gets 503. The test creates new keys, so it measures the SHA-256 path.
+
+### Scenarios
+
+Select one with `SCENARIO`. The default runs all scenarios that the environment allows.
+
+| Scenario | What it does |
+|----------|--------------|
+| `user-journey` | Each virtual user follows a path of a normal user: list, read, create, update and delete. `USER_MIX` sets the share of each role. |
+| `deploy-path` | Creates instances and deploys the chart `loadtest/chart/loadtest-tiny` to a local cluster. Needs `LOADTEST_K8S=1`. |
+| `fanout` | Opens WebSocket sessions on both backends and checks that events on one backend reach the clients of the other. Needs `LOADTEST_FANOUT=1`. |
+
+### Environment variables
+
+| Variable | Meaning |
+|----------|---------|
+| `API_URL` | First backend (set by the Makefile from `LOADTEST_PORT`). |
+| `API_URL_2` | Second backend (set with `LOADTEST_FANOUT=1`, port `LOADTEST_PORT_2`, default 8082). |
+| `ADMIN_USERNAME`, `ADMIN_PASSWORD` | Admin account that creates the users (default `admin` and `admin`). |
+| `SCENARIO` | Scenario name (see above). |
+| `USERS` | Users and virtual users of `user-journey`. `deploy-path` and `fanout` get their own users (`DEPLOY_VUS` and 10), so the test creates `USERS` + `DEPLOY_VUS` + 10 users when all scenarios run. |
+| `USER_MIX` | Share of each role (`user:devops:admin`, default `30:8:2`). `deploy-path` uses only the `user` and `devops` shares. |
+| `K8S_KUBECONFIG_PATH` | Absolute path of the kubeconfig (set with `LOADTEST_K8S=1`). |
+| `DEPLOY_CHART_PATH` | Absolute path of the chart to deploy (set with `LOADTEST_K8S=1`). |
+| `DEPLOY_VUS`, `DEPLOY_ITERATIONS` | Virtual users and iterations of `deploy-path`. |
+
+The Makefile passes `API_URL`, `API_URL_2`, `K8S_KUBECONFIG_PATH` and `DEPLOY_CHART_PATH`. k6 reads the other variables from your shell:
+
+```bash
+USERS=200 SCENARIO=user-journey make loadtest-users
+```
+
+### Deploy to a local cluster (Rancher Desktop)
+
+The `deploy-path` scenario installs `loadtest/chart/loadtest-tiny` with Helm. The chart has one small pod (nginx-unprivileged, 5m CPU, 8Mi memory, restricted Pod Security). Do this once:
+
+1. Start Rancher Desktop and turn Kubernetes on.
+2. Check that the kubectl context `rancher-desktop` exists. For another cluster, set `LOADTEST_KUBE_CONTEXT=<context>`.
+3. Install `kubectl` and `helm`.
+
+`make loadtest-k8s-config` writes a kubeconfig with that one context to `backend/tmp/loadtest-kubeconfig.yaml` (mode 600). It also runs `kubectl get nodes` and `helm version`. It stops with an error when the context is missing or the cluster does not answer.
+
+```bash
+make loadtest-users LOADTEST_K8S=1
+```
+
+Note: `deploy-path` creates namespaces and pods on this cluster. Use a local cluster only.
+
+### Second backend (replica)
+
+`LOADTEST_FANOUT=1` tests the WebSocket fan-out between two replicas:
+
+```bash
+make loadtest-start-backend LOADTEST_FANOUT=1   # backend 1: port 8081, POD_NAME=loadtest-a
+make loadtest-start-replica                      # backend 2: port 8082, POD_NAME=loadtest-b, pprof on 127.0.0.1:6061
+make loadtest-users-run LOADTEST_FANOUT=1
+make loadtest-stop-replica loadtest-stop-backend
+```
+
+Both backends use `WS_FANOUT_ENABLED=true` and the same database. The log of the replica is `backend/tmp/loadtest-2.log`.
+
+Caveats:
+
+- Both processes run without leader election. Both run the background workers (TTL reaper, status watcher, cleanup, retention). The load is higher than in a cluster with one leader.
+- Both backends share one MySQL server, one computer and one IP address.
+- Start the replica after the first backend. The first backend builds the binary and runs the migrations.
+- `loadtest-capture` records RSS and CPU of the first backend only. With `LOADTEST_FANOUT=1`, the capture also takes the end profiles of the replica (`-A 127.0.0.1:6061`, file names with `-replica`).
+
+### MySQL statement statistics
+
+`loadtest/mysql-stats.sh` reads `performance_schema` of MySQL:
+
+```bash
+make loadtest-mysql-stats-reset                  # before the test
+make loadtest-mysql-stats                        # after the test: loadtest/results/mysql-digests.md and mysql-status.tsv
+```
+
+With `LOADTEST_MYSQL=docker` (default), the script runs `mysql` inside the container of `docker-compose.yml` (`app-mysql-dev`; set `MYSQL_CONTAINER` for another name). With `LOADTEST_MYSQL=external`, it uses the `mysql` client and the `DB_*` variables. The script never prints the password.
+
+The report has these tables:
+
+- The 25 statements with the highest total time.
+- The 25 statements with the highest count.
+- Statements without an index, or with many more rows examined than rows sent.
+- Counters since the reset: threads, `Innodb_row_lock_*`, `Created_tmp_disk_tables`, `Select_full_join`.
+
+### Mutex and block profiles
+
+The Makefile starts the backend with `PPROF_MUTEX_FRACTION=5` (one of five contention events) and `PPROF_BLOCK_RATE=1000000` (one sample for each millisecond of blocking). Set `0` to turn a profile off. `capture-resources.sh` downloads `mutex-end.pb.gz` and `block-end.pb.gz` at the end of a capture. The profiles add a small cost, so compare timing only between runs with equal settings.
+
+### One command: make loadtest-full
+
+```bash
+make loadtest-full LOADTEST_K8S=1 LOADTEST_FANOUT=1
+```
+
+The target does these steps:
+
+1. It writes the kubeconfig (`LOADTEST_K8S=1`).
+2. It starts the backend, and the replica (`LOADTEST_FANOUT=1`).
+3. It resets the MySQL statistics.
+4. It runs `k6-users.js` with the resource capture, and the stackctl workers at the same time (`LOADTEST_STACKCTL=1`).
+5. It writes the MySQL report.
+6. It stops the backends. It keeps MySQL.
+
+All results go to `loadtest/results/<timestamp>/`: the CSV of RSS and CPU, `profiles/`, `k6-summary.json`, `stackctl-summary.md`, `mysql-digests.md` and `mysql-status.tsv`. The exit code is the code of k6.
+
+### stackctl workers
+
+`loadtest/stackctl-load.sh` adds CLI load. Each worker is its own user with its own API key and its own stackctl config directory (`STACKCTL_CONFIG_DIR`), so your stackctl config does not change. Each worker repeats `stack list --mine`, `stack create`, `stack get`, `override set` (an `env` key), `stack preview`, `stack extend`, `override unset` and `stack delete` on a draft stack, and the script times each command.
+
+```bash
+loadtest/stackctl-load.sh -w 20 -d 300      # 20 workers for 300 s against http://localhost:8081
+make loadtest-stackctl STACKCTL_WORKERS=20 STACKCTL_DURATION=300
+```
+
+It needs bash 5, `stackctl`, `curl` and `jq`. It writes `stackctl-timings.tsv`, `stackctl-summary.md` (count, errors, p50, p95 and max for each command) and `stackctl-errors.log`. At the end it deletes its users (and so their keys) and its definition.
+
+`make loadtest-full` runs the workers at the same time as k6 when `LOADTEST_STACKCTL=1` (default when `stackctl` is installed). The results are in the same folder.
+
+### Find the bottleneck
+
+Start with the k6 summary, then go from the symptom to the profile.
+
+Layout of `loadtest/results/<run>/` (`<run>` is the timestamp of `loadtest-full`). The capture script uses its own start time `<cap>` for the CSV and the profile folder, so the two timestamps differ:
+
+- `k6-summary.json`, `mysql-digests.md`, `mysql-status.tsv`, `stackctl-*` files.
+- `resources-<cap>.csv`: RSS, CPU and goroutines.
+- `profiles/<cap>/`: `cpu-*.pb.gz`, `heap-*.pb.gz`, `goroutine-*.pb.gz` with the labels `start`, `peak` and `end`, plus `mutex-end.pb.gz`, `block-end.pb.gz` and the `*-replica` files.
+
+In the commands below, `P` is `loadtest/results/<run>/profiles/<cap>`.
+
+1. **k6 summary** (`k6-summary.json`). Look at `http_req_duration` p95 and p99 per scenario tag, `http_req_failed`, `http_req_waiting` against `http_req_blocked`, and `checks`. A high `http_req_waiting` means the backend or the database is slow. A high `http_req_blocked` means the client or the connection limit is the limit.
+2. **CPU**: `go tool pprof -top -cum P/cpu-end.pb.gz`. For a graph, use `go tool pprof -http=:8000 <file>`. High CPU in JSON, GORM or bcrypt shows the code path to improve.
+3. **Mutex**: `go tool pprof -top P/mutex-end.pb.gz`. The top entries are the locks with the longest wait. Check the hub, caches and rate limiters first.
+4. **Block**: `go tool pprof -top P/block-end.pb.gz`. Time in `database/sql` connection waits means the pool (`DB_MAX_OPEN_CONNS`) is too small. Time in channel operations shows queues that hold work.
+5. **Goroutines and heap**: compare `goroutine-start.pb.gz` and `goroutine-end.pb.gz`, and `heap-peak.pb.gz` and `heap-end.pb.gz` (`-sample_index=inuse_space`). Growth that does not return after the test shows a leak.
+6. **MySQL** (`mysql-digests.md`). A statement with a high total time and a high count is the first to tune. Statements with `no index` above 0 need an index. A high `rows examined` to `rows sent` ratio shows a scan. In `mysql-status.tsv`, a high change of `Innodb_row_lock_waits` or `Innodb_row_lock_time` shows lock contention. A high `Created_tmp_disk_tables` shows sorts or groups that do not fit in memory.
+7. **Fan-out**: compare the latency of events between the backends in the `fanout` scenario with the poll interval (`WS_FANOUT_POLL_INTERVAL`, 500 ms). A latency far above it shows a slow `ws_events` poll query (see the digest report).
+
 ## Frontend Load Tests (Playwright)
 
 The tests simulate users in a real browser. Parallel Playwright workers create concurrent sessions. Each test signs in through the login page.
@@ -269,6 +425,15 @@ make loadtest-start            # The same, and the frontend dev server
 make loadtest-backend-run      # Run the k6 tests (the backend must be running)
 make loadtest-stress-run       # Run the k6 stress tests (the backend must be running)
 make loadtest-frontend-run     # Run the Playwright tests (the backend and the frontend must be running)
+make loadtest-users-run        # Run the k6 users test (the backend must be running)
+make loadtest-users            # Start the backend (and replica), run the k6 users test, stop
+make loadtest-stackctl         # Run the stackctl workers against the running backend
+make loadtest-stop-replica     # Stop the second backend
+make loadtest-full             # One run with capture and MySQL report (see above)
+make loadtest-k8s-config       # Write the single-context kubeconfig of the local cluster
+make loadtest-start-replica    # Start a second backend (LOADTEST_FANOUT=1)
+make loadtest-mysql-stats-reset # Reset the MySQL statement statistics
+make loadtest-mysql-stats      # Write the MySQL statement report
 make loadtest-capture          # Record memory, CPU and profiles of the running backend (Ctrl-C stops)
 make loadtest-stop             # Stop the backend and the frontend dev server
 ```
@@ -327,6 +492,7 @@ Options (`CAPTURE_ARGS` for the Makefile targets):
 |--------|---------|-------------|
 | `-p PID` | PID in `backend/tmp/loadtest-backend.pid` or `backend/tmp/loadtest-mysql.pid` | Backend process |
 | `-a ADDR` | `PPROF_ADDR`, else `127.0.0.1:6060` | pprof address |
+| `-A ADDR` | (empty) | pprof address of a second backend (replica). The end capture also takes its heap, goroutine, mutex and block profiles (`*-end-replica.pb.gz`). |
 | `-i SECONDS` | `5` | Sample interval |
 | `-c SECONDS` | `30` | Length of each CPU profile. `0`: no CPU profiles. |
 | `-m PERCENT` | `10` | RSS growth that takes the peak profiles again |

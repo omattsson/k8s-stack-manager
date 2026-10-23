@@ -413,10 +413,19 @@ type ServerConfig struct {
 	WriteTimeout    time.Duration
 	IdleTimeout     time.Duration
 	ShutdownTimeout time.Duration
+	// PprofMutexFraction is PPROF_MUTEX_FRACTION: runtime.SetMutexProfileFraction
+	// (0 = off). Read only when PPROF_ENABLED=true.
+	PprofMutexFraction int
+	// PprofBlockRate is PPROF_BLOCK_RATE in nanoseconds: runtime.SetBlockProfileRate
+	// (0 = off). Read only when PPROF_ENABLED=true.
+	PprofBlockRate int
 	// String fields (8-byte on 64-bit systems)
 	Host      string
 	Port      string
 	PprofAddr string
+	// pprofErr is the first parse error of the PPROF_* profile settings;
+	// Validate returns it.
+	pprofErr error
 	// TrustedProxies are the IPs and CIDR ranges that may set the client IP
 	// with X-Forwarded-For or X-Real-IP (TRUSTED_PROXIES, see
 	// ParseTrustedProxies); nil = no proxy is trusted.
@@ -673,6 +682,10 @@ func (c *AuthConfig) Validate() error {
 }
 
 func (c *ServerConfig) Validate() error {
+	if c.pprofErr != nil {
+		return c.pprofErr
+	}
+
 	if c.Port == "" {
 		return errors.New("port is required")
 	}
@@ -827,7 +840,7 @@ func loadDatabaseConfig() DatabaseConfig {
 }
 
 func loadServerConfig() ServerConfig {
-	return ServerConfig{
+	c := ServerConfig{
 		Host:            getEnv("SERVER_HOST", ""),
 		Port:            getEnv("SERVER_PORT", "8081"),
 		ReadTimeout:     getEnvDuration("SERVER_READ_TIMEOUT", defaultReadTimeout),
@@ -840,6 +853,27 @@ func loadServerConfig() ServerConfig {
 		PprofEnabled:    getEnvBool("PPROF_ENABLED", false),
 		PprofAddr:       getEnv("PPROF_ADDR", "127.0.0.1:6060"),
 	}
+	if c.PprofEnabled {
+		var err1, err2 error
+		c.PprofMutexFraction, err1 = parseNonNegativeEnvInt("PPROF_MUTEX_FRACTION")
+		c.PprofBlockRate, err2 = parseNonNegativeEnvInt("PPROF_BLOCK_RATE")
+		c.pprofErr = errors.Join(err1, err2)
+	}
+	return c
+}
+
+// parseNonNegativeEnvInt reads an integer >= 0 from the environment. An
+// unset or empty variable gives 0.
+func parseNonNegativeEnvInt(key string) (int, error) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return 0, nil
+	}
+	v, err := strconv.Atoi(value)
+	if err != nil || v < 0 {
+		return 0, fmt.Errorf("%s %q must be a whole number >= 0", key, value)
+	}
+	return v, nil
 }
 
 func loadAuthConfig() AuthConfig {

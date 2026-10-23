@@ -1,4 +1,4 @@
-.PHONY: gosec e2e-prepare test-e2e-isolated dev dev-otel dev-api-only compose-api-only seed dev-backend dev-frontend dev-local dev-local-backend dev-local-frontend prod prod-backend prod-frontend build clean prune test test-backend test-backend-integration test-backend-all test-frontend test-e2e integration-infra-start integration-infra-stop install docs fmt lint loadtest loadtest-start loadtest-start-backend loadtest-start-frontend loadtest-stop loadtest-stop-backend loadtest-stop-frontend loadtest-backend loadtest-backend-run loadtest-stress loadtest-stress-run loadtest-frontend loadtest-frontend-run loadtest-capture
+.PHONY: loadtest-stackctl gosec e2e-prepare test-e2e-isolated dev dev-otel dev-api-only compose-api-only seed dev-backend dev-frontend dev-local dev-local-backend dev-local-frontend prod prod-backend prod-frontend build clean prune test test-backend test-backend-integration test-backend-all test-frontend test-e2e integration-infra-start integration-infra-stop install docs fmt lint loadtest loadtest-start loadtest-start-backend loadtest-start-frontend loadtest-stop loadtest-stop-backend loadtest-stop-frontend loadtest-backend loadtest-backend-run loadtest-stress loadtest-stress-run loadtest-frontend loadtest-frontend-run loadtest-capture loadtest-k8s-config loadtest-start-replica loadtest-stop-replica loadtest-users loadtest-users-run loadtest-mysql-stats-reset loadtest-mysql-stats loadtest-full
 
 # Development mode for both services
 dev:
@@ -363,8 +363,23 @@ LOADTEST_MYSQL ?= docker
 # 1: run each k6 test through loadtest/capture-resources.sh $(CAPTURE_ARGS).
 LOADTEST_CAPTURE ?=
 CAPTURE_ARGS ?=
-LOADTEST_K6 = $(if $(filter 1 true yes,$(LOADTEST_CAPTURE)),loadtest/capture-resources.sh $(CAPTURE_ARGS) --) \
-	k6 run --env API_URL=$(LOADTEST_URL)
+# 1: the k6-users.js tests deploy a small chart to a local cluster (see loadtest-k8s-config).
+LOADTEST_K8S ?=
+LOADTEST_KUBE_CONTEXT ?= rancher-desktop
+# 1: run a second backend (loadtest-start-replica) with WS fan-out on both.
+LOADTEST_FANOUT ?=
+LOADTEST_PORT_2 ?= 8082
+LOADTEST_PPROF_ADDR_2 ?= 127.0.0.1:6061
+LOADTEST_URL_2 = http://localhost:$(LOADTEST_PORT_2)
+# Extra k6 options, for example --summary-export FILE.
+LOADTEST_K6_EXTRA ?=
+# Folder of the MySQL report (loadtest-mysql-stats).
+LOADTEST_STATS_DIR ?= loadtest/results
+LOADTEST_KUBECONFIG = $(CURDIR)/backend/tmp/loadtest-kubeconfig.yaml
+LOADTEST_CHART = $(CURDIR)/loadtest/chart/loadtest-tiny
+LOADTEST_CAPTURE_REPLICA = $(if $(filter 1 true yes,$(LOADTEST_FANOUT)),-A $(LOADTEST_PPROF_ADDR_2))
+LOADTEST_K6 = $(if $(filter 1 true yes,$(LOADTEST_CAPTURE)),loadtest/capture-resources.sh $(CAPTURE_ARGS) $(LOADTEST_CAPTURE_REPLICA) --) \
+	k6 run $(LOADTEST_K6_EXTRA) --env API_URL=$(LOADTEST_URL)
 
 # Env vars of the load test backends. All k6 users share one IP address, so
 # both rate limits are high. The empty kubeconfig and git token variables keep
@@ -378,9 +393,11 @@ LOADTEST_ENV = \
 	ADMIN_USERNAME=$${ADMIN_USERNAME:-admin} ADMIN_PASSWORD=$${ADMIN_PASSWORD:-admin} \
 	SELF_REGISTRATION=true \
 	HELM_BINARY=$${HELM_BINARY:-helm} \
-	KUBECONFIG= KUBECONFIG_PATH= IN_CLUSTER_FALLBACK_KUBECONFIG= \
+	KUBECONFIG= KUBECONFIG_PATH= IN_CLUSTER_FALLBACK_KUBECONFIG= ALLOWED_CHART_REPOS= \
 	AZURE_DEVOPS_PAT= GITHUB_TOKEN= GITLAB_TOKEN= \
 	PPROF_ENABLED=$${PPROF_ENABLED:-true} PPROF_ADDR=$${PPROF_ADDR:-127.0.0.1:6060} \
+	PPROF_MUTEX_FRACTION=$${PPROF_MUTEX_FRACTION:-5} PPROF_BLOCK_RATE=$${PPROF_BLOCK_RATE:-1000000} \
+	$(if $(filter 1 true yes,$(LOADTEST_FANOUT)),WS_FANOUT_ENABLED=true POD_NAME=loadtest-a) \
 	OTEL_TRACE_SAMPLE_RATE=$${OTEL_TRACE_SAMPLE_RATE:-0.05} \
 	RATE_LIMIT=$${RATE_LIMIT:-1000000} LOGIN_RATE_LIMIT=$${LOGIN_RATE_LIMIT:-1000000}
 
@@ -500,6 +517,99 @@ loadtest-stress-run: ## Run k6 stress tests (assumes backend already running)
 
 loadtest-capture: ## Record RSS, CPU and pprof profiles of the running load test backend (Ctrl-C stops)
 	loadtest/capture-resources.sh $(CAPTURE_ARGS)
+
+loadtest-k8s-config: ## Write a single-context kubeconfig of the local cluster (LOADTEST_KUBE_CONTEXT, default rancher-desktop)
+	@command -v kubectl >/dev/null 2>&1 || { echo "ERROR: kubectl not found."; exit 1; }
+	@command -v helm >/dev/null 2>&1 || { echo "ERROR: helm not found."; exit 1; }
+	@kubectl config get-contexts -o name 2>/dev/null | grep -qx "$(LOADTEST_KUBE_CONTEXT)" || { \
+		echo "ERROR: kubectl context \"$(LOADTEST_KUBE_CONTEXT)\" not found. Start Rancher Desktop with Kubernetes on, or set LOADTEST_KUBE_CONTEXT."; exit 1; }
+	@mkdir -p backend/tmp
+	@umask 077; kubectl config view --minify --flatten --context $(LOADTEST_KUBE_CONTEXT) > backend/tmp/loadtest-kubeconfig.yaml
+	@chmod 600 backend/tmp/loadtest-kubeconfig.yaml
+	@kubectl --kubeconfig backend/tmp/loadtest-kubeconfig.yaml get nodes || { \
+		echo "ERROR: the cluster of context \"$(LOADTEST_KUBE_CONTEXT)\" does not answer. Is Rancher Desktop running?"; exit 1; }
+	@helm version --short
+	@echo "Kubeconfig: backend/tmp/loadtest-kubeconfig.yaml"
+
+loadtest-start-replica: ## Start a second backend on LOADTEST_PORT_2 (fan-out on, same database; run loadtest-start-backend with LOADTEST_FANOUT=1 first)
+	@if [ ! -x backend/tmp/main ]; then echo "ERROR: backend/tmp/main not found. Run make loadtest-start-backend LOADTEST_FANOUT=1 first."; exit 1; fi
+	@if [ -f backend/tmp/loadtest-2.pid ] && kill -0 $$(cat backend/tmp/loadtest-2.pid) 2>/dev/null; then \
+		echo "ERROR: the replica runs already (PID $$(cat backend/tmp/loadtest-2.pid))."; exit 1; fi
+	@if command -v lsof >/dev/null 2>&1; then addr=$(LOADTEST_PPROF_ADDR_2); for p in $(LOADTEST_PORT_2) $${addr##*:}; do \
+		if [ -n "$$(lsof -nP -iTCP:$$p -sTCP:LISTEN -t 2>/dev/null)" ]; then echo "ERROR: port $$p is in use."; exit 1; fi; done; fi
+	@echo "Starting replica on port $(LOADTEST_PORT_2) (WS_FANOUT_ENABLED=true, POD_NAME=loadtest-b)..."
+	@cd backend && ( $(LOADTEST_ENV) SERVER_PORT=$(LOADTEST_PORT_2) PPROF_ADDR=$(LOADTEST_PPROF_ADDR_2) \
+		WS_FANOUT_ENABLED=true POD_NAME=loadtest-b ./tmp/main > tmp/loadtest-2.log 2>&1 & echo $$! > tmp/loadtest-2.pid )
+	@n=0; until curl -sf $(LOADTEST_URL_2)/health/live >/dev/null 2>&1; do \
+		if ! kill -0 $$(cat backend/tmp/loadtest-2.pid) 2>/dev/null; then \
+			echo "ERROR: the replica stopped. Last lines of backend/tmp/loadtest-2.log:"; tail -20 backend/tmp/loadtest-2.log; \
+			rm -f backend/tmp/loadtest-2.pid; exit 1; fi; \
+		n=$$((n+1)); \
+		if [ $$n -ge 30 ]; then echo "ERROR: replica failed to start after 30s. See backend/tmp/loadtest-2.log"; \
+			kill $$(cat backend/tmp/loadtest-2.pid) 2>/dev/null; rm -f backend/tmp/loadtest-2.pid; exit 1; fi; \
+		sleep 1; \
+	done
+	@echo "Replica is ready on $(LOADTEST_URL_2) (logs: backend/tmp/loadtest-2.log)"
+
+loadtest-stop-replica: ## Stop the second load test backend
+	@if [ -f backend/tmp/loadtest-2.pid ]; then \
+		echo "Stopping replica (PID: $$(cat backend/tmp/loadtest-2.pid))..."; \
+		kill $$(cat backend/tmp/loadtest-2.pid) 2>/dev/null || true; \
+		rm -f backend/tmp/loadtest-2.pid; \
+	else \
+		echo "No replica PID file found."; \
+	fi
+
+loadtest-users: ## Run k6-users.js (many users with API keys; starts/stops the backend, and the replica with LOADTEST_FANOUT=1)
+	@rc=0; \
+	$(if $(filter 1 true yes,$(LOADTEST_K8S)),$(MAKE) loadtest-k8s-config || exit 1;) \
+	$(MAKE) loadtest-start-backend || exit 1; \
+	$(if $(filter 1 true yes,$(LOADTEST_FANOUT)),$(MAKE) loadtest-start-replica || { $(MAKE) loadtest-stop-backend; exit 1; };) \
+	trap '$(if $(filter 1 true yes,$(LOADTEST_FANOUT)),$(MAKE) loadtest-stop-replica;) $(MAKE) loadtest-stop-backend; exit 130' INT TERM; \
+	$(MAKE) loadtest-users-run || rc=$$?; \
+	$(if $(filter 1 true yes,$(LOADTEST_FANOUT)),$(MAKE) loadtest-stop-replica;) \
+	$(MAKE) loadtest-stop-backend; \
+	exit $$rc
+
+loadtest-users-run: ## Run k6-users.js (assumes backend running; LOADTEST_K8S=1 deploys, LOADTEST_FANOUT=1 adds the replica URL)
+	@command -v k6 >/dev/null 2>&1 || { echo "k6 not found. Install: brew install k6"; exit 1; }
+	@echo "Running the users load test against $(LOADTEST_URL)..."
+	$(LOADTEST_K6) \
+		$(if $(filter 1 true yes,$(LOADTEST_K8S)),--env K8S_KUBECONFIG_PATH=$(LOADTEST_KUBECONFIG) --env DEPLOY_CHART_PATH=$(LOADTEST_CHART)) \
+		$(if $(filter 1 true yes,$(LOADTEST_FANOUT)),--env API_URL_2=$(LOADTEST_URL_2)) \
+		loadtest/backend/k6-users.js
+
+loadtest-mysql-stats-reset: ## Reset the MySQL statement statistics (before a test)
+	loadtest/mysql-stats.sh reset
+
+loadtest-mysql-stats: ## Write the MySQL statement report into LOADTEST_STATS_DIR (default loadtest/results)
+	loadtest/mysql-stats.sh report $(LOADTEST_STATS_DIR)
+
+# stackctl workers (loadtest/stackctl-load.sh). loadtest-full runs them next to k6.
+LOADTEST_STACKCTL ?= $(if $(shell command -v stackctl 2>/dev/null),1,)
+STACKCTL_WORKERS ?= 10
+STACKCTL_DURATION ?= 330
+
+loadtest-stackctl: ## Run the stackctl workers against the running load test backend
+	@loadtest/stackctl-load.sh -w $(STACKCTL_WORKERS) -d $(STACKCTL_DURATION) -u $(LOADTEST_URL) $(if $(STACKCTL_OUT),-o $(STACKCTL_OUT))
+
+loadtest-full: ## One run: backend(s), MySQL stats, k6-users.js with capture, reports in loadtest/results/<timestamp>/
+	@dir=loadtest/results/$$(date +%Y%m%d-%H%M%S); mkdir -p $$dir; rc=0; sc=; \
+	trap '[ -z "$$sc" ] || { pkill -P $$sc 2>/dev/null; kill $$sc 2>/dev/null; }; \
+		$(if $(filter 1 true yes,$(LOADTEST_FANOUT)),$(MAKE) loadtest-stop-replica;) $(MAKE) loadtest-stop-backend; exit 130' INT TERM; \
+	$(if $(filter 1 true yes,$(LOADTEST_K8S)),$(MAKE) loadtest-k8s-config || exit 1;) \
+	$(MAKE) loadtest-start-backend || exit 1; \
+	$(if $(filter 1 true yes,$(LOADTEST_FANOUT)),$(MAKE) loadtest-start-replica || { $(MAKE) loadtest-stop-backend; exit 1; };) \
+	$(MAKE) loadtest-mysql-stats-reset || echo "WARNING: the MySQL statistics reset failed. The MySQL report can include older statements."; \
+	$(if $(filter 1 true yes,$(LOADTEST_STACKCTL)),$(MAKE) loadtest-stackctl STACKCTL_OUT=$$dir > $$dir/stackctl.log 2>&1 & sc=$$!;) \
+	$(MAKE) loadtest-users-run LOADTEST_CAPTURE=1 CAPTURE_ARGS="$(CAPTURE_ARGS) -o $$dir" \
+		LOADTEST_K6_EXTRA="$(LOADTEST_K6_EXTRA) --summary-export $$dir/k6-summary.json" || rc=$$?; \
+	if [ -n "$$sc" ]; then wait $$sc; scrc=$$?; \
+		if [ $$scrc != 0 ]; then echo "stackctl workers failed (exit $$scrc), see $$dir/stackctl.log"; fi; sc=; fi; \
+	$(MAKE) loadtest-mysql-stats LOADTEST_STATS_DIR=$$dir || true; \
+	$(if $(filter 1 true yes,$(LOADTEST_FANOUT)),$(MAKE) loadtest-stop-replica;) \
+	$(MAKE) loadtest-stop-backend; \
+	echo "Results: $$dir"; exit $$rc
 
 loadtest-frontend: loadtest-start ## Run Playwright frontend load tests (starts/stops backend + frontend)
 	@$(MAKE) loadtest-frontend-run || ($(MAKE) loadtest-stop; exit 1)
