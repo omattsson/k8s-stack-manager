@@ -78,8 +78,11 @@ func (r *GORMClusterRepository) decryptKubeconfig(cluster *models.Cluster) error
 // Returns the original plaintext so the caller can restore it after the DB write.
 func (r *GORMClusterRepository) encryptRegistryPassword(cluster *models.Cluster) (string, error) {
 	original := cluster.RegistryPassword
-	if original == "" || len(r.encryptionKey) == 0 {
+	if original == "" {
 		return original, nil
+	}
+	if len(r.encryptionKey) == 0 {
+		return "", errRegistryPasswordNoKey()
 	}
 	encrypted, err := crypto.Encrypt([]byte(original), r.encryptionKey)
 	if err != nil {
@@ -89,13 +92,46 @@ func (r *GORMClusterRepository) encryptRegistryPassword(cluster *models.Cluster)
 	return original, nil
 }
 
+func errRegistryPasswordNoKey() error {
+	return dberrors.NewDatabaseError("validation",
+		fmt.Errorf("registry_password cannot be stored without KUBECONFIG_ENCRYPTION_KEY configured: %w", dberrors.ErrValidation))
+}
+
+// minCiphertextLen is the AES-GCM nonce plus the tag: a shorter value is not ciphertext.
+const minCiphertextLen = 12 + 16
+
+// storedRegistryPassword reads the stored (not decrypted) registry password.
+func (r *GORMClusterRepository) storedRegistryPassword(ctx context.Context, id string) (string, error) {
+	var stored string
+	err := r.db.WithContext(ctx).Model(&models.Cluster{}).Where("id = ?", id).
+		Select("COALESCE(registry_password, '')").Limit(1).Scan(&stored).Error
+	if err != nil {
+		return "", dberrors.NewDatabaseError("find_by_id", err)
+	}
+	return stored, nil
+}
+
+// keepLegacyPassword reports whether an update without a key keeps the stored
+// legacy plaintext password unchanged, so other edits still work.
+func (r *GORMClusterRepository) keepLegacyPassword(ctx context.Context, cluster *models.Cluster) (bool, error) {
+	if cluster.RegistryPassword == "" || len(r.encryptionKey) != 0 {
+		return false, nil
+	}
+	stored, err := r.storedRegistryPassword(ctx, cluster.ID)
+	if err != nil {
+		return false, err
+	}
+	return stored == cluster.RegistryPassword, nil
+}
+
 // decryptRegistryPassword decrypts RegistryPassword in-place after reading from DB.
 func (r *GORMClusterRepository) decryptRegistryPassword(cluster *models.Cluster) error {
 	if cluster.RegistryPassword == "" || len(r.encryptionKey) == 0 {
 		return nil
 	}
 	decoded, err := base64.StdEncoding.DecodeString(cluster.RegistryPassword)
-	if err != nil {
+	if err != nil || len(decoded) < minCiphertextLen {
+		// Not ciphertext; legacy plaintext from before the key was required.
 		return nil
 	}
 	decrypted, err := crypto.Decrypt(decoded, r.encryptionKey)
@@ -179,12 +215,22 @@ func (r *GORMClusterRepository) Update(ctx context.Context, cluster *models.Clus
 	if err != nil {
 		return err
 	}
-	originalRP, err := r.encryptRegistryPassword(cluster)
+	keep, err := r.keepLegacyPassword(ctx, cluster)
 	if err != nil {
 		if originalKC != "" {
 			cluster.KubeconfigData = originalKC
 		}
 		return err
+	}
+	originalRP := cluster.RegistryPassword
+	if !keep {
+		originalRP, err = r.encryptRegistryPassword(cluster)
+		if err != nil {
+			if originalKC != "" {
+				cluster.KubeconfigData = originalKC
+			}
+			return err
+		}
 	}
 
 	dbErr := r.db.WithContext(ctx).Omit("is_default", "health_status").Save(cluster).Error
@@ -262,6 +308,21 @@ func (r *GORMClusterRepository) List(ctx context.Context) ([]models.Cluster, err
 		}
 	}
 	return clusters, nil
+}
+
+// CountPlaintextRegistryPasswords returns the number of clusters that store a
+// registry password. Without a key, each of them is legacy plaintext.
+func (r *GORMClusterRepository) CountPlaintextRegistryPasswords(ctx context.Context) (int, error) {
+	if len(r.encryptionKey) != 0 {
+		return 0, nil
+	}
+	var count int64
+	if err := r.db.WithContext(ctx).Model(&models.Cluster{}).
+		Where("registry_password IS NOT NULL AND registry_password <> ''").
+		Count(&count).Error; err != nil {
+		return 0, dberrors.NewDatabaseError("count_plaintext_registry_passwords", err)
+	}
+	return int(count), nil
 }
 
 // CountAll returns the total number of clusters using a projected aggregate

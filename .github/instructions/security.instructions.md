@@ -91,7 +91,7 @@ v1.Use(rateLimiter.RateLimit())
 - Every auth path (login, refresh, OpenID Connect (OIDC), and API key) and the `/ws` upgrade reject `User.Disabled`.
 - `middleware.SecurityHeaders()` sets baseline security headers. `middleware.RedactWSToken()` removes `?token=` from `/ws` URLs before logging, metrics, and tracing. Keep both.
 - Outbound hooks carry a hash-based message authentication code (HMAC) signature in `X-StackManager-Signature` when the subscription or action sets `secret_env` (`internal/hooks/client.go`). Omitting `secret_env` is the only unsigned mode. A `secret_env` that resolves to an empty value is rejected at config load (fail closed). Hooks do not follow redirects.
-- Kubeconfig data is encrypted at rest with AES-GCM (`pkg/crypto`, `KUBECONFIG_ENCRYPTION_KEY`).
+- Kubeconfig data and registry passwords are encrypted at rest with AES-GCM (`pkg/crypto`, `KUBECONFIG_ENCRYPTION_KEY`). Without the key, the backend refuses `kubeconfig_data` and `registry_password` (400).
 
 ## Recovery middleware
 

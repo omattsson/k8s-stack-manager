@@ -395,7 +395,7 @@ The table shows the key environment variables. The full list is in `backend/inte
 | `GITLAB_TOKEN` | No | GitLab access token |
 | `GITLAB_BASE_URL` | No | Origin of a self-hosted GitLab (default: `https://gitlab.com`). See [GitLab custom origins](#gitlab-custom-origins). |
 | `DEFAULT_BRANCH` | No | Default Git branch (default: `master`) |
-| `KUBECONFIG_ENCRYPTION_KEY` | No | Passphrase. The backend derives an AES-256 key from it (SHA-256) to encrypt kubeconfig data, registry passwords, and webhook channel secrets. Without it, the backend rejects a cluster that has kubeconfig data. Use a kubeconfig path or in-cluster configuration then. |
+| `KUBECONFIG_ENCRYPTION_KEY` | No | Passphrase. The backend derives an AES-256 key from it (SHA-256) to encrypt kubeconfig data, registry passwords, and webhook channel secrets. Without it, the backend rejects a cluster that has kubeconfig data or a registry password. Use a kubeconfig path or in-cluster configuration then. |
 | `ALLOWED_CHART_REPOS` | No | Comma-separated chart repository URL prefixes (`oci://`, `https://`, `http://`). Empty: every chart source is allowed. |
 | `NAMESPACE_LABELS` | No | Extra labels for stack namespaces (`key=value,key=value`) |
 | `UNIQUE_INSTANCE_NAMES` | No | `true`: an instance name must be unique on its cluster (409 on create, rename, clone and quick deploy). Use it when Ingress hosts use `{{.InstanceName}}`. Default: `false` |

@@ -179,6 +179,7 @@ define e2e_start_backend
 		DB_HOST=$${DB_HOST:-127.0.0.1} DB_PORT=$${DB_PORT:-3306} \
 		DB_USER=$${DB_USER:-root} DB_PASSWORD=$${DB_PASSWORD:-rootpassword} DB_NAME=$(E2E_DB_NAME) \
 		JWT_SECRET="dev-secret-change-in-production-minimum-16-chars" \
+		KUBECONFIG_ENCRYPTION_KEY=$${KUBECONFIG_ENCRYPTION_KEY:-dev-only-encryption-key-do-not-use-in-production} \
 		ADMIN_USERNAME=admin ADMIN_PASSWORD=admin SELF_REGISTRATION=true \
 		HELM_BINARY=$${HELM_BINARY:-helm} \
 		CORS_ALLOWED_ORIGINS=http://localhost:3000 \
@@ -314,6 +315,7 @@ DEV_LOCAL_ENV = \
 	DB_HOST=$${DB_HOST:-127.0.0.1} DB_PORT=$${DB_PORT:-3306} \
 	DB_USER=$${DB_USER:-root} DB_PASSWORD=$${DB_PASSWORD:-rootpassword} DB_NAME=$${DB_NAME:-app} \
 	JWT_SECRET="dev-secret-change-in-production-minimum-16-chars" \
+	KUBECONFIG_ENCRYPTION_KEY=$${KUBECONFIG_ENCRYPTION_KEY:-dev-only-encryption-key-do-not-use-in-production} \
 	ADMIN_USERNAME=admin ADMIN_PASSWORD=admin \
 	SELF_REGISTRATION=true \
 	HELM_BINARY=$${HELM_BINARY:-helm} \

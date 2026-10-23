@@ -122,7 +122,6 @@ func TestEncryptRegistryPassword_EmptyOrNoKey(t *testing.T) {
 		hasKey   bool
 	}{
 		{"empty password", "", true},
-		{"no encryption key", "secret", false},
 		{"both empty", "", false},
 	}
 

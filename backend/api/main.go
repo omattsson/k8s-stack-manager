@@ -299,6 +299,32 @@ func gracefulShutdown(srvs *servers, timeout time.Duration, deps shutdownDeps) {
 	slog.Info("Server exited gracefully")
 }
 
+// plaintextPasswordCounter is implemented by the cluster repository.
+type plaintextPasswordCounter interface {
+	CountPlaintextRegistryPasswords(ctx context.Context) (int, error)
+}
+
+// warnPlaintextRegistryPasswords logs the number of clusters that still store
+// a registry password in plaintext (legacy data, no encryption key). It never
+// logs the values.
+func warnPlaintextRegistryPasswords(clusterRepo models.ClusterRepository) {
+	counter, ok := clusterRepo.(plaintextPasswordCounter)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), instanceBackfillTimeout)
+	defer cancel()
+	n, err := counter.CountPlaintextRegistryPasswords(ctx)
+	if err != nil {
+		slog.Warn("Could not check for plaintext registry passwords", "error", err)
+		return
+	}
+	if n > 0 {
+		slog.Warn("Clusters store a registry password in plaintext. Set KUBECONFIG_ENCRYPTION_KEY and save these clusters again to encrypt the password.",
+			"clusters", n)
+	}
+}
+
 // ensureDefaultCluster auto-creates a default cluster from KUBECONFIG_PATH
 // when no clusters exist yet. This provides a migration path for existing
 // single-cluster setups.
