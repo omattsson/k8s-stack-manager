@@ -181,7 +181,6 @@ Developers use this application to configure, store and deploy multi-service Hel
 - Add new actions and entity types to `KnownAuditActions` and `KnownAuditEntityTypes`, and to the filter lists of `pages/AuditLog`.
 - `routes/audit_routes_test.go` fails for a mutating route with an unknown entity type.
 
-
 ## Security Rules
 
 - Never expose a raw error message for a 500. Return `"Internal server error"`.

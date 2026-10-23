@@ -113,7 +113,6 @@ backend/
   internal/test/test_helpers.go  # Shared test utilities (test server setup)
 ```
 
-
 ## Frontend Structure
 
 ```

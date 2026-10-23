@@ -8,7 +8,6 @@ Developers use this application to configure, store and deploy multi-service Hel
 
 ### Domain Conventions
 
-
 **Instances**
 - **Branch default:** `master` (`DEFAULT_BRANCH`), unless the stack definition sets `DefaultBranch`.
 - **Namespace naming:** the handler generates `stack-{instance-name}-{owner}` (`buildNamespace`).
