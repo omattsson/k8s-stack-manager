@@ -1,0 +1,35 @@
+# Sessions and WebSocket Auth
+
+Reference for Claude Code and other agents. The root `CLAUDE.md` links here. Read this file before you work in this area.
+
+**Sessions.**
+- Login returns a JWT (with a `jti` and a `sid` session claim) and a refresh token.
+- `POST /auth/refresh` rotates the refresh token through `RefreshTokenRepository`. Each login starts a session family (`family_id`, `session_started_at`).
+- A rotated token that comes again within `REFRESH_REUSE_GRACE` (default 30s, for concurrent tabs) gets a new access token and no new cookie. Later reuse revokes the family.
+- The idle limit (`SESSION_IDLE_TIMEOUT`, default 30m) counts from the last authenticated request. The JWT middleware touches the `last_activity` of the family, at most one write for each session per interval: a quarter of `SESSION_IDLE_TIMEOUT`, at most 1 minute and at least 1 second (`middleware.SessionActivityInterval`). So a session can count as idle about one interval before the full timeout after its last request.
+- `SESSION_MAX_LIFETIME` (default 12h) caps a session. Rotation never extends it.
+- Exceptions: the SSO CLI token has no session and lives for `JWT_EXPIRATION`. API keys have no session. `/ws` traffic is not activity.
+- `/auth/logout` blocklists the `jti` of the current access token in `sessionstore` and revokes the presented refresh token. `/auth/logout-all` also revokes every refresh token of the user.
+- JWT auth checks `IsTokenBlocked` and `IsUserBlocked(ctx, userID, issueTime)`.
+  - A user block rejects only tokens issued at or before the block time (401).
+  - The precision is one millisecond. Access tokens carry `iat_ms`. The block time is stored in ms. A legacy token without `iat_ms` keeps the rule "same second or before".
+  - `BlockUser` writes two rows: `user_block` in seconds (older versions read it during a rolling update) and `user_block_ms`. See `userBlockTime` and `Claims.IssueTime`.
+  - The check fails open on a store error (log and continue).
+- API-key auth skips the blocklist.
+- Delete, disable, password reset and role change block earlier tokens and revoke refresh tokens. Delete also removes the API keys. A role change keeps them, because API-key auth reads the current role.
+- `MAX_REFRESH_TOKENS_PER_USER` (default 10) caps the active refresh tokens of a user at about that number. A new token revokes only the least recently used ones (issued or rotated; `RevokeOldestForUser`), never all of them: revoking all also killed the new session of a concurrent login (401 "Session revoked", #619). Concurrent logins can exceed the cap by up to N-1 until the next token is issued.
+- Every failed login writes one log line `Login failed` with a fixed `reason` (`user_not_found`, `password_mismatch`, `no_password` (a user without a local password, for example an SSO user; status `invalid`), `hash_invalid` (only a malformed stored hash), `hash_changed`, `session_revoked`, `disabled`, `lookup_error`, ...), the username, `cache_hit`, `client_ip` and `request_id`, and `auth.login.total` gets the `reason` label (`handlers/login_failure.go`). Never the password, hash or token. The client keeps the generic 401; a database error gives 500, not 401.
+- Login checks the password before the account state (#632). An unknown user, or a user without a usable hash, runs one bcrypt compare against a dummy hash (`dummyPasswordHash`, cost `passwordHashCost`). Without the correct password, every case gets the same 401 "Invalid username or password". "Account disabled" (403) and the SSO-only 403 come only after a correct password.
+- A login cache hit (`LOGIN_CACHE_TTL`) skips only bcrypt. After the password check, the login reads the user again and uses that record (disabled check, token role). A changed password hash gives 401.
+- All auth paths (login, refresh, OIDC, API key) reject `User.Disabled`.
+- Register (`POST /auth/register`) needs an admin, or `SELF_REGISTRATION=true` (code and Helm chart default `false`; Docker Compose sets `true` for development).
+- WebSocket auth:
+  - The `/ws` upgrade accepts a JWT in the `Sec-WebSocket-Protocol: bearer, <jwt>` subprotocol, in the `Authorization` header or in `?token=`. It accepts an API key in the `X-API-Key` header only.
+  - It runs the same checks (`middleware.CheckRevocation`, fail open) and also rejects a deleted or disabled user (401). A user lookup error gives 500.
+  - An API-key upgrade counts against the per-IP API rate limit.
+- WebSocket revocation:
+  - The hub (`websocket.ClientRevoker`) closes sockets with code 1008 on delete, disable, password reset, role change and logout-all (`DisconnectUser`), on logout (`DisconnectToken`) and on API key delete (`DisconnectAPIKey`).
+  - Each socket also closes when its access token (or API key) expires.
+  - The frontend reconnects. It refreshes the token first after a 1008 close or near expiry. A refresh is not idle activity: the rotated refresh token keeps `LastActivity`.
+  - With fan-out, a revocation reaches the other replicas through `ws_events` within about one poll interval.
+  - `Hub.StartRevalidation` re-checks all open sockets every minute (fail open). It closes sockets that a direct database change or a blocklist entry made invalid.
