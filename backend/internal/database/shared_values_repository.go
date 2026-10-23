@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"errors"
 	"time"
 
@@ -27,20 +28,30 @@ func NewGORMSharedValuesRepository(db *gorm.DB) *GORMSharedValuesRepository {
 }
 
 // Create inserts a new shared values record.
-func (r *GORMSharedValuesRepository) Create(sv *models.SharedValues) error {
+func (r *GORMSharedValuesRepository) Create(ctx context.Context, sv *models.SharedValues) error {
 	if sv.ID == "" {
 		sv.ID = uuid.New().String()
 	}
 	now := time.Now().UTC()
 	sv.CreatedAt = now
 	sv.UpdatedAt = now
-	return r.BaseRepository.Create(sv)
+	return r.withContext(ctx).Create(sv)
+}
+
+// FindByID returns a shared values record by ID.
+func (r *GORMSharedValuesRepository) FindByID(ctx context.Context, id string) (*models.SharedValues, error) {
+	return r.withContext(ctx).FindByID(id)
+}
+
+// Delete deletes a shared values record by ID.
+func (r *GORMSharedValuesRepository) Delete(ctx context.Context, id string) error {
+	return r.withContext(ctx).Delete(id)
 }
 
 // FindByClusterAndID returns a shared values record matching both cluster ID and record ID.
-func (r *GORMSharedValuesRepository) FindByClusterAndID(clusterID, id string) (*models.SharedValues, error) {
+func (r *GORMSharedValuesRepository) FindByClusterAndID(ctx context.Context, clusterID, id string) (*models.SharedValues, error) {
 	var sv models.SharedValues
-	if err := r.DB.Where("cluster_id = ? AND id = ?", clusterID, id).First(&sv).Error; err != nil {
+	if err := r.DB.WithContext(ctx).Where("cluster_id = ? AND id = ?", clusterID, id).First(&sv).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, dberrors.NewDatabaseError("find_by_cluster_and_id", dberrors.ErrNotFound)
 		}
@@ -50,17 +61,17 @@ func (r *GORMSharedValuesRepository) FindByClusterAndID(clusterID, id string) (*
 }
 
 // Update persists changes to an existing shared values record.
-func (r *GORMSharedValuesRepository) Update(sv *models.SharedValues) error {
+func (r *GORMSharedValuesRepository) Update(ctx context.Context, sv *models.SharedValues) error {
 	sv.UpdatedAt = time.Now().UTC()
-	return r.Save(sv)
+	return r.withContext(ctx).Save(sv)
 }
 
 // ListByCluster returns all shared values for a given cluster in merge order
 // (models.SortSharedValues: priority, then name, then ID). The final sort runs
 // in Go so the order does not depend on the database collation.
-func (r *GORMSharedValuesRepository) ListByCluster(clusterID string) ([]models.SharedValues, error) {
+func (r *GORMSharedValuesRepository) ListByCluster(ctx context.Context, clusterID string) ([]models.SharedValues, error) {
 	var values []models.SharedValues
-	if err := r.DB.Where("cluster_id = ?", clusterID).
+	if err := r.DB.WithContext(ctx).Where("cluster_id = ?", clusterID).
 		Order("priority ASC").
 		Find(&values).Error; err != nil {
 		return nil, dberrors.NewDatabaseError("list_by_cluster", err)

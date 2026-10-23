@@ -85,7 +85,7 @@ func DeleteInstanceRecord(ctx context.Context, repos TxRepos, inst *models.Stack
 		}
 	}
 	if repos.ValueOverride != nil {
-		if err := repos.ValueOverride.DeleteByInstance(inst.ID); err != nil {
+		if err := repos.ValueOverride.DeleteByInstance(ctx, inst.ID); err != nil {
 			return err
 		}
 	}

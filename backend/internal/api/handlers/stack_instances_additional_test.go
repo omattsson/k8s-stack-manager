@@ -320,7 +320,7 @@ func TestCloneInstance_Additional(t *testing.T) {
 		seedInstance(t, instRepo, "src-1", "my-stack", "d1", "uid-1", models.StackStatusRunning)
 
 		// Create value overrides for the source instance.
-		require.NoError(t, overrideRepo.Create(&models.ValueOverride{
+		require.NoError(t, overrideRepo.Create(context.Background(), &models.ValueOverride{
 			ID:              "ov1",
 			StackInstanceID: "src-1",
 			ChartConfigID:   "cc1",
@@ -345,7 +345,7 @@ func TestCloneInstance_Additional(t *testing.T) {
 		assert.Equal(t, "d1", result.StackDefinitionID)
 
 		// Verify value overrides were copied.
-		clonedOverrides, err := overrideRepo.ListByInstance(result.ID)
+		clonedOverrides, err := overrideRepo.ListByInstance(context.Background(), result.ID)
 		require.NoError(t, err)
 		assert.Len(t, clonedOverrides, 1)
 		assert.Equal(t, "replicas: 3", clonedOverrides[0].Values)
@@ -663,7 +663,7 @@ func TestCompareInstances_Additional(t *testing.T) {
 		seedChartConfigForTest(t, ccRepo, "cc1", "d1", "backend")
 
 		// Add override for left instance only.
-		require.NoError(t, overrideRepo.Create(&models.ValueOverride{
+		require.NoError(t, overrideRepo.Create(context.Background(), &models.ValueOverride{
 			ID:              "ov1",
 			StackInstanceID: "i1",
 			ChartConfigID:   "cc1",

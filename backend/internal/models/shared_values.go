@@ -1,6 +1,7 @@
 package models
 
 import (
+	"context"
 	"sort"
 	"time"
 )
@@ -20,12 +21,12 @@ type SharedValues struct {
 
 // SharedValuesRepository defines data access operations for shared values.
 type SharedValuesRepository interface {
-	Create(sv *SharedValues) error
-	FindByID(id string) (*SharedValues, error)
-	FindByClusterAndID(clusterID, id string) (*SharedValues, error)
-	Update(sv *SharedValues) error
-	Delete(id string) error
-	ListByCluster(clusterID string) ([]SharedValues, error)
+	Create(ctx context.Context, sv *SharedValues) error
+	FindByID(ctx context.Context, id string) (*SharedValues, error)
+	FindByClusterAndID(ctx context.Context, clusterID, id string) (*SharedValues, error)
+	Update(ctx context.Context, sv *SharedValues) error
+	Delete(ctx context.Context, id string) error
+	ListByCluster(ctx context.Context, clusterID string) ([]SharedValues, error)
 }
 
 // SortSharedValues orders shared values for merging and listing: priority

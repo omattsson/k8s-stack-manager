@@ -93,7 +93,7 @@ func newAuthzFixture(t *testing.T, instStatus, callerID, callerRole string) *aut
 		RepositoryURL:     "oci://example.com/charts/app",
 		DeployOrder:       1,
 	}))
-	require.NoError(t, f.overrideRepo.Create(&models.ValueOverride{
+	require.NoError(t, f.overrideRepo.Create(context.Background(), &models.ValueOverride{
 		ID: "vo-1", StackInstanceID: authzInstanceID, ChartConfigID: authzChartID, Values: "replicas: 1",
 	}))
 	require.NoError(t, f.boRepo.Set(context.Background(), &models.ChartBranchOverride{
@@ -218,7 +218,7 @@ func (f *authzFixture) assertNoSideEffects(t *testing.T, before *models.StackIns
 	assert.Empty(t, f.hookRec.names(), "no hook fired")
 	assert.Zero(t, f.actionCalls.Load(), "no action invoked")
 
-	vo, err := f.overrideRepo.ListByInstance(authzInstanceID)
+	vo, err := f.overrideRepo.ListByInstance(context.Background(), authzInstanceID)
 	require.NoError(t, err)
 	require.Len(t, vo, 1, "value overrides unchanged")
 	assert.Equal(t, "replicas: 1", vo[0].Values)

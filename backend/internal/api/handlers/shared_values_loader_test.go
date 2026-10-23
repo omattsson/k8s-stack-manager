@@ -57,9 +57,9 @@ func TestLoadSharedValues(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			mem := newMockSharedValuesRepo()
-			require.NoError(t, mem.Create(&models.SharedValues{ID: "b", ClusterID: "cl-1", Priority: 5, Values: "p5: b\n"}))
-			require.NoError(t, mem.Create(&models.SharedValues{ID: "a", ClusterID: "cl-1", Priority: 0, Values: "p0: a\n"}))
-			require.NoError(t, mem.Create(&models.SharedValues{ID: "blank", ClusterID: "cl-1", Priority: 3, Values: "  \n"}))
+			require.NoError(t, mem.Create(context.Background(), &models.SharedValues{ID: "b", ClusterID: "cl-1", Priority: 5, Values: "p5: b\n"}))
+			require.NoError(t, mem.Create(context.Background(), &models.SharedValues{ID: "a", ClusterID: "cl-1", Priority: 0, Values: "p0: a\n"}))
+			require.NoError(t, mem.Create(context.Background(), &models.SharedValues{ID: "blank", ClusterID: "cl-1", Priority: 3, Values: "  \n"}))
 
 			var repo models.SharedValuesRepository = mem
 			if tt.failList {
@@ -95,7 +95,7 @@ func TestLoadSharedValues_OrderAndInvalidYAML(t *testing.T) {
 		{ID: "id-bad", ClusterID: "cl-1", Name: "broken", Priority: 2, Values: "key: [unclosed\n"},
 		{ID: "id-list", ClusterID: "cl-1", Name: "list", Priority: 3, Values: "- a\n- b\n"},
 	} {
-		require.NoError(t, mem.Create(sv))
+		require.NoError(t, mem.Create(context.Background(), sv))
 	}
 
 	got, err := loadSharedValues(context.Background(), mem, nil, nil, &models.StackInstance{ID: "i1", ClusterID: "cl-1"})

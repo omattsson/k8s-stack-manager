@@ -35,7 +35,7 @@ type failingSharedValuesRepo struct {
 	*mockSharedValuesRepo
 }
 
-func (f *failingSharedValuesRepo) ListByCluster(string) ([]models.SharedValues, error) {
+func (f *failingSharedValuesRepo) ListByCluster(context.Context, string) ([]models.SharedValues, error) {
 	return nil, errors.New("connection refused")
 }
 
@@ -110,7 +110,7 @@ func newSVFixture(t *testing.T, clusterID string) *svFixture {
 
 func (f *svFixture) addShared(t *testing.T, id, clusterID string, priority int, values string) {
 	t.Helper()
-	require.NoError(t, f.svRepo.Create(&models.SharedValues{
+	require.NoError(t, f.svRepo.Create(context.Background(), &models.SharedValues{
 		ID: id, ClusterID: clusterID, Name: id, Priority: priority, Values: values,
 	}))
 }
@@ -554,7 +554,7 @@ type failingListValueOverrideRepo struct {
 	*MockValueOverrideRepository
 }
 
-func (f *failingListValueOverrideRepo) ListByInstance(string) ([]models.ValueOverride, error) {
+func (f *failingListValueOverrideRepo) ListByInstance(context.Context, string) ([]models.ValueOverride, error) {
 	return nil, errors.New("connection refused")
 }
 
@@ -602,7 +602,7 @@ func TestQuickDeploy_UsesValuesPipeline(t *testing.T) {
 				DefaultValues: "fromDefault: svc\nlockedKey: default\n",
 				LockedValues:  "lockedKey: locked\n",
 			}))
-			require.NoError(t, svMock.Create(&models.SharedValues{ID: "sv-1", ClusterID: "test-cluster", Values: "sharedValuesOnly: shared\nlockedKey: shared\n"}))
+			require.NoError(t, svMock.Create(context.Background(), &models.SharedValues{ID: "sv-1", ClusterID: "test-cluster", Values: "sharedValuesOnly: shared\nlockedKey: shared\n"}))
 
 			var ovRepo models.ValueOverrideRepository = ovMock
 			if tt.failOverride {

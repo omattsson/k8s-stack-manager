@@ -275,7 +275,7 @@ func TestCloneInstance_CopiesSettings(t *testing.T) {
 				OwnerID: "uid-1", Branch: "feature-x", ClusterID: "cluster-a", Status: models.StackStatusRunning,
 				TTLMinutes: 240, ExpiresAt: &exp,
 			}))
-			require.NoError(t, env.ov.Create(&models.ValueOverride{ID: "ov1", StackInstanceID: "src", ChartConfigID: "cc1", Values: "replicas: 3"}))
+			require.NoError(t, env.ov.Create(context.Background(), &models.ValueOverride{ID: "ov1", StackInstanceID: "src", ChartConfigID: "cc1", Values: "replicas: 3"}))
 			require.NoError(t, env.bo.Set(context.Background(), &models.ChartBranchOverride{ID: "bo1", StackInstanceID: "src", ChartConfigID: "cc1", Branch: "hotfix"}))
 			pods := 7
 			require.NoError(t, env.quota.Upsert(context.Background(), &models.InstanceQuotaOverride{
@@ -297,7 +297,7 @@ func TestCloneInstance_CopiesSettings(t *testing.T) {
 			assert.Equal(t, "uid-2", clone.OwnerID)
 			assert.Equal(t, models.StackStatusDraft, clone.Status)
 
-			ovs, err := env.ov.ListByInstance(clone.ID)
+			ovs, err := env.ov.ListByInstance(context.Background(), clone.ID)
 			require.NoError(t, err)
 			require.Len(t, ovs, 1)
 			assert.Equal(t, "replicas: 3", ovs[0].Values)
@@ -457,7 +457,7 @@ func seedRollbackInstance(t *testing.T, env *lifecycleEnv) {
 		ID: "i1", StackDefinitionID: "d1", Name: "zz-life", Namespace: "stack-zz-life-alice",
 		OwnerID: "uid-1", Branch: "master", Status: models.StackStatusRunning,
 	}))
-	require.NoError(t, env.ov.Create(&models.ValueOverride{ID: "ov1", StackInstanceID: "i1", ChartConfigID: "cc1", Values: "replicas: 2\n"}))
+	require.NoError(t, env.ov.Create(context.Background(), &models.ValueOverride{ID: "ov1", StackInstanceID: "i1", ChartConfigID: "cc1", Values: "replicas: 2\n"}))
 }
 
 func seedLog(t *testing.T, env *lifecycleEnv, log models.DeploymentLog) {

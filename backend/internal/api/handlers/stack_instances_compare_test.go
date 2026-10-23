@@ -162,13 +162,13 @@ func TestCompareInstances(t *testing.T) {
 					ChartName:         "my-chart",
 					DefaultValues:     "key: default\n",
 				}))
-				require.NoError(t, ovRepo.Create(&models.ValueOverride{
+				require.NoError(t, ovRepo.Create(context.Background(), &models.ValueOverride{
 					ID:              "ov1",
 					StackInstanceID: "i-left",
 					ChartConfigID:   "cc1",
 					Values:          "key: left-override\n",
 				}))
-				require.NoError(t, ovRepo.Create(&models.ValueOverride{
+				require.NoError(t, ovRepo.Create(context.Background(), &models.ValueOverride{
 					ID:              "ov2",
 					StackInstanceID: "i-right",
 					ChartConfigID:   "cc1",

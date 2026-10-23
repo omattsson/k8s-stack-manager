@@ -791,16 +791,24 @@ func (s *stubTemplateChartConfigRepo) ListByTemplate(_ string) ([]models.Templat
 
 type stubValueOverrideRepo struct{}
 
-func (s *stubValueOverrideRepo) Create(_ *models.ValueOverride) error             { return nil }
-func (s *stubValueOverrideRepo) FindByID(_ string) (*models.ValueOverride, error) { return nil, nil }
-func (s *stubValueOverrideRepo) DeleteByInstance(_ string) error                  { return nil }
-func (s *stubValueOverrideRepo) FindByInstanceAndChart(_, _ string) (*models.ValueOverride, error) {
-	return nil, nil
+func (s *stubValueOverrideRepo) Create(ctx context.Context, _ *models.ValueOverride) error {
+	return ctx.Err()
 }
-func (s *stubValueOverrideRepo) Update(_ *models.ValueOverride) error { return nil }
-func (s *stubValueOverrideRepo) Delete(_ string) error                { return nil }
-func (s *stubValueOverrideRepo) ListByInstance(_ string) ([]models.ValueOverride, error) {
-	return nil, nil
+func (s *stubValueOverrideRepo) FindByID(ctx context.Context, _ string) (*models.ValueOverride, error) {
+	return nil, ctx.Err()
+}
+func (s *stubValueOverrideRepo) DeleteByInstance(ctx context.Context, _ string) error {
+	return ctx.Err()
+}
+func (s *stubValueOverrideRepo) FindByInstanceAndChart(ctx context.Context, _, _ string) (*models.ValueOverride, error) {
+	return nil, ctx.Err()
+}
+func (s *stubValueOverrideRepo) Update(ctx context.Context, _ *models.ValueOverride) error {
+	return ctx.Err()
+}
+func (s *stubValueOverrideRepo) Delete(ctx context.Context, _ string) error { return ctx.Err() }
+func (s *stubValueOverrideRepo) ListByInstance(ctx context.Context, _ string) ([]models.ValueOverride, error) {
+	return nil, ctx.Err()
 }
 
 // ---- stubChartBranchOverrideRepo ----
@@ -852,15 +860,21 @@ func (s *stubAPIKeyRepo) DeleteAllForUser(_ context.Context, _ string) (int64, e
 
 type stubSharedValuesRepo struct{}
 
-func (s *stubSharedValuesRepo) Create(_ *models.SharedValues) error             { return nil }
-func (s *stubSharedValuesRepo) FindByID(_ string) (*models.SharedValues, error) { return nil, nil }
-func (s *stubSharedValuesRepo) FindByClusterAndID(_, _ string) (*models.SharedValues, error) {
-	return nil, nil
+func (s *stubSharedValuesRepo) Create(ctx context.Context, _ *models.SharedValues) error {
+	return ctx.Err()
 }
-func (s *stubSharedValuesRepo) Update(_ *models.SharedValues) error { return nil }
-func (s *stubSharedValuesRepo) Delete(_ string) error               { return nil }
-func (s *stubSharedValuesRepo) ListByCluster(_ string) ([]models.SharedValues, error) {
-	return nil, nil
+func (s *stubSharedValuesRepo) FindByID(ctx context.Context, _ string) (*models.SharedValues, error) {
+	return nil, ctx.Err()
+}
+func (s *stubSharedValuesRepo) FindByClusterAndID(ctx context.Context, _, _ string) (*models.SharedValues, error) {
+	return nil, ctx.Err()
+}
+func (s *stubSharedValuesRepo) Update(ctx context.Context, _ *models.SharedValues) error {
+	return ctx.Err()
+}
+func (s *stubSharedValuesRepo) Delete(ctx context.Context, _ string) error { return ctx.Err() }
+func (s *stubSharedValuesRepo) ListByCluster(ctx context.Context, _ string) ([]models.SharedValues, error) {
+	return nil, ctx.Err()
 }
 
 // ---- stubTemplateVersionRepo ----

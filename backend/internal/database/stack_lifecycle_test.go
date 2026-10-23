@@ -102,7 +102,7 @@ func TestDeleteInstanceWithOwnedDefinition(t *testing.T) {
 			inst := &models.StackInstance{ID: "i1", StackDefinitionID: "d1", Name: "qd", Namespace: "stack-qd-u1", OwnerID: "u1", Status: models.StackStatusDraft}
 			require.NoError(t, instRepo.Create(context.Background(), inst))
 			require.NoError(t, boRepo.Set(context.Background(), &models.ChartBranchOverride{ID: "b1", StackInstanceID: "i1", ChartConfigID: "c1", Branch: "x"}))
-			require.NoError(t, ovRepo.Create(&models.ValueOverride{ID: "v1", StackInstanceID: "i1", ChartConfigID: "c1", Values: "a: 1"}))
+			require.NoError(t, ovRepo.Create(context.Background(), &models.ValueOverride{ID: "v1", StackInstanceID: "i1", ChartConfigID: "c1", Values: "a: 1"}))
 			require.NoError(t, quotaRepo.Upsert(ctx, &models.InstanceQuotaOverride{StackInstanceID: "i1", CPULimit: "1"}))
 			followerRepo := NewGORMInstanceFollowerRepository(db)
 			require.NoError(t, followerRepo.Follow(ctx, "u2", "i1"))
@@ -123,7 +123,7 @@ func TestDeleteInstanceWithOwnedDefinition(t *testing.T) {
 			bos, err := boRepo.List(context.Background(), "i1")
 			require.NoError(t, err)
 			assert.Empty(t, bos, "branch overrides are deleted")
-			ovs, err := ovRepo.ListByInstance("i1")
+			ovs, err := ovRepo.ListByInstance(context.Background(), "i1")
 			require.NoError(t, err)
 			assert.Empty(t, ovs, "value overrides are deleted")
 			_, err = quotaRepo.GetByInstanceID(ctx, "i1")

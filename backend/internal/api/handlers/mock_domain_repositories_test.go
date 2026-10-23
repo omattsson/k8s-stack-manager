@@ -1652,7 +1652,10 @@ func NewMockValueOverrideRepository() *MockValueOverrideRepository {
 	return &MockValueOverrideRepository{items: make(map[string]*models.ValueOverride)}
 }
 
-func (m *MockValueOverrideRepository) Create(v *models.ValueOverride) error {
+func (m *MockValueOverrideRepository) Create(ctx context.Context, v *models.ValueOverride) error {
+	if err := ctxDone(ctx, "create"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -1662,7 +1665,10 @@ func (m *MockValueOverrideRepository) Create(v *models.ValueOverride) error {
 	return nil
 }
 
-func (m *MockValueOverrideRepository) FindByID(id string) (*models.ValueOverride, error) {
+func (m *MockValueOverrideRepository) FindByID(ctx context.Context, id string) (*models.ValueOverride, error) {
+	if err := ctxDone(ctx, "find_by_id"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	v, ok := m.items[id]
@@ -1673,7 +1679,10 @@ func (m *MockValueOverrideRepository) FindByID(id string) (*models.ValueOverride
 	return &cp, nil
 }
 
-func (m *MockValueOverrideRepository) FindByInstanceAndChart(instanceID, chartConfigID string) (*models.ValueOverride, error) {
+func (m *MockValueOverrideRepository) FindByInstanceAndChart(ctx context.Context, instanceID, chartConfigID string) (*models.ValueOverride, error) {
+	if err := ctxDone(ctx, "find_by_instance_and_chart"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, v := range m.items {
@@ -1685,7 +1694,10 @@ func (m *MockValueOverrideRepository) FindByInstanceAndChart(instanceID, chartCo
 	return nil, errors.New("not found")
 }
 
-func (m *MockValueOverrideRepository) Update(v *models.ValueOverride) error {
+func (m *MockValueOverrideRepository) Update(ctx context.Context, v *models.ValueOverride) error {
+	if err := ctxDone(ctx, "update"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -1698,7 +1710,10 @@ func (m *MockValueOverrideRepository) Update(v *models.ValueOverride) error {
 	return nil
 }
 
-func (m *MockValueOverrideRepository) Delete(id string) error {
+func (m *MockValueOverrideRepository) Delete(ctx context.Context, id string) error {
+	if err := ctxDone(ctx, "delete"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.items[id]; !ok {
@@ -1708,7 +1723,10 @@ func (m *MockValueOverrideRepository) Delete(id string) error {
 	return nil
 }
 
-func (m *MockValueOverrideRepository) DeleteByInstance(instanceID string) error {
+func (m *MockValueOverrideRepository) DeleteByInstance(ctx context.Context, instanceID string) error {
+	if err := ctxDone(ctx, "delete_by_instance"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for id, v := range m.items {
@@ -1719,7 +1737,10 @@ func (m *MockValueOverrideRepository) DeleteByInstance(instanceID string) error 
 	return nil
 }
 
-func (m *MockValueOverrideRepository) ListByInstance(instanceID string) ([]models.ValueOverride, error) {
+func (m *MockValueOverrideRepository) ListByInstance(ctx context.Context, instanceID string) ([]models.ValueOverride, error) {
+	if err := ctxDone(ctx, "list_by_instance"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	var out []models.ValueOverride

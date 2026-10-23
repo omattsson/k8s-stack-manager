@@ -259,7 +259,8 @@ type writeCtxFixture struct {
 	charts    *hookChartConfigRepo
 	branches  *hookBranchOverrideRepo
 	logs      *MockDeploymentLogRepository
-	ov        *MockValueOverrideRepository
+	ov        *hookValueOverrideRepo
+	shared    *hookSharedValuesRepo
 	followers *MockInstanceFollowerRepository
 	notif     *followerCtxNotifier
 	audit     *MockAuditLogRepository
@@ -275,13 +276,14 @@ func newWriteCtxFixture(t *testing.T) *writeCtxFixture {
 	f := &writeCtxFixture{
 		inst:      newHookInstanceRepo(),
 		logs:      NewMockDeploymentLogRepository(),
-		ov:        NewMockValueOverrideRepository(),
 		followers: NewMockInstanceFollowerRepository(),
 		notif:     &followerCtxNotifier{followers: []string{"f-1"}},
 		audit:     NewMockAuditLogRepository(),
 	}
 	f.def = &hookDefinitionRepo{MockStackDefinitionRepository: NewMockStackDefinitionRepository(), hooks: f.inst}
 	def := f.def
+	f.ov = newHookValueOverrideRepo(f.inst)
+	f.shared = newHookSharedValuesRepo(f.inst)
 	f.charts = newHookChartConfigRepo(f.inst)
 	f.branches = newHookBranchOverrideRepo(f.inst)
 	cc, bo := f.charts, f.branches
@@ -326,6 +328,7 @@ func newWriteCtxFixture(t *testing.T) *writeCtxFixture {
 	require.NoError(t, err)
 	h.WithNotifier(f.notif)
 	h.WithFollowers(ctxFollowerRepo{f.followers})
+	h.WithSharedValues(f.shared)
 
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
@@ -534,9 +537,9 @@ func TestInstanceWrites_CancelledAfterReadsStillCommit(t *testing.T) {
 		},
 		{
 			name: "value override", method: http.MethodPut, path: "/api/v1/stack-instances/draft-1/overrides/cc1",
-			body: `{"values":"replicas: 2\n"}`, cancelAt: "after:Definition.FindByID", wantStatus: http.StatusOK,
+			body: `{"values":"replicas: 2\n"}`, cancelAt: "after:Override.FindByInstanceAndChart", wantStatus: http.StatusOK,
 			check: func(t *testing.T, f *writeCtxFixture, _ *httptest.ResponseRecorder) {
-				ov, err := f.ov.FindByInstanceAndChart("draft-1", "cc1")
+				ov, err := f.ov.FindByInstanceAndChart(context.Background(), "draft-1", "cc1")
 				require.NoError(t, err)
 				assert.Equal(t, "replicas: 2\n", ov.Values)
 			},

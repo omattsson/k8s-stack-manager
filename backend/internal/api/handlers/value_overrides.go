@@ -43,7 +43,7 @@ func (h *InstanceHandler) GetOverrides(c *gin.Context) {
 		return
 	}
 
-	overrides, err := h.overrideRepo.ListByInstance(instanceID)
+	overrides, err := h.overrideRepo.ListByInstance(c.Request.Context(), instanceID)
 	if err != nil {
 		status, message := mapError(err, "Value overrides")
 		c.JSON(status, gin.H{"error": message})
@@ -103,7 +103,7 @@ func (h *InstanceHandler) SetOverride(c *gin.Context) {
 	// Empty values mean "no override": remove the row instead of storing an
 	// empty one, so GET /overrides lists only real overrides.
 	if strings.TrimSpace(input.Values) == "" {
-		if err := h.deleteValueOverride(instanceID, chartID); err != nil && !isNotFoundError(err) {
+		if err := h.deleteValueOverride(c, instanceID, chartID); err != nil && !isNotFoundError(err) {
 			status, message := mapError(err, entityValueOverride)
 			if status == http.StatusInternalServerError {
 				slog.Error("failed to remove empty value override", logKeyInstanceID, instanceID, "chart_id", chartID, "error", err)
@@ -133,12 +133,22 @@ func (h *InstanceHandler) SetOverride(c *gin.Context) {
 	now := time.Now().UTC()
 
 	// Try to find existing override for upsert.
-	existing, err := h.overrideRepo.FindByInstanceAndChart(instanceID, chartID)
+	existing, err := h.overrideRepo.FindByInstanceAndChart(c.Request.Context(), instanceID, chartID)
+	if err != nil && !isNotFoundError(err) {
+		// A failed read must not turn the upsert into a create (#656).
+		status, message := mapError(err, entityValueOverride)
+		if status == http.StatusInternalServerError {
+			slog.Error("failed to find value override", logKeyInstanceID, instanceID, "chart_id", chartID, "error", err)
+		}
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
 	if err == nil && existing != nil {
 		existing.Values = input.Values
 		existing.UpdatedAt = now
 
-		if err := h.overrideRepo.Update(existing); err != nil {
+		// The audit entry follows the commit: a client that leaves must not cancel the write (#656).
+		if err := h.overrideRepo.Update(writeCtx(c), existing); err != nil {
 			status, message := mapError(err, "Value override")
 			c.JSON(status, gin.H{"error": message})
 			return
@@ -157,7 +167,7 @@ func (h *InstanceHandler) SetOverride(c *gin.Context) {
 		UpdatedAt:       now,
 	}
 
-	if err := h.overrideRepo.Create(override); err != nil {
+	if err := h.overrideRepo.Create(writeCtx(c), override); err != nil {
 		status, message := mapError(err, "Value override")
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -204,16 +214,17 @@ func requireInstanceChart(c *gin.Context, repo models.ChartConfigRepository, ins
 }
 
 // deleteValueOverride removes the value override of a chart. It returns a
-// not-found error (see isNotFoundError) when no override exists.
-func (h *InstanceHandler) deleteValueOverride(instanceID, chartID string) error {
-	existing, err := h.overrideRepo.FindByInstanceAndChart(instanceID, chartID)
+// not-found error (see isNotFoundError) when no override exists. The lookup
+// uses the request context and the delete a detached one (#656).
+func (h *InstanceHandler) deleteValueOverride(c *gin.Context, instanceID, chartID string) error {
+	existing, err := h.overrideRepo.FindByInstanceAndChart(c.Request.Context(), instanceID, chartID)
 	if err != nil {
 		return err
 	}
 	if existing == nil {
 		return dberrors.NewDatabaseError("delete", dberrors.ErrNotFound)
 	}
-	return h.overrideRepo.Delete(existing.ID)
+	return h.overrideRepo.Delete(writeCtx(c), existing.ID)
 }
 
 // GetOverride godoc
@@ -251,7 +262,7 @@ func (h *InstanceHandler) GetOverride(c *gin.Context) {
 		return
 	}
 
-	override, err := h.overrideRepo.FindByInstanceAndChart(instanceID, chartID)
+	override, err := h.overrideRepo.FindByInstanceAndChart(c.Request.Context(), instanceID, chartID)
 	if err != nil {
 		status, message := mapError(err, entityValueOverride)
 		if status == http.StatusInternalServerError {
@@ -299,7 +310,7 @@ func (h *InstanceHandler) DeleteOverride(c *gin.Context) {
 		return
 	}
 
-	err = h.deleteValueOverride(instanceID, chartID)
+	err = h.deleteValueOverride(c, instanceID, chartID)
 	if err == nil {
 		c.Status(http.StatusNoContent)
 		return

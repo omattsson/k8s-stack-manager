@@ -74,7 +74,7 @@ func (b *valuesBuilder) layers(ctx context.Context, inst *models.StackInstance, 
 
 	overridesMap := make(map[string]string)
 	if b.overrideRepo != nil {
-		overrides, err := b.overrideRepo.ListByInstance(inst.ID)
+		overrides, err := b.overrideRepo.ListByInstance(ctx, inst.ID)
 		if err != nil {
 			return nil, helm.TemplateVars{}, nil, fmt.Errorf("list value overrides: %w", err)
 		}

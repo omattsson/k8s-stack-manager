@@ -55,7 +55,7 @@ func seedValueOverride(t *testing.T, repo *MockValueOverrideRepository, id, inst
 		Values:          values,
 		UpdatedAt:       time.Now().UTC(),
 	}
-	require.NoError(t, repo.Create(v))
+	require.NoError(t, repo.Create(context.Background(), v))
 	return v
 }
 
