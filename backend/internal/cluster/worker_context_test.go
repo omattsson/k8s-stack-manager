@@ -182,11 +182,11 @@ func (r *clusterCtxRecorder) List(ctx context.Context) ([]models.Cluster, error)
 	return r.mockClusterRepo.List(ctx)
 }
 
-func (r *clusterCtxRecorder) Update(ctx context.Context, cl *models.Cluster) error {
+func (r *clusterCtxRecorder) UpdateHealthStatus(ctx context.Context, id, status string) error {
 	r.mu.Lock()
 	r.updateMarker, r.updateCalled = ctx.Value(workerCtxKey{}), true
 	r.mu.Unlock()
-	return r.mockClusterRepo.Update(ctx, cl)
+	return r.mockClusterRepo.UpdateHealthStatus(ctx, id, status)
 }
 
 func (r *clusterCtxRecorder) seenList() (any, bool) {

@@ -331,6 +331,21 @@ func (m *mockClusterRepo) Update(ctx context.Context, c *models.Cluster) error {
 	return fmt.Errorf("not found")
 }
 
+func (m *mockClusterRepo) UpdateHealthStatus(ctx context.Context, id, status string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, existing := range m.clusters {
+		if existing.ID == id {
+			existing.HealthStatus = status
+			return nil
+		}
+	}
+	return fmt.Errorf("not found")
+}
+
 func (m *mockClusterRepo) Delete(ctx context.Context, id string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -497,7 +512,7 @@ func (m *mockInstanceRepo) FindByCluster(ctx context.Context, clusterID string) 
 	return out, nil
 }
 
-func (m *mockInstanceRepo) CountByClusterAndOwner(ctx context.Context, _, _ string) (int, error) {
+func (m *mockInstanceRepo) CountForInstanceLimit(ctx context.Context, _, _ string, _ bool) (int, error) {
 	return 0, ctx.Err()
 }
 
@@ -809,6 +824,9 @@ func (f *failOnCreateClusterRepo) Update(ctx context.Context, _ *models.Cluster)
 		return err
 	}
 	return nil
+}
+func (f *failOnCreateClusterRepo) UpdateHealthStatus(ctx context.Context, _, _ string) error {
+	return ctx.Err()
 }
 func (f *failOnCreateClusterRepo) Delete(ctx context.Context, _ string) error {
 	if err := ctx.Err(); err != nil {

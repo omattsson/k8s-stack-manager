@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/pprof"
 	"os"
@@ -577,7 +578,7 @@ func buildHandlers(
 	}
 	quickDeployHandler.WithSharedValues(repos.SharedValues).WithTemplateVersions(repos.TemplateVersion).
 		WithUniqueInstanceNames(cfg.App.UniqueInstanceNames).WithMaxTTLDays(cfg.App.MaxInstanceTTLDays).
-		WithNotifier(svc.LifecycleNotifier)
+		WithNotifier(svc.LifecycleNotifier).WithClusterRepo(repos.Cluster)
 
 	// Cluster shared values are the lowest values layer of every deploy.
 	// Warn loudly if they are not wired: deploys would silently skip them.
@@ -897,10 +898,26 @@ type servers struct {
 	Metrics *http.Server // nil when METRICS_ENABLED=false
 }
 
-// startHTTPServer creates, configures, and starts the HTTP server (and
-// optionally a pprof server and a Prometheus metrics server) in background goroutines.
-func startHTTPServer(router *gin.Engine, cfg *config.Config, tel *telemetry.Telemetry) *servers {
+// startHTTPServer binds the main server and, when enabled, the pprof and
+// metrics servers, then serves them in background goroutines. It binds
+// before it serves, so a bind failure of the main server is an error for the
+// caller (#662). A pprof or metrics bind failure is only logged. The Addr of
+// each started server is its bound address (port 0 gets the real port).
+func startHTTPServer(router *gin.Engine, cfg *config.Config, tel *telemetry.Telemetry) (*servers, error) {
 	s := &servers{}
+
+	s.Main = &http.Server{
+		Addr:         fmt.Sprintf("%s:%s", cfg.Server.Host, cfg.Server.Port),
+		Handler:      router,
+		ReadTimeout:  cfg.Server.ReadTimeout,
+		WriteTimeout: cfg.Server.WriteTimeout,
+		IdleTimeout:  cfg.Server.IdleTimeout,
+	}
+	mainLn, err := net.Listen("tcp", s.Main.Addr)
+	if err != nil {
+		return nil, fmt.Errorf("listen on %s: %w", s.Main.Addr, err)
+	}
+	s.Main.Addr = mainLn.Addr().String()
 
 	// Start pprof server on a separate port when PPROF_ENABLED=true.
 	if cfg.Server.PprofEnabled {
@@ -917,12 +934,7 @@ func startHTTPServer(router *gin.Engine, cfg *config.Config, tel *telemetry.Tele
 			WriteTimeout: 30 * time.Second,
 			IdleTimeout:  60 * time.Second,
 		}
-		go func() {
-			slog.Info("pprof server starting", "addr", s.Pprof.Addr)
-			if err := s.Pprof.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				slog.Error("pprof server failed", "error", err)
-			}
-		}()
+		serveOptional(s.Pprof, "pprof server")
 	}
 
 	// Start Prometheus metrics server when enabled.
@@ -936,31 +948,35 @@ func startHTTPServer(router *gin.Engine, cfg *config.Config, tel *telemetry.Tele
 			WriteTimeout: 10 * time.Second,
 			IdleTimeout:  30 * time.Second,
 		}
-		go func() {
-			slog.Info("metrics server starting", "addr", s.Metrics.Addr)
-			if err := s.Metrics.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				slog.Error("metrics server error", "error", err)
-			}
-		}()
+		serveOptional(s.Metrics, "metrics server")
 	}
 
-	s.Main = &http.Server{
-		Addr:         fmt.Sprintf("%s:%s", cfg.Server.Host, cfg.Server.Port),
-		Handler:      router,
-		ReadTimeout:  cfg.Server.ReadTimeout,
-		WriteTimeout: cfg.Server.WriteTimeout,
-		IdleTimeout:  cfg.Server.IdleTimeout,
-	}
-
+	slog.Info("Server starting", "addr", s.Main.Addr)
 	go func() {
-		slog.Info("Server starting", "addr", s.Main.Addr)
-		if err := s.Main.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			slog.Error("Failed to start server", "error", err)
+		if err := s.Main.Serve(mainLn); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("Server stopped", "error", err)
 			os.Exit(1)
 		}
 	}()
 
-	return s
+	return s, nil
+}
+
+// serveOptional binds srv and serves it in a background goroutine. A bind or
+// serve failure is only logged: the main server runs without it.
+func serveOptional(srv *http.Server, name string) {
+	ln, err := net.Listen("tcp", srv.Addr)
+	if err != nil {
+		slog.Error(name+" failed", "addr", srv.Addr, "error", err)
+		return
+	}
+	srv.Addr = ln.Addr().String()
+	slog.Info(name+" starting", "addr", srv.Addr)
+	go func() {
+		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error(name+" failed", "error", err)
+		}
+	}()
 }
 
 // stackAccessBinding converts the STACK_ACCESS_* config to the k8s access

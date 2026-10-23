@@ -164,17 +164,46 @@ func TestGORMStackInstanceRepository_FindByCluster(t *testing.T) {
 	assert.Len(t, instances, 2)
 }
 
-func TestGORMStackInstanceRepository_CountByClusterAndOwner(t *testing.T) {
+// TestGORMStackInstanceRepository_CountForInstanceLimit checks the count of
+// the per-user instance limit: with includeUnassigned the instances without
+// a cluster count too, because they run on the default cluster (#682).
+func TestGORMStackInstanceRepository_CountForInstanceLimit(t *testing.T) {
 	t.Parallel()
 
 	repo := setupStackInstanceRepo(t)
-	require.NoError(t, repo.Create(context.Background(), &models.StackInstance{Name: "cnt1", StackDefinitionID: "d1", Namespace: "ns-cnt1", OwnerID: "o1", Branch: "main", Status: "draft", ClusterID: "c1"}))
-	require.NoError(t, repo.Create(context.Background(), &models.StackInstance{Name: "cnt2", StackDefinitionID: "d1", Namespace: "ns-cnt2", OwnerID: "o1", Branch: "main", Status: "draft", ClusterID: "c1"}))
-	require.NoError(t, repo.Create(context.Background(), &models.StackInstance{Name: "cnt3", StackDefinitionID: "d1", Namespace: "ns-cnt3", OwnerID: "o2", Branch: "main", Status: "draft", ClusterID: "c1"}))
+	seed := []struct{ name, owner, cluster string }{
+		{"cnt1", "o1", "c1"}, {"cnt2", "o1", "c1"}, {"cnt3", "o2", "c1"},
+		{"cnt4", "o1", ""}, {"cnt5", "o1", "c2"},
+	}
+	for _, s := range seed {
+		require.NoError(t, repo.Create(context.Background(), &models.StackInstance{
+			Name: s.name, StackDefinitionID: "d1", Namespace: "ns-" + s.name, OwnerID: s.owner,
+			Branch: "main", Status: "draft", ClusterID: s.cluster,
+		}))
+	}
 
-	count, err := repo.CountByClusterAndOwner(context.Background(), "c1", "o1")
-	require.NoError(t, err)
-	assert.Equal(t, 2, count)
+	tests := []struct {
+		name              string
+		cluster           string
+		owner             string
+		includeUnassigned bool
+		want              int
+	}{
+		{name: "own cluster only", cluster: "c1", owner: "o1", want: 2},
+		{name: "default cluster with unassigned", cluster: "c1", owner: "o1", includeUnassigned: true, want: 3},
+		{name: "other owner", cluster: "c1", owner: "o2", includeUnassigned: true, want: 1},
+		{name: "other cluster", cluster: "c2", owner: "o1", want: 1},
+		{name: "owner without a user row", cluster: "c9", owner: "o9", want: 0},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			count, err := repo.CountForInstanceLimit(context.Background(), tt.cluster, tt.owner, tt.includeUnassigned)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, count)
+		})
+	}
 }
 
 func TestGORMStackInstanceRepository_ListExpired(t *testing.T) {

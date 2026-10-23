@@ -516,7 +516,7 @@ type createInstanceRequest struct {
 // @Failure     401      {object} map[string]string
 // @Failure     403      {object} map[string]string "A pre-instance-create hook rejected the request"
 // @Failure     404      {object} map[string]string "Stack definition not found"
-// @Failure     409      {object} NamespaceConflictResponse "Namespace already exists, or the name is taken on the cluster (UNIQUE_INSTANCE_NAMES)"
+// @Failure     409      {object} NamespaceConflictResponse "Namespace already exists, the name is taken on the cluster (UNIQUE_INSTANCE_NAMES), or the per-user instance limit of the cluster is reached ({error})"
 // @Failure     500      {object} map[string]string
 // @Router      /api/v1/stack-instances [post]
 func (h *InstanceHandler) CreateInstance(c *gin.Context) {
@@ -572,26 +572,9 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 		}
 	}
 
-	// Look up per-user instance limit from the cluster config (if any).
-	var maxInstancesPerUser int
-	if h.clusterRepo != nil && inst.ClusterID != "" {
-		cl, clErr := h.clusterRepo.FindByID(c.Request.Context(), inst.ClusterID)
-		if clErr != nil {
-			// A failed lookup must not skip the instance limit (#656).
-			if respondCancelled(c, clErr) {
-				return
-			}
-			if errors.Is(clErr, dberrors.ErrNotFound) {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "Unknown cluster_id"})
-				return
-			}
-			slog.Error("Failed to read the cluster of a new instance", "cluster_id", inst.ClusterID, "error", clErr)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
-			return
-		}
-		if cl.MaxInstancesPerUser > 0 {
-			maxInstancesPerUser = cl.MaxInstancesPerUser
-		}
+	limit, ok := instanceLimitFor(c, h.clusterRepo, inst.ClusterID, unknownClusterID)
+	if !ok {
+		return
 	}
 
 	if err := models.ValidateInstanceName(inst.Name); err != nil {
@@ -639,54 +622,30 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 	}
 
 	wctx := writeCtx(c)
-	if h.txRunner != nil && maxInstancesPerUser > 0 {
-		// Transactional path — count check + create are serialized within
-		// a transaction, closing the TOCTOU window for concurrent creates.
-		limitMsg := fmt.Sprintf("Maximum instances per user reached for this cluster (limit: %d)", maxInstancesPerUser)
-		txErr := h.txRunner.RunInTx(wctx, func(repos database.TxRepos) error {
-			count, countErr := repos.StackInstance.CountByClusterAndOwner(wctx, inst.ClusterID, inst.OwnerID)
-			if countErr != nil {
-				return countErr
-			}
-			if count >= maxInstancesPerUser {
-				return fmt.Errorf("%w: %s", ErrInstanceLimitExceeded, limitMsg)
-			}
-			return repos.StackInstance.Create(wctx, &inst)
+	create := func(repo models.StackInstanceRepository) error {
+		if err := checkInstanceLimit(wctx, repo, limit, inst.OwnerID); err != nil {
+			return err
+		}
+		return repo.Create(wctx, &inst)
+	}
+	var createErr error
+	if h.txRunner != nil && limit.max > 0 {
+		// The count locks the user row first, so concurrent creates of one
+		// owner wait for each other. Without a txRunner the lock ends with
+		// the count: two concurrent creates can then both pass.
+		createErr = h.txRunner.RunInTx(wctx, func(repos database.TxRepos) error {
+			return create(repos.StackInstance)
 		})
-		if txErr != nil {
-			if errors.Is(txErr, ErrInstanceLimitExceeded) {
-				c.JSON(http.StatusConflict, gin.H{"error": limitMsg})
-				return
-			}
-			status, message := mapError(txErr, entityStackInstance)
-			c.JSON(status, gin.H{"error": message})
-			return
-		}
-	} else if maxInstancesPerUser > 0 {
-		// Non-transactional path — still enforce the limit (TOCTOU possible
-		// but acceptable when txRunner is not configured).
-		limitMsg := fmt.Sprintf("Maximum instances per user reached for this cluster (limit: %d)", maxInstancesPerUser)
-		count, countErr := h.instanceRepo.CountByClusterAndOwner(wctx, inst.ClusterID, inst.OwnerID)
-		if countErr != nil {
-			status, message := mapError(countErr, entityStackInstance)
-			c.JSON(status, gin.H{"error": message})
-			return
-		}
-		if count >= maxInstancesPerUser {
-			c.JSON(http.StatusConflict, gin.H{"error": limitMsg})
-			return
-		}
-		if err := h.instanceRepo.Create(wctx, &inst); err != nil {
-			status, message := mapError(err, entityStackInstance)
-			c.JSON(status, gin.H{"error": message})
-			return
-		}
 	} else {
-		if err := h.instanceRepo.Create(wctx, &inst); err != nil {
-			status, message := mapError(err, entityStackInstance)
-			c.JSON(status, gin.H{"error": message})
+		createErr = create(h.instanceRepo)
+	}
+	if createErr != nil {
+		if respondInstanceLimit(c, createErr, limit) {
 			return
 		}
+		status, message := mapError(createErr, entityStackInstance)
+		c.JSON(status, gin.H{"error": message})
+		return
 	}
 
 	// Post-instance-create hook: ignore-by-default. Cannot undo the create at
@@ -1264,7 +1223,7 @@ func cloneNameCandidate(base string, n int) string {
 // @Failure     401  {object} map[string]string
 // @Failure     403  {object} map[string]string
 // @Failure     404  {object} map[string]string
-// @Failure     409  {object} NamespaceConflictResponse "Namespace already exists (given name), the name is taken on the cluster (UNIQUE_INSTANCE_NAMES), or no free generated name"
+// @Failure     409  {object} NamespaceConflictResponse "Namespace already exists (given name), the name is taken on the cluster (UNIQUE_INSTANCE_NAMES), no free generated name, the per-user instance limit of the cluster is reached, or the cluster of the source instance no longer exists ({error})"
 // @Failure     500  {object} map[string]string
 // @Router      /api/v1/stack-instances/{id}/clone [post]
 func (h *InstanceHandler) CloneInstance(c *gin.Context) {
@@ -1399,17 +1358,28 @@ func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 		return
 	}
 
+	limit, ok := instanceLimitFor(c, h.clusterRepo, clone.ClusterID, sourceClusterGone)
+	if !ok {
+		return
+	}
+
 	quotaPolicy := h.cloneQuotaPolicy(c, source)
 
 	// Instance create + override copies are atomic.
 	wctx := writeCtx(c)
 	var warning string
 	txErr := h.txRunner.RunInTx(wctx, func(repos database.TxRepos) error {
+		if err := checkInstanceLimit(wctx, repos.StackInstance, limit, clone.OwnerID); err != nil {
+			return err
+		}
 		var err error
 		warning, err = cloneInstanceTx(wctx, repos, source.ID, clone, now, quotaPolicy)
 		return err
 	})
 	if txErr != nil {
+		if respondInstanceLimit(c, txErr, limit) {
+			return
+		}
 		status, message := mapError(txErr, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
 		return

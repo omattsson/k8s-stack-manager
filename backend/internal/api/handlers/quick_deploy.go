@@ -47,7 +47,16 @@ type QuickDeployHandler struct {
 	sharedValuesRepo   models.SharedValuesRepository
 	versionRepo        models.TemplateVersionRepository
 	notifier           deployer.LifecycleNotifier
+	clusterRepo        models.ClusterRepository
 	uniqueNames        bool
+}
+
+// WithClusterRepo attaches the cluster repository: quick deploy then applies
+// the per-user instance limit of the cluster (max_instances_per_user, #682).
+// Returns h for chaining.
+func (h *QuickDeployHandler) WithClusterRepo(repo models.ClusterRepository) *QuickDeployHandler {
+	h.clusterRepo = repo
+	return h
 }
 
 // WithMaxTTLDays sets MAX_INSTANCE_TTL_DAYS: the maximum TTL and the maximum
@@ -173,7 +182,7 @@ type quickDeployResponse struct {
 // @Failure     401  {object} map[string]string
 // @Failure     403  {object} map[string]string
 // @Failure     404  {object} map[string]string
-// @Failure     409  {object} NamespaceConflictResponse "Namespace already exists, the name is taken on the cluster (UNIQUE_INSTANCE_NAMES), or the template has no published version ({error})"
+// @Failure     409  {object} NamespaceConflictResponse "Namespace already exists, the name is taken on the cluster (UNIQUE_INSTANCE_NAMES), the template has no published version, or the per-user instance limit of the cluster is reached ({error})"
 // @Failure     500  {object} map[string]string
 // @Security    BearerAuth
 // @Router      /api/v1/templates/{id}/quick-deploy [post]
@@ -349,6 +358,10 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 	if h.uniqueNames && guard.check(c, inst.Name, inst.ClusterID, "", username) {
 		return
 	}
+	limit, ok := instanceLimitFor(c, h.clusterRepo, inst.ClusterID, unknownClusterID)
+	if !ok {
+		return
+	}
 
 	// The definition belongs to this instance: deleting the instance deletes
 	// it when no other instance uses it. Its name is unique for the owner:
@@ -373,6 +386,9 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 	// that leaves must not stop the create, the deploy or the audit entry.
 	wctx := writeCtx(c)
 	txErr := h.txRunner.RunInTx(wctx, func(repos database.TxRepos) error {
+		if err := checkInstanceLimit(wctx, repos.StackInstance, limit, inst.OwnerID); err != nil {
+			return err
+		}
 		if err := repos.StackDefinition.Create(wctx, def); err != nil {
 			return err
 		}
@@ -384,6 +400,9 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 		return repos.StackInstance.Create(wctx, inst)
 	})
 	if txErr != nil {
+		if respondInstanceLimit(c, txErr, limit) {
+			return
+		}
 		slog.Error("Quick deploy transaction failed", "error", txErr)
 		status, message := mapError(txErr, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})

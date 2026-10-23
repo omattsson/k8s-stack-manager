@@ -1453,7 +1453,7 @@ const docTemplate = `{
         },
         "/api/v1/auth/logout": {
             "post": {
-                "description": "Revokes the current refresh token and blocklists the access token",
+                "description": "Revokes the session of the refresh token cookie (all refresh tokens of its family), blocklists the access token and closes its WebSockets. When the refresh token lookup or the revoke fails, the cookie is still cleared and the access token blocked, but the answer is 500.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1476,6 +1476,15 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -2164,7 +2173,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Removes a cluster registration. Blocked if any stack instances reference this cluster.",
+                "description": "Removes a cluster registration. Blocked (409) if any stack instances reference this cluster. For the default cluster, instances without a cluster ID block it too: they run on the default cluster.",
                 "produces": [
                     "application/json"
                 ],
@@ -5093,7 +5102,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "Namespace already exists, or the name is taken on the cluster (UNIQUE_INSTANCE_NAMES)",
+                        "description": "Namespace already exists, the name is taken on the cluster (UNIQUE_INSTANCE_NAMES), or the per-user instance limit of the cluster is reached ({error})",
                         "schema": {
                             "$ref": "#/definitions/handlers.NamespaceConflictResponse"
                         }
@@ -6539,7 +6548,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "Namespace already exists (given name), the name is taken on the cluster (UNIQUE_INSTANCE_NAMES), or no free generated name",
+                        "description": "Namespace already exists (given name), the name is taken on the cluster (UNIQUE_INSTANCE_NAMES), no free generated name, the per-user instance limit of the cluster is reached, or the cluster of the source instance no longer exists ({error})",
                         "schema": {
                             "$ref": "#/definitions/handlers.NamespaceConflictResponse"
                         }
@@ -9364,7 +9373,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "Namespace already exists, the name is taken on the cluster (UNIQUE_INSTANCE_NAMES), or the template has no published version ({error})",
+                        "description": "Namespace already exists, the name is taken on the cluster (UNIQUE_INSTANCE_NAMES), the template has no published version, or the per-user instance limit of the cluster is reached ({error})",
                         "schema": {
                             "$ref": "#/definitions/handlers.NamespaceConflictResponse"
                         }

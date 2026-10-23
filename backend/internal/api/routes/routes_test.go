@@ -958,7 +958,7 @@ func (s *stubStackInstanceRepo) FindByName(ctx context.Context, _ string) ([]mod
 func (s *stubStackInstanceRepo) FindByCluster(ctx context.Context, _ string) ([]models.StackInstance, error) {
 	return nil, ctx.Err()
 }
-func (s *stubStackInstanceRepo) CountByClusterAndOwner(ctx context.Context, _, _ string) (int, error) {
+func (s *stubStackInstanceRepo) CountForInstanceLimit(ctx context.Context, _, _ string, _ bool) (int, error) {
 	return 0, ctx.Err()
 }
 func (s *stubStackInstanceRepo) CountAll(ctx context.Context) (int, error) { return 0, ctx.Err() }
@@ -1152,6 +1152,9 @@ func (s *stubClusterRepo) Update(ctx context.Context, _ *models.Cluster) error {
 		return err
 	}
 	return nil
+}
+func (s *stubClusterRepo) UpdateHealthStatus(ctx context.Context, _, _ string) error {
+	return ctx.Err()
 }
 func (s *stubClusterRepo) Delete(ctx context.Context, _ string) error {
 	if err := ctx.Err(); err != nil {

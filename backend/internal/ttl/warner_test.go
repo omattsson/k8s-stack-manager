@@ -152,7 +152,7 @@ func (m *warnerMockInstanceRepo) FindByName(ctx context.Context, _ string) ([]mo
 func (m *warnerMockInstanceRepo) FindByCluster(ctx context.Context, _ string) ([]models.StackInstance, error) {
 	return nil, ctx.Err()
 }
-func (m *warnerMockInstanceRepo) CountByClusterAndOwner(ctx context.Context, _, _ string) (int, error) {
+func (m *warnerMockInstanceRepo) CountForInstanceLimit(ctx context.Context, _, _ string, _ bool) (int, error) {
 	return 0, ctx.Err()
 }
 func (m *warnerMockInstanceRepo) CountAll(ctx context.Context) (int, error) { return 0, ctx.Err() }

@@ -1367,8 +1367,8 @@ func (m *MockStackInstanceRepository) FindByCluster(ctx context.Context, cluster
 	return out, nil
 }
 
-func (m *MockStackInstanceRepository) CountByClusterAndOwner(ctx context.Context, clusterID, ownerID string) (int, error) {
-	if err := ctxDone(ctx, "count_by_cluster_and_owner"); err != nil {
+func (m *MockStackInstanceRepository) CountForInstanceLimit(ctx context.Context, clusterID, ownerID string, includeUnassigned bool) (int, error) {
+	if err := ctxDone(ctx, "count_for_instance_limit"); err != nil {
 		return 0, err
 	}
 	m.mu.RLock()
@@ -1378,7 +1378,8 @@ func (m *MockStackInstanceRepository) CountByClusterAndOwner(ctx context.Context
 	}
 	count := 0
 	for _, i := range m.items {
-		if i.ClusterID == clusterID && i.OwnerID == ownerID {
+		onCluster := i.ClusterID == clusterID || (includeUnassigned && i.ClusterID == "")
+		if onCluster && i.OwnerID == ownerID {
 			count++
 		}
 	}
@@ -2206,11 +2207,34 @@ func (m *MockClusterRepository) Update(ctx context.Context, cl *models.Cluster) 
 	if m.err != nil {
 		return m.err
 	}
-	if _, ok := m.clusters[cl.ID]; !ok {
+	stored, ok := m.clusters[cl.ID]
+	if !ok {
 		return dberrors.NewDatabaseError("Update", dberrors.ErrNotFound)
 	}
 	cl.UpdatedAt = time.Now()
-	m.clusters[cl.ID] = cl
+	// Like the GORM repository (#678): SetDefault and UpdateHealthStatus own
+	// is_default and health_status.
+	cp := *cl
+	cp.IsDefault, cp.HealthStatus = stored.IsDefault, stored.HealthStatus
+	m.clusters[cl.ID] = &cp
+	return nil
+}
+
+func (m *MockClusterRepository) UpdateHealthStatus(ctx context.Context, id, status string) error {
+	if err := ctxDone(ctx, "update_health_status"); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	cl, ok := m.clusters[id]
+	if !ok {
+		return dberrors.NewDatabaseError("UpdateHealthStatus", dberrors.ErrNotFound)
+	}
+	cl.HealthStatus = status
+	cl.UpdatedAt = time.Now()
 	return nil
 }
 
@@ -2328,6 +2352,11 @@ func (m *MockClusterRepository) SetDefault(ctx context.Context, id string) error
 		return dberrors.NewDatabaseError("SetDefault", dberrors.ErrNotFound)
 	}
 	m.defaultID = id
+	for cid, cl := range m.clusters {
+		cp := *cl
+		cp.IsDefault = cid == id
+		m.clusters[cid] = &cp
+	}
 	return nil
 }
 

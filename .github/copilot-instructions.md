@@ -327,7 +327,7 @@ backend/
 - The idle limit (`SESSION_IDLE_TIMEOUT`, default 30m) counts from the last authenticated request. The JWT middleware touches the `last_activity` of the family, at most once per minute.
 - `SESSION_MAX_LIFETIME` (default 12h) caps a session. Rotation never extends it.
 - Exceptions: the SSO CLI token has no session and lives for `JWT_EXPIRATION`. API keys have no session. `/ws` traffic is not activity.
-- `/auth/logout` blocklists the `jti` of the current access token in `sessionstore` and revokes the presented refresh token. `/auth/logout-all` also revokes every refresh token of the user.
+- `/auth/logout` blocklists the `jti` of the current access token in `sessionstore` and revokes the session family of the presented refresh token (`RevokeFamily`), so the active successor of a rotated token is revoked too (#673). A failed lookup or revoke still clears the cookie, blocks the `jti` and closes the sockets, but answers 500; an unknown token answers 200. `/auth/logout-all` also revokes every refresh token of the user.
 - JWT auth checks `IsTokenBlocked` and `IsUserBlocked(ctx, userID, issueTime)`.
   - A user block rejects only tokens issued at or before the block time (401).
   - The precision is one millisecond. Access tokens carry `iat_ms`. The block time is stored in ms. A legacy token without `iat_ms` keeps the rule "same second or before".
@@ -535,6 +535,10 @@ Developers use this application to configure, store and deploy multi-service Hel
   - The create form, the clone dialog and the quick deploy dialog show the message and the free names (`describeNameConflict` in `utils/apiError.ts`).
   - `instanceNameGuard` (`handlers/instance_names.go`) runs the check through `models.InstanceNameLookup`. It is an application check after the namespace check: two concurrent requests can both pass.
   - Existing duplicates stay. At startup the backend logs a warning for each duplicate name (`LogDuplicateInstanceNames`).
+- **Per-user instance limit:** `max_instances_per_user` of a cluster (0 = no limit) applies to create, clone and quick deploy (`handlers/instance_limit.go`, #682).
+  - The first statement of the create transaction is `CountForInstanceLimit`. It locks the user row of the owner (`SELECT ... FOR UPDATE`) and then counts, so concurrent creates of one owner run one after the other. Do not lock the counted rows (`COUNT ... FOR UPDATE` takes gap locks and can deadlock). The transaction does not retry a deadlock (1213).
+  - On the default cluster, the instances without a cluster ID count too (the rule of `clusterInstances`). An instance without a cluster ID gets the limit of the default cluster, also for its clone.
+  - At the limit the answer is 409 `Maximum instances per user reached for this cluster (limit: N)`. A failed cluster read stops the create (500). A clone whose source cluster no longer exists gives 409 `The cluster of the source instance no longer exists`.
 - **Clone:** `POST /stack-instances/:id/clone` takes an optional `{name, branch, ttl_minutes}` or `expires_at` instead of `ttl_minutes`.
   - Without a name, it picks `<name>-copy`, `<name>-copy-2`, and so on.
   - It copies the cluster, TTL (or a future fixed stop time), value overrides and branch overrides.
@@ -661,11 +665,11 @@ Developers use this application to configure, store and deploy multi-service Hel
 
 **Clusters and operations**
 - **Multi-cluster:** register clusters through `/api/v1/clusters` with kubeconfig data (encrypted at rest through `pkg/crypto`) or a kubeconfig path.
-  - `ClusterRegistry` manages the K8s and Helm clients of each cluster. The health poller monitors the status. The registry reads the cluster row on its own context with a 10s timeout, never the request context.
+  - `ClusterRegistry` manages the K8s and Helm clients of each cluster. The health poller monitors the status and writes only `health_status` (`UpdateHealthStatus`). `ClusterRepository.Update` never writes `is_default` (only `SetDefault` does) or `health_status`, so a stale row cannot undo those writes (#678). The registry reads the cluster row on its own context with a 10s timeout, never the request context.
   - A cluster with `use_in_cluster` uses the backend service account and has no API server URL.
     - The Kubernetes client uses only `rest.InClusterConfig()`, and Helm gets `KUBECONFIG=/dev/null` (`HelmClient.command`), so neither reads `$KUBECONFIG` or `~/.kube/config`.
     - Outside a pod (`make dev-local`, a binary on a laptop), such a cluster is unreachable (`k8s.ErrInClusterUnavailable`). For local development, `IN_CLUSTER_FALLBACK_KUBECONFIG=<path>` gives both clients that kubeconfig, with a warning in the log (#582). In Docker Compose the path is in the container (`make dev-k8s`: `/root/.kube/config`).
-  - An instance targets one cluster (or the default).
+  - An instance targets one cluster (or the default). `DELETE /clusters/:id` gives 409 while instances use the cluster; for the default cluster, instances without a cluster ID count too (#679).
   - Per-cluster registry credentials (`registry_url`, `registry_username`, `registry_password`) give automatic image pull secret provisioning at deploy time and a refresh every 4 hours (`SecretRefresher`).
 - **Git provider detection:** by the exact host of the URL. `dev.azure.com` and `*.visualstudio.com` mean Azure DevOps. `github.com` means GitHub. `gitlab.com`, or the custom `GITLAB_BASE_URL` origin, means GitLab. With a custom origin, `gitlab.com` URLs are not supported. A known provider without credentials gives HTTP 503.
 - **Cleanup policies:**

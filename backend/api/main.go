@@ -179,7 +179,11 @@ func main() {
 	leaderRun := startLeaderElection(elector, workers.Group)
 
 	// HTTP server.
-	srvs := startHTTPServer(router, cfg, tel)
+	srvs, err := startHTTPServer(router, cfg, tel)
+	if err != nil {
+		slog.Error("Failed to start server", "error", err)
+		os.Exit(1)
+	}
 
 	// Wait for interrupt signal.
 	quit := make(chan os.Signal, 1)

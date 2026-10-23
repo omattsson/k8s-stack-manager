@@ -507,7 +507,7 @@ func (h *ClusterHandler) UpdateCluster(c *gin.Context) {
 
 // DeleteCluster godoc
 // @Summary      Delete a cluster
-// @Description  Removes a cluster registration. Blocked if any stack instances reference this cluster.
+// @Description  Removes a cluster registration. Blocked (409) if any stack instances reference this cluster. For the default cluster, instances without a cluster ID block it too: they run on the default cluster.
 // @Tags         clusters
 // @Produce      json
 // @Param        id  path  string  true  "Cluster ID"
@@ -520,15 +520,16 @@ func (h *ClusterHandler) UpdateCluster(c *gin.Context) {
 func (h *ClusterHandler) DeleteCluster(c *gin.Context) {
 	id := c.Param("id")
 
-	// Verify cluster exists.
-	if _, err := h.clusterRepo.FindByID(c.Request.Context(), id); err != nil {
+	cl, err := h.clusterRepo.FindByID(c.Request.Context(), id)
+	if err != nil {
 		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
-	// Check for instances using this cluster.
-	instances, err := h.instanceRepo.FindByCluster(c.Request.Context(), id)
+	// Instances without a cluster run on the default cluster, so they block
+	// its delete too (#679).
+	instances, err := h.clusterInstances(c.Request.Context(), cl)
 	if err != nil {
 		if respondCancelled(c, err) {
 			return
