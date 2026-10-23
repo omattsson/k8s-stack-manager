@@ -512,7 +512,7 @@ func (m *mockInstanceRepo) FindByCluster(ctx context.Context, clusterID string) 
 	return out, nil
 }
 
-func (m *mockInstanceRepo) CountByClusterAndOwner(ctx context.Context, _, _ string) (int, error) {
+func (m *mockInstanceRepo) CountForInstanceLimit(ctx context.Context, _, _ string, _ bool) (int, error) {
 	return 0, ctx.Err()
 }
 

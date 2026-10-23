@@ -1367,8 +1367,8 @@ func (m *MockStackInstanceRepository) FindByCluster(ctx context.Context, cluster
 	return out, nil
 }
 
-func (m *MockStackInstanceRepository) CountByClusterAndOwner(ctx context.Context, clusterID, ownerID string) (int, error) {
-	if err := ctxDone(ctx, "count_by_cluster_and_owner"); err != nil {
+func (m *MockStackInstanceRepository) CountForInstanceLimit(ctx context.Context, clusterID, ownerID string, includeUnassigned bool) (int, error) {
+	if err := ctxDone(ctx, "count_for_instance_limit"); err != nil {
 		return 0, err
 	}
 	m.mu.RLock()
@@ -1378,7 +1378,8 @@ func (m *MockStackInstanceRepository) CountByClusterAndOwner(ctx context.Context
 	}
 	count := 0
 	for _, i := range m.items {
-		if i.ClusterID == clusterID && i.OwnerID == ownerID {
+		onCluster := i.ClusterID == clusterID || (includeUnassigned && i.ClusterID == "")
+		if onCluster && i.OwnerID == ownerID {
 			count++
 		}
 	}

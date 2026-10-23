@@ -572,7 +572,7 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 		}
 	}
 
-	maxInstancesPerUser, ok := instanceLimitFor(c, h.clusterRepo, inst.ClusterID)
+	limit, ok := instanceLimitFor(c, h.clusterRepo, inst.ClusterID, unknownClusterID)
 	if !ok {
 		return
 	}
@@ -623,16 +623,16 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 
 	wctx := writeCtx(c)
 	create := func(repo models.StackInstanceRepository) error {
-		if err := checkInstanceLimit(wctx, repo, inst.ClusterID, inst.OwnerID, maxInstancesPerUser); err != nil {
+		if err := checkInstanceLimit(wctx, repo, limit, inst.OwnerID); err != nil {
 			return err
 		}
 		return repo.Create(wctx, &inst)
 	}
 	var createErr error
-	if h.txRunner != nil && maxInstancesPerUser > 0 {
-		// The count check and the create share a transaction, so concurrent
-		// creates cannot both pass the limit. Without a txRunner the check
-		// still runs, with a small race window.
+	if h.txRunner != nil && limit.max > 0 {
+		// The count locks the user row first, so concurrent creates of one
+		// owner wait for each other. Without a txRunner the lock ends with
+		// the count: two concurrent creates can then both pass.
 		createErr = h.txRunner.RunInTx(wctx, func(repos database.TxRepos) error {
 			return create(repos.StackInstance)
 		})
@@ -640,7 +640,7 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 		createErr = create(h.instanceRepo)
 	}
 	if createErr != nil {
-		if respondInstanceLimit(c, createErr, maxInstancesPerUser) {
+		if respondInstanceLimit(c, createErr, limit) {
 			return
 		}
 		status, message := mapError(createErr, entityStackInstance)
@@ -1223,7 +1223,7 @@ func cloneNameCandidate(base string, n int) string {
 // @Failure     401  {object} map[string]string
 // @Failure     403  {object} map[string]string
 // @Failure     404  {object} map[string]string
-// @Failure     409  {object} NamespaceConflictResponse "Namespace already exists (given name), the name is taken on the cluster (UNIQUE_INSTANCE_NAMES), no free generated name, or the per-user instance limit of the cluster is reached ({error})"
+// @Failure     409  {object} NamespaceConflictResponse "Namespace already exists (given name), the name is taken on the cluster (UNIQUE_INSTANCE_NAMES), no free generated name, the per-user instance limit of the cluster is reached, or the cluster of the source instance no longer exists ({error})"
 // @Failure     500  {object} map[string]string
 // @Router      /api/v1/stack-instances/{id}/clone [post]
 func (h *InstanceHandler) CloneInstance(c *gin.Context) {
@@ -1358,7 +1358,7 @@ func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 		return
 	}
 
-	maxInstancesPerUser, ok := instanceLimitFor(c, h.clusterRepo, clone.ClusterID)
+	limit, ok := instanceLimitFor(c, h.clusterRepo, clone.ClusterID, sourceClusterGone)
 	if !ok {
 		return
 	}
@@ -1369,7 +1369,7 @@ func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 	wctx := writeCtx(c)
 	var warning string
 	txErr := h.txRunner.RunInTx(wctx, func(repos database.TxRepos) error {
-		if err := checkInstanceLimit(wctx, repos.StackInstance, clone.ClusterID, clone.OwnerID, maxInstancesPerUser); err != nil {
+		if err := checkInstanceLimit(wctx, repos.StackInstance, limit, clone.OwnerID); err != nil {
 			return err
 		}
 		var err error
@@ -1377,7 +1377,7 @@ func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 		return err
 	})
 	if txErr != nil {
-		if respondInstanceLimit(c, txErr, maxInstancesPerUser) {
+		if respondInstanceLimit(c, txErr, limit) {
 			return
 		}
 		status, message := mapError(txErr, entityStackInstance)

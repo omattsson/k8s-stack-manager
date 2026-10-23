@@ -772,7 +772,7 @@ func (r *cleanupMockInstanceRepo) FindByCluster(ctx context.Context, id string) 
 	}
 	return result, nil
 }
-func (r *cleanupMockInstanceRepo) CountByClusterAndOwner(ctx context.Context, clusterID, ownerID string) (int, error) {
+func (r *cleanupMockInstanceRepo) CountForInstanceLimit(ctx context.Context, clusterID, ownerID string, _ bool) (int, error) {
 	if err := ctxDone(ctx, "count_by_cluster_and_owner"); err != nil {
 		return 0, err
 	}

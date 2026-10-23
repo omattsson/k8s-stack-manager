@@ -195,7 +195,12 @@ type StackInstanceRepository interface {
 	ListByOwner(ctx context.Context, ownerID string) ([]StackInstance, error)
 	FindByName(ctx context.Context, name string) ([]StackInstance, error)
 	FindByCluster(ctx context.Context, clusterID string) ([]StackInstance, error)
-	CountByClusterAndOwner(ctx context.Context, clusterID, ownerID string) (int, error)
+	// CountForInstanceLimit counts the instances of ownerID on clusterID; with
+	// includeUnassigned also those without a cluster (they run on the default
+	// cluster). It first locks the user row of ownerID (FOR UPDATE), so
+	// concurrent creates of one owner run one after the other. Call it as the
+	// first statement of the create transaction (#682).
+	CountForInstanceLimit(ctx context.Context, clusterID, ownerID string, includeUnassigned bool) (int, error)
 	CountAll(ctx context.Context) (int, error)
 	CountByStatus(ctx context.Context, status string) (int, error)
 	CountByStatuses(ctx context.Context, statuses []string) (int, error)

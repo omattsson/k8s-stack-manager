@@ -64,8 +64,8 @@ var instanceRepoCalls = []struct {
 		_, err := r.FindByCluster(ctx, "c1")
 		return err
 	}},
-	{name: "CountByClusterAndOwner", call: func(ctx context.Context, r *GORMStackInstanceRepository) error {
-		_, err := r.CountByClusterAndOwner(ctx, "c1", "o1")
+	{name: "CountForInstanceLimit", call: func(ctx context.Context, r *GORMStackInstanceRepository) error {
+		_, err := r.CountForInstanceLimit(ctx, "c1", "o1", true)
 		return err
 	}},
 	{name: "CountAll", call: func(ctx context.Context, r *GORMStackInstanceRepository) error {

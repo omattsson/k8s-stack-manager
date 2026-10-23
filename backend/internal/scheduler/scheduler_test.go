@@ -143,7 +143,7 @@ func (r *mockInstanceRepo) FindByCluster(ctx context.Context, clusterID string) 
 	}
 	return result, nil
 }
-func (r *mockInstanceRepo) CountByClusterAndOwner(ctx context.Context, _ string, _ string) (int, error) {
+func (r *mockInstanceRepo) CountForInstanceLimit(ctx context.Context, _ string, _ string, _ bool) (int, error) {
 	return 0, ctx.Err()
 }
 func (r *mockInstanceRepo) ListPaged(ctx context.Context, _ models.StackInstanceFilter, _, _ int) ([]models.StackInstance, int, error) {

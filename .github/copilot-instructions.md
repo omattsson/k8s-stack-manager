@@ -535,7 +535,10 @@ Developers use this application to configure, store and deploy multi-service Hel
   - The create form, the clone dialog and the quick deploy dialog show the message and the free names (`describeNameConflict` in `utils/apiError.ts`).
   - `instanceNameGuard` (`handlers/instance_names.go`) runs the check through `models.InstanceNameLookup`. It is an application check after the namespace check: two concurrent requests can both pass.
   - Existing duplicates stay. At startup the backend logs a warning for each duplicate name (`LogDuplicateInstanceNames`).
-- **Per-user instance limit:** `max_instances_per_user` of a cluster (0 = no limit) applies to create, clone and quick deploy (`handlers/instance_limit.go`, #682). The count runs in the transaction of the create. At the limit the answer is 409 `Maximum instances per user reached for this cluster (limit: N)`. A failed cluster read stops the create (500).
+- **Per-user instance limit:** `max_instances_per_user` of a cluster (0 = no limit) applies to create, clone and quick deploy (`handlers/instance_limit.go`, #682).
+  - The first statement of the create transaction is `CountForInstanceLimit`. It locks the user row of the owner (`SELECT ... FOR UPDATE`) and then counts, so concurrent creates of one owner run one after the other. Do not lock the counted rows (`COUNT ... FOR UPDATE` takes gap locks and can deadlock). The transaction does not retry a deadlock (1213).
+  - On the default cluster, the instances without a cluster ID count too (the rule of `clusterInstances`). An instance without a cluster ID gets the limit of the default cluster, also for its clone.
+  - At the limit the answer is 409 `Maximum instances per user reached for this cluster (limit: N)`. A failed cluster read stops the create (500). A clone whose source cluster no longer exists gives 409 `The cluster of the source instance no longer exists`.
 - **Clone:** `POST /stack-instances/:id/clone` takes an optional `{name, branch, ttl_minutes}` or `expires_at` instead of `ttl_minutes`.
   - Without a name, it picks `<name>-copy`, `<name>-copy-2`, and so on.
   - It copies the cluster, TTL (or a future fixed stop time), value overrides and branch overrides.

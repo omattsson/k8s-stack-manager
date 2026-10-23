@@ -6548,7 +6548,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "Namespace already exists (given name), the name is taken on the cluster (UNIQUE_INSTANCE_NAMES), no free generated name, or the per-user instance limit of the cluster is reached ({error})",
+                        "description": "Namespace already exists (given name), the name is taken on the cluster (UNIQUE_INSTANCE_NAMES), no free generated name, the per-user instance limit of the cluster is reached, or the cluster of the source instance no longer exists ({error})",
                         "schema": {
                             "$ref": "#/definitions/handlers.NamespaceConflictResponse"
                         }

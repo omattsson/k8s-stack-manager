@@ -358,7 +358,7 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 	if h.uniqueNames && guard.check(c, inst.Name, inst.ClusterID, "", username) {
 		return
 	}
-	maxInstancesPerUser, ok := instanceLimitFor(c, h.clusterRepo, inst.ClusterID)
+	limit, ok := instanceLimitFor(c, h.clusterRepo, inst.ClusterID, unknownClusterID)
 	if !ok {
 		return
 	}
@@ -386,7 +386,7 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 	// that leaves must not stop the create, the deploy or the audit entry.
 	wctx := writeCtx(c)
 	txErr := h.txRunner.RunInTx(wctx, func(repos database.TxRepos) error {
-		if err := checkInstanceLimit(wctx, repos.StackInstance, inst.ClusterID, inst.OwnerID, maxInstancesPerUser); err != nil {
+		if err := checkInstanceLimit(wctx, repos.StackInstance, limit, inst.OwnerID); err != nil {
 			return err
 		}
 		if err := repos.StackDefinition.Create(wctx, def); err != nil {
@@ -400,7 +400,7 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 		return repos.StackInstance.Create(wctx, inst)
 	})
 	if txErr != nil {
-		if respondInstanceLimit(c, txErr, maxInstancesPerUser) {
+		if respondInstanceLimit(c, txErr, limit) {
 			return
 		}
 		slog.Error("Quick deploy transaction failed", "error", txErr)

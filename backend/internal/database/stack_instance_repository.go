@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Compile-time interface check.
@@ -332,13 +333,27 @@ func (r *GORMStackInstanceRepository) FindByCluster(ctx context.Context, cluster
 	return instances, nil
 }
 
-// CountByClusterAndOwner returns the number of instances for a cluster+owner combination.
-func (r *GORMStackInstanceRepository) CountByClusterAndOwner(ctx context.Context, clusterID, ownerID string) (int, error) {
+// CountForInstanceLimit locks the user row of ownerID and counts the
+// instances of ownerID on clusterID (with includeUnassigned also those without
+// a cluster). The lock is on the user row, not on the counted rows: a
+// COUNT ... FOR UPDATE takes gap locks and can deadlock concurrent inserts.
+// Outside a transaction the lock ends with the statement.
+func (r *GORMStackInstanceRepository) CountForInstanceLimit(ctx context.Context, clusterID, ownerID string, includeUnassigned bool) (int, error) {
+	db := r.db.WithContext(ctx)
+	var locked []string
+	if err := db.Model(&models.User{}).Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id = ?", ownerID).Pluck("id", &locked).Error; err != nil {
+		return 0, withContextErr(ctx, "count_for_instance_limit", dberrors.NewDatabaseError("count_for_instance_limit", err))
+	}
+	q := db.Model(&models.StackInstance{}).Where("owner_id = ?", ownerID)
+	if includeUnassigned {
+		q = q.Where("(cluster_id = ? OR cluster_id = '' OR cluster_id IS NULL)", clusterID)
+	} else {
+		q = q.Where("cluster_id = ?", clusterID)
+	}
 	var count int64
-	if err := r.db.WithContext(ctx).Model(&models.StackInstance{}).
-		Where("cluster_id = ? AND owner_id = ?", clusterID, ownerID).
-		Count(&count).Error; err != nil {
-		return 0, dberrors.NewDatabaseError("count_by_cluster_and_owner", err)
+	if err := q.Count(&count).Error; err != nil {
+		return 0, withContextErr(ctx, "count_for_instance_limit", dberrors.NewDatabaseError("count_for_instance_limit", err))
 	}
 	return int(count), nil
 }

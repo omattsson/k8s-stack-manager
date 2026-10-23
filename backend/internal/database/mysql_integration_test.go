@@ -194,8 +194,8 @@ func TestMySQLIntegration_StackInstanceRepository(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, instances, 1)
 
-	// CountByClusterAndOwner
-	count, err := repo.CountByClusterAndOwner(context.Background(), "cluster1", "user1")
+	// CountForInstanceLimit
+	count, err := repo.CountForInstanceLimit(context.Background(), "cluster1", "user1", false)
 	require.NoError(t, err)
 	assert.Equal(t, 1, count)
 
