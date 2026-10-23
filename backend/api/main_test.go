@@ -941,14 +941,16 @@ func TestBackfillInstanceClusterIDs_UpdateError(t *testing.T) {
 
 type stubPolicyRepo struct{}
 
-func (s *stubPolicyRepo) Create(_ *models.CleanupPolicy) error { return nil }
-func (s *stubPolicyRepo) FindByID(_ string) (*models.CleanupPolicy, error) {
+func (s *stubPolicyRepo) Create(ctx context.Context, _ *models.CleanupPolicy) error { return nil }
+func (s *stubPolicyRepo) FindByID(_ context.Context, _ string) (*models.CleanupPolicy, error) {
 	return nil, fmt.Errorf("not found")
 }
-func (s *stubPolicyRepo) Update(_ *models.CleanupPolicy) error         { return nil }
-func (s *stubPolicyRepo) Delete(_ string) error                        { return nil }
-func (s *stubPolicyRepo) List() ([]models.CleanupPolicy, error)        { return nil, nil }
-func (s *stubPolicyRepo) ListEnabled() ([]models.CleanupPolicy, error) { return nil, nil }
+func (s *stubPolicyRepo) Update(ctx context.Context, _ *models.CleanupPolicy) error { return nil }
+func (s *stubPolicyRepo) Delete(_ context.Context, _ string) error                  { return nil }
+func (s *stubPolicyRepo) List(ctx context.Context) ([]models.CleanupPolicy, error)  { return nil, nil }
+func (s *stubPolicyRepo) ListEnabled(ctx context.Context) ([]models.CleanupPolicy, error) {
+	return nil, nil
+}
 
 // ---- gracefulShutdown tests ----
 

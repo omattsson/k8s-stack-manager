@@ -37,7 +37,7 @@ func (r *GORMTemplateChartConfigRepository) Create(ctx context.Context, config *
 		config.ID = uuid.New().String()
 	}
 	config.CreatedAt = time.Now().UTC()
-	return r.withContext(ctx).Create(config)
+	return r.BaseRepository.Create(ctx, config)
 }
 
 // Update persists changes to an existing template chart config record.
@@ -45,7 +45,7 @@ func (r *GORMTemplateChartConfigRepository) Update(ctx context.Context, config *
 	if err := config.Validate(); err != nil {
 		return dberrors.NewDatabaseError("update", fmt.Errorf("%w: %s", dberrors.ErrValidation, err.Error()))
 	}
-	return r.withContext(ctx).Save(config)
+	return r.BaseRepository.Save(ctx, config)
 }
 
 // ListByTemplate returns all template chart configs for a given stack template.
@@ -61,10 +61,10 @@ func (r *GORMTemplateChartConfigRepository) ListByTemplate(ctx context.Context, 
 
 // FindByID returns a template chart config by its ID.
 func (r *GORMTemplateChartConfigRepository) FindByID(ctx context.Context, id string) (*models.TemplateChartConfig, error) {
-	return r.withContext(ctx).FindByID(id)
+	return r.BaseRepository.FindByID(ctx, id)
 }
 
 // Delete removes a template chart config by ID.
 func (r *GORMTemplateChartConfigRepository) Delete(ctx context.Context, id string) error {
-	return r.withContext(ctx).Delete(id)
+	return r.BaseRepository.Delete(ctx, id)
 }

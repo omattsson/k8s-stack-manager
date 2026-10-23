@@ -431,7 +431,7 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 
 	// 6. Audit log.
 	if h.auditRepo != nil {
-		if auditErr := h.auditRepo.Create(&models.AuditLog{
+		if auditErr := h.auditRepo.Create(wctx, &models.AuditLog{
 			ID:         uuid.New().String(),
 			UserID:     userID,
 			Username:   username,

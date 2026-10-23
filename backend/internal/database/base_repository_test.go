@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"testing"
 
 	"backend/internal/models"
@@ -62,10 +63,10 @@ func TestBaseRepository_FindByID(t *testing.T) {
 					Action:   "stop",
 				}
 				policy.ID = id
-				require.NoError(t, repo.Create(&policy))
+				require.NoError(t, repo.Create(context.Background(), &policy))
 			}
 
-			result, err := repo.FindByID(id)
+			result, err := repo.FindByID(context.Background(), id)
 			if tt.wantErr {
 				require.Error(t, err)
 				assert.ErrorIs(t, err, tt.wantSentinel)
@@ -116,17 +117,17 @@ func TestBaseRepository_Delete(t *testing.T) {
 					Action:   "stop",
 				}
 				policy.ID = id
-				require.NoError(t, repo.Create(&policy))
+				require.NoError(t, repo.Create(context.Background(), &policy))
 			}
 
-			err := repo.Delete(id)
+			err := repo.Delete(context.Background(), id)
 			if tt.wantErr {
 				require.Error(t, err)
 				assert.ErrorIs(t, err, tt.wantSentinel)
 			} else {
 				require.NoError(t, err)
 				// Verify it is gone.
-				_, err = repo.FindByID(id)
+				_, err = repo.FindByID(context.Background(), id)
 				assert.ErrorIs(t, err, dberrors.ErrNotFound)
 			}
 		})
@@ -144,11 +145,11 @@ func TestBaseRepository_Create(t *testing.T) {
 	}
 	policy.ID = uuid.New().String()
 
-	err := repo.Create(&policy)
+	err := repo.Create(context.Background(), &policy)
 	require.NoError(t, err)
 
 	// Verify persisted.
-	found, err := repo.FindByID(policy.ID)
+	found, err := repo.FindByID(context.Background(), policy.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "new-policy", found.Name)
 }
@@ -163,13 +164,13 @@ func TestBaseRepository_Save(t *testing.T) {
 		Action:   "stop",
 	}
 	policy.ID = uuid.New().String()
-	require.NoError(t, repo.Create(&policy))
+	require.NoError(t, repo.Create(context.Background(), &policy))
 
 	policy.Name = "updated"
-	err := repo.Save(&policy)
+	err := repo.Save(context.Background(), &policy)
 	require.NoError(t, err)
 
-	found, err := repo.FindByID(policy.ID)
+	found, err := repo.FindByID(context.Background(), policy.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "updated", found.Name)
 }

@@ -29,7 +29,10 @@ func newMockCleanupPolicyRepo() *mockCleanupPolicyRepo {
 	return &mockCleanupPolicyRepo{policies: make(map[string]*models.CleanupPolicy)}
 }
 
-func (r *mockCleanupPolicyRepo) Create(p *models.CleanupPolicy) error {
+func (r *mockCleanupPolicyRepo) Create(ctx context.Context, p *models.CleanupPolicy) error {
+	if err := ctxDone(ctx, "cleanup_policy"); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if p.ID == "" {
@@ -42,7 +45,10 @@ func (r *mockCleanupPolicyRepo) Create(p *models.CleanupPolicy) error {
 	return nil
 }
 
-func (r *mockCleanupPolicyRepo) FindByID(id string) (*models.CleanupPolicy, error) {
+func (r *mockCleanupPolicyRepo) FindByID(ctx context.Context, id string) (*models.CleanupPolicy, error) {
+	if err := ctxDone(ctx, "cleanup_policy"); err != nil {
+		return nil, err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	p, ok := r.policies[id]
@@ -52,7 +58,10 @@ func (r *mockCleanupPolicyRepo) FindByID(id string) (*models.CleanupPolicy, erro
 	return p, nil
 }
 
-func (r *mockCleanupPolicyRepo) Update(p *models.CleanupPolicy) error {
+func (r *mockCleanupPolicyRepo) Update(ctx context.Context, p *models.CleanupPolicy) error {
+	if err := ctxDone(ctx, "cleanup_policy"); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, ok := r.policies[p.ID]; !ok {
@@ -63,7 +72,10 @@ func (r *mockCleanupPolicyRepo) Update(p *models.CleanupPolicy) error {
 	return nil
 }
 
-func (r *mockCleanupPolicyRepo) Delete(id string) error {
+func (r *mockCleanupPolicyRepo) Delete(ctx context.Context, id string) error {
+	if err := ctxDone(ctx, "cleanup_policy"); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, ok := r.policies[id]; !ok {
@@ -73,7 +85,10 @@ func (r *mockCleanupPolicyRepo) Delete(id string) error {
 	return nil
 }
 
-func (r *mockCleanupPolicyRepo) List() ([]models.CleanupPolicy, error) {
+func (r *mockCleanupPolicyRepo) List(ctx context.Context) ([]models.CleanupPolicy, error) {
+	if err := ctxDone(ctx, "cleanup_policy"); err != nil {
+		return nil, err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var result []models.CleanupPolicy
@@ -83,7 +98,10 @@ func (r *mockCleanupPolicyRepo) List() ([]models.CleanupPolicy, error) {
 	return result, nil
 }
 
-func (r *mockCleanupPolicyRepo) ListEnabled() ([]models.CleanupPolicy, error) {
+func (r *mockCleanupPolicyRepo) ListEnabled(ctx context.Context) ([]models.CleanupPolicy, error) {
+	if err := ctxDone(ctx, "cleanup_policy"); err != nil {
+		return nil, err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var result []models.CleanupPolicy
@@ -98,22 +116,22 @@ func (r *mockCleanupPolicyRepo) ListEnabled() ([]models.CleanupPolicy, error) {
 // failingCleanupPolicyRepo always returns errors.
 type failingCleanupPolicyRepo struct{}
 
-func (r *failingCleanupPolicyRepo) Create(_ *models.CleanupPolicy) error {
+func (r *failingCleanupPolicyRepo) Create(ctx context.Context, _ *models.CleanupPolicy) error {
 	return errors.New("db failure")
 }
-func (r *failingCleanupPolicyRepo) FindByID(_ string) (*models.CleanupPolicy, error) {
+func (r *failingCleanupPolicyRepo) FindByID(_ context.Context, _ string) (*models.CleanupPolicy, error) {
 	return nil, dberrors.NewDatabaseError("find_by_id", dberrors.ErrNotFound)
 }
-func (r *failingCleanupPolicyRepo) Update(_ *models.CleanupPolicy) error {
+func (r *failingCleanupPolicyRepo) Update(ctx context.Context, _ *models.CleanupPolicy) error {
 	return errors.New("db failure")
 }
-func (r *failingCleanupPolicyRepo) Delete(_ string) error {
+func (r *failingCleanupPolicyRepo) Delete(_ context.Context, _ string) error {
 	return dberrors.NewDatabaseError("delete", dberrors.ErrNotFound)
 }
-func (r *failingCleanupPolicyRepo) List() ([]models.CleanupPolicy, error) {
+func (r *failingCleanupPolicyRepo) List(ctx context.Context) ([]models.CleanupPolicy, error) {
 	return nil, errors.New("db failure")
 }
-func (r *failingCleanupPolicyRepo) ListEnabled() ([]models.CleanupPolicy, error) {
+func (r *failingCleanupPolicyRepo) ListEnabled(ctx context.Context) ([]models.CleanupPolicy, error) {
 	return nil, nil
 }
 
@@ -150,7 +168,7 @@ func TestListCleanupPolicies(t *testing.T) {
 		{
 			name: "with policies",
 			setup: func(repo *mockCleanupPolicyRepo) {
-				_ = repo.Create(&models.CleanupPolicy{
+				_ = repo.Create(context.Background(), &models.CleanupPolicy{
 					ID: "p1", Name: "test", Action: "stop",
 					Condition: "idle_days:7", Schedule: "0 2 * * *",
 					ClusterID: "all", Enabled: true,
@@ -291,7 +309,7 @@ func TestUpdateCleanupPolicy(t *testing.T) {
 			name: "valid update",
 			id:   "p1",
 			setup: func(repo *mockCleanupPolicyRepo) {
-				_ = repo.Create(&models.CleanupPolicy{
+				_ = repo.Create(context.Background(), &models.CleanupPolicy{
 					ID: "p1", Name: "old", Action: "stop", Condition: "idle_days:7",
 					Schedule: "0 2 * * *", ClusterID: "all", Enabled: true,
 				})
@@ -316,7 +334,7 @@ func TestUpdateCleanupPolicy(t *testing.T) {
 			name: "invalid body",
 			id:   "p1",
 			setup: func(repo *mockCleanupPolicyRepo) {
-				_ = repo.Create(&models.CleanupPolicy{
+				_ = repo.Create(context.Background(), &models.CleanupPolicy{
 					ID: "p1", Name: "old", Action: "stop", Condition: "idle_days:7",
 					Schedule: "0 2 * * *", ClusterID: "all", Enabled: true,
 				})
@@ -361,7 +379,7 @@ func TestDeleteCleanupPolicy(t *testing.T) {
 			name: "successful delete",
 			id:   "p1",
 			setup: func(repo *mockCleanupPolicyRepo) {
-				_ = repo.Create(&models.CleanupPolicy{
+				_ = repo.Create(context.Background(), &models.CleanupPolicy{
 					ID: "p1", Name: "test", Action: "stop", Condition: "idle_days:7",
 					Schedule: "0 2 * * *", ClusterID: "all", Enabled: true,
 				})
@@ -433,7 +451,7 @@ func TestRunCleanupPolicy(t *testing.T) {
 			t.Parallel()
 
 			policyRepo := newMockCleanupPolicyRepo()
-			_ = policyRepo.Create(&models.CleanupPolicy{
+			_ = policyRepo.Create(context.Background(), &models.CleanupPolicy{
 				ID: "p1", Name: "stop-idle", Action: "stop",
 				Condition: "idle_days:7", Schedule: "0 2 * * *",
 				ClusterID: "all", Enabled: true,
@@ -493,19 +511,23 @@ type configurableCleanupPolicyRepo struct {
 	deleteErr  error
 }
 
-func (r *configurableCleanupPolicyRepo) Create(p *models.CleanupPolicy) error { return r.createErr }
-func (r *configurableCleanupPolicyRepo) FindByID(id string) (*models.CleanupPolicy, error) {
+func (r *configurableCleanupPolicyRepo) Create(ctx context.Context, p *models.CleanupPolicy) error {
+	return r.createErr
+}
+func (r *configurableCleanupPolicyRepo) FindByID(ctx context.Context, id string) (*models.CleanupPolicy, error) {
 	if r.findByIDFn != nil {
 		return r.findByIDFn(id)
 	}
 	return &models.CleanupPolicy{ID: id, Name: "existing", Action: "stop", Condition: "idle_days:7", Schedule: "0 2 * * *", ClusterID: "all"}, nil
 }
-func (r *configurableCleanupPolicyRepo) Update(_ *models.CleanupPolicy) error { return r.updateErr }
-func (r *configurableCleanupPolicyRepo) Delete(_ string) error                { return r.deleteErr }
-func (r *configurableCleanupPolicyRepo) List() ([]models.CleanupPolicy, error) {
+func (r *configurableCleanupPolicyRepo) Update(ctx context.Context, _ *models.CleanupPolicy) error {
+	return r.updateErr
+}
+func (r *configurableCleanupPolicyRepo) Delete(_ context.Context, _ string) error { return r.deleteErr }
+func (r *configurableCleanupPolicyRepo) List(ctx context.Context) ([]models.CleanupPolicy, error) {
 	return nil, nil
 }
-func (r *configurableCleanupPolicyRepo) ListEnabled() ([]models.CleanupPolicy, error) {
+func (r *configurableCleanupPolicyRepo) ListEnabled(ctx context.Context) ([]models.CleanupPolicy, error) {
 	return nil, nil
 }
 
@@ -811,14 +833,14 @@ type cleanupMockAuditRepo struct {
 	entries []models.AuditLog
 }
 
-func (r *cleanupMockAuditRepo) Create(log *models.AuditLog) error {
+func (r *cleanupMockAuditRepo) Create(ctx context.Context, log *models.AuditLog) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.entries = append(r.entries, *log)
 	return nil
 }
 
-func (r *cleanupMockAuditRepo) List(_ models.AuditLogFilters) (*models.AuditLogResult, error) {
+func (r *cleanupMockAuditRepo) List(ctx context.Context, _ models.AuditLogFilters) (*models.AuditLogResult, error) {
 	return &models.AuditLogResult{
 		Data:  r.entries,
 		Total: int64(len(r.entries)),
@@ -836,11 +858,11 @@ type countingPolicyRepo struct {
 	listEnabled int
 }
 
-func (r *countingPolicyRepo) ListEnabled() ([]models.CleanupPolicy, error) {
+func (r *countingPolicyRepo) ListEnabled(ctx context.Context) ([]models.CleanupPolicy, error) {
 	r.mu.Lock()
 	r.listEnabled++
 	r.mu.Unlock()
-	return r.mockCleanupPolicyRepo.ListEnabled()
+	return r.mockCleanupPolicyRepo.ListEnabled(context.Background())
 }
 
 func (r *countingPolicyRepo) listEnabledCalls() int {
@@ -899,7 +921,7 @@ func TestUpdateCleanupPolicy_PartialUpdate(t *testing.T) {
 			t.Parallel()
 			repo := &countingPolicyRepo{mockCleanupPolicyRepo: newMockCleanupPolicyRepo()}
 			seed := base
-			_ = repo.Create(&seed)
+			_ = repo.Create(context.Background(), &seed)
 			stored := seed // copy with the timestamps of Create
 
 			sched := scheduler.NewScheduler(repo, &cleanupMockInstanceRepo{}, &cleanupMockAuditRepo{}, nil, nil)
@@ -914,7 +936,7 @@ func TestUpdateCleanupPolicy_PartialUpdate(t *testing.T) {
 			router.ServeHTTP(w, req)
 
 			assert.Equal(t, tt.wantStatus, w.Code, w.Body.String())
-			got, err := repo.FindByID("p1")
+			got, err := repo.FindByID(context.Background(), "p1")
 			assert.NoError(t, err)
 			want := stored
 			if tt.want != nil {

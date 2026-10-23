@@ -1818,7 +1818,10 @@ func NewMockAuditLogRepository() *MockAuditLogRepository {
 	return &MockAuditLogRepository{}
 }
 
-func (m *MockAuditLogRepository) Create(log *models.AuditLog) error {
+func (m *MockAuditLogRepository) Create(ctx context.Context, log *models.AuditLog) error {
+	if err := ctxDone(ctx, "create"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -1828,7 +1831,10 @@ func (m *MockAuditLogRepository) Create(log *models.AuditLog) error {
 	return nil
 }
 
-func (m *MockAuditLogRepository) List(filters models.AuditLogFilters) (*models.AuditLogResult, error) {
+func (m *MockAuditLogRepository) List(ctx context.Context, filters models.AuditLogFilters) (*models.AuditLogResult, error) {
+	if err := ctxDone(ctx, "list"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -2358,7 +2364,10 @@ func favKey(userID, entityType, entityID string) string {
 	return userID + ":" + entityType + ":" + entityID
 }
 
-func (m *MockUserFavoriteRepository) Add(fav *models.UserFavorite) error {
+func (m *MockUserFavoriteRepository) Add(ctx context.Context, fav *models.UserFavorite) error {
+	if err := ctxDone(ctx, "add"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -2373,7 +2382,10 @@ func (m *MockUserFavoriteRepository) Add(fav *models.UserFavorite) error {
 	return nil
 }
 
-func (m *MockUserFavoriteRepository) Remove(userID, entityType, entityID string) error {
+func (m *MockUserFavoriteRepository) Remove(ctx context.Context, userID, entityType, entityID string) error {
+	if err := ctxDone(ctx, "remove"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -2387,7 +2399,10 @@ func (m *MockUserFavoriteRepository) Remove(userID, entityType, entityID string)
 	return nil
 }
 
-func (m *MockUserFavoriteRepository) List(userID string) ([]*models.UserFavorite, error) {
+func (m *MockUserFavoriteRepository) List(ctx context.Context, userID string) ([]*models.UserFavorite, error) {
+	if err := ctxDone(ctx, "list"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -2403,7 +2418,10 @@ func (m *MockUserFavoriteRepository) List(userID string) ([]*models.UserFavorite
 	return out, nil
 }
 
-func (m *MockUserFavoriteRepository) IsFavorite(userID, entityType, entityID string) (bool, error) {
+func (m *MockUserFavoriteRepository) IsFavorite(ctx context.Context, userID, entityType, entityID string) (bool, error) {
+	if err := ctxDone(ctx, "is_favorite"); err != nil {
+		return false, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {

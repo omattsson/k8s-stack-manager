@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -103,8 +104,8 @@ func TestSetupRoutes_EveryMutatingRouteHasKnownAuditEntry(t *testing.T) {
 // emptyAuditLogRepo returns an empty audit log page.
 type emptyAuditLogRepo struct{}
 
-func (s *emptyAuditLogRepo) Create(_ *models.AuditLog) error { return nil }
-func (s *emptyAuditLogRepo) List(_ models.AuditLogFilters) (*models.AuditLogResult, error) {
+func (s *emptyAuditLogRepo) Create(ctx context.Context, _ *models.AuditLog) error { return nil }
+func (s *emptyAuditLogRepo) List(ctx context.Context, _ models.AuditLogFilters) (*models.AuditLogResult, error) {
 	return &models.AuditLogResult{Data: []models.AuditLog{}}, nil
 }
 

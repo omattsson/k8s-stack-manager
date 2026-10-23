@@ -133,13 +133,13 @@ func TestScheduler_FiresCleanupPolicyExecuted(t *testing.T) {
 			p.Name = "nightly"
 			p.Action = tt.action
 			p.DryRun = tt.dryRun
-			require.NoError(t, policyRepo.Create(p))
+			require.NoError(t, policyRepo.Create(context.Background(), p))
 			exec := &triggerExecutor{failIDs: tt.failIDs}
 			rec := &recordingHooks{}
 			s := NewScheduler(policyRepo, &mockInstanceRepo{instances: tt.instances}, &mockAuditRepo{}, exec, nil).WithHooks(rec)
 
 			if tt.manual {
-				_, err := s.RunPolicy("pol-1", tt.dryRun)
+				_, err := s.RunPolicy(context.Background(), "pol-1", tt.dryRun)
 				require.NoError(t, err)
 			} else {
 				s.executeScheduledPolicy(context.Background(), "pol-1")
@@ -197,7 +197,7 @@ func TestScheduler_FiresCleanupPolicyExecuted(t *testing.T) {
 func TestScheduler_InterruptedRunFiresNothing(t *testing.T) {
 	t.Parallel()
 	policyRepo := newMockPolicyRepo()
-	require.NoError(t, policyRepo.Create(newTestPolicy("p1", "0 2 * * *")))
+	require.NoError(t, policyRepo.Create(context.Background(), newTestPolicy("p1", "0 2 * * *")))
 	rec := &recordingHooks{}
 	s := NewScheduler(policyRepo, &mockInstanceRepo{instances: stoppedInstances(3)}, &mockAuditRepo{}, &triggerExecutor{}, nil).WithHooks(rec)
 
@@ -258,7 +258,7 @@ func TestScheduler_ChannelMessageListsNames(t *testing.T) {
 			policyRepo := newMockPolicyRepo()
 			p := newTestPolicy("p1", "0 2 * * *")
 			p.Action = tt.action
-			require.NoError(t, policyRepo.Create(p))
+			require.NoError(t, policyRepo.Create(context.Background(), p))
 			notif := &systemNotifier{}
 			s := NewScheduler(policyRepo, &mockInstanceRepo{instances: stoppedInstances(tt.count)}, &mockAuditRepo{}, &triggerExecutor{failIDs: tt.failIDs}, notif)
 

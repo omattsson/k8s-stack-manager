@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/csv"
 	"encoding/json"
@@ -30,7 +31,7 @@ func setupAuditLogRouter(auditRepo *MockAuditLogRepository) *gin.Engine {
 // seedAuditLog inserts an AuditLog into the mock repo.
 func seedAuditLog(t *testing.T, repo *MockAuditLogRepository, id, userID, action, entityType, entityID string) {
 	t.Helper()
-	require.NoError(t, repo.Create(&models.AuditLog{
+	require.NoError(t, repo.Create(context.Background(), &models.AuditLog{
 		ID:         id,
 		UserID:     userID,
 		Username:   "testuser",

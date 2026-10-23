@@ -65,7 +65,7 @@ func TestScheduler_ScheduledRunUsesJobContext(t *testing.T) {
 			policyRepo := newMockPolicyRepo()
 			p := newTestPolicy("p1", "0 2 * * *")
 			p.ClusterID = tt.clusterID
-			require.NoError(t, policyRepo.Create(p))
+			require.NoError(t, policyRepo.Create(context.Background(), p))
 			repo := &ctxRecordingInstanceRepo{mockInstanceRepo: &mockInstanceRepo{}, seen: map[string]any{}}
 			s := NewScheduler(policyRepo, repo, &mockAuditRepo{}, nil, nil)
 			t.Cleanup(s.Stop)
@@ -85,14 +85,14 @@ func TestScheduler_ScheduledRunUsesJobContext(t *testing.T) {
 func TestScheduler_RunPolicyUsesSchedulerContext(t *testing.T) {
 	t.Parallel()
 	policyRepo := newMockPolicyRepo()
-	require.NoError(t, policyRepo.Create(newTestPolicy("p1", "0 2 * * *")))
+	require.NoError(t, policyRepo.Create(context.Background(), newTestPolicy("p1", "0 2 * * *")))
 	s := NewScheduler(policyRepo, &mockInstanceRepo{}, &mockAuditRepo{}, nil, nil)
 
-	_, err := s.RunPolicy("p1", true)
+	_, err := s.RunPolicy(context.Background(), "p1", true)
 	require.NoError(t, err)
 
 	s.Stop()
-	_, err = s.RunPolicy("p1", true)
+	_, err = s.RunPolicy(context.Background(), "p1", true)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.Canceled, "the instance read runs with s.ctx")
 }

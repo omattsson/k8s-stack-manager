@@ -107,7 +107,7 @@ func TestTwoReplicasOneDatabase(t *testing.T) {
 		Name: "expiring", StackDefinitionID: "d1", Namespace: "stack-expiring", OwnerID: "u1",
 		Branch: "main", Status: models.StackStatusRunning, ExpiresAt: &exp,
 	}))
-	require.NoError(t, database.NewGORMCleanupPolicyRepository(db).Create(&models.CleanupPolicy{
+	require.NoError(t, database.NewGORMCleanupPolicyRepository(db).Create(context.Background(), &models.CleanupPolicy{
 		Name: "every-second", ClusterID: "all", Action: "stop", Condition: "status:running",
 		Schedule: "@every 1s", Enabled: true,
 	}))

@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -24,7 +25,7 @@ type mockAuditLogger struct {
 	err     error
 }
 
-func (m *mockAuditLogger) Create(log *models.AuditLog) error {
+func (m *mockAuditLogger) Create(ctx context.Context, log *models.AuditLog) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -321,7 +322,7 @@ type slowMockLogger struct {
 	delay time.Duration
 }
 
-func (s *slowMockLogger) Create(_ *models.AuditLog) error {
+func (s *slowMockLogger) Create(ctx context.Context, _ *models.AuditLog) error {
 	time.Sleep(s.delay)
 	return nil
 }

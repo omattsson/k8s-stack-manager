@@ -203,7 +203,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := s.Reload(); err != nil {
+			if err := s.Reload(ctx); err != nil {
 				slog.Error("Cleanup scheduler: periodic reload failed", "error", err)
 			}
 		}
@@ -218,7 +218,7 @@ func (s *Scheduler) activate(jobCtx context.Context) error {
 	if s.active {
 		return nil
 	}
-	policies, err := s.policyRepo.ListEnabled()
+	policies, err := s.policyRepo.ListEnabled(jobCtx)
 	if err != nil {
 		return fmt.Errorf("loading policies: %w", err)
 	}
@@ -315,7 +315,7 @@ func (s *Scheduler) deactivate() {
 // scheduler is not active (a replica that is not the leader), Reload does
 // nothing: the active scheduler on the leader reads the change at its next
 // periodic reload.
-func (s *Scheduler) Reload() error {
+func (s *Scheduler) Reload(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -324,7 +324,7 @@ func (s *Scheduler) Reload() error {
 		return nil
 	}
 
-	policies, err := s.policyRepo.ListEnabled()
+	policies, err := s.policyRepo.ListEnabled(ctx)
 	if err != nil {
 		return fmt.Errorf("reloading policies: %w", err)
 	}
@@ -380,8 +380,10 @@ func (s *Scheduler) schedulePolicy(policy models.CleanupPolicy) {
 }
 
 // RunPolicy executes a policy immediately (manual trigger). Returns matched instances.
-func (s *Scheduler) RunPolicy(policyID string, dryRun bool) ([]CleanupResult, error) {
-	policy, err := s.policyRepo.FindByID(policyID)
+// ctx reads the policy only. The run itself uses the process context, so a
+// client that leaves does not stop a run that has started.
+func (s *Scheduler) RunPolicy(ctx context.Context, policyID string, dryRun bool) ([]CleanupResult, error) {
+	policy, err := s.policyRepo.FindByID(ctx, policyID)
 	if err != nil {
 		return nil, err
 	}
@@ -399,7 +401,7 @@ func (s *Scheduler) executeScheduledPolicy(ctx context.Context, policyID string)
 	if ctx.Err() != nil {
 		return
 	}
-	policy, err := s.policyRepo.FindByID(policyID)
+	policy, err := s.policyRepo.FindByID(ctx, policyID)
 	if err != nil {
 		slog.Error("Cleanup policy not loaded for its scheduled run", "policy_id", policyID, "error", err)
 		return
@@ -425,7 +427,7 @@ func (s *Scheduler) executeScheduledPolicy(ctx context.Context, policyID string)
 	// Update LastRunAt regardless of outcome.
 	now := time.Now().UTC()
 	policy.LastRunAt = &now
-	if updateErr := s.policyRepo.Update(policy); updateErr != nil {
+	if updateErr := s.policyRepo.Update(ctx, policy); updateErr != nil {
 		slog.Error("Failed to update policy LastRunAt", "policy", policy.ID, "error", updateErr)
 	}
 	slog.Info("Cleanup policy executed", "policy", policy.Name, "results", len(results))
@@ -533,7 +535,7 @@ func (s *Scheduler) executePolicyWithOptions(parent context.Context, policy *mod
 			} else {
 				result.Status = "success"
 			}
-			s.createAuditEntry(policy, inst, result)
+			s.createAuditEntry(ctx, policy, inst, result)
 		} else {
 			// No executor — treat as dry run.
 			result.Status = "dry_run"
@@ -551,7 +553,7 @@ func (s *Scheduler) executePolicyWithOptions(parent context.Context, policy *mod
 	return results, nil
 }
 
-func (s *Scheduler) createAuditEntry(policy *models.CleanupPolicy, inst *models.StackInstance, result CleanupResult) {
+func (s *Scheduler) createAuditEntry(ctx context.Context, policy *models.CleanupPolicy, inst *models.StackInstance, result CleanupResult) {
 	if s.auditRepo == nil {
 		return
 	}
@@ -569,7 +571,7 @@ func (s *Scheduler) createAuditEntry(policy *models.CleanupPolicy, inst *models.
 		EntityID:   inst.ID,
 		Details:    string(details),
 	}
-	if err := s.auditRepo.Create(entry); err != nil {
+	if err := s.auditRepo.Create(context.WithoutCancel(ctx), entry); err != nil {
 		slog.Error("Failed to create audit log for cleanup", "error", err)
 	}
 }

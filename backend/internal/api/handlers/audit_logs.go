@@ -102,7 +102,7 @@ func (h *AuditLogHandler) ListAuditLogs(c *gin.Context) {
 		return
 	}
 
-	result, err := h.auditRepo.List(filters)
+	result, err := h.auditRepo.List(c.Request.Context(), filters)
 	if err != nil {
 		status, message := mapError(err, "Audit log")
 		c.JSON(status, gin.H{"error": message})
@@ -152,8 +152,11 @@ func (h *AuditLogHandler) ExportAuditLogs(c *gin.Context) {
 	filters.Limit = maxExportLimit
 	filters.Offset = 0
 
-	result, err := h.auditRepo.List(filters)
+	result, err := h.auditRepo.List(c.Request.Context(), filters)
 	if err != nil {
+		if respondCancelled(c, err) {
+			return
+		}
 		slog.Error("failed to export audit logs", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
@@ -203,7 +206,7 @@ func (h *AuditLogHandler) ExportAuditLogs(c *gin.Context) {
 		c.Header("Content-Type", "application/json")
 		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
 
-		if err := json.NewEncoder(c.Writer).Encode(logs); err != nil {
+		if err := json.NewEncoder(c.Writer).Encode(logs); err != nil && c.Request.Context().Err() == nil {
 			slog.Error("failed to encode audit logs JSON", "error", err)
 		}
 	}

@@ -150,14 +150,17 @@ type mockAuditRepo struct {
 	logs []*models.AuditLog
 }
 
-func (m *mockAuditRepo) Create(log *models.AuditLog) error {
+func (m *mockAuditRepo) Create(ctx context.Context, log *models.AuditLog) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.logs = append(m.logs, log)
 	return nil
 }
 
-func (m *mockAuditRepo) List(models.AuditLogFilters) (*models.AuditLogResult, error) {
+func (m *mockAuditRepo) List(_ context.Context, _ models.AuditLogFilters) (*models.AuditLogResult, error) {
 	return &models.AuditLogResult{}, nil
 }
 

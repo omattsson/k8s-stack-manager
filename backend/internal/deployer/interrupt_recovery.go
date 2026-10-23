@@ -202,7 +202,7 @@ func (r *InterruptRecovery) interrupt(ctx context.Context, l models.DeploymentLo
 		"started_at", l.StartedAt,
 		"instance_set_to_error", res.InstanceUpdated)
 	recordInterruptEvent(l.Action, interruptEventRecovered)
-	r.audit(l, res.InstanceUpdated, now)
+	r.audit(ctx, l, res.InstanceUpdated, now)
 
 	if res.InstanceUpdated && inst != nil {
 		r.broadcast(l, message)
@@ -211,7 +211,7 @@ func (r *InterruptRecovery) interrupt(ctx context.Context, l models.DeploymentLo
 	return true
 }
 
-func (r *InterruptRecovery) audit(l models.DeploymentLog, instanceUpdated bool, now time.Time) {
+func (r *InterruptRecovery) audit(ctx context.Context, l models.DeploymentLog, instanceUpdated bool, now time.Time) {
 	if r.cfg.AuditLog == nil {
 		return
 	}
@@ -228,7 +228,7 @@ func (r *InterruptRecovery) audit(l models.DeploymentLog, instanceUpdated bool, 
 		Details:    details,
 		Timestamp:  now,
 	}
-	if err := r.cfg.AuditLog.Create(entry); err != nil {
+	if err := r.cfg.AuditLog.Create(context.WithoutCancel(ctx), entry); err != nil {
 		slog.Error("Failed to create audit log for an interrupted operation",
 			"instance_id", l.StackInstanceID, "deploy_log_id", l.ID, "error", err)
 	}
