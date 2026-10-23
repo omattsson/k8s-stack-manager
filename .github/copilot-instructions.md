@@ -666,7 +666,7 @@ Developers use this application to configure, store and deploy multi-service Hel
   - A cluster with `use_in_cluster` uses the backend service account and has no API server URL.
     - The Kubernetes client uses only `rest.InClusterConfig()`, and Helm gets `KUBECONFIG=/dev/null` (`HelmClient.command`), so neither reads `$KUBECONFIG` or `~/.kube/config`.
     - Outside a pod (`make dev-local`, a binary on a laptop), such a cluster is unreachable (`k8s.ErrInClusterUnavailable`). For local development, `IN_CLUSTER_FALLBACK_KUBECONFIG=<path>` gives both clients that kubeconfig, with a warning in the log (#582). In Docker Compose the path is in the container (`make dev-k8s`: `/root/.kube/config`).
-  - An instance targets one cluster (or the default).
+  - An instance targets one cluster (or the default). `DELETE /clusters/:id` gives 409 while instances use the cluster; for the default cluster, instances without a cluster ID count too (#679).
   - Per-cluster registry credentials (`registry_url`, `registry_username`, `registry_password`) give automatic image pull secret provisioning at deploy time and a refresh every 4 hours (`SecretRefresher`).
 - **Git provider detection:** by the exact host of the URL. `dev.azure.com` and `*.visualstudio.com` mean Azure DevOps. `github.com` means GitHub. `gitlab.com`, or the custom `GITLAB_BASE_URL` origin, means GitLab. With a custom origin, `gitlab.com` URLs are not supported. A known provider without credentials gives HTTP 503.
 - **Cleanup policies:**

@@ -2173,7 +2173,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Removes a cluster registration. Blocked if any stack instances reference this cluster.",
+                "description": "Removes a cluster registration. Blocked (409) if any stack instances reference this cluster. For the default cluster, instances without a cluster ID block it too: they run on the default cluster.",
                 "produces": [
                     "application/json"
                 ],
