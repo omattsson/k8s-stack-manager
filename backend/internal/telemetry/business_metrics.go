@@ -117,13 +117,13 @@ func StartBusinessMetrics(
 		}
 
 		// Clusters — projected counts, no secret decryption.
-		if total, clusterErr := clusterRepo.CountAll(); clusterErr != nil {
-			slog.Warn("business metrics: failed to count clusters", "error", clusterErr)
+		if total, clusterErr := clusterRepo.CountAll(ctx); clusterErr != nil {
+			slog.WarnContext(ctx, "business metrics: failed to count clusters", "error", clusterErr)
 		} else {
 			o.ObserveInt64(businessMetrics.clustersTotal, int64(total))
 		}
-		if healthy, healthyErr := clusterRepo.CountByHealthStatus(models.ClusterHealthy); healthyErr != nil {
-			slog.Warn("business metrics: failed to count healthy clusters", "error", healthyErr)
+		if healthy, healthyErr := clusterRepo.CountByHealthStatus(ctx, models.ClusterHealthy); healthyErr != nil {
+			slog.WarnContext(ctx, "business metrics: failed to count healthy clusters", "error", healthyErr)
 		} else {
 			o.ObserveInt64(businessMetrics.clustersHealthy, int64(healthy))
 		}

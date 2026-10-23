@@ -682,7 +682,7 @@ func TestCreateInstance_CancelledAtCreateStillRunsSideEffects(t *testing.T) {
 			defRepo := NewMockStackDefinitionRepository()
 			seedDefinition(t, defRepo, "d1", "def-1", "uid-1")
 			clusterRepo := NewMockClusterRepository()
-			require.NoError(t, clusterRepo.Create(&models.Cluster{ID: "cl-1", Name: "one", MaxInstancesPerUser: tt.maxInstances}))
+			require.NoError(t, clusterRepo.Create(context.Background(), &models.Cluster{ID: "cl-1", Name: "one", MaxInstancesPerUser: tt.maxInstances}))
 			hub := &MockBroadcastSender{}
 			mgr := deployer.NewManager(deployer.ManagerConfig{
 				InstanceRepo: instRepo, DeployLogRepo: NewMockDeploymentLogRepository(), Hub: hub, MaxConcurrent: 1,
@@ -940,7 +940,7 @@ func TestUpdateQuotas_PropagationUsesItsOwnContext(t *testing.T) {
 	registry, _ := newQuotaTestRegistry("stack-one-u")
 	instRepo := newHookInstanceRepo()
 	clusterRepo := NewMockClusterRepository()
-	require.NoError(t, clusterRepo.Create(&models.Cluster{ID: "cl-1", Name: "one", IsDefault: true}))
+	require.NoError(t, clusterRepo.Create(context.Background(), &models.Cluster{ID: "cl-1", Name: "one", IsDefault: true}))
 	h := NewClusterHandlerWithQuotas(clusterRepo, registry, instRepo, NewMockResourceQuotaRepository())
 
 	type seen struct {

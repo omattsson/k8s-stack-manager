@@ -189,7 +189,7 @@ func (h *DashboardHandler) buildDashboard(ctx context.Context, privileged bool, 
 }
 
 func (h *DashboardHandler) buildClusterData(ctx context.Context, privileged bool) ([]DashboardCluster, error) {
-	clusters, err := h.clusterRepo.List()
+	clusters, err := h.clusterRepo.List(ctx)
 	if err != nil {
 		return nil, err
 	}

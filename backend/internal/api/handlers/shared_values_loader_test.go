@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -68,7 +69,7 @@ func TestLoadSharedValues(t *testing.T) {
 				repo = nil
 			}
 
-			got, err := loadSharedValues(repo, tt.resolver, nil, &models.StackInstance{ID: "i1", ClusterID: tt.clusterID})
+			got, err := loadSharedValues(context.Background(), repo, tt.resolver, nil, &models.StackInstance{ID: "i1", ClusterID: tt.clusterID})
 			if tt.wantErr {
 				assert.Error(t, err)
 				return
@@ -97,7 +98,7 @@ func TestLoadSharedValues_OrderAndInvalidYAML(t *testing.T) {
 		require.NoError(t, mem.Create(sv))
 	}
 
-	got, err := loadSharedValues(mem, nil, nil, &models.StackInstance{ID: "i1", ClusterID: "cl-1"})
+	got, err := loadSharedValues(context.Background(), mem, nil, nil, &models.StackInstance{ID: "i1", ClusterID: "cl-1"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"from: zeta-d\n", "from: alpha-b\n", "from: beta-a\n", "from: beta-c\n"}, got)
 }

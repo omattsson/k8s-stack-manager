@@ -455,7 +455,7 @@ func TestPerUserInstanceLimit(t *testing.T) {
 			KubeconfigPath:      "/path/to/kubeconfig",
 			MaxInstancesPerUser: 2,
 		}
-		_ = clusterRepo.Create(cl)
+		_ = clusterRepo.Create(context.Background(), cl)
 
 		// Create 2 existing instances for the user on this cluster.
 		_ = instanceRepo.Create(context.Background(), &models.StackInstance{
@@ -533,7 +533,7 @@ func TestPerUserInstanceLimit(t *testing.T) {
 			KubeconfigPath:      "/path/to/kubeconfig",
 			MaxInstancesPerUser: 5,
 		}
-		_ = clusterRepo.Create(cl)
+		_ = clusterRepo.Create(context.Background(), cl)
 
 		// Only 1 existing instance.
 		_ = instanceRepo.Create(context.Background(), &models.StackInstance{
@@ -598,7 +598,7 @@ func TestPerUserInstanceLimit(t *testing.T) {
 			KubeconfigPath:      "/path/to/kubeconfig",
 			MaxInstancesPerUser: 0, // unlimited
 		}
-		_ = clusterRepo.Create(cl)
+		_ = clusterRepo.Create(context.Background(), cl)
 
 		_ = defRepo.Create(context.Background(), &models.StackDefinition{
 			ID:      "def-1",

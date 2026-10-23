@@ -133,8 +133,8 @@ func TestGORMClusterRepository_NamesByIDs(t *testing.T) {
 	repo := setupClusterRepo(t)
 	c1 := &models.Cluster{Name: "first", APIServerURL: "https://c1.example.com", KubeconfigData: "apiVersion: v1"}
 	c2 := &models.Cluster{Name: "second", APIServerURL: "https://c2.example.com"}
-	require.NoError(t, repo.Create(c1))
-	require.NoError(t, repo.Create(c2))
+	require.NoError(t, repo.Create(context.Background(), c1))
+	require.NoError(t, repo.Create(context.Background(), c2))
 
 	tests := []struct {
 		name string
@@ -149,7 +149,7 @@ func TestGORMClusterRepository_NamesByIDs(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := repo.NamesByIDs(tt.ids)
+			got, err := repo.NamesByIDs(context.Background(), tt.ids)
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
 		})
@@ -158,9 +158,9 @@ func TestGORMClusterRepository_NamesByIDs(t *testing.T) {
 	t.Run("a deleted cluster has no name", func(t *testing.T) {
 		t.Parallel()
 		c3 := &models.Cluster{Name: "third", APIServerURL: "https://c3.example.com"}
-		require.NoError(t, repo.Create(c3))
-		require.NoError(t, repo.Delete(c3.ID))
-		got, err := repo.NamesByIDs([]string{c3.ID})
+		require.NoError(t, repo.Create(context.Background(), c3))
+		require.NoError(t, repo.Delete(context.Background(), c3.ID))
+		got, err := repo.NamesByIDs(context.Background(), []string{c3.ID})
 		require.NoError(t, err)
 		assert.Empty(t, got)
 	})

@@ -65,8 +65,8 @@ func newNameTestRepos(t *testing.T) nameTestRepos {
 	require.NoError(t, r.user.Create(context.Background(), &models.User{ID: "uid-bob", Username: "bob"}))
 	require.NoError(t, r.def.Create(context.Background(), &models.StackDefinition{ID: "def-a", Name: "Definition A", OwnerID: "uid-alice"}))
 	require.NoError(t, r.def.Create(context.Background(), &models.StackDefinition{ID: "def-b", Name: "Definition B", OwnerID: "uid-bob"}))
-	require.NoError(t, r.cluster.Create(&models.Cluster{ID: "cl-1", Name: "cluster-one"}))
-	require.NoError(t, r.cluster.Create(&models.Cluster{ID: "cl-2", Name: "cluster-two"}))
+	require.NoError(t, r.cluster.Create(context.Background(), &models.Cluster{ID: "cl-1", Name: "cluster-one"}))
+	require.NoError(t, r.cluster.Create(context.Background(), &models.Cluster{ID: "cl-2", Name: "cluster-two"}))
 	return r
 }
 

@@ -265,7 +265,7 @@ func TestDeployPreview_SharedValuesMergeOrder(t *testing.T) {
 			name:      "empty cluster ID resolves the default cluster",
 			clusterID: "",
 			setup: func(t *testing.T, f *svFixture) {
-				require.NoError(t, f.clusterRepo.Create(&models.Cluster{ID: "cl-default", Name: "default", IsDefault: true}))
+				require.NoError(t, f.clusterRepo.Create(context.Background(), &models.Cluster{ID: "cl-default", Name: "default", IsDefault: true}))
 				f.addShared(t, "sv-1", "cl-default", 0, "fromDefaultCluster: yes\n")
 				f.addShared(t, "sv-2", "cl-2", 0, "otherCluster: x\n")
 			},
@@ -280,7 +280,7 @@ func TestDeployPreview_SharedValuesMergeOrder(t *testing.T) {
 			name:      "empty cluster ID without registry uses the default cluster from the repository",
 			clusterID: "",
 			setup: func(t *testing.T, f *svFixture) {
-				require.NoError(t, f.clusterRepo.Create(&models.Cluster{ID: "cl-default", Name: "default", IsDefault: true}))
+				require.NoError(t, f.clusterRepo.Create(context.Background(), &models.Cluster{ID: "cl-default", Name: "default", IsDefault: true}))
 				f.addShared(t, "sv-1", "cl-default", 0, "fromDefaultCluster: yes\n")
 			},
 			wantStatus: http.StatusOK,

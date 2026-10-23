@@ -668,7 +668,7 @@ Developers use this application to configure, store and deploy multi-service Hel
 
 **Clusters and operations**
 - **Multi-cluster:** register clusters through `/api/v1/clusters` with kubeconfig data (encrypted at rest through `pkg/crypto`) or a kubeconfig path.
-  - `ClusterRegistry` manages the K8s and Helm clients of each cluster. The health poller monitors the status.
+  - `ClusterRegistry` manages the K8s and Helm clients of each cluster. The health poller monitors the status. The registry reads the cluster row on its own context with a 10s timeout, never the request context.
   - A cluster with `use_in_cluster` uses the backend service account and has no API server URL.
     - The Kubernetes client uses only `rest.InClusterConfig()`, and Helm gets `KUBECONFIG=/dev/null` (`HelmClient.command`), so neither reads `$KUBECONFIG` or `~/.kube/config`.
     - Outside a pod (`make dev-local`, a binary on a laptop), such a cluster is unreachable (`k8s.ErrInClusterUnavailable`). For local development, `IN_CLUSTER_FALLBACK_KUBECONFIG=<path>` gives both clients that kubeconfig, with a warning in the log (#582). In Docker Compose the path is in the container (`make dev-k8s`: `/root/.kube/config`).

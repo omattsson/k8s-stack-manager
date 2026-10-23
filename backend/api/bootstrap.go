@@ -26,6 +26,7 @@ import (
 	"backend/internal/ttl"
 	"backend/internal/websocket"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -415,6 +416,22 @@ func buildDomainServices(
 // names (UNIQUE_INSTANCE_NAMES, #656).
 const duplicateNamesTimeout = 30 * time.Second
 
+// startupDefaultClusterID returns the default cluster ID for the duplicate
+// name check, or "". A failed lookup (not a missing default) logs a warning.
+func startupDefaultClusterID(reg *cluster.Registry) string {
+	if reg == nil {
+		return ""
+	}
+	id, err := reg.ResolveClusterID("")
+	switch {
+	case err == nil:
+		return id
+	case !errors.Is(err, cluster.ErrNoDefaultCluster):
+		slog.Warn("Duplicate instance name check: default cluster lookup failed; instances without a cluster are not counted on it", "error", err)
+	}
+	return ""
+}
+
 // buildHandlers creates all HTTP handlers.
 func buildHandlers(
 	cfg *config.Config,
@@ -477,12 +494,7 @@ func buildHandlers(
 		if !ok {
 			return nil, fmt.Errorf("UNIQUE_INSTANCE_NAMES: the instance repository cannot look up names on a cluster")
 		}
-		defaultClusterID := ""
-		if svc.ClusterRegistry != nil {
-			if id, resolveErr := svc.ClusterRegistry.ResolveClusterID(""); resolveErr == nil {
-				defaultClusterID = id
-			}
-		}
+		defaultClusterID := startupDefaultClusterID(svc.ClusterRegistry)
 		slog.Info("Instance names are unique for each cluster (UNIQUE_INSTANCE_NAMES)")
 		// One query over all instances on every replica start; small table.
 		dupCtx, cancelDup := context.WithTimeout(context.Background(), duplicateNamesTimeout)

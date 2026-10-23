@@ -373,7 +373,7 @@ func TestUpdateQuotas_InstanceOverrideConflicts(t *testing.T) {
 			t.Parallel()
 
 			clusterRepo := NewMockClusterRepository()
-			require.NoError(t, clusterRepo.Create(&models.Cluster{ID: "cl-1", Name: "one", IsDefault: tt.isDefault}))
+			require.NoError(t, clusterRepo.Create(context.Background(), &models.Cluster{ID: "cl-1", Name: "one", IsDefault: tt.isDefault}))
 			instRepo := NewMockStackInstanceRepository()
 			for id, clusterID := range tt.instances {
 				inst := seedInstance(t, instRepo, id, "name-"+id, "def-1", "uid-1", models.StackStatusRunning)

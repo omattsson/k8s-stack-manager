@@ -59,17 +59,23 @@ func (f *fakeTemplateRepo) Count() (int64, error) { return f.count, nil }
 
 type fakeClusterRepo struct {
 	models.ClusterRepository
-	total   int
-	healthy int
+	countAllCtx context.Context // context of the last CountAll call
+	byHealthCtx context.Context // context of the last CountByHealthStatus call
+	total       int
+	healthy     int
 }
 
-func (f *fakeClusterRepo) CountAll() (int, error) { return f.total, nil }
+func (f *fakeClusterRepo) CountAll(ctx context.Context) (int, error) {
+	f.countAllCtx = ctx
+	return f.total, nil
+}
 
-func (f *fakeClusterRepo) NamesByIDs(_ []string) (map[string]string, error) {
+func (f *fakeClusterRepo) NamesByIDs(_ context.Context, _ []string) (map[string]string, error) {
 	return map[string]string{}, nil
 }
 
-func (f *fakeClusterRepo) CountByHealthStatus(status string) (int, error) {
+func (f *fakeClusterRepo) CountByHealthStatus(ctx context.Context, status string) (int, error) {
+	f.byHealthCtx = ctx
 	if status == models.ClusterHealthy {
 		return f.healthy, nil
 	}
@@ -129,8 +135,9 @@ func TestStartBusinessMetrics_ObservesGauges(t *testing.T) {
 
 type collectCtxKey struct{}
 
-// TestStartBusinessMetrics_UserCountUsesCallbackContext checks that the user
-// and instance counts run with the context of the metrics collection (#656).
+// TestStartBusinessMetrics_UserCountUsesCallbackContext checks that the user,
+// instance and cluster counts run with the context of the metrics collection
+// (#656).
 func TestStartBusinessMetrics_UserCountUsesCallbackContext(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
@@ -143,7 +150,8 @@ func TestStartBusinessMetrics_UserCountUsesCallbackContext(t *testing.T) {
 
 	userRepo := &fakeUserRepo{count: 1}
 	instanceRepo := &fakeInstanceRepo{}
-	require.NoError(t, StartBusinessMetrics(instanceRepo, userRepo, &fakeTemplateRepo{}, &fakeClusterRepo{}))
+	clusterRepo := &fakeClusterRepo{}
+	require.NoError(t, StartBusinessMetrics(instanceRepo, userRepo, &fakeTemplateRepo{}, clusterRepo))
 
 	var rm metricdata.ResourceMetrics
 	require.NoError(t, reader.Collect(context.WithValue(context.Background(), collectCtxKey{}, "scrape"), &rm))
@@ -154,4 +162,8 @@ func TestStartBusinessMetrics_UserCountUsesCallbackContext(t *testing.T) {
 	assert.Equal(t, "scrape", instanceRepo.countAllCtx.Value(collectCtxKey{}))
 	require.NotNil(t, instanceRepo.byStatusesCtx)
 	assert.Equal(t, "scrape", instanceRepo.byStatusesCtx.Value(collectCtxKey{}))
+	require.NotNil(t, clusterRepo.countAllCtx)
+	assert.Equal(t, "scrape", clusterRepo.countAllCtx.Value(collectCtxKey{}))
+	require.NotNil(t, clusterRepo.byHealthCtx)
+	assert.Equal(t, "scrape", clusterRepo.byHealthCtx.Value(collectCtxKey{}))
 }

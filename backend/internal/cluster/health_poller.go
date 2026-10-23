@@ -82,7 +82,7 @@ func (p *HealthPoller) run() {
 // mix Run with Start and Stop on the same value.
 func (p *HealthPoller) Run(ctx context.Context) {
 	// Run an initial poll immediately.
-	p.poll()
+	p.poll(ctx)
 
 	ticker := time.NewTicker(p.interval)
 	defer ticker.Stop()
@@ -92,19 +92,25 @@ func (p *HealthPoller) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			p.poll()
+			p.poll(ctx)
 		}
 	}
 }
 
-func (p *HealthPoller) poll() {
+// poll runs one cycle. The cluster queries and the pings run with ctx, the
+// worker context (#656).
+func (p *HealthPoller) poll(ctx context.Context) {
 	if p.registry == nil {
 		slog.Debug("health poller: registry is nil, skipping poll")
 		return
 	}
 
-	clusters, err := p.clusterRepo.List()
+	clusters, err := p.clusterRepo.List(ctx)
 	if err != nil {
+		if ctx.Err() != nil {
+			slog.DebugContext(ctx, "health poller: cycle cancelled", "error", err)
+			return
+		}
 		slog.Error("health poller: failed to list clusters", "error", err)
 		return
 	}
@@ -112,7 +118,11 @@ func (p *HealthPoller) poll() {
 	for i := range clusters {
 		cl := &clusters[i]
 		started := time.Now()
-		newStatus := p.checkCluster(cl)
+		newStatus := p.checkCluster(ctx, cl)
+		if ctx.Err() != nil {
+			// A cancelled ping is not an unreachable cluster.
+			return
+		}
 		recordClusterHealthCheck(cl.Name, newStatus, time.Since(started))
 
 		slog.Debug("health poller: checked cluster",
@@ -127,7 +137,11 @@ func (p *HealthPoller) poll() {
 
 		oldStatus := cl.HealthStatus
 		cl.HealthStatus = newStatus
-		if updateErr := p.clusterRepo.Update(cl); updateErr != nil {
+		if updateErr := p.clusterRepo.Update(ctx, cl); updateErr != nil {
+			if ctx.Err() != nil {
+				slog.DebugContext(ctx, "health poller: cycle cancelled", "error", updateErr)
+				return
+			}
 			slog.Error("health poller: failed to update cluster health",
 				"cluster_id", cl.ID,
 				"error", updateErr,
@@ -150,7 +164,7 @@ func (p *HealthPoller) poll() {
 	}
 }
 
-func (p *HealthPoller) checkCluster(cl *models.Cluster) string {
+func (p *HealthPoller) checkCluster(ctx context.Context, cl *models.Cluster) string {
 	client, err := p.registry.GetK8sClient(cl.ID)
 	if err != nil {
 		slog.Debug("health poller: failed to get k8s client",
@@ -160,7 +174,7 @@ func (p *HealthPoller) checkCluster(cl *models.Cluster) string {
 		return models.ClusterUnreachable
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), healthCheckTimeout)
+	ctx, cancel := context.WithTimeout(ctx, healthCheckTimeout)
 	defer cancel()
 
 	// Use a context-aware discovery request so the timeout actually cancels

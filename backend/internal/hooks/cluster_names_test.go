@@ -22,7 +22,10 @@ type countingLookup struct {
 	err   error
 }
 
-func (l *countingLookup) lookup(ids []string) (map[string]string, error) {
+func (l *countingLookup) lookup(ctx context.Context, ids []string) (map[string]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.calls = append(l.calls, append([]string(nil), ids...))
@@ -220,7 +223,7 @@ func TestClusterNameResolver_StopIsSafe(t *testing.T) {
 	nilResolver.Stop()
 	assert.Nil(t, NewClusterNameResolver(nil))
 
-	r := NewClusterNameResolver(func([]string) (map[string]string, error) {
+	r := NewClusterNameResolver(func(context.Context, []string) (map[string]string, error) {
 		return map[string]string{"c1": "Production"}, nil
 	})
 	r.Stop()
@@ -243,7 +246,7 @@ func TestDispatcher_ClusterNameLookupTimeout(t *testing.T) {
 
 	release := make(chan struct{})
 	answered := make(chan struct{})
-	resolver := NewClusterNameResolver(func([]string) (map[string]string, error) {
+	resolver := NewClusterNameResolver(func(context.Context, []string) (map[string]string, error) {
 		<-release
 		defer close(answered)
 		return map[string]string{"c1": "Production"}, nil
@@ -275,7 +278,7 @@ func TestDispatcher_ClusterNameCanceledContext(t *testing.T) {
 	t.Parallel()
 	release := make(chan struct{})
 	t.Cleanup(func() { close(release) })
-	resolver := NewClusterNameResolver(func([]string) (map[string]string, error) {
+	resolver := NewClusterNameResolver(func(context.Context, []string) (map[string]string, error) {
 		<-release
 		return nil, nil
 	})
@@ -306,7 +309,7 @@ func TestActionRegistry_ClusterNameInRequest(t *testing.T) {
 
 	reg, err := NewActionRegistry([]ActionSubscription{{Name: "refresh-db", URL: srv.URL}}, srv.Client())
 	require.NoError(t, err)
-	resolver := NewClusterNameResolver(func([]string) (map[string]string, error) {
+	resolver := NewClusterNameResolver(func(context.Context, []string) (map[string]string, error) {
 		return map[string]string{"c1": "Production"}, nil
 	})
 	t.Cleanup(resolver.Stop)
@@ -357,4 +360,70 @@ func TestClusterNameResolver_NameFor(t *testing.T) {
 			assert.Equal(t, tt.wantCall, lookup.callCount() > 0)
 		})
 	}
+}
+
+type traceKey struct{}
+
+// TestClusterNameResolver_LookupContext checks the context of the lookup
+// query (#656): it keeps the values of the caller context (the trace), it
+// does not end when the caller stops waiting, so a late answer still fills
+// the cache, and it has the query timeout.
+func TestClusterNameResolver_LookupContext(t *testing.T) {
+	t.Parallel()
+	release := make(chan struct{})
+	seen := make(chan context.Context, 1)
+	resolver := NewClusterNameResolver(func(ctx context.Context, _ []string) (map[string]string, error) {
+		seen <- ctx
+		<-release
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return map[string]string{"c1": "Production"}, nil
+	})
+	t.Cleanup(resolver.Stop)
+	ctx, cancel := context.WithCancel(context.WithValue(context.Background(), traceKey{}, "trace-1"))
+	start := time.Now()
+	done := make(chan map[string]string, 1)
+	go func() { done <- resolver.names(ctx, []string{"c1"}) }()
+
+	lookupCtx := <-seen
+	cancel()
+	assert.Equal(t, "", (<-done)["c1"], "the caller stops waiting at its cancel")
+	assert.Equal(t, "trace-1", lookupCtx.Value(traceKey{}), "the query keeps the caller values")
+	assert.NoError(t, lookupCtx.Err(), "the caller cancel does not end the query")
+	deadline, ok := lookupCtx.Deadline()
+	require.True(t, ok, "the query has a deadline")
+	assert.WithinDuration(t, start.Add(clusterNameQueryTimeout), deadline, 2*time.Second)
+
+	close(release)
+	require.Eventually(t, func() bool {
+		name, ok := resolver.cache.Get("c1")
+		return ok && name == "Production"
+	}, time.Second, 10*time.Millisecond, "the late answer fills the cache")
+}
+
+// TestClusterNameResolver_QueryTimeout checks that a hung lookup ends at the
+// query timeout and that its failure is not cached.
+func TestClusterNameResolver_QueryTimeout(t *testing.T) {
+	t.Parallel()
+	ended := make(chan error, 1)
+	resolver := NewClusterNameResolver(func(ctx context.Context, _ []string) (map[string]string, error) {
+		<-ctx.Done()
+		ended <- ctx.Err()
+		return nil, ctx.Err()
+	})
+	resolver.timeout = 10 * time.Millisecond
+	resolver.queryTimeout = 50 * time.Millisecond
+	t.Cleanup(resolver.Stop)
+
+	assert.Equal(t, "", resolver.names(context.Background(), []string{"c1"})["c1"])
+
+	select {
+	case err := <-ended:
+		assert.ErrorIs(t, err, context.DeadlineExceeded)
+	case <-time.After(3 * time.Second):
+		t.Fatal("the query timeout did not end the lookup")
+	}
+	_, cached := resolver.cache.Get("c1")
+	assert.False(t, cached, "a failed lookup is not cached")
 }

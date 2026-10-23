@@ -49,8 +49,12 @@ func (a *AccessReconciler) Run(ctx context.Context) {
 }
 
 func (a *AccessReconciler) reconcile(ctx context.Context) {
-	clusters, err := a.clusterRepo.List()
+	clusters, err := a.clusterRepo.List(ctx)
 	if err != nil {
+		if ctx.Err() != nil {
+			slog.DebugContext(ctx, "access reconcile: cycle cancelled", "error", err)
+			return
+		}
 		slog.Warn("access reconcile: list clusters failed", "error", err)
 		return
 	}
@@ -67,6 +71,10 @@ func (a *AccessReconciler) reconcile(ctx context.Context) {
 		}
 		written, err := k8sClient.EnsureAccessBindings(ctx)
 		if err != nil {
+			if ctx.Err() != nil {
+				slog.DebugContext(ctx, "access reconcile: cycle cancelled", "cluster_id", c.ID, "error", err)
+				continue
+			}
 			slog.Warn("access reconcile: some namespaces failed", "cluster_id", c.ID, "written", written, "error", err)
 			continue
 		}

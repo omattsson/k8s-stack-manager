@@ -134,7 +134,9 @@ func (h *NotificationChannelHandler) filterWarnings(ctx context.Context, f model
 		}
 	}
 	if h.clusterRepo != nil && len(f.ClusterIDs) > 0 {
-		if names, err := h.clusterRepo.NamesByIDs(f.ClusterIDs); err != nil {
+		if names, err := h.clusterRepo.NamesByIDs(ctx, f.ClusterIDs); errors.Is(err, context.Canceled) {
+			slog.DebugContext(ctx, "Channel filter cluster check cancelled", "error", err)
+		} else if err != nil {
 			slog.Error("Failed to check channel filter clusters", "error", err)
 		} else {
 			for _, id := range f.ClusterIDs {

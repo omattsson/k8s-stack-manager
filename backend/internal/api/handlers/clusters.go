@@ -227,7 +227,7 @@ func NewClusterHandlerWithQuotas(
 // @Router       /api/v1/clusters [get]
 // @Security     BearerAuth
 func (h *ClusterHandler) ListClusters(c *gin.Context) {
-	clusters, err := h.clusterRepo.List()
+	clusters, err := h.clusterRepo.List(c.Request.Context())
 	if err != nil {
 		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
@@ -289,14 +289,17 @@ func (h *ClusterHandler) CreateCluster(c *gin.Context) {
 		return
 	}
 
-	if err := h.clusterRepo.Create(cl); err != nil {
+	// Detached from the first write on: a client that leaves cannot skip the
+	// default or the registry refresh (#656).
+	wctx := context.WithoutCancel(c.Request.Context())
+	if err := h.clusterRepo.Create(wctx, cl); err != nil {
 		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	if req.IsDefault {
-		if err := h.clusterRepo.SetDefault(cl.ID); err != nil {
+		if err := h.clusterRepo.SetDefault(wctx, cl.ID); err != nil {
 			slog.Error("Failed to set new cluster as default", logKeyClusterID, cl.ID, "error", err)
 			// Return 201 with consistent schema; surface warning via header.
 			cl.KubeconfigData = ""
@@ -313,9 +316,12 @@ func (h *ClusterHandler) CreateCluster(c *gin.Context) {
 		// Auto-default: if no default cluster exists yet, make this one the default
 		// so that instance creation (which resolves empty cluster_id to the default)
 		// doesn't fail with a 400.
-		_, err := h.clusterRepo.FindDefault()
+		_, err := h.clusterRepo.FindDefault(wctx)
+		if err != nil && !errors.Is(err, dberrors.ErrNotFound) {
+			slog.WarnContext(wctx, "Failed to check the default cluster; the new cluster stays non-default", logKeyClusterID, cl.ID, "error", err)
+		}
 		if err != nil && errors.Is(err, dberrors.ErrNotFound) {
-			if setErr := h.clusterRepo.SetDefault(cl.ID); setErr != nil {
+			if setErr := h.clusterRepo.SetDefault(wctx, cl.ID); setErr != nil {
 				slog.Error("Failed to auto-set first cluster as default", logKeyClusterID, cl.ID, "error", setErr)
 			} else {
 				cl.IsDefault = true
@@ -349,7 +355,7 @@ func (h *ClusterHandler) CreateCluster(c *gin.Context) {
 func (h *ClusterHandler) GetCluster(c *gin.Context) {
 	id := c.Param("id")
 
-	cl, err := h.clusterRepo.FindByID(id)
+	cl, err := h.clusterRepo.FindByID(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
@@ -381,7 +387,7 @@ func (h *ClusterHandler) GetCluster(c *gin.Context) {
 func (h *ClusterHandler) UpdateCluster(c *gin.Context) {
 	id := c.Param("id")
 
-	existing, err := h.clusterRepo.FindByID(id)
+	existing, err := h.clusterRepo.FindByID(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
@@ -443,28 +449,40 @@ func (h *ClusterHandler) UpdateCluster(c *gin.Context) {
 	if req.ImagePullSecretName != nil {
 		existing.ImagePullSecretName = *req.ImagePullSecretName
 	}
+	makeDefault := false
 	if req.IsDefault != nil {
 		if *req.IsDefault && !existing.IsDefault {
-			// Use SetDefault to atomically unset the old default and set the new one.
-			if err := h.clusterRepo.SetDefault(id); err != nil {
-				status, message := mapError(err, entityCluster)
-				c.JSON(status, gin.H{"error": message})
-				return
-			}
-			existing.IsDefault = true
+			makeDefault = true
 		} else if !*req.IsDefault && existing.IsDefault {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot unset default cluster via update; use SetDefault to change the default cluster"})
 			return
 		}
 	}
 
-	// Re-validate after applying updates (e.g. kubeconfig mutual exclusion).
+	// Re-validate after applying updates (e.g. kubeconfig mutual exclusion),
+	// before the first write.
 	if err := existing.Validate(); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	if err := h.clusterRepo.Update(existing); err != nil {
+	// Detached from the first write on, so the registry refresh always runs (#656).
+	wctx := context.WithoutCancel(c.Request.Context())
+	if makeDefault {
+		// Use SetDefault to atomically unset the old default and set the new one.
+		if err := h.clusterRepo.SetDefault(wctx, id); err != nil {
+			status, message := mapError(err, entityCluster)
+			c.JSON(status, gin.H{"error": message})
+			return
+		}
+		existing.IsDefault = true
+		// The default changed even when the update below fails.
+		if h.registry != nil {
+			h.registry.InvalidateDefault()
+		}
+	}
+
+	if err := h.clusterRepo.Update(wctx, existing); err != nil {
 		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -503,7 +521,7 @@ func (h *ClusterHandler) DeleteCluster(c *gin.Context) {
 	id := c.Param("id")
 
 	// Verify cluster exists.
-	if _, err := h.clusterRepo.FindByID(id); err != nil {
+	if _, err := h.clusterRepo.FindByID(c.Request.Context(), id); err != nil {
 		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -524,7 +542,8 @@ func (h *ClusterHandler) DeleteCluster(c *gin.Context) {
 		return
 	}
 
-	if err := h.clusterRepo.Delete(id); err != nil {
+	// Detached: a client that leaves cannot skip the registry refresh (#656).
+	if err := h.clusterRepo.Delete(context.WithoutCancel(c.Request.Context()), id); err != nil {
 		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -555,7 +574,7 @@ func (h *ClusterHandler) TestClusterConnection(c *gin.Context) {
 	id := c.Param("id")
 
 	// Verify cluster exists.
-	if _, err := h.clusterRepo.FindByID(id); err != nil {
+	if _, err := h.clusterRepo.FindByID(c.Request.Context(), id); err != nil {
 		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -628,7 +647,8 @@ func (h *ClusterHandler) TestClusterConnection(c *gin.Context) {
 func (h *ClusterHandler) SetDefaultCluster(c *gin.Context) {
 	id := c.Param("id")
 
-	if err := h.clusterRepo.SetDefault(id); err != nil {
+	// Detached: a cancel during the commit must not skip the registry refresh (#656).
+	if err := h.clusterRepo.SetDefault(context.WithoutCancel(c.Request.Context()), id); err != nil {
 		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -660,7 +680,7 @@ func (h *ClusterHandler) GetClusterHealthSummary(c *gin.Context) {
 		return
 	}
 
-	if _, err := h.clusterRepo.FindByID(id); err != nil {
+	if _, err := h.clusterRepo.FindByID(c.Request.Context(), id); err != nil {
 		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -716,7 +736,7 @@ func (h *ClusterHandler) GetClusterNodes(c *gin.Context) {
 		return
 	}
 
-	if _, err := h.clusterRepo.FindByID(id); err != nil {
+	if _, err := h.clusterRepo.FindByID(c.Request.Context(), id); err != nil {
 		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -763,7 +783,7 @@ func (h *ClusterHandler) GetClusterNamespaces(c *gin.Context) {
 		return
 	}
 
-	if _, err := h.clusterRepo.FindByID(id); err != nil {
+	if _, err := h.clusterRepo.FindByID(c.Request.Context(), id); err != nil {
 		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -826,7 +846,7 @@ func (h *ClusterHandler) GetQuotas(c *gin.Context) {
 	id := c.Param("id")
 
 	// Verify cluster exists.
-	if _, err := h.clusterRepo.FindByID(id); err != nil {
+	if _, err := h.clusterRepo.FindByID(c.Request.Context(), id); err != nil {
 		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -867,7 +887,7 @@ func (h *ClusterHandler) UpdateQuotas(c *gin.Context) {
 	id := c.Param("id")
 
 	// Verify cluster exists.
-	cl, err := h.clusterRepo.FindByID(id)
+	cl, err := h.clusterRepo.FindByID(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
@@ -926,23 +946,27 @@ func (h *ClusterHandler) UpdateQuotas(c *gin.Context) {
 		return
 	}
 
-	if err := h.quotaRepo.Upsert(c.Request.Context(), config); err != nil {
+	// Detached from the write on: a client that leaves cannot skip the
+	// namespace quota writes (#656).
+	wctx := context.WithoutCancel(c.Request.Context())
+	if err := h.quotaRepo.Upsert(wctx, config); err != nil {
 		status, message := mapError(err, entityResourceQuotaConfig)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
+	// Propagate quotas to all existing stack namespaces in this cluster. It
+	// reads the stored quota itself, so a failed read-back below does not skip it.
+	if h.quotaClients != nil {
+		go h.propagateQuotasToNamespaces(cl)
+	}
+
 	// Re-read the saved config so timestamps and ID are populated.
-	saved, err := h.quotaRepo.GetByClusterID(c.Request.Context(), id)
+	saved, err := h.quotaRepo.GetByClusterID(wctx, id)
 	if err != nil {
 		slog.Error("Failed to read back saved quota config", logKeyClusterID, id, "error", err)
 		c.JSON(http.StatusOK, config)
 		return
-	}
-
-	// Propagate quotas to all existing stack namespaces in this cluster.
-	if h.quotaClients != nil {
-		go h.propagateQuotasToNamespaces(cl)
 	}
 
 	c.JSON(http.StatusOK, saved)
@@ -1033,7 +1057,7 @@ func (h *ClusterHandler) DeleteQuotas(c *gin.Context) {
 	id := c.Param("id")
 
 	// Verify cluster exists.
-	if _, err := h.clusterRepo.FindByID(id); err != nil {
+	if _, err := h.clusterRepo.FindByID(c.Request.Context(), id); err != nil {
 		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -1044,7 +1068,7 @@ func (h *ClusterHandler) DeleteQuotas(c *gin.Context) {
 		return
 	}
 
-	if err := h.quotaRepo.Delete(c.Request.Context(), id); err != nil {
+	if err := h.quotaRepo.Delete(context.WithoutCancel(c.Request.Context()), id); err != nil {
 		status, message := mapError(err, entityResourceQuotaConfig)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -1085,7 +1109,7 @@ func (h *ClusterHandler) GetUtilization(c *gin.Context) {
 	id := c.Param("id")
 
 	// Verify cluster exists.
-	if _, err := h.clusterRepo.FindByID(id); err != nil {
+	if _, err := h.clusterRepo.FindByID(c.Request.Context(), id); err != nil {
 		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return

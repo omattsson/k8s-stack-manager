@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"backend/internal/database"
 	"backend/internal/helm"
 	"backend/internal/models"
+	"backend/pkg/dberrors"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -413,6 +415,173 @@ func TestUniqueInstanceNames_LookupErrorGives500(t *testing.T) {
 			w := doJSON(f.routerWith(repo, true, nil), tt.method, tt.path, tt.body)
 			assert.Equal(t, http.StatusInternalServerError, w.Code, w.Body.String())
 			assert.JSONEq(t, `{"error":"Internal server error"}`, w.Body.String())
+		})
+	}
+}
+
+// resolveTestRegistry returns a registry over clusters c1 (default) and c2.
+// defaultErr, when set, fails the default cluster read.
+func resolveTestRegistry(t *testing.T, defaultErr error) *cluster.Registry {
+	t.Helper()
+	clusters := NewMockClusterRepository()
+	require.NoError(t, clusters.Create(context.Background(), &models.Cluster{ID: "c1", Name: "one", IsDefault: true}))
+	require.NoError(t, clusters.Create(context.Background(), &models.Cluster{ID: "c2", Name: "two"}))
+	clusters.defaultErr = defaultErr
+	return cluster.NewRegistry(cluster.RegistryOptions{ClusterRepo: clusters, HelmBinary: "helm"})
+}
+
+// TestUniqueInstanceNames_DefaultResolveErrorStopsWrite checks that a failed
+// default cluster resolve stops the write (#656). Before, the guard used ""
+// as the default cluster and skipped the instances without a cluster, so
+// carol's "demo" (no cluster, so on the default c1) did not block the name.
+func TestUniqueInstanceNames_DefaultResolveErrorStopsWrite(t *testing.T) {
+	t.Parallel()
+
+	seed := []models.StackInstance{
+		{ID: "i-carol", Name: "demo", Namespace: "stack-demo-carol", OwnerID: "uid-carol"},
+		{ID: "i-alice", Name: "mine", Namespace: "stack-mine-alice", OwnerID: "uid-1", ClusterID: "c1"},
+	}
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{name: "create", method: http.MethodPost, path: "/api/v1/stack-instances", body: `{"stack_definition_id":"d1","name":"demo","cluster_id":"c1"}`},
+		{name: "rename", method: http.MethodPut, path: "/api/v1/stack-instances/i-alice", body: `{"name":"demo"}`},
+		{name: "clone", method: http.MethodPost, path: "/api/v1/stack-instances/i-alice/clone", body: `{"name":"demo"}`},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f := newUniqueNamesFixture(t, seed...)
+
+			w := doJSON(f.router(true, resolveTestRegistry(t, errors.New("db down"))), tt.method, tt.path, tt.body)
+
+			require.Equal(t, http.StatusInternalServerError, w.Code, w.Body.String())
+			assert.JSONEq(t, `{"error":"Internal server error"}`, w.Body.String())
+			all, err := f.instances.List(context.Background())
+			require.NoError(t, err)
+			assert.Len(t, all, 2, "no instance is created")
+			mine, err := f.instances.FindByID(context.Background(), "i-alice")
+			require.NoError(t, err)
+			assert.Equal(t, "mine", mine.Name, "the instance is not renamed")
+		})
+	}
+
+	t.Run("no default cluster lets a free name pass", func(t *testing.T) {
+		t.Parallel()
+		f := newUniqueNamesFixture(t, seed...)
+		registry := resolveTestRegistry(t, dberrors.NewDatabaseError("find_default", dberrors.ErrNotFound))
+
+		w := doJSON(f.router(true, registry), http.MethodPut, "/api/v1/stack-instances/i-alice", `{"name":"fresh"}`)
+
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	})
+}
+
+// TestCreateInstance_DefaultResolveError checks the answer to a failed
+// default cluster resolve of a create without cluster_id: 400 only when no
+// default cluster exists, else 500 and no instance (#656).
+func TestCreateInstance_DefaultResolveError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		err        error
+		name       string
+		wantStatus int
+	}{
+		{name: "no default cluster", err: dberrors.NewDatabaseError("find_default", dberrors.ErrNotFound), wantStatus: http.StatusBadRequest},
+		{name: "database error", err: errors.New("db down"), wantStatus: http.StatusInternalServerError},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f := newUniqueNamesFixture(t)
+
+			w := doJSON(f.router(false, resolveTestRegistry(t, tt.err)), http.MethodPost, "/api/v1/stack-instances",
+				`{"stack_definition_id":"d1","name":"demo"}`)
+
+			require.Equal(t, tt.wantStatus, w.Code, w.Body.String())
+			if tt.wantStatus == http.StatusInternalServerError {
+				assert.JSONEq(t, `{"error":"Internal server error"}`, w.Body.String())
+			}
+			all, err := f.instances.List(context.Background())
+			require.NoError(t, err)
+			assert.Empty(t, all, "no instance is created")
+		})
+	}
+}
+
+// TestQuickDeploy_DefaultResolveError checks the same answers for a quick
+// deploy: 400 only when no default cluster exists, else 500; no definition
+// and no instance is created.
+func TestQuickDeploy_DefaultResolveError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		err        error
+		name       string
+		wantStatus int
+	}{
+		{name: "no default cluster", err: dberrors.NewDatabaseError("find_default", dberrors.ErrNotFound), wantStatus: http.StatusBadRequest},
+		{name: "database error", err: errors.New("db down"), wantStatus: http.StatusInternalServerError},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f := newUniqueNamesFixture(t)
+			tmplRepo := NewMockStackTemplateRepository()
+			tmplChartRepo := NewMockTemplateChartConfigRepository()
+			seedTemplate(t, tmplRepo, "t1", "My Template", "owner-1", true)
+			require.NoError(t, tmplChartRepo.Create(&models.TemplateChartConfig{
+				ID: "tc1", StackTemplateID: "t1", ChartName: "nginx",
+				RepositoryURL: "oci://example.com/charts/nginx", DeployOrder: 1,
+			}))
+			ccRepo := NewMockChartConfigRepository()
+			boRepo := NewMockChartBranchOverrideRepository()
+			ovRepo := NewMockValueOverrideRepository()
+			h, err := NewQuickDeployHandler(
+				tmplRepo, tmplChartRepo, f.defs, ccRepo,
+				f.instances, boRepo, ovRepo, helm.NewValuesGenerator(),
+				newTestManager(f.instances, NewMockDeploymentLogRepository()), f.users, nil, NewMockAuditLogRepository(),
+				&MockBroadcastSender{}, resolveTestRegistry(t, tt.err), nil,
+				0,
+				&mockHandlerTxRunner{repos: database.TxRepos{
+					StackDefinition: f.defs,
+					ChartConfig:     ccRepo,
+					StackInstance:   f.instances,
+					ValueOverride:   ovRepo,
+					BranchOverride:  boRepo,
+				}},
+			)
+			require.NoError(t, err)
+			h.WithTemplateVersions(newWorkingCopyReleaseRepo(tmplRepo, tmplChartRepo))
+			gin.SetMode(gin.TestMode)
+			r := gin.New()
+			r.Use(func(c *gin.Context) {
+				c.Set("userID", "uid-1")
+				c.Set("username", "alice")
+				c.Set("role", "user")
+				c.Next()
+			})
+			r.POST("/api/v1/templates/:id/quick-deploy", h.QuickDeploy)
+
+			w := doJSON(r, http.MethodPost, "/api/v1/templates/t1/quick-deploy", `{"instance_name":"demo"}`)
+
+			require.Equal(t, tt.wantStatus, w.Code, w.Body.String())
+			if tt.wantStatus == http.StatusInternalServerError {
+				assert.JSONEq(t, `{"error":"Internal server error"}`, w.Body.String())
+			}
+			all, err := f.instances.List(context.Background())
+			require.NoError(t, err)
+			assert.Empty(t, all, "no instance is created")
+			defs, err := f.defs.List(context.Background())
+			require.NoError(t, err)
+			assert.Len(t, defs, 1, "only the seeded definition exists")
 		})
 	}
 }

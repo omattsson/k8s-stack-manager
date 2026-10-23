@@ -39,14 +39,20 @@ func newMockClusterRepo() *mockClusterRepo {
 	}
 }
 
-func (m *mockClusterRepo) Create(cluster *models.Cluster) error {
+func (m *mockClusterRepo) Create(ctx context.Context, cluster *models.Cluster) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.clusters[cluster.ID] = cluster
 	return nil
 }
 
-func (m *mockClusterRepo) FindByID(id string) (*models.Cluster, error) {
+func (m *mockClusterRepo) FindByID(ctx context.Context, id string) (*models.Cluster, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.findByIDCalls++
@@ -57,7 +63,10 @@ func (m *mockClusterRepo) FindByID(id string) (*models.Cluster, error) {
 	return c, nil
 }
 
-func (m *mockClusterRepo) Update(cluster *models.Cluster) error {
+func (m *mockClusterRepo) Update(ctx context.Context, cluster *models.Cluster) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.updateErr != nil {
@@ -67,14 +76,20 @@ func (m *mockClusterRepo) Update(cluster *models.Cluster) error {
 	return nil
 }
 
-func (m *mockClusterRepo) Delete(id string) error {
+func (m *mockClusterRepo) Delete(ctx context.Context, id string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.clusters, id)
 	return nil
 }
 
-func (m *mockClusterRepo) List() ([]models.Cluster, error) {
+func (m *mockClusterRepo) List(ctx context.Context) ([]models.Cluster, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.listErr != nil {
@@ -87,7 +102,10 @@ func (m *mockClusterRepo) List() ([]models.Cluster, error) {
 	return out, nil
 }
 
-func (m *mockClusterRepo) FindDefault() (*models.Cluster, error) {
+func (m *mockClusterRepo) FindDefault(ctx context.Context) (*models.Cluster, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.findDefaultErr != nil {
@@ -98,10 +116,13 @@ func (m *mockClusterRepo) FindDefault() (*models.Cluster, error) {
 			return c, nil
 		}
 	}
-	return nil, fmt.Errorf("no default cluster")
+	return nil, dberrors.NewDatabaseError("find_default", dberrors.ErrNotFound)
 }
 
-func (m *mockClusterRepo) SetDefault(id string) error {
+func (m *mockClusterRepo) SetDefault(ctx context.Context, id string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, c := range m.clusters {
@@ -760,22 +781,53 @@ func TestResolveClusterID_CachesDefault(t *testing.T) {
 	assert.Equal(t, "def", id2)
 }
 
-func TestGetDefaultClients_ErrorCachesEmpty(t *testing.T) {
+// TestDefaultLookup_ErrorText checks that only a missing default says "no
+// default cluster configured"; a failed lookup says "find default cluster".
+func TestDefaultLookup_ErrorText(t *testing.T) {
 	t.Parallel()
 
-	repo := newMockClusterRepo()
-	repo.findDefaultErr = fmt.Errorf("db error")
+	tests := []struct {
+		name    string
+		err     error
+		wantMsg string
+		notMsg  string
+	}{
+		{
+			name:    "lookup failure",
+			err:     fmt.Errorf("db error"),
+			wantMsg: "find default cluster: db error",
+			notMsg:  "no default cluster configured",
+		},
+		{
+			name:    "no default",
+			err:     dberrors.NewDatabaseError("find_default", dberrors.ErrNotFound),
+			wantMsg: "no default cluster configured",
+			notMsg:  "find default cluster",
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	reg := newTestRegistry(repo)
+			repo := newMockClusterRepo()
+			repo.findDefaultErr = tt.err
+			reg := newTestRegistry(repo)
 
-	// First call — error, but default gets "resolved" as empty.
-	_, err := reg.GetDefaultClients()
-	require.Error(t, err)
+			// Two calls: the second one reads the cache after a not-found.
+			for i := 0; i < 2; i++ {
+				_, err := reg.GetDefaultClients()
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantMsg, "GetDefaultClients call %d", i+1)
+				assert.NotContains(t, err.Error(), tt.notMsg, "GetDefaultClients call %d", i+1)
 
-	// Second call — uses cached empty default, still error but without hitting repo again.
-	_, err = reg.GetDefaultClients()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no default cluster configured")
+				_, err = reg.ResolveClusterID("")
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantMsg, "ResolveClusterID call %d", i+1)
+				assert.NotContains(t, err.Error(), tt.notMsg, "ResolveClusterID call %d", i+1)
+			}
+		})
+	}
 }
 
 func TestConcurrentResolveClusterID(t *testing.T) {
@@ -892,10 +944,8 @@ func TestHealthCheck_NilClusterRepo(t *testing.T) {
 func TestHealthCheck_CancelledContext(t *testing.T) {
 	t.Parallel()
 
-	// The fake K8s clientset does not honor context cancellation in its
-	// discovery REST client, so we verify context propagation indirectly:
-	// use a k8s factory that fails, combined with a cancelled context, to
-	// confirm the health check still reports all clusters unreachable.
+	// The cluster list runs with the health check context (#656): a
+	// cancelled context fails the check before any ping.
 	repo := newMockClusterRepo()
 	repo.clusters["c1"] = &models.Cluster{
 		ID:             "c1",
@@ -911,7 +961,7 @@ func TestHealthCheck_CancelledContext(t *testing.T) {
 
 	err := reg.HealthCheck(ctx)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unreachable")
+	assert.Contains(t, err.Error(), "cluster registry unavailable")
 }
 
 func TestHealthCheck_MixedFirstFailsSecondReachable(t *testing.T) {
@@ -949,12 +999,17 @@ func TestHealthCheck_MixedFirstFailsSecondReachable(t *testing.T) {
 	require.NoError(t, err, "should succeed when at least one cluster is reachable")
 }
 
-func (*mockClusterRepo) CountAll() (int, error) { return 0, nil }
+func (*mockClusterRepo) CountAll(ctx context.Context) (int, error) { return 0, ctx.Err() }
 
-func (*mockClusterRepo) NamesByIDs(_ []string) (map[string]string, error) {
+func (*mockClusterRepo) NamesByIDs(ctx context.Context, _ []string) (map[string]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return map[string]string{}, nil
 }
-func (*mockClusterRepo) CountByHealthStatus(status string) (int, error) { return 0, nil }
+func (*mockClusterRepo) CountByHealthStatus(ctx context.Context, status string) (int, error) {
+	return 0, ctx.Err()
+}
 
 // TestResolveClusterID_ErrNoDefaultCluster checks that a missing default
 // cluster is reported as ErrNoDefaultCluster on the first and the cached

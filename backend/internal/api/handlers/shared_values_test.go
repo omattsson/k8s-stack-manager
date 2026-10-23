@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -90,21 +91,38 @@ func newMockClusterRepoForSV() *mockClusterRepoForSV {
 	}}
 }
 
-func (m *mockClusterRepoForSV) Create(c *models.Cluster) error { return nil }
-func (m *mockClusterRepoForSV) Update(c *models.Cluster) error { return nil }
-func (m *mockClusterRepoForSV) Delete(id string) error         { return nil }
-func (m *mockClusterRepoForSV) List() ([]models.Cluster, error) {
+func (m *mockClusterRepoForSV) Create(ctx context.Context, c *models.Cluster) error {
+	return ctxDone(ctx, "create")
+}
+func (m *mockClusterRepoForSV) Update(ctx context.Context, c *models.Cluster) error {
+	return ctxDone(ctx, "update")
+}
+func (m *mockClusterRepoForSV) Delete(ctx context.Context, id string) error {
+	return ctxDone(ctx, "delete")
+}
+func (m *mockClusterRepoForSV) List(ctx context.Context) ([]models.Cluster, error) {
+	if err := ctxDone(ctx, "list"); err != nil {
+		return nil, err
+	}
 	var r []models.Cluster
 	for _, c := range m.clusters {
 		r = append(r, *c)
 	}
 	return r, nil
 }
-func (m *mockClusterRepoForSV) FindDefault() (*models.Cluster, error) {
+func (m *mockClusterRepoForSV) FindDefault(ctx context.Context) (*models.Cluster, error) {
+	if err := ctxDone(ctx, "find_default"); err != nil {
+		return nil, err
+	}
 	return nil, dberrors.NewDatabaseError("find_default", dberrors.ErrNotFound)
 }
-func (m *mockClusterRepoForSV) SetDefault(id string) error { return nil }
-func (m *mockClusterRepoForSV) FindByID(id string) (*models.Cluster, error) {
+func (m *mockClusterRepoForSV) SetDefault(ctx context.Context, id string) error {
+	return ctxDone(ctx, "set_default")
+}
+func (m *mockClusterRepoForSV) FindByID(ctx context.Context, id string) (*models.Cluster, error) {
+	if err := ctxDone(ctx, "find_by_id"); err != nil {
+		return nil, err
+	}
 	c, ok := m.clusters[id]
 	if !ok {
 		return nil, dberrors.NewDatabaseError("find_by_id", dberrors.ErrNotFound)
@@ -418,9 +436,16 @@ func TestDeleteSharedValues(t *testing.T) {
 	}
 }
 
-func (*mockClusterRepoForSV) CountAll() (int, error) { return 0, nil }
+func (*mockClusterRepoForSV) CountAll(ctx context.Context) (int, error) {
+	return 0, ctxDone(ctx, "count_all")
+}
 
-func (*mockClusterRepoForSV) NamesByIDs(_ []string) (map[string]string, error) {
+func (*mockClusterRepoForSV) NamesByIDs(ctx context.Context, _ []string) (map[string]string, error) {
+	if err := ctxDone(ctx, "names_by_ids"); err != nil {
+		return nil, err
+	}
 	return map[string]string{}, nil
 }
-func (*mockClusterRepoForSV) CountByHealthStatus(status string) (int, error) { return 0, nil }
+func (*mockClusterRepoForSV) CountByHealthStatus(ctx context.Context, status string) (int, error) {
+	return 0, ctxDone(ctx, "count_by_health_status")
+}

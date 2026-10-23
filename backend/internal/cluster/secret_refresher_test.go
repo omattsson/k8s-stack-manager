@@ -18,7 +18,10 @@ import (
 
 // mockInstanceRepo implements models.StackInstanceRepository for testing.
 type mockInstanceRepo struct {
-	instances []models.StackInstance
+	// onFindByCluster runs before FindByCluster checks ctx (for example a cancel).
+	onFindByCluster  func()
+	findByClusterErr error
+	instances        []models.StackInstance
 }
 
 func (m *mockInstanceRepo) Create(ctx context.Context, _ *models.StackInstance) error {
@@ -50,8 +53,14 @@ func (m *mockInstanceRepo) FindByName(ctx context.Context, _ string) ([]models.S
 	return nil, ctx.Err()
 }
 func (m *mockInstanceRepo) FindByCluster(ctx context.Context, clusterID string) ([]models.StackInstance, error) {
+	if m.onFindByCluster != nil {
+		m.onFindByCluster()
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	if m.findByClusterErr != nil {
+		return nil, m.findByClusterErr
 	}
 	var result []models.StackInstance
 	for _, inst := range m.instances {

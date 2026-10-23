@@ -106,7 +106,7 @@ func (h *InstanceHandler) setInstanceNames(ctx context.Context, instances ...*mo
 		defLookup = func(ids []string) (map[string]string, error) { return h.definitionRepo.NamesByIDs(ctx, ids) }
 	}
 	if h.clusterRepo != nil {
-		clusterLookup = h.clusterRepo.NamesByIDs
+		clusterLookup = func(ids []string) (map[string]string, error) { return h.clusterRepo.NamesByIDs(ctx, ids) }
 	}
 	defNames := lookupNames(ctx, defLookup, "stack_definition", defIDs)
 	clusterNames := lookupNames(ctx, clusterLookup, "cluster", clusterIDs)
