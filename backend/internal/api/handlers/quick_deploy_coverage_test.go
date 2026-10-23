@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -94,7 +95,7 @@ func TestQuickDeploy_ChartConfigCreateError(t *testing.T) {
 	auditRepo := NewMockAuditLogRepository()
 
 	seedTemplate(t, tmplRepo, "t1", "My Template", "owner-1", true)
-	require.NoError(t, tmplChartRepo.Create(&models.TemplateChartConfig{
+	require.NoError(t, tmplChartRepo.Create(context.Background(), &models.TemplateChartConfig{
 		ID:              "tc1",
 		StackTemplateID: "t1",
 		ChartName:       "frontend",

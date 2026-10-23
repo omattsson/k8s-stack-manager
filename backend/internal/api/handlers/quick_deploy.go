@@ -200,7 +200,7 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 	}
 
 	// 1. Fetch and verify template.
-	tmpl, err := h.templateRepo.FindByID(templateID)
+	tmpl, err := h.templateRepo.FindByID(c.Request.Context(), templateID)
 	if err != nil {
 		status, message := mapError(err, entityTemplate)
 		c.JSON(status, gin.H{"error": message})

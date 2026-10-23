@@ -736,7 +736,7 @@ func TestQuickDeploy_OwnedDefinitionAndNames(t *testing.T) {
 			ccRepo := NewMockChartConfigRepository()
 			instRepo := NewMockStackInstanceRepository()
 			seedTemplate(t, tmplRepo, "t1", "tmpl", "owner-1", true)
-			require.NoError(t, tmplChartRepo.Create(&models.TemplateChartConfig{ID: "tc1", StackTemplateID: "t1", ChartName: "web", DeployOrder: 1}))
+			require.NoError(t, tmplChartRepo.Create(context.Background(), &models.TemplateChartConfig{ID: "tc1", StackTemplateID: "t1", ChartName: "web", DeployOrder: 1}))
 			for i, n := range tt.existingDefs {
 				seedDefinition(t, defRepo, "old-"+string(rune('a'+i)), n, "uid-1")
 			}

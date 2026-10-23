@@ -92,11 +92,13 @@ func (h *TemplateHandler) executeBulkTemplateOperation(c *gin.Context, opName st
 			TemplateID: id,
 		}
 
-		tmpl, err := h.templateRepo.FindByID(id)
+		tmpl, err := h.templateRepo.FindByID(c.Request.Context(), id)
 		if err != nil {
 			result.Status = "error"
 			if errors.Is(err, dberrors.ErrNotFound) {
 				result.Error = "template not found"
+			} else if errors.Is(err, context.Canceled) {
+				result.Error = "request cancelled"
 			} else {
 				result.Error = msgInternalServerError
 				slog.Error("bulk "+opName+" FindByID failed",
@@ -173,7 +175,8 @@ func (h *TemplateHandler) BulkDeleteTemplates(c *gin.Context) {
 			}
 		}
 
-		if err := h.templateRepo.Delete(tmpl.ID); err != nil {
+		// The audit entry follows the commit: a client that leaves must not cancel the write (#656).
+		if err := h.templateRepo.Delete(context.WithoutCancel(c.Request.Context()), tmpl.ID); err != nil {
 			slog.Error("bulk delete: failed to delete template", logKeyBulkTemplateID, tmpl.ID, "error", err)
 			return fmt.Errorf("failed to delete template")
 		}
@@ -226,7 +229,7 @@ func (h *TemplateHandler) BulkPublishTemplates(c *gin.Context) {
 // @Failure     403     {object} map[string]string
 // @Router      /api/v1/templates/bulk/unpublish [post]
 func (h *TemplateHandler) BulkUnpublishTemplates(c *gin.Context) {
-	h.executeBulkTemplateOperation(c, "unpublish", func(_ *gin.Context, tmpl *models.StackTemplate) error {
+	h.executeBulkTemplateOperation(c, "unpublish", func(c *gin.Context, tmpl *models.StackTemplate) error {
 		if !tmpl.IsPublished {
 			return nil // already unpublished, treat as success
 		}
@@ -234,7 +237,7 @@ func (h *TemplateHandler) BulkUnpublishTemplates(c *gin.Context) {
 		tmpl.IsPublished = false
 		tmpl.UpdatedAt = timeNow()
 
-		if err := h.templateRepo.Update(tmpl); err != nil {
+		if err := h.templateRepo.Update(context.WithoutCancel(c.Request.Context()), tmpl); err != nil {
 			slog.Error("bulk unpublish: failed to update template", logKeyBulkTemplateID, tmpl.ID, "error", err)
 			return fmt.Errorf("failed to unpublish template")
 		}

@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -27,7 +28,7 @@ func NewGORMTemplateChartConfigRepository(db *gorm.DB) *GORMTemplateChartConfigR
 }
 
 // Create inserts a new template chart config record with validation.
-func (r *GORMTemplateChartConfigRepository) Create(config *models.TemplateChartConfig) error {
+func (r *GORMTemplateChartConfigRepository) Create(ctx context.Context, config *models.TemplateChartConfig) error {
 	if err := config.Validate(); err != nil {
 		return dberrors.NewDatabaseError("create", fmt.Errorf("%w: %s", dberrors.ErrValidation, err.Error()))
 	}
@@ -36,24 +37,34 @@ func (r *GORMTemplateChartConfigRepository) Create(config *models.TemplateChartC
 		config.ID = uuid.New().String()
 	}
 	config.CreatedAt = time.Now().UTC()
-	return r.BaseRepository.Create(config)
+	return r.withContext(ctx).Create(config)
 }
 
 // Update persists changes to an existing template chart config record.
-func (r *GORMTemplateChartConfigRepository) Update(config *models.TemplateChartConfig) error {
+func (r *GORMTemplateChartConfigRepository) Update(ctx context.Context, config *models.TemplateChartConfig) error {
 	if err := config.Validate(); err != nil {
 		return dberrors.NewDatabaseError("update", fmt.Errorf("%w: %s", dberrors.ErrValidation, err.Error()))
 	}
-	return r.Save(config)
+	return r.withContext(ctx).Save(config)
 }
 
 // ListByTemplate returns all template chart configs for a given stack template.
-func (r *GORMTemplateChartConfigRepository) ListByTemplate(templateID string) ([]models.TemplateChartConfig, error) {
+func (r *GORMTemplateChartConfigRepository) ListByTemplate(ctx context.Context, templateID string) ([]models.TemplateChartConfig, error) {
 	var configs []models.TemplateChartConfig
-	if err := r.DB.Where("stack_template_id = ?", templateID).
+	if err := r.DB.WithContext(ctx).Where("stack_template_id = ?", templateID).
 		Order("deploy_order ASC").
 		Find(&configs).Error; err != nil {
 		return nil, dberrors.NewDatabaseError("list_by_template", err)
 	}
 	return configs, nil
+}
+
+// FindByID returns a template chart config by its ID.
+func (r *GORMTemplateChartConfigRepository) FindByID(ctx context.Context, id string) (*models.TemplateChartConfig, error) {
+	return r.withContext(ctx).FindByID(id)
+}
+
+// Delete removes a template chart config by ID.
+func (r *GORMTemplateChartConfigRepository) Delete(ctx context.Context, id string) error {
+	return r.withContext(ctx).Delete(id)
 }

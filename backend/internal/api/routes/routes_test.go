@@ -851,25 +851,35 @@ func TestSetupRoutes_SwaggerGatedByConfig(t *testing.T) {
 
 type stubStackTemplateRepo struct{}
 
-func (s *stubStackTemplateRepo) Create(_ *models.StackTemplate) error             { return nil }
-func (s *stubStackTemplateRepo) FindByID(_ string) (*models.StackTemplate, error) { return nil, nil }
-func (s *stubStackTemplateRepo) FindByIDForUpdate(_ string) (*models.StackTemplate, error) {
-	return nil, nil
+func (s *stubStackTemplateRepo) Create(ctx context.Context, _ *models.StackTemplate) error {
+	return ctx.Err()
 }
-func (s *stubStackTemplateRepo) Update(_ *models.StackTemplate) error  { return nil }
-func (s *stubStackTemplateRepo) Delete(_ string) error                 { return nil }
-func (s *stubStackTemplateRepo) List() ([]models.StackTemplate, error) { return nil, nil }
-func (s *stubStackTemplateRepo) ListPaged(_, _ int, _ string) ([]models.StackTemplate, int64, error) {
-	return nil, 0, nil
+func (s *stubStackTemplateRepo) FindByID(ctx context.Context, _ string) (*models.StackTemplate, error) {
+	return nil, ctx.Err()
 }
-func (s *stubStackTemplateRepo) ListPublished() ([]models.StackTemplate, error) { return nil, nil }
-func (s *stubStackTemplateRepo) ListPublishedPaged(_, _ int, _ string) ([]models.StackTemplate, int64, error) {
-	return nil, 0, nil
+func (s *stubStackTemplateRepo) FindByIDForUpdate(ctx context.Context, _ string) (*models.StackTemplate, error) {
+	return nil, ctx.Err()
 }
-func (s *stubStackTemplateRepo) ListByOwner(_ string) ([]models.StackTemplate, error) {
-	return nil, nil
+func (s *stubStackTemplateRepo) Update(ctx context.Context, _ *models.StackTemplate) error {
+	return ctx.Err()
 }
-func (s *stubStackTemplateRepo) Count() (int64, error) { return 0, nil }
+func (s *stubStackTemplateRepo) Delete(ctx context.Context, _ string) error { return ctx.Err() }
+func (s *stubStackTemplateRepo) List(ctx context.Context) ([]models.StackTemplate, error) {
+	return nil, ctx.Err()
+}
+func (s *stubStackTemplateRepo) ListPaged(ctx context.Context, _, _ int, _ string) ([]models.StackTemplate, int64, error) {
+	return nil, 0, ctx.Err()
+}
+func (s *stubStackTemplateRepo) ListPublished(ctx context.Context) ([]models.StackTemplate, error) {
+	return nil, ctx.Err()
+}
+func (s *stubStackTemplateRepo) ListPublishedPaged(ctx context.Context, _, _ int, _ string) ([]models.StackTemplate, int64, error) {
+	return nil, 0, ctx.Err()
+}
+func (s *stubStackTemplateRepo) ListByOwner(ctx context.Context, _ string) ([]models.StackTemplate, error) {
+	return nil, ctx.Err()
+}
+func (s *stubStackTemplateRepo) Count(ctx context.Context) (int64, error) { return 0, ctx.Err() }
 
 type stubStackDefinitionRepo struct{}
 
@@ -1007,14 +1017,18 @@ func (s *stubChartConfigRepo) CountByDefinitionIDs(ctx context.Context, _ []stri
 
 type stubTemplateChartConfigRepo struct{}
 
-func (s *stubTemplateChartConfigRepo) Create(_ *models.TemplateChartConfig) error { return nil }
-func (s *stubTemplateChartConfigRepo) FindByID(_ string) (*models.TemplateChartConfig, error) {
-	return nil, nil
+func (s *stubTemplateChartConfigRepo) Create(ctx context.Context, _ *models.TemplateChartConfig) error {
+	return ctx.Err()
 }
-func (s *stubTemplateChartConfigRepo) Update(_ *models.TemplateChartConfig) error { return nil }
-func (s *stubTemplateChartConfigRepo) Delete(_ string) error                      { return nil }
-func (s *stubTemplateChartConfigRepo) ListByTemplate(_ string) ([]models.TemplateChartConfig, error) {
-	return nil, nil
+func (s *stubTemplateChartConfigRepo) FindByID(ctx context.Context, _ string) (*models.TemplateChartConfig, error) {
+	return nil, ctx.Err()
+}
+func (s *stubTemplateChartConfigRepo) Update(ctx context.Context, _ *models.TemplateChartConfig) error {
+	return ctx.Err()
+}
+func (s *stubTemplateChartConfigRepo) Delete(ctx context.Context, _ string) error { return ctx.Err() }
+func (s *stubTemplateChartConfigRepo) ListByTemplate(ctx context.Context, _ string) ([]models.TemplateChartConfig, error) {
+	return nil, ctx.Err()
 }
 
 type stubValueOverrideRepo struct{}

@@ -110,8 +110,8 @@ func StartBusinessMetrics(
 		}
 
 		// Templates.
-		if templates, templateErr := templateRepo.Count(); templateErr != nil {
-			slog.Warn("business metrics: failed to count templates", "error", templateErr)
+		if templates, templateErr := templateRepo.Count(ctx); templateErr != nil {
+			slog.WarnContext(ctx, "business metrics: failed to count templates", "error", templateErr)
 		} else {
 			o.ObserveInt64(businessMetrics.templatesTotal, templates)
 		}

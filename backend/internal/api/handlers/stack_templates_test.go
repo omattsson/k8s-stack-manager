@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -69,7 +70,7 @@ func seedTemplate(t *testing.T, repo *MockStackTemplateRepository, id, name, own
 		CreatedAt:   time.Now().UTC(),
 		UpdatedAt:   time.Now().UTC(),
 	}
-	require.NoError(t, repo.Create(tmpl))
+	require.NoError(t, repo.Create(context.Background(), tmpl))
 	return tmpl
 }
 
@@ -306,7 +307,7 @@ func TestCreateTemplate_WithInlineCharts(t *testing.T) {
 
 	// And the chart repo actually contains them — guards against future
 	// refactors that satisfy the response but skip persistence.
-	persisted, err := chartRepo.ListByTemplate(resp.ID)
+	persisted, err := chartRepo.ListByTemplate(context.Background(), resp.ID)
 	require.NoError(t, err)
 	require.Len(t, persisted, 2, "both charts must be persisted under the new template ID")
 }
@@ -342,7 +343,7 @@ func TestCreateTemplate_InvalidChartRollsBack(t *testing.T) {
 
 	// No template should have been written — we validate every chart before
 	// opening the transaction.
-	templates, err := tmplRepo.List()
+	templates, err := tmplRepo.List(context.Background())
 	require.NoError(t, err)
 	assert.Empty(t, templates, "no template must be persisted when a chart fails validation")
 }
@@ -395,7 +396,7 @@ func TestGetTemplate(t *testing.T) {
 		repo := NewMockStackTemplateRepository()
 		seedTemplate(t, repo, "t1", "My Template", "owner-1", true)
 		chartRepo := NewMockTemplateChartConfigRepository()
-		require.NoError(t, chartRepo.Create(&models.TemplateChartConfig{
+		require.NoError(t, chartRepo.Create(context.Background(), &models.TemplateChartConfig{
 			ID:              "tc1",
 			StackTemplateID: "t1",
 			ChartName:       "backend",
@@ -609,7 +610,7 @@ func TestInstantiateTemplate(t *testing.T) {
 
 		seedTemplate(t, tmplRepo, "t1", "My Template", "owner-1", true)
 		// Add a chart to the template so it gets copied.
-		require.NoError(t, chartRepo.Create(&models.TemplateChartConfig{
+		require.NoError(t, chartRepo.Create(context.Background(), &models.TemplateChartConfig{
 			ID:              "c1",
 			StackTemplateID: "t1",
 			ChartName:       "my-service",
@@ -678,7 +679,7 @@ func TestCloneTemplate(t *testing.T) {
 		tmplRepo := NewMockStackTemplateRepository()
 		chartRepo := NewMockTemplateChartConfigRepository()
 		seedTemplate(t, tmplRepo, "t1", "Original", "owner-1", true)
-		require.NoError(t, chartRepo.Create(&models.TemplateChartConfig{
+		require.NoError(t, chartRepo.Create(context.Background(), &models.TemplateChartConfig{
 			ID:              "c1",
 			StackTemplateID: "t1",
 			ChartName:       "frontend",
@@ -735,7 +736,7 @@ func TestCloneTemplate(t *testing.T) {
 			var resp models.StackTemplate
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 			assert.Equal(t, tt.wantName, resp.Name)
-			stored, err := tmplRepo.FindByID(resp.ID)
+			stored, err := tmplRepo.FindByID(context.Background(), resp.ID)
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantName, stored.Name)
 		})

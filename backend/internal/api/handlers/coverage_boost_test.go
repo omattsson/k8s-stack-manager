@@ -278,7 +278,7 @@ func TestExportAllValues(t *testing.T) {
 					DefaultValues:     "replicas: 1",
 					CreatedAt:         time.Now().UTC(),
 				}))
-				require.NoError(t, tmplChartRepo.Create(&models.TemplateChartConfig{
+				require.NoError(t, tmplChartRepo.Create(context.Background(), &models.TemplateChartConfig{
 					ID:              "tc1",
 					StackTemplateID: "tmpl-1",
 					ChartName:       "nginx",

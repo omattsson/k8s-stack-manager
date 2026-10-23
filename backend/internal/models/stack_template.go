@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // StackTemplate represents a DevOps-managed reusable stack recipe.
 type StackTemplate struct {
@@ -22,20 +25,20 @@ type StackTemplate struct {
 
 // StackTemplateRepository defines data access operations for stack templates.
 type StackTemplateRepository interface {
-	Create(template *StackTemplate) error
-	FindByID(id string) (*StackTemplate, error)
+	Create(ctx context.Context, template *StackTemplate) error
+	FindByID(ctx context.Context, id string) (*StackTemplate, error)
 	// FindByIDForUpdate reads the template and locks its row until the end of
 	// the transaction (SELECT ... FOR UPDATE). Publish uses it.
-	FindByIDForUpdate(id string) (*StackTemplate, error)
-	Update(template *StackTemplate) error
-	Delete(id string) error
-	List() ([]StackTemplate, error)
+	FindByIDForUpdate(ctx context.Context, id string) (*StackTemplate, error)
+	Update(ctx context.Context, template *StackTemplate) error
+	Delete(ctx context.Context, id string) error
+	List(ctx context.Context) ([]StackTemplate, error)
 	// ListPaged returns a page of templates; a non-empty name filters by
 	// exact name.
-	ListPaged(limit, offset int, name string) ([]StackTemplate, int64, error)
-	ListPublished() ([]StackTemplate, error)
+	ListPaged(ctx context.Context, limit, offset int, name string) ([]StackTemplate, int64, error)
+	ListPublished(ctx context.Context) ([]StackTemplate, error)
 	// ListPublishedPaged is ListPaged for published templates only.
-	ListPublishedPaged(limit, offset int, name string) ([]StackTemplate, int64, error)
-	ListByOwner(ownerID string) ([]StackTemplate, error)
-	Count() (int64, error)
+	ListPublishedPaged(ctx context.Context, limit, offset int, name string) ([]StackTemplate, int64, error)
+	ListByOwner(ctx context.Context, ownerID string) ([]StackTemplate, error)
+	Count(ctx context.Context) (int64, error)
 }

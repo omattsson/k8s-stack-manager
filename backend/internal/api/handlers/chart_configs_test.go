@@ -456,7 +456,7 @@ func TestDeleteChartConfig(t *testing.T) {
 		seedChartConfig(t, chartRepo, "chart-1", "def-1", "nginx")
 
 		tmplChartRepo := NewMockTemplateChartConfigRepository()
-		require.NoError(t, tmplChartRepo.Create(&models.TemplateChartConfig{
+		require.NoError(t, tmplChartRepo.Create(context.Background(), &models.TemplateChartConfig{
 			ID:              "tc-1",
 			StackTemplateID: "tmpl-1",
 			ChartName:       "nginx",
@@ -519,7 +519,7 @@ func TestDeleteChartConfig(t *testing.T) {
 		seedChartConfig(t, chartRepo, "chart-1", "def-1", "nginx")
 
 		tmplChartRepo := NewMockTemplateChartConfigRepository()
-		require.NoError(t, tmplChartRepo.Create(&models.TemplateChartConfig{
+		require.NoError(t, tmplChartRepo.Create(context.Background(), &models.TemplateChartConfig{
 			ID:              "tc-1",
 			StackTemplateID: "tmpl-1",
 			ChartName:       "nginx",

@@ -107,11 +107,11 @@ func (e *draftReleaseEnv) routerAs(userID, role string) *gin.Engine {
 func (e *draftReleaseEnv) seedDraft(t *testing.T) {
 	t.Helper()
 	now := time.Now().UTC()
-	require.NoError(t, e.templates.Create(&models.StackTemplate{
+	require.NoError(t, e.templates.Create(context.Background(), &models.StackTemplate{
 		ID: "t1", Name: "Web stack", Version: "1.0.0", OwnerID: "uid-dev", DefaultBranch: "main",
 		CreatedAt: now, UpdatedAt: now,
 	}))
-	require.NoError(t, e.charts.Create(&models.TemplateChartConfig{
+	require.NoError(t, e.charts.Create(context.Background(), &models.TemplateChartConfig{
 		ID: "tc-web", StackTemplateID: "t1", ChartName: "web", RepositoryURL: "oci://charts/web",
 		ChartVersion: "1.0.0", DefaultValues: "replicas: 1", LockedValues: "tls: true", DeployOrder: 1, CreatedAt: now,
 	}))
@@ -292,7 +292,7 @@ func TestDraftRelease_Publish(t *testing.T) {
 				w, _ := e.publish(t, "")
 				assert.Equal(t, http.StatusInternalServerError, w.Code)
 				assert.JSONEq(t, `{"error":"Internal server error"}`, w.Body.String())
-				tmpl, err := e.templates.FindByID("t1")
+				tmpl, err := e.templates.FindByID(context.Background(), "t1")
 				require.NoError(t, err)
 				assert.False(t, tmpl.IsPublished)
 			},
@@ -372,9 +372,9 @@ func TestDraftRelease_UsersGetLatestSnapshot(t *testing.T) {
 				snap := makeSnapshotJSON(t, models.TemplateSnapshotData{Name: "Web stack", Version: "1.0.0"},
 					[]models.TemplateChartSnapshotData{{ChartName: "web", DefaultValues: "replicas: 1", SortOrder: 1}})
 				seedVersion(t, e.versions, "v-legacy", "t1", "1.0.0", snap, time.Now())
-				tmpl, _ := e.templates.FindByID("t1")
+				tmpl, _ := e.templates.FindByID(context.Background(), "t1")
 				tmpl.IsPublished = true
-				require.NoError(t, e.templates.Update(tmpl))
+				require.NoError(t, e.templates.Update(context.Background(), tmpl))
 				detail := e.getTemplate(t)
 				require.Len(t, detail.PublishedCharts, 1)
 				assert.Equal(t, "tc-web", detail.PublishedCharts[0].ID, "legacy snapshot charts take the working copy ID")
@@ -791,11 +791,11 @@ func TestTemplateOwnerOrAdmin(t *testing.T) {
 				assert.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
 				assert.JSONEq(t, `{"error":"`+msgTemplateForbidden+`"}`, w.Body.String())
 				// Nothing changed.
-				tmpl, err := e.templates.FindByID("t1")
+				tmpl, err := e.templates.FindByID(context.Background(), "t1")
 				require.NoError(t, err)
 				assert.False(t, tmpl.IsPublished)
 				assert.Equal(t, 0, e.versionCount(t))
-				charts, err := e.charts.ListByTemplate("t1")
+				charts, err := e.charts.ListByTemplate(context.Background(), "t1")
 				require.NoError(t, err)
 				assert.Len(t, charts, 1)
 			})
@@ -806,7 +806,7 @@ func TestTemplateOwnerOrAdmin(t *testing.T) {
 		t.Parallel()
 		e := newDraftReleaseEnv(t)
 		e.seedDraft(t)
-		require.NoError(t, e.templates.Create(&models.StackTemplate{ID: "t2", Name: "Other", OwnerID: "uid-dev"}))
+		require.NoError(t, e.templates.Create(context.Background(), &models.StackTemplate{ID: "t2", Name: "Other", OwnerID: "uid-dev"}))
 		w := serve(e.router, http.MethodDelete, "/api/v1/templates/t2/charts/tc-web", "")
 		assert.Equal(t, http.StatusNotFound, w.Code)
 		w = serve(e.router, http.MethodPut, "/api/v1/templates/t2/charts/tc-web", `{"chart_name":"web"}`)
@@ -873,15 +873,15 @@ func TestUpdateTemplate_Partial(t *testing.T) {
 			t.Parallel()
 			e := newDraftReleaseEnv(t)
 			e.seedDraft(t)
-			tmpl, err := e.templates.FindByID("t1")
+			tmpl, err := e.templates.FindByID(context.Background(), "t1")
 			require.NoError(t, err)
 			tmpl.Category = "Web"
-			require.NoError(t, e.templates.Update(tmpl))
+			require.NoError(t, e.templates.Update(context.Background(), tmpl))
 
 			w := serve(e.router, http.MethodPut, "/api/v1/templates/t1", tt.body)
 			require.Equal(t, tt.want, w.Code, w.Body.String())
 			if tt.check != nil {
-				got, err := e.templates.FindByID("t1")
+				got, err := e.templates.FindByID(context.Background(), "t1")
 				require.NoError(t, err)
 				tt.check(t, *got)
 			}
@@ -1051,10 +1051,10 @@ func TestDraftRelease_SecondReview(t *testing.T) {
 			name: "legacy latest snapshot counts as changed and its version may be reused",
 			run: func(t *testing.T, e *draftReleaseEnv) {
 				seedSchemaSnapshot(t, e, "v-legacy", "1.0.0", 0, webChart, time.Now().Add(-time.Minute))
-				tmpl, err := e.templates.FindByID("t1")
+				tmpl, err := e.templates.FindByID(context.Background(), "t1")
 				require.NoError(t, err)
 				tmpl.IsPublished = true
-				require.NoError(t, e.templates.Update(tmpl))
+				require.NoError(t, e.templates.Update(context.Background(), tmpl))
 				assert.True(t, e.getTemplate(t).HasUnpublishedChanges)
 
 				w, resp := e.publish(t, "")
@@ -1094,10 +1094,10 @@ func TestDraftRelease_SecondReview(t *testing.T) {
 				}))
 				target := webChart // schema 1, chart_version and chart_path empty
 				seedSchemaSnapshot(t, e, "v-target", "1.1.0", 1, target, time.Now())
-				tmpl, err := e.templates.FindByID("t1")
+				tmpl, err := e.templates.FindByID(context.Background(), "t1")
 				require.NoError(t, err)
 				tmpl.IsPublished = true
-				require.NoError(t, e.templates.Update(tmpl))
+				require.NoError(t, e.templates.Update(context.Background(), tmpl))
 
 				w := serve(e.router, http.MethodGet, "/api/v1/stack-definitions/d1/check-upgrade", "")
 				require.Equal(t, http.StatusOK, w.Code, w.Body.String())
@@ -1198,8 +1198,8 @@ func TestListTemplates_NameFilter(t *testing.T) {
 			t.Parallel()
 			e := newDraftReleaseEnv(t)
 			e.seedDraft(t) // t1 "Web stack", unpublished
-			require.NoError(t, e.templates.Create(&models.StackTemplate{ID: "t2", Name: "Web stack 2", OwnerID: "uid-dev"}))
-			require.NoError(t, e.templates.Create(&models.StackTemplate{ID: "t3", Name: "api", OwnerID: "uid-dev", IsPublished: true}))
+			require.NoError(t, e.templates.Create(context.Background(), &models.StackTemplate{ID: "t2", Name: "Web stack 2", OwnerID: "uid-dev"}))
+			require.NoError(t, e.templates.Create(context.Background(), &models.StackTemplate{ID: "t3", Name: "api", OwnerID: "uid-dev", IsPublished: true}))
 			r := e.routerAs("uid-x", tt.role)
 			r.GET("/api/v1/templates", e.th.ListTemplates)
 

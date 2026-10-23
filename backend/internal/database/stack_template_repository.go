@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"errors"
 	"time"
 
@@ -26,14 +27,14 @@ func NewGORMStackTemplateRepository(db *gorm.DB) *GORMStackTemplateRepository {
 }
 
 // Create inserts a new stack template record.
-func (r *GORMStackTemplateRepository) Create(template *models.StackTemplate) error {
+func (r *GORMStackTemplateRepository) Create(ctx context.Context, template *models.StackTemplate) error {
 	if template.ID == "" {
 		template.ID = uuid.New().String()
 	}
 	now := time.Now().UTC()
 	template.CreatedAt = now
 	template.UpdatedAt = now
-	if err := r.db.Create(template).Error; err != nil {
+	if err := r.db.WithContext(ctx).Create(template).Error; err != nil {
 		if isDuplicateKeyError(err) {
 			return dberrors.NewDatabaseError("create", dberrors.ErrDuplicateKey)
 		}
@@ -44,9 +45,9 @@ func (r *GORMStackTemplateRepository) Create(template *models.StackTemplate) err
 
 // FindByIDForUpdate returns a stack template by its ID and locks the row
 // (SELECT ... FOR UPDATE). Use it inside a transaction.
-func (r *GORMStackTemplateRepository) FindByIDForUpdate(id string) (*models.StackTemplate, error) {
+func (r *GORMStackTemplateRepository) FindByIDForUpdate(ctx context.Context, id string) (*models.StackTemplate, error) {
 	var template models.StackTemplate
-	if err := r.db.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", id).First(&template).Error; err != nil {
+	if err := r.db.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", id).First(&template).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, dberrors.NewDatabaseError("find_by_id_for_update", dberrors.ErrNotFound)
 		}
@@ -56,9 +57,9 @@ func (r *GORMStackTemplateRepository) FindByIDForUpdate(id string) (*models.Stac
 }
 
 // FindByID returns a stack template by its ID.
-func (r *GORMStackTemplateRepository) FindByID(id string) (*models.StackTemplate, error) {
+func (r *GORMStackTemplateRepository) FindByID(ctx context.Context, id string) (*models.StackTemplate, error) {
 	var template models.StackTemplate
-	if err := r.db.Where("id = ?", id).First(&template).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&template).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, dberrors.NewDatabaseError("find_by_id", dberrors.ErrNotFound)
 		}
@@ -68,9 +69,9 @@ func (r *GORMStackTemplateRepository) FindByID(id string) (*models.StackTemplate
 }
 
 // Update persists changes to an existing stack template.
-func (r *GORMStackTemplateRepository) Update(template *models.StackTemplate) error {
+func (r *GORMStackTemplateRepository) Update(ctx context.Context, template *models.StackTemplate) error {
 	template.UpdatedAt = time.Now().UTC()
-	if err := r.db.Save(template).Error; err != nil {
+	if err := r.db.WithContext(ctx).Save(template).Error; err != nil {
 		if isDuplicateKeyError(err) {
 			return dberrors.NewDatabaseError("update", dberrors.ErrDuplicateKey)
 		}
@@ -80,8 +81,8 @@ func (r *GORMStackTemplateRepository) Update(template *models.StackTemplate) err
 }
 
 // Delete removes a stack template by ID.
-func (r *GORMStackTemplateRepository) Delete(id string) error {
-	result := r.db.Where("id = ?", id).Delete(&models.StackTemplate{})
+func (r *GORMStackTemplateRepository) Delete(ctx context.Context, id string) error {
+	result := r.db.WithContext(ctx).Where("id = ?", id).Delete(&models.StackTemplate{})
 	if result.Error != nil {
 		return dberrors.NewDatabaseError("delete", result.Error)
 	}
@@ -92,9 +93,9 @@ func (r *GORMStackTemplateRepository) Delete(id string) error {
 }
 
 // List returns all stack templates.
-func (r *GORMStackTemplateRepository) List() ([]models.StackTemplate, error) {
+func (r *GORMStackTemplateRepository) List(ctx context.Context) ([]models.StackTemplate, error) {
 	var templates []models.StackTemplate
-	if err := r.db.Find(&templates).Error; err != nil {
+	if err := r.db.WithContext(ctx).Find(&templates).Error; err != nil {
 		return nil, dberrors.NewDatabaseError("list", err)
 	}
 	return templates, nil
@@ -119,13 +120,13 @@ func nameScope(name string) func(*gorm.DB) *gorm.DB {
 
 // ListPaged returns a page of stack templates ordered by created_at DESC. A
 // non-empty name filters by exact name.
-func (r *GORMStackTemplateRepository) ListPaged(limit, offset int, name string) ([]models.StackTemplate, int64, error) {
+func (r *GORMStackTemplateRepository) ListPaged(ctx context.Context, limit, offset int, name string) ([]models.StackTemplate, int64, error) {
 	var total int64
-	if err := r.db.Model(&models.StackTemplate{}).Scopes(nameScope(name)).Count(&total).Error; err != nil {
+	if err := r.db.WithContext(ctx).Model(&models.StackTemplate{}).Scopes(nameScope(name)).Count(&total).Error; err != nil {
 		return nil, 0, dberrors.NewDatabaseError("count", err)
 	}
 	var templates []models.StackTemplate
-	if err := r.db.Select(templateListColumns).Scopes(nameScope(name)).
+	if err := r.db.WithContext(ctx).Select(templateListColumns).Scopes(nameScope(name)).
 		Order("created_at DESC").Limit(limit).Offset(offset).Find(&templates).Error; err != nil {
 		return nil, 0, dberrors.NewDatabaseError("list_paged", err)
 	}
@@ -134,13 +135,13 @@ func (r *GORMStackTemplateRepository) ListPaged(limit, offset int, name string) 
 
 // ListPublishedPaged returns a page of published stack templates ordered by
 // created_at DESC. A non-empty name filters by exact name.
-func (r *GORMStackTemplateRepository) ListPublishedPaged(limit, offset int, name string) ([]models.StackTemplate, int64, error) {
+func (r *GORMStackTemplateRepository) ListPublishedPaged(ctx context.Context, limit, offset int, name string) ([]models.StackTemplate, int64, error) {
 	var total int64
-	if err := r.db.Model(&models.StackTemplate{}).Where("is_published = ?", true).Scopes(nameScope(name)).Count(&total).Error; err != nil {
+	if err := r.db.WithContext(ctx).Model(&models.StackTemplate{}).Where("is_published = ?", true).Scopes(nameScope(name)).Count(&total).Error; err != nil {
 		return nil, 0, dberrors.NewDatabaseError("count_published", err)
 	}
 	var templates []models.StackTemplate
-	if err := r.db.Select(templateListColumns).Where("is_published = ?", true).Scopes(nameScope(name)).
+	if err := r.db.WithContext(ctx).Select(templateListColumns).Where("is_published = ?", true).Scopes(nameScope(name)).
 		Order("created_at DESC").Limit(limit).Offset(offset).Find(&templates).Error; err != nil {
 		return nil, 0, dberrors.NewDatabaseError("list_published_paged", err)
 	}
@@ -148,27 +149,27 @@ func (r *GORMStackTemplateRepository) ListPublishedPaged(limit, offset int, name
 }
 
 // Count returns the total number of stack templates.
-func (r *GORMStackTemplateRepository) Count() (int64, error) {
+func (r *GORMStackTemplateRepository) Count(ctx context.Context) (int64, error) {
 	var count int64
-	if err := r.db.Model(&models.StackTemplate{}).Count(&count).Error; err != nil {
+	if err := r.db.WithContext(ctx).Model(&models.StackTemplate{}).Count(&count).Error; err != nil {
 		return 0, dberrors.NewDatabaseError("count", err)
 	}
 	return count, nil
 }
 
 // ListPublished returns all published stack templates.
-func (r *GORMStackTemplateRepository) ListPublished() ([]models.StackTemplate, error) {
+func (r *GORMStackTemplateRepository) ListPublished(ctx context.Context) ([]models.StackTemplate, error) {
 	var templates []models.StackTemplate
-	if err := r.db.Where("is_published = ?", true).Find(&templates).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("is_published = ?", true).Find(&templates).Error; err != nil {
 		return nil, dberrors.NewDatabaseError("list_published", err)
 	}
 	return templates, nil
 }
 
 // ListByOwner returns all stack templates owned by the given user.
-func (r *GORMStackTemplateRepository) ListByOwner(ownerID string) ([]models.StackTemplate, error) {
+func (r *GORMStackTemplateRepository) ListByOwner(ctx context.Context, ownerID string) ([]models.StackTemplate, error) {
 	var templates []models.StackTemplate
-	if err := r.db.Where("owner_id = ?", ownerID).Find(&templates).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("owner_id = ?", ownerID).Find(&templates).Error; err != nil {
 		return nil, dberrors.NewDatabaseError("list_by_owner", err)
 	}
 	return templates, nil

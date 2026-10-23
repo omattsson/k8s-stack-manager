@@ -316,7 +316,7 @@ func TestSetOverride_LockedValuesReadsFailClosed(t *testing.T) {
 			seedChartConfig(t, ccMock, "chart-1", "def-1", "nginx")
 			ccRepo := &chartFindFailsAt{MockChartConfigRepository: ccMock, n: tt.chartFail}
 			tmplCharts := NewMockTemplateChartConfigRepository()
-			require.NoError(t, tmplCharts.Create(&models.TemplateChartConfig{
+			require.NoError(t, tmplCharts.Create(context.Background(), &models.TemplateChartConfig{
 				ID: "tc-1", StackTemplateID: "tmpl-1", ChartName: "nginx", LockedValues: "replicaCount: 3",
 			}))
 			if tt.setup != nil {
@@ -400,6 +400,26 @@ func (r *ctxSpyDefinitionRepo) ListIDsByTemplateIDs(ctx context.Context, ids []s
 	return out, err
 }
 
+// liveTemplateReads runs the template reads on a context that never ends, so
+// a test of the definition count reads gets past them with a done request.
+type liveTemplateReads struct{ *MockStackTemplateRepository }
+
+func (r liveTemplateReads) Count(ctx context.Context) (int64, error) {
+	return r.MockStackTemplateRepository.Count(context.WithoutCancel(ctx))
+}
+
+func (r liveTemplateReads) List(ctx context.Context) ([]models.StackTemplate, error) {
+	return r.MockStackTemplateRepository.List(context.WithoutCancel(ctx))
+}
+
+func (r liveTemplateReads) ListPaged(ctx context.Context, limit, offset int, name string) ([]models.StackTemplate, int64, error) {
+	return r.MockStackTemplateRepository.ListPaged(context.WithoutCancel(ctx), limit, offset, name)
+}
+
+func (r liveTemplateReads) ListPublishedPaged(ctx context.Context, limit, offset int, name string) ([]models.StackTemplate, int64, error) {
+	return r.MockStackTemplateRepository.ListPublishedPaged(context.WithoutCancel(ctx), limit, offset, name)
+}
+
 // TestDefinitionCountReads_UseRequestContext checks the definition counts of
 // the analytics and template list reads (#656): they run with the request
 // context, a cancelled count answers 499 and a passed deadline 500. The
@@ -432,8 +452,8 @@ func TestDefinitionCountReads_UseRequestContext(t *testing.T) {
 			seedTemplate(t, tmplRepo, "t1", "tmpl", "uid-1", true)
 			defs := &ctxSpyDefinitionRepo{MockStackDefinitionRepository: NewMockStackDefinitionRepository(), cancelAfter: tt.cancelAfter}
 			require.NoError(t, defs.MockStackDefinitionRepository.Create(context.Background(), &models.StackDefinition{ID: "d1", Name: "def", OwnerID: "uid-1", SourceTemplateID: "t1"}))
-			ah := NewAnalyticsHandler(tmplRepo, defs, NewMockStackInstanceRepository(), newMockDeployLogRepo(), NewMockUserRepository())
-			th := NewTemplateHandler(tmplRepo, NewMockTemplateChartConfigRepository(), defs, NewMockChartConfigRepository())
+			ah := NewAnalyticsHandler(liveTemplateReads{tmplRepo}, defs, NewMockStackInstanceRepository(), newMockDeployLogRepo(), NewMockUserRepository())
+			th := NewTemplateHandler(liveTemplateReads{tmplRepo}, NewMockTemplateChartConfigRepository(), defs, NewMockChartConfigRepository())
 			r := gin.New()
 			r.Use(injectAuthContext("admin-1", "admin"))
 			r.GET("/api/v1/analytics/overview", ah.GetOverview)

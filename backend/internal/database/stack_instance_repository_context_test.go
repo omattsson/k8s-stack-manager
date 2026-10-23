@@ -565,9 +565,7 @@ func TestGORMStackInstanceRepository_LogTraceContext(t *testing.T) {
 }
 
 // TestInstanceDeleteHelpers_LogTraceContext checks that the statements of
-// RunInTx and of the delete helpers carry the trace of the caller context,
-// also those of repositories without a ctx parameter (they run on the
-// transaction of RunInTx).
+// RunInTx and of the delete helpers carry the trace of the caller context.
 func TestInstanceDeleteHelpers_LogTraceContext(t *testing.T) {
 	t.Parallel()
 
@@ -578,7 +576,7 @@ func TestInstanceDeleteHelpers_LogTraceContext(t *testing.T) {
 	}{
 		{name: "RunInTx", call: func(ctx context.Context, runner *GORMTxRunner) error {
 			return runner.RunInTx(ctx, func(repos TxRepos) error {
-				_, err := repos.StackTemplate.FindByID("tpl-1")
+				_, err := repos.StackTemplate.FindByID(ctx, "tpl-1")
 				return err
 			})
 		}},

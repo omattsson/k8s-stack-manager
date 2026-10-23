@@ -55,7 +55,7 @@ type fakeTemplateRepo struct {
 	count int64
 }
 
-func (f *fakeTemplateRepo) Count() (int64, error) { return f.count, nil }
+func (f *fakeTemplateRepo) Count(_ context.Context) (int64, error) { return f.count, nil }
 
 type fakeClusterRepo struct {
 	models.ClusterRepository

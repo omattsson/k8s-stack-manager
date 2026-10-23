@@ -28,7 +28,7 @@ func newTemplateLinkEnv(t *testing.T) *draftReleaseEnv {
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
 	now := time.Now().UTC()
-	require.NoError(t, e.templates.Create(&models.StackTemplate{
+	require.NoError(t, e.templates.Create(context.Background(), &models.StackTemplate{
 		ID: "t2", Name: "Draft stack", Version: "0.1.0", OwnerID: "uid-dev", CreatedAt: now, UpdatedAt: now,
 	}))
 	require.NoError(t, e.defs.Create(context.Background(), &models.StackDefinition{
@@ -180,7 +180,7 @@ func TestImportDefinition_SourceTemplate(t *testing.T) {
 			e := newTemplateLinkEnv(t)
 			if tt.duplicate != "" {
 				now := time.Now().UTC()
-				require.NoError(t, e.templates.Create(&models.StackTemplate{
+				require.NoError(t, e.templates.Create(context.Background(), &models.StackTemplate{
 					ID: "t3", Name: "Web stack", Version: "1.0.0", OwnerID: "uid-dev", CreatedAt: now, UpdatedAt: now,
 					IsPublished: tt.duplicate == "published",
 				}))

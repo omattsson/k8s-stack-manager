@@ -451,7 +451,7 @@ func TestExportChartValues_Additional(t *testing.T) {
 		seedChartConfigForTest(t, ccRepo, "c1", "d1", "backend")
 
 		// Create template chart config with locked values.
-		require.NoError(t, tmplChartRepo.Create(&models.TemplateChartConfig{
+		require.NoError(t, tmplChartRepo.Create(context.Background(), &models.TemplateChartConfig{
 			ID:              "tc1",
 			StackTemplateID: "tmpl-1",
 			ChartName:       "backend",
@@ -749,7 +749,7 @@ func TestCompareInstances_Additional(t *testing.T) {
 		seedInstance(t, instRepo, "i2", "stack-b", "d1", "uid-1", models.StackStatusRunning)
 		seedChartConfigForTest(t, ccRepo, "cc1", "d1", "backend")
 
-		require.NoError(t, tmplChartRepo.Create(&models.TemplateChartConfig{
+		require.NoError(t, tmplChartRepo.Create(context.Background(), &models.TemplateChartConfig{
 			ID:              "tc1",
 			StackTemplateID: "tmpl-1",
 			ChartName:       "backend",
@@ -945,7 +945,7 @@ func TestDeployInstance_Additional(t *testing.T) {
 
 		seedChartConfigForTest(t, ccRepo, "cc1", "d-tmpl", "backend")
 
-		require.NoError(t, tmplChartRepo.Create(&models.TemplateChartConfig{
+		require.NoError(t, tmplChartRepo.Create(context.Background(), &models.TemplateChartConfig{
 			ID:              "tc1",
 			StackTemplateID: "tmpl-1",
 			ChartName:       "backend",

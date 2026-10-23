@@ -116,8 +116,11 @@ func (h *AnalyticsHandler) GetOverview(c *gin.Context) {
 		return
 	}
 
-	templateCount, err := h.templateRepo.Count()
+	templateCount, err := h.templateRepo.Count(c.Request.Context())
 	if err != nil {
+		if respondCancelled(c, err) {
+			return
+		}
 		slog.Error("analytics: failed to count templates", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
@@ -198,8 +201,11 @@ func (h *AnalyticsHandler) GetTemplateStats(c *gin.Context) {
 		return
 	}
 
-	templates, err := h.templateRepo.List()
+	templates, err := h.templateRepo.List(c.Request.Context())
 	if err != nil {
+		if respondCancelled(c, err) {
+			return
+		}
 		slog.Error("analytics: failed to list templates", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return

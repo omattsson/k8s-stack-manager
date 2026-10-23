@@ -34,14 +34,14 @@ func (r *workingCopyReleaseRepo) GetLatestByTemplate(ctx context.Context, templa
 	if err == nil || !errors.Is(err, dberrors.ErrNotFound) {
 		return v, err
 	}
-	tmpl, tErr := r.templates.FindByID(templateID)
+	tmpl, tErr := r.templates.FindByID(context.Background(), templateID)
 	if tErr != nil || !tmpl.IsPublished {
 		return nil, err
 	}
 	var charts []models.TemplateChartConfig
 	if r.charts != nil {
 		var cErr error
-		if charts, cErr = r.charts.ListByTemplate(templateID); cErr != nil {
+		if charts, cErr = r.charts.ListByTemplate(context.Background(), templateID); cErr != nil {
 			return nil, cErr
 		}
 	}

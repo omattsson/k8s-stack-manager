@@ -150,9 +150,9 @@ func (h *TemplateHandler) ListTemplates(c *gin.Context) {
 	var total int64
 	var err error
 	if role == "admin" || role == "devops" {
-		templates, total, err = h.templateRepo.ListPaged(pageSize, offset, name)
+		templates, total, err = h.templateRepo.ListPaged(c.Request.Context(), pageSize, offset, name)
 	} else {
-		templates, total, err = h.templateRepo.ListPublishedPaged(pageSize, offset, name)
+		templates, total, err = h.templateRepo.ListPublishedPaged(c.Request.Context(), pageSize, offset, name)
 	}
 	if err != nil {
 		status, message := mapError(err, entityTemplate)
@@ -279,9 +279,12 @@ func (h *TemplateHandler) CreateTemplate(c *gin.Context) {
 		chartModels[i] = ch
 	}
 
+	// Detached from the first write: a committed write must answer success, so its audit entry follows (#656).
+	wctx := context.WithoutCancel(c.Request.Context())
+
 	// Legacy path: no charts and no publish, no need for a transaction.
 	if len(chartModels) == 0 && !publishAfterCreate {
-		if err := h.templateRepo.Create(&tmpl); err != nil {
+		if err := h.templateRepo.Create(wctx, &tmpl); err != nil {
 			status, message := mapError(err, entityTemplate)
 			c.JSON(status, gin.H{"error": message})
 			return
@@ -301,20 +304,19 @@ func (h *TemplateHandler) CreateTemplate(c *gin.Context) {
 	}
 
 	var published *models.TemplateVersion
-	// Detached: a committed write must answer success, so its audit entry follows (#656).
-	txErr := h.txRunner.RunInTx(context.WithoutCancel(c.Request.Context()), func(repos database.TxRepos) error {
-		if err := repos.StackTemplate.Create(&tmpl); err != nil {
+	txErr := h.txRunner.RunInTx(wctx, func(repos database.TxRepos) error {
+		if err := repos.StackTemplate.Create(wctx, &tmpl); err != nil {
 			return err
 		}
 		for i := range chartModels {
-			if err := repos.TemplateChart.Create(&chartModels[i]); err != nil {
+			if err := repos.TemplateChart.Create(wctx, &chartModels[i]); err != nil {
 				return err
 			}
 		}
 		if !publishAfterCreate {
 			return nil
 		}
-		v, _, err := publishInTx(c.Request.Context(), repos, &tmpl, "", "", middleware.GetUserIDFromContext(c))
+		v, _, err := publishInTx(wctx, repos, &tmpl, "", "", middleware.GetUserIDFromContext(c))
 		published = v
 		return err
 	})
@@ -361,14 +363,14 @@ func (h *TemplateHandler) GetTemplate(c *gin.Context) {
 		return
 	}
 
-	tmpl, err := h.templateRepo.FindByID(id)
+	tmpl, err := h.templateRepo.FindByID(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, entityTemplate)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
-	charts, err := h.chartRepo.ListByTemplate(id)
+	charts, err := h.chartRepo.ListByTemplate(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, entityTemplateCharts)
 		c.JSON(status, gin.H{"error": message})
@@ -449,7 +451,7 @@ func (h *TemplateHandler) findManagedTemplate(c *gin.Context) *models.StackTempl
 		c.JSON(http.StatusBadRequest, gin.H{"error": msgTemplateIDRequired})
 		return nil
 	}
-	tmpl, err := h.templateRepo.FindByID(id)
+	tmpl, err := h.templateRepo.FindByID(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, entityTemplate)
 		c.JSON(status, gin.H{"error": message})
@@ -516,7 +518,7 @@ func (h *TemplateHandler) UpdateTemplate(c *gin.Context) {
 		return
 	}
 
-	if err := h.templateRepo.Update(existing); err != nil {
+	if err := h.templateRepo.Update(context.WithoutCancel(c.Request.Context()), existing); err != nil {
 		status, message := mapError(err, entityTemplate)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -564,7 +566,7 @@ func (h *TemplateHandler) DeleteTemplate(c *gin.Context) {
 		}
 	}
 
-	if err := h.templateRepo.Delete(id); err != nil {
+	if err := h.templateRepo.Delete(context.WithoutCancel(c.Request.Context()), id); err != nil {
 		status, message := mapError(err, entityTemplate)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -700,7 +702,7 @@ func validatePublishInput(version, changeSummary string) (string, error) {
 func (h *TemplateHandler) publishWorkingCopy(ctx context.Context, templateID, version, changeSummary, userID string) (*models.StackTemplate, *models.TemplateVersion, bool, error) {
 	// Without version support (legacy constructor) publish only flips the flag.
 	if h.versionRepo == nil {
-		tmpl, err := h.templateRepo.FindByID(templateID)
+		tmpl, err := h.templateRepo.FindByID(ctx, templateID)
 		if err != nil {
 			return nil, nil, false, err
 		}
@@ -713,7 +715,7 @@ func (h *TemplateHandler) publishWorkingCopy(ctx context.Context, templateID, ve
 		tmpl.Version = version
 		tmpl.IsPublished = true
 		tmpl.UpdatedAt = time.Now().UTC()
-		return tmpl, nil, false, h.templateRepo.Update(tmpl)
+		return tmpl, nil, false, h.templateRepo.Update(context.WithoutCancel(ctx), tmpl)
 	}
 	if h.txRunner == nil {
 		return nil, nil, false, fmt.Errorf("publish requires a transaction runner")
@@ -724,13 +726,14 @@ func (h *TemplateHandler) publishWorkingCopy(ctx context.Context, templateID, ve
 		published *models.TemplateVersion
 		created   bool
 	)
-	// See CreateTemplate for the detached context.
-	err := h.txRunner.RunInTx(context.WithoutCancel(ctx), func(repos database.TxRepos) error {
-		locked, err := repos.StackTemplate.FindByIDForUpdate(templateID)
+	// The whole transaction runs on the detached context (see CreateTemplate).
+	wctx := context.WithoutCancel(ctx)
+	err := h.txRunner.RunInTx(wctx, func(repos database.TxRepos) error {
+		locked, err := repos.StackTemplate.FindByIDForUpdate(wctx, templateID)
 		if err != nil {
 			return err
 		}
-		v, c, err := publishInTx(ctx, repos, locked, version, changeSummary, userID)
+		v, c, err := publishInTx(wctx, repos, locked, version, changeSummary, userID)
 		if err != nil {
 			return err
 		}
@@ -757,7 +760,7 @@ func publishInTx(ctx context.Context, repos database.TxRepos, tmpl *models.Stack
 		return nil, false, err
 	}
 
-	charts, err := repos.TemplateChart.ListByTemplate(tmpl.ID)
+	charts, err := repos.TemplateChart.ListByTemplate(ctx, tmpl.ID)
 	if err != nil {
 		return nil, false, fmt.Errorf("list template charts: %w", err)
 	}
@@ -828,7 +831,7 @@ func publishInTx(ctx context.Context, repos database.TxRepos, tmpl *models.Stack
 		tmpl.IsPublished = true
 		tmpl.Version = version
 		tmpl.UpdatedAt = time.Now().UTC()
-		if err := repos.StackTemplate.Update(tmpl); err != nil {
+		if err := repos.StackTemplate.Update(ctx, tmpl); err != nil {
 			return nil, false, err
 		}
 	}
@@ -857,7 +860,7 @@ func (h *TemplateHandler) UnpublishTemplate(c *gin.Context) {
 	tmpl.IsPublished = false
 	tmpl.UpdatedAt = time.Now().UTC()
 
-	if err := h.templateRepo.Update(tmpl); err != nil {
+	if err := h.templateRepo.Update(context.WithoutCancel(c.Request.Context()), tmpl); err != nil {
 		status, message := mapError(err, entityTemplate)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -896,7 +899,7 @@ type instantiateTemplateRequest struct {
 // @Router      /api/v1/templates/{id}/instantiate [post]
 func (h *TemplateHandler) InstantiateTemplate(c *gin.Context) {
 	id := c.Param("id")
-	tmpl, err := h.templateRepo.FindByID(id)
+	tmpl, err := h.templateRepo.FindByID(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, entityTemplate)
 		c.JSON(status, gin.H{"error": message})
@@ -929,9 +932,12 @@ func (h *TemplateHandler) InstantiateTemplate(c *gin.Context) {
 	}
 
 	overrides, err := resolveChartOverrides(input.ChartOverrides, release.Charts, func() ([]models.TemplateChartConfig, error) {
-		return h.chartRepo.ListByTemplate(tmpl.ID)
+		return h.chartRepo.ListByTemplate(c.Request.Context(), tmpl.ID)
 	})
 	if err != nil {
+		if respondCancelled(c, err) {
+			return
+		}
 		slog.Error("failed to resolve chart overrides", "template_id", tmpl.ID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
@@ -1047,7 +1053,7 @@ func (h *TemplateHandler) CloneTemplate(c *gin.Context) {
 		}
 	}
 
-	source, err := h.templateRepo.FindByID(id)
+	source, err := h.templateRepo.FindByID(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, entityTemplate)
 		c.JSON(status, gin.H{"error": message})
@@ -1078,7 +1084,7 @@ func (h *TemplateHandler) CloneTemplate(c *gin.Context) {
 	}
 
 	// Fetch source charts before any writes so we fail early on read errors.
-	charts, err := h.chartRepo.ListByTemplate(source.ID)
+	charts, err := h.chartRepo.ListByTemplate(c.Request.Context(), source.ID)
 	if err != nil {
 		status, message := mapError(err, entityTemplateCharts)
 		c.JSON(status, gin.H{"error": message})
@@ -1105,12 +1111,13 @@ func (h *TemplateHandler) CloneTemplate(c *gin.Context) {
 	}
 
 	// See CreateTemplate for the detached context.
-	txErr := h.txRunner.RunInTx(context.WithoutCancel(c.Request.Context()), func(repos database.TxRepos) error {
-		if err := repos.StackTemplate.Create(clone); err != nil {
+	wctx := context.WithoutCancel(c.Request.Context())
+	txErr := h.txRunner.RunInTx(wctx, func(repos database.TxRepos) error {
+		if err := repos.StackTemplate.Create(wctx, clone); err != nil {
 			return err
 		}
 		for _, cc := range chartClones {
-			if err := repos.TemplateChart.Create(cc); err != nil {
+			if err := repos.TemplateChart.Create(wctx, cc); err != nil {
 				return err
 			}
 		}
