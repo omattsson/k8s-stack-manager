@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -96,7 +97,7 @@ func TestValueOverride_ChartValidationAndDelete(t *testing.T) {
 				assert.Empty(t, w.Body.String())
 			}
 
-			_, err := overrideRepo.FindByInstanceAndChart("inst-1", tt.chartID)
+			_, err := overrideRepo.FindByInstanceAndChart(context.Background(), "inst-1", tt.chartID)
 			if tt.wantRow {
 				assert.NoError(t, err, "override row must exist")
 			} else {

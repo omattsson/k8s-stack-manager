@@ -591,7 +591,7 @@ func TestLoadSharedValues_DefaultClusterReadUsesContext(t *testing.T) {
 	clusters := NewMockClusterRepository()
 	require.NoError(t, clusters.Create(context.Background(), &models.Cluster{ID: "cl-1", Name: "one", IsDefault: true}))
 	shared := newMockSharedValuesRepo()
-	require.NoError(t, shared.Create(&models.SharedValues{ID: "sv-1", ClusterID: "cl-1", Name: "base", Values: "a: 1\n"}))
+	require.NoError(t, shared.Create(context.Background(), &models.SharedValues{ID: "sv-1", ClusterID: "cl-1", Name: "base", Values: "a: 1\n"}))
 	inst := &models.StackInstance{ID: "i1"}
 
 	got, err := loadSharedValues(context.Background(), shared, nil, clusters, inst)
@@ -610,7 +610,7 @@ func TestValuesBuilder_DefaultClusterReadUsesContext(t *testing.T) {
 	clusters := NewMockClusterRepository()
 	require.NoError(t, clusters.Create(context.Background(), &models.Cluster{ID: "cl-1", Name: "one", IsDefault: true}))
 	shared := newMockSharedValuesRepo()
-	require.NoError(t, shared.Create(&models.SharedValues{ID: "sv-1", ClusterID: "cl-1", Name: "base", Values: "a: 1\n"}))
+	require.NoError(t, shared.Create(context.Background(), &models.SharedValues{ID: "sv-1", ClusterID: "cl-1", Name: "base", Values: "a: 1\n"}))
 	b := &valuesBuilder{sharedValuesRepo: shared, clusterRepo: clusters}
 	inst := &models.StackInstance{ID: "i1", Name: "web"}
 	def := &models.StackDefinition{ID: "def-1", Name: "web"}

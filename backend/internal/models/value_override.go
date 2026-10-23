@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // ValueOverride holds per-chart value overrides for a stack instance.
 type ValueOverride struct {
@@ -13,13 +16,13 @@ type ValueOverride struct {
 
 // ValueOverrideRepository defines data access operations for value overrides.
 type ValueOverrideRepository interface {
-	Create(override *ValueOverride) error
-	FindByID(id string) (*ValueOverride, error)
-	FindByInstanceAndChart(instanceID, chartConfigID string) (*ValueOverride, error)
-	Update(override *ValueOverride) error
-	Delete(id string) error
-	ListByInstance(instanceID string) ([]ValueOverride, error)
+	Create(ctx context.Context, override *ValueOverride) error
+	FindByID(ctx context.Context, id string) (*ValueOverride, error)
+	FindByInstanceAndChart(ctx context.Context, instanceID, chartConfigID string) (*ValueOverride, error)
+	Update(ctx context.Context, override *ValueOverride) error
+	Delete(ctx context.Context, id string) error
+	ListByInstance(ctx context.Context, instanceID string) ([]ValueOverride, error)
 	// DeleteByInstance deletes all value overrides of an instance (no error
 	// when there are none).
-	DeleteByInstance(instanceID string) error
+	DeleteByInstance(ctx context.Context, instanceID string) error
 }

@@ -80,7 +80,7 @@ func loadSharedValues(
 		}
 	}
 
-	values, err := repo.ListByCluster(clusterID)
+	values, err := repo.ListByCluster(ctx, clusterID)
 	if err != nil {
 		return nil, fmt.Errorf("list shared values for cluster %s: %w", clusterID, err)
 	}

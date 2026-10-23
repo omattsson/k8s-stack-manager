@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -28,7 +29,7 @@ func NewGORMValueOverrideRepository(db *gorm.DB) *GORMValueOverrideRepository {
 }
 
 // Create inserts a new value override record with validation.
-func (r *GORMValueOverrideRepository) Create(override *models.ValueOverride) error {
+func (r *GORMValueOverrideRepository) Create(ctx context.Context, override *models.ValueOverride) error {
 	if err := override.Validate(); err != nil {
 		return dberrors.NewDatabaseError("create", fmt.Errorf("%w: %s", dberrors.ErrValidation, err.Error()))
 	}
@@ -37,13 +38,23 @@ func (r *GORMValueOverrideRepository) Create(override *models.ValueOverride) err
 		override.ID = uuid.New().String()
 	}
 	override.UpdatedAt = time.Now().UTC()
-	return r.BaseRepository.Create(override)
+	return r.withContext(ctx).Create(override)
+}
+
+// FindByID returns a value override by ID.
+func (r *GORMValueOverrideRepository) FindByID(ctx context.Context, id string) (*models.ValueOverride, error) {
+	return r.withContext(ctx).FindByID(id)
+}
+
+// Delete deletes a value override by ID.
+func (r *GORMValueOverrideRepository) Delete(ctx context.Context, id string) error {
+	return r.withContext(ctx).Delete(id)
 }
 
 // FindByInstanceAndChart returns the value override for a specific instance and chart config.
-func (r *GORMValueOverrideRepository) FindByInstanceAndChart(instanceID, chartConfigID string) (*models.ValueOverride, error) {
+func (r *GORMValueOverrideRepository) FindByInstanceAndChart(ctx context.Context, instanceID, chartConfigID string) (*models.ValueOverride, error) {
 	var override models.ValueOverride
-	if err := r.DB.Where("stack_instance_id = ? AND chart_config_id = ?", instanceID, chartConfigID).
+	if err := r.DB.WithContext(ctx).Where("stack_instance_id = ? AND chart_config_id = ?", instanceID, chartConfigID).
 		First(&override).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, dberrors.NewDatabaseError("find_by_instance_and_chart", dberrors.ErrNotFound)
@@ -54,15 +65,15 @@ func (r *GORMValueOverrideRepository) FindByInstanceAndChart(instanceID, chartCo
 }
 
 // Update persists changes to an existing value override record.
-func (r *GORMValueOverrideRepository) Update(override *models.ValueOverride) error {
+func (r *GORMValueOverrideRepository) Update(ctx context.Context, override *models.ValueOverride) error {
 	override.UpdatedAt = time.Now().UTC()
-	return r.Save(override)
+	return r.withContext(ctx).Save(override)
 }
 
 // ListByInstance returns all value overrides for a given stack instance.
-func (r *GORMValueOverrideRepository) ListByInstance(instanceID string) ([]models.ValueOverride, error) {
+func (r *GORMValueOverrideRepository) ListByInstance(ctx context.Context, instanceID string) ([]models.ValueOverride, error) {
 	var overrides []models.ValueOverride
-	if err := r.DB.Where("stack_instance_id = ?", instanceID).
+	if err := r.DB.WithContext(ctx).Where("stack_instance_id = ?", instanceID).
 		Find(&overrides).Error; err != nil {
 		return nil, dberrors.NewDatabaseError("list_by_instance", err)
 	}
@@ -70,8 +81,8 @@ func (r *GORMValueOverrideRepository) ListByInstance(instanceID string) ([]model
 }
 
 // DeleteByInstance deletes all value overrides of an instance in one statement.
-func (r *GORMValueOverrideRepository) DeleteByInstance(instanceID string) error {
-	if err := r.DB.Where("stack_instance_id = ?", instanceID).Delete(&models.ValueOverride{}).Error; err != nil {
+func (r *GORMValueOverrideRepository) DeleteByInstance(ctx context.Context, instanceID string) error {
+	if err := r.DB.WithContext(ctx).Where("stack_instance_id = ?", instanceID).Delete(&models.ValueOverride{}).Error; err != nil {
 		return dberrors.NewDatabaseError("delete_by_instance", err)
 	}
 	return nil

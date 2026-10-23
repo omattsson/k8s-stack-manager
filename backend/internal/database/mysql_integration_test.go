@@ -408,10 +408,10 @@ func TestMySQLIntegration_SharedValuesRepository(t *testing.T) {
 		Priority:    10,
 	}
 
-	err := repo.Create(sv)
+	err := repo.Create(context.Background(), sv)
 	require.NoError(t, err)
 
-	list, err := repo.ListByCluster("cluster1")
+	list, err := repo.ListByCluster(context.Background(), "cluster1")
 	require.NoError(t, err)
 	assert.Len(t, list, 1)
 	assert.Equal(t, "global-defaults", list[0].Name)
@@ -480,14 +480,14 @@ func TestMySQLIntegration_ValueOverrideRepository(t *testing.T) {
 		Values:          "replicas: 3",
 	}
 
-	err := repo.Create(override)
+	err := repo.Create(context.Background(), override)
 	require.NoError(t, err)
 
-	found, err := repo.FindByInstanceAndChart("inst1", "chart1")
+	found, err := repo.FindByInstanceAndChart(context.Background(), "inst1", "chart1")
 	require.NoError(t, err)
 	assert.Equal(t, "replicas: 3", found.Values)
 
-	list, err := repo.ListByInstance("inst1")
+	list, err := repo.ListByInstance(context.Background(), "inst1")
 	require.NoError(t, err)
 	assert.Len(t, list, 1)
 }

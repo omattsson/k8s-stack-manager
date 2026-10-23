@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"errors"
 
 	"backend/pkg/dberrors"
@@ -16,6 +17,11 @@ import (
 // queries, validation, encryption, etc.) should remain on the concrete type.
 type BaseRepository[T any] struct {
 	DB *gorm.DB
+}
+
+// withContext returns a copy whose queries run with ctx.
+func (r *BaseRepository[T]) withContext(ctx context.Context) *BaseRepository[T] {
+	return &BaseRepository[T]{DB: r.DB.WithContext(ctx)}
 }
 
 // FindByID returns a single record by primary key.

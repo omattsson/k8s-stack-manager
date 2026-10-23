@@ -215,7 +215,7 @@ func seedDeleteFixture(t *testing.T, db *gorm.DB) *models.StackInstance {
 	require.NoError(t, NewGORMStackInstanceRepository(db).Create(ctx, inst))
 	require.NoError(t, NewGORMStackDefinitionRepository(db).Create(context.Background(), &models.StackDefinition{ID: "d1", Name: "qd", OwnerID: "o1", OwnerInstanceID: "inst-1"}))
 	require.NoError(t, NewGORMChartBranchOverrideRepository(db).Set(context.Background(), &models.ChartBranchOverride{StackInstanceID: "inst-1", ChartConfigID: "cc1", Branch: "feature"}))
-	require.NoError(t, NewGORMValueOverrideRepository(db).Create(&models.ValueOverride{StackInstanceID: "inst-1", ChartConfigID: "cc1", Values: "a: 1"}))
+	require.NoError(t, NewGORMValueOverrideRepository(db).Create(ctx, &models.ValueOverride{StackInstanceID: "inst-1", ChartConfigID: "cc1", Values: "a: 1"}))
 	require.NoError(t, NewGORMInstanceQuotaOverrideRepository(db).Upsert(ctx, &models.InstanceQuotaOverride{StackInstanceID: "inst-1", CPULimit: "1"}))
 	require.NoError(t, NewGORMInstanceFollowerRepository(db).Follow(ctx, "o2", "inst-1"))
 	require.NoError(t, NewGORMActionRunRepository(db).Create(ctx, &models.ActionRun{InstanceID: "inst-1", Action: "a", UserID: "o1"}))
@@ -325,8 +325,7 @@ func TestGORMTxRunner_CancelInsideTx(t *testing.T) {
 				return err
 			}
 			cancel()
-			// A repository without a ctx parameter runs with the ctx of the transaction.
-			if err := repos.ValueOverride.DeleteByInstance("inst-1"); err != nil {
+			if err := repos.ValueOverride.DeleteByInstance(ctx, "inst-1"); err != nil {
 				return errors.New("deleting value overrides failed")
 			}
 			return nil
@@ -579,7 +578,7 @@ func TestInstanceDeleteHelpers_LogTraceContext(t *testing.T) {
 	}{
 		{name: "RunInTx", call: func(ctx context.Context, runner *GORMTxRunner) error {
 			return runner.RunInTx(ctx, func(repos TxRepos) error {
-				_, err := repos.ValueOverride.ListByInstance("inst-1")
+				_, err := repos.StackTemplate.FindByID("tpl-1")
 				return err
 			})
 		}},

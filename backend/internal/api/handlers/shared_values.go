@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 
@@ -49,7 +50,7 @@ func (h *SharedValuesHandler) ListSharedValues(c *gin.Context) {
 		return
 	}
 
-	values, err := h.repo.ListByCluster(clusterID)
+	values, err := h.repo.ListByCluster(c.Request.Context(), clusterID)
 	if err != nil {
 		status, message := mapError(err, entitySharedValues)
 		c.JSON(status, gin.H{"error": message})
@@ -96,7 +97,7 @@ func (h *SharedValuesHandler) CreateSharedValues(c *gin.Context) {
 		return
 	}
 
-	if err := h.repo.Create(&sv); err != nil {
+	if err := h.repo.Create(context.WithoutCancel(c.Request.Context()), &sv); err != nil {
 		slog.Error("Failed to create shared values", "cluster_id", clusterID, "error", err)
 		status, message := mapError(err, entitySharedValues)
 		c.JSON(status, gin.H{"error": message})
@@ -131,7 +132,7 @@ func (h *SharedValuesHandler) UpdateSharedValues(c *gin.Context) {
 		return
 	}
 
-	existing, err := h.repo.FindByClusterAndID(clusterID, valueID)
+	existing, err := h.repo.FindByClusterAndID(c.Request.Context(), clusterID, valueID)
 	if err != nil {
 		status, message := mapError(err, entitySharedValues)
 		c.JSON(status, gin.H{"error": message})
@@ -154,7 +155,7 @@ func (h *SharedValuesHandler) UpdateSharedValues(c *gin.Context) {
 		return
 	}
 
-	if err := h.repo.Update(&input); err != nil {
+	if err := h.repo.Update(context.WithoutCancel(c.Request.Context()), &input); err != nil {
 		slog.Error("Failed to update shared values", "id", valueID, "error", err)
 		status, message := mapError(err, entitySharedValues)
 		c.JSON(status, gin.H{"error": message})
@@ -179,13 +180,13 @@ func (h *SharedValuesHandler) DeleteSharedValues(c *gin.Context) {
 	clusterID := c.Param("id")
 	valueID := c.Param("valueId")
 
-	if _, err := h.repo.FindByClusterAndID(clusterID, valueID); err != nil {
+	if _, err := h.repo.FindByClusterAndID(c.Request.Context(), clusterID, valueID); err != nil {
 		status, message := mapError(err, entitySharedValues)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
-	if err := h.repo.Delete(valueID); err != nil {
+	if err := h.repo.Delete(context.WithoutCancel(c.Request.Context()), valueID); err != nil {
 		slog.Error("Failed to delete shared values", "id", valueID, "error", err)
 		status, message := mapError(err, entitySharedValues)
 		c.JSON(status, gin.H{"error": message})

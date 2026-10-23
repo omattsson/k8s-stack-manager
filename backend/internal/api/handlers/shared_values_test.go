@@ -26,7 +26,10 @@ func newMockSharedValuesRepo() *mockSharedValuesRepo {
 	return &mockSharedValuesRepo{items: make(map[string]*models.SharedValues)}
 }
 
-func (m *mockSharedValuesRepo) Create(sv *models.SharedValues) error {
+func (m *mockSharedValuesRepo) Create(ctx context.Context, sv *models.SharedValues) error {
+	if err := ctxDone(ctx, "create"); err != nil {
+		return err
+	}
 	if _, exists := m.items[sv.ID]; exists {
 		return dberrors.NewDatabaseError("create", dberrors.ErrDuplicateKey)
 	}
@@ -37,7 +40,10 @@ func (m *mockSharedValuesRepo) Create(sv *models.SharedValues) error {
 	return nil
 }
 
-func (m *mockSharedValuesRepo) FindByID(id string) (*models.SharedValues, error) {
+func (m *mockSharedValuesRepo) FindByID(ctx context.Context, id string) (*models.SharedValues, error) {
+	if err := ctxDone(ctx, "find_by_id"); err != nil {
+		return nil, err
+	}
 	sv, ok := m.items[id]
 	if !ok {
 		return nil, dberrors.NewDatabaseError("find_by_id", dberrors.ErrNotFound)
@@ -45,7 +51,10 @@ func (m *mockSharedValuesRepo) FindByID(id string) (*models.SharedValues, error)
 	return sv, nil
 }
 
-func (m *mockSharedValuesRepo) FindByClusterAndID(clusterID, id string) (*models.SharedValues, error) {
+func (m *mockSharedValuesRepo) FindByClusterAndID(ctx context.Context, clusterID, id string) (*models.SharedValues, error) {
+	if err := ctxDone(ctx, "find_by_cluster_and_id"); err != nil {
+		return nil, err
+	}
 	sv, ok := m.items[id]
 	if !ok || sv.ClusterID != clusterID {
 		return nil, dberrors.NewDatabaseError("find_by_cluster_and_id", dberrors.ErrNotFound)
@@ -53,7 +62,10 @@ func (m *mockSharedValuesRepo) FindByClusterAndID(clusterID, id string) (*models
 	return sv, nil
 }
 
-func (m *mockSharedValuesRepo) Update(sv *models.SharedValues) error {
+func (m *mockSharedValuesRepo) Update(ctx context.Context, sv *models.SharedValues) error {
+	if err := ctxDone(ctx, "update"); err != nil {
+		return err
+	}
 	if _, ok := m.items[sv.ID]; !ok {
 		return dberrors.NewDatabaseError("update", dberrors.ErrNotFound)
 	}
@@ -62,7 +74,10 @@ func (m *mockSharedValuesRepo) Update(sv *models.SharedValues) error {
 	return nil
 }
 
-func (m *mockSharedValuesRepo) Delete(id string) error {
+func (m *mockSharedValuesRepo) Delete(ctx context.Context, id string) error {
+	if err := ctxDone(ctx, "delete"); err != nil {
+		return err
+	}
 	if _, ok := m.items[id]; !ok {
 		return dberrors.NewDatabaseError("delete", dberrors.ErrNotFound)
 	}
@@ -70,7 +85,10 @@ func (m *mockSharedValuesRepo) Delete(id string) error {
 	return nil
 }
 
-func (m *mockSharedValuesRepo) ListByCluster(clusterID string) ([]models.SharedValues, error) {
+func (m *mockSharedValuesRepo) ListByCluster(ctx context.Context, clusterID string) ([]models.SharedValues, error) {
+	if err := ctxDone(ctx, "list_by_cluster"); err != nil {
+		return nil, err
+	}
 	var result []models.SharedValues
 	for _, sv := range m.items {
 		if sv.ClusterID == clusterID {

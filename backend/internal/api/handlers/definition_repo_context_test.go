@@ -526,7 +526,7 @@ func TestSetOverride_FailedDefinitionReadStopsTheWrite(t *testing.T) {
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code, w.Body.String())
 	assert.JSONEq(t, `{"error":"Internal server error"}`, w.Body.String())
-	_, err := f.ov.FindByInstanceAndChart("draft-1", "cc1")
+	_, err := f.ov.FindByInstanceAndChart(context.Background(), "draft-1", "cc1")
 	assert.Error(t, err, "no override is stored")
 }
 
@@ -582,7 +582,7 @@ func TestInstanceWrites_CancelledDefinitionReadChangesNothing(t *testing.T) {
 			name: "value override", method: http.MethodPut, path: "/api/v1/stack-instances/draft-1/overrides/cc1",
 			body: `{"values":"replicas: 2\n"}`, wantStatus: statusClientClosedRequest,
 			check: func(t *testing.T, f *writeCtxFixture, _ *httptest.ResponseRecorder) {
-				_, err := f.ov.FindByInstanceAndChart("draft-1", "cc1")
+				_, err := f.ov.FindByInstanceAndChart(context.Background(), "draft-1", "cc1")
 				assert.Error(t, err, "no override is stored")
 			},
 		},

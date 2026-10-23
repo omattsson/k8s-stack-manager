@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"testing"
 
 	"backend/internal/models"
@@ -28,33 +29,33 @@ func TestGORMSharedValuesRepository_CRUD(t *testing.T) {
 		Values:      "env: production",
 		Priority:    10,
 	}
-	err := repo.Create(sv)
+	err := repo.Create(context.Background(), sv)
 	require.NoError(t, err)
 	assert.NotEmpty(t, sv.ID)
 	assert.False(t, sv.CreatedAt.IsZero())
 
 	// FindByID
-	found, err := repo.FindByID(sv.ID)
+	found, err := repo.FindByID(context.Background(), sv.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "common-values", found.Name)
 
 	// FindByClusterAndID
-	found2, err := repo.FindByClusterAndID("c1", sv.ID)
+	found2, err := repo.FindByClusterAndID(context.Background(), "c1", sv.ID)
 	require.NoError(t, err)
 	assert.Equal(t, sv.ID, found2.ID)
 
 	// Update
 	found.Values = "env: staging"
-	err = repo.Update(found)
+	err = repo.Update(context.Background(), found)
 	require.NoError(t, err)
-	updated, err := repo.FindByID(sv.ID)
+	updated, err := repo.FindByID(context.Background(), sv.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "env: staging", updated.Values)
 
 	// Delete
-	err = repo.Delete(sv.ID)
+	err = repo.Delete(context.Background(), sv.ID)
 	require.NoError(t, err)
-	_, err = repo.FindByID(sv.ID)
+	_, err = repo.FindByID(context.Background(), sv.ID)
 	assert.Error(t, err)
 }
 
@@ -62,7 +63,7 @@ func TestGORMSharedValuesRepository_FindByID_NotFound(t *testing.T) {
 	t.Parallel()
 
 	repo := setupSharedValuesRepo(t)
-	_, err := repo.FindByID("nonexistent")
+	_, err := repo.FindByID(context.Background(), "nonexistent")
 	assert.Error(t, err)
 }
 
@@ -70,7 +71,7 @@ func TestGORMSharedValuesRepository_FindByClusterAndID_NotFound(t *testing.T) {
 	t.Parallel()
 
 	repo := setupSharedValuesRepo(t)
-	_, err := repo.FindByClusterAndID("c1", "nonexistent")
+	_, err := repo.FindByClusterAndID(context.Background(), "c1", "nonexistent")
 	assert.Error(t, err)
 }
 
@@ -78,7 +79,7 @@ func TestGORMSharedValuesRepository_Delete_NotFound(t *testing.T) {
 	t.Parallel()
 
 	repo := setupSharedValuesRepo(t)
-	err := repo.Delete("nonexistent")
+	err := repo.Delete(context.Background(), "nonexistent")
 	assert.Error(t, err)
 }
 
@@ -86,11 +87,11 @@ func TestGORMSharedValuesRepository_ListByCluster(t *testing.T) {
 	t.Parallel()
 
 	repo := setupSharedValuesRepo(t)
-	require.NoError(t, repo.Create(&models.SharedValues{ClusterID: "c-list", Name: "sv1", Values: "a: 1", Priority: 20}))
-	require.NoError(t, repo.Create(&models.SharedValues{ClusterID: "c-list", Name: "sv2", Values: "b: 2", Priority: 10}))
-	require.NoError(t, repo.Create(&models.SharedValues{ClusterID: "c-other", Name: "sv3", Values: "c: 3", Priority: 1}))
+	require.NoError(t, repo.Create(context.Background(), &models.SharedValues{ClusterID: "c-list", Name: "sv1", Values: "a: 1", Priority: 20}))
+	require.NoError(t, repo.Create(context.Background(), &models.SharedValues{ClusterID: "c-list", Name: "sv2", Values: "b: 2", Priority: 10}))
+	require.NoError(t, repo.Create(context.Background(), &models.SharedValues{ClusterID: "c-other", Name: "sv3", Values: "c: 3", Priority: 1}))
 
-	values, err := repo.ListByCluster("c-list")
+	values, err := repo.ListByCluster(context.Background(), "c-list")
 	require.NoError(t, err)
 	assert.Len(t, values, 2)
 	// Should be ordered by priority ASC.
@@ -110,10 +111,10 @@ func TestGORMSharedValuesRepository_ListByCluster_TieBreak(t *testing.T) {
 		{ID: "id-a", ClusterID: "c-tie", Name: "beta", Values: "a: 3", Priority: 5},
 		{ID: "id-d", ClusterID: "c-tie", Name: "zeta", Values: "a: 4", Priority: 1},
 	} {
-		require.NoError(t, repo.Create(sv))
+		require.NoError(t, repo.Create(context.Background(), sv))
 	}
 
-	values, err := repo.ListByCluster("c-tie")
+	values, err := repo.ListByCluster(context.Background(), "c-tie")
 	require.NoError(t, err)
 	ids := make([]string, 0, len(values))
 	for _, v := range values {
@@ -129,10 +130,10 @@ func TestGORMSharedValuesRepository_ListByCluster_CaseOrder(t *testing.T) {
 	t.Parallel()
 
 	repo := setupSharedValuesRepo(t)
-	require.NoError(t, repo.Create(&models.SharedValues{ID: "id-1", ClusterID: "c-case", Name: "alpha", Values: "a: 1", Priority: 0}))
-	require.NoError(t, repo.Create(&models.SharedValues{ID: "id-2", ClusterID: "c-case", Name: "Beta", Values: "a: 2", Priority: 0}))
+	require.NoError(t, repo.Create(context.Background(), &models.SharedValues{ID: "id-1", ClusterID: "c-case", Name: "alpha", Values: "a: 1", Priority: 0}))
+	require.NoError(t, repo.Create(context.Background(), &models.SharedValues{ID: "id-2", ClusterID: "c-case", Name: "Beta", Values: "a: 2", Priority: 0}))
 
-	values, err := repo.ListByCluster("c-case")
+	values, err := repo.ListByCluster(context.Background(), "c-case")
 	require.NoError(t, err)
 	require.Len(t, values, 2)
 	assert.Equal(t, "Beta", values[0].Name)

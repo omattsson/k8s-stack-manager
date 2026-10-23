@@ -151,7 +151,7 @@ func TestDatabaseMySQL_DeleteInstanceWithOwnedDefinitionContext(t *testing.T) {
 				ID: inst.StackDefinitionID, Name: "qd", OwnerID: "u1", OwnerInstanceID: inst.ID}))
 			require.NoError(t, NewGORMChartBranchOverrideRepository(db).Set(context.Background(), &models.ChartBranchOverride{
 				StackInstanceID: inst.ID, ChartConfigID: "cc1", Branch: "feature"}))
-			require.NoError(t, NewGORMValueOverrideRepository(db).Create(&models.ValueOverride{
+			require.NoError(t, NewGORMValueOverrideRepository(db).Create(context.Background(), &models.ValueOverride{
 				StackInstanceID: inst.ID, ChartConfigID: "cc1", Values: "a: 1"}))
 			require.NoError(t, NewGORMActionRunRepository(db).Create(ctx0, &models.ActionRun{
 				InstanceID: inst.ID, Action: "a", UserID: "u1"}))

@@ -776,7 +776,7 @@ func TestRollbackToTarget_FailedDriftBuildStillRollsBack(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.NotContains(t, resp, "values_drift", "no drift result without a values build")
 	assert.NotContains(t, resp, "warning")
-	assert.Equal(t, []string{models.DeployActionDeploy, models.DeployActionRollback}, f.logActions(t, "run-1"))
+	assert.ElementsMatch(t, []string{models.DeployActionDeploy, models.DeployActionRollback}, f.logActions(t, "run-1"), "the mock lists in map order")
 }
 
 // TestCloneInstance_CancelledAtBranchCopyStillCommits checks that a clone

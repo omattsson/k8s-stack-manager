@@ -483,7 +483,7 @@ func TestCloneInstance(t *testing.T) {
 		instRepo := NewMockStackInstanceRepository()
 		overrideRepo := NewMockValueOverrideRepository()
 		seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusRunning)
-		require.NoError(t, overrideRepo.Create(&models.ValueOverride{
+		require.NoError(t, overrideRepo.Create(context.Background(), &models.ValueOverride{
 			ID:              "ov1",
 			StackInstanceID: "i1",
 			ChartConfigID:   "c1",
@@ -703,7 +703,7 @@ func TestExportChartValues(t *testing.T) {
 			ChartName:         "backend",
 			DefaultValues:     "replicas: 1\nimage: myapp",
 		}))
-		require.NoError(t, overrideRepo.Create(&models.ValueOverride{
+		require.NoError(t, overrideRepo.Create(context.Background(), &models.ValueOverride{
 			ID:              "ov1",
 			StackInstanceID: "i1",
 			ChartConfigID:   "c1",
@@ -1245,7 +1245,7 @@ func TestDeployPreview(t *testing.T) {
 			ChartName:         "backend",
 			DefaultValues:     "replicas: 1\n",
 		}))
-		require.NoError(t, overrideRepo.Create(&models.ValueOverride{
+		require.NoError(t, overrideRepo.Create(context.Background(), &models.ValueOverride{
 			ID:              "ov1",
 			StackInstanceID: "i1",
 			ChartConfigID:   "c1",

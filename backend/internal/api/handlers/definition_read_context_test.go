@@ -342,7 +342,7 @@ func TestSetOverride_LockedValuesReadsFailClosed(t *testing.T) {
 			r.ServeHTTP(w, req)
 
 			assert.Equal(t, tt.wantStatus, w.Code, w.Body.String())
-			_, err := ovRepo.FindByInstanceAndChart("inst-1", "chart-1")
+			_, err := ovRepo.FindByInstanceAndChart(context.Background(), "inst-1", "chart-1")
 			if tt.wantStored {
 				assert.NoError(t, err, "the override is stored")
 				return

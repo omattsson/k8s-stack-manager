@@ -1494,12 +1494,12 @@ func cloneInstanceTx(ctx context.Context, repos database.TxRepos, sourceID strin
 		return "", err
 	}
 	if repos.ValueOverride != nil {
-		overrides, err := repos.ValueOverride.ListByInstance(sourceID)
+		overrides, err := repos.ValueOverride.ListByInstance(ctx, sourceID)
 		if err != nil {
 			return "", err
 		}
 		for _, ov := range overrides {
-			if err := repos.ValueOverride.Create(&models.ValueOverride{
+			if err := repos.ValueOverride.Create(ctx, &models.ValueOverride{
 				ID:              uuid.New().String(),
 				StackInstanceID: clone.ID,
 				ChartConfigID:   ov.ChartConfigID,
