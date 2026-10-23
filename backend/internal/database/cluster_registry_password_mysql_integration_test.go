@@ -39,9 +39,10 @@ func TestDatabaseMySQL_RegistryPasswordWithoutKey(t *testing.T) {
 	require.Error(t, repo.Update(ctx, found))
 	assert.Equal(t, "plain", storedPassword(t, db, "rp-legacy"))
 
-	n, err := repo.CountPlaintextRegistryPasswords(ctx)
+	cleartext, encrypted, err := repo.CountRegistryPasswordsWithoutKey(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, 1, n)
+	assert.Equal(t, 1, cleartext)
+	assert.Zero(t, encrypted)
 
 	refused := &models.Cluster{Name: "rp-new", APIServerURL: "https://c.example.com", RegistryURL: "r.example.com", RegistryUsername: "u", RegistryPassword: "pw"}
 	require.Error(t, repo.Create(ctx, refused))

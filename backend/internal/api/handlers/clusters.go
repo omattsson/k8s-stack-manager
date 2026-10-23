@@ -459,6 +459,11 @@ func (h *ClusterHandler) UpdateCluster(c *gin.Context) {
 		}
 	}
 
+	if existing.RegistryPasswordUnreadable && existing.RegistryPassword == "" && existing.RegistryURL != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "The stored registry password cannot be read. Set registry_password again."})
+		return
+	}
+
 	// Re-validate after applying updates (e.g. kubeconfig mutual exclusion),
 	// before the first write.
 	if err := existing.Validate(); err != nil {
@@ -468,6 +473,15 @@ func (h *ClusterHandler) UpdateCluster(c *gin.Context) {
 
 	// Detached from the first write on, so the registry refresh always runs (#656).
 	wctx := context.WithoutCancel(c.Request.Context())
+	// Refuse credentials without a key before any write, so a failed request
+	// does not change the default cluster.
+	if checker, ok := h.clusterRepo.(models.ClusterCredentialChecker); ok {
+		if err := checker.CheckCredentialsStorable(wctx, existing); err != nil {
+			status, message := mapError(err, entityCluster)
+			c.JSON(status, gin.H{"error": message})
+			return
+		}
+	}
 	if makeDefault {
 		// Use SetDefault to atomically unset the old default and set the new one.
 		if err := h.clusterRepo.SetDefault(wctx, id); err != nil {

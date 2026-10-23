@@ -299,29 +299,33 @@ func gracefulShutdown(srvs *servers, timeout time.Duration, deps shutdownDeps) {
 	slog.Info("Server exited gracefully")
 }
 
-// plaintextPasswordCounter is implemented by the cluster repository.
-type plaintextPasswordCounter interface {
-	CountPlaintextRegistryPasswords(ctx context.Context) (int, error)
+// registryPasswordCounter is implemented by the cluster repository.
+type registryPasswordCounter interface {
+	CountRegistryPasswordsWithoutKey(ctx context.Context) (cleartext, encrypted int, err error)
 }
 
-// warnPlaintextRegistryPasswords logs the number of clusters that still store
-// a registry password in plaintext (legacy data, no encryption key). It never
-// logs the values.
+// warnPlaintextRegistryPasswords logs how many clusters store a registry
+// password that the backend cannot use without KUBECONFIG_ENCRYPTION_KEY. It
+// never logs the values.
 func warnPlaintextRegistryPasswords(clusterRepo models.ClusterRepository) {
-	counter, ok := clusterRepo.(plaintextPasswordCounter)
+	counter, ok := clusterRepo.(registryPasswordCounter)
 	if !ok {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), instanceBackfillTimeout)
 	defer cancel()
-	n, err := counter.CountPlaintextRegistryPasswords(ctx)
+	cleartext, encrypted, err := counter.CountRegistryPasswordsWithoutKey(ctx)
 	if err != nil {
 		slog.Warn("Could not check for plaintext registry passwords", "error", err)
 		return
 	}
-	if n > 0 {
-		slog.Warn("Clusters store a registry password in plaintext. Set KUBECONFIG_ENCRYPTION_KEY and save these clusters again to encrypt the password.",
-			"clusters", n)
+	if cleartext > 0 {
+		slog.Warn("Clusters store a registry password in plaintext. Set KUBECONFIG_ENCRYPTION_KEY, then set the registry password of these clusters again. A value that the backend cannot decrypt is ignored.",
+			"clusters", cleartext)
+	}
+	if encrypted > 0 {
+		slog.Warn("Clusters store an encrypted registry password, but KUBECONFIG_ENCRYPTION_KEY is not set. The backend ignores these passwords. Set the same key again, or set the passwords again.",
+			"clusters", encrypted)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"strings"
 	"testing"
 
 	"backend/internal/models"
@@ -95,7 +96,8 @@ func TestClusterRepository_RegistryPasswordWithKey(t *testing.T) {
 	require.NoError(t, repo.Create(ctx, c))
 	raw := storedPassword(t, db, c.ID)
 	assert.NotEqual(t, "s3cret-pass", raw)
-	decoded, err := base64.StdEncoding.DecodeString(raw)
+	require.True(t, strings.HasPrefix(raw, encryptedPrefix), "new ciphertext has the version prefix")
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(raw, encryptedPrefix))
 	require.NoError(t, err)
 	plain, err := crypto.Decrypt(decoded, crypto.DeriveKey(testRegistryKey))
 	require.NoError(t, err)
@@ -121,45 +123,104 @@ func TestClusterRepository_RegistryPasswordWithKey(t *testing.T) {
 	assert.NotEqual(t, "legacy-plain", storedPassword(t, db, c.ID))
 }
 
-func TestDecryptRegistryPassword_LegacyPlaintextRule(t *testing.T) {
+func TestDecryptRegistryPassword_Rules(t *testing.T) {
 	t.Parallel()
 	key := crypto.DeriveKey("key")
 	enc, err := crypto.Encrypt([]byte("pw"), key)
 	require.NoError(t, err)
-	valid := base64.StdEncoding.EncodeToString(enc)
+	raw := base64.StdEncoding.EncodeToString(enc)
 	wrongKey, err := crypto.Encrypt([]byte("pw"), crypto.DeriveKey("other"))
 	require.NoError(t, err)
+	wrongRaw := base64.StdEncoding.EncodeToString(wrongKey)
+	// A 52-character legacy password and a 40-character hex token are valid base64 of 28 bytes or more.
+	longPlain := strings.Repeat("ab12", 13)
+	hexToken := strings.Repeat("0123456789", 4)
 
 	tests := []struct {
-		name    string
-		stored  string
-		want    string
-		wantErr bool
+		name       string
+		stored     string
+		want       string
+		wantUnread bool
 	}{
-		{"ciphertext", valid, "pw", false},
+		{"prefixed ciphertext", encryptedPrefix + raw, "pw", false},
+		{"unprefixed ciphertext of an older version", raw, "pw", false},
 		{"short base64 plaintext", "password", "password", false},
-		{"base64 plaintext below ciphertext length", "QUJDREVGR0g=", "QUJDREVGR0g=", false},
 		{"non base64 plaintext", "p@ss word!", "p@ss word!", false},
-		{"ciphertext of another key is an error", base64.StdEncoding.EncodeToString(wrongKey), "", true},
+		{"long base64 plaintext is isolated", longPlain, "", true},
+		{"hex token is isolated", hexToken, "", true},
+		{"prefixed ciphertext of another key is isolated", encryptedPrefix + wrongRaw, "", true},
+		{"prefixed garbage is isolated", encryptedPrefix + "!!", "", true},
 	}
 	for _, tt := range tests {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			repo := &GORMClusterRepository{encryptionKey: key}
-			c := &models.Cluster{RegistryPassword: tt.stored}
-			err := repo.decryptRegistryPassword(c)
-			if tt.wantErr {
-				require.Error(t, err)
-				return
-			}
-			require.NoError(t, err)
+			c := &models.Cluster{ID: "c1", RegistryPassword: tt.stored}
+			require.NoError(t, repo.decryptRegistryPassword(c), "a read never fails")
 			assert.Equal(t, tt.want, c.RegistryPassword)
+			assert.Equal(t, tt.wantUnread, c.RegistryPasswordUnreadable)
 		})
 	}
+
+	t.Run("prefixed value without a key is never returned as a password", func(t *testing.T) {
+		t.Parallel()
+		repo := &GORMClusterRepository{}
+		c := &models.Cluster{ID: "c1", RegistryPassword: encryptedPrefix + raw}
+		require.NoError(t, repo.decryptRegistryPassword(c))
+		assert.Empty(t, c.RegistryPassword)
+		assert.True(t, c.RegistryPasswordUnreadable)
+	})
 }
 
-func TestClusterRepository_CountPlaintextRegistryPasswords(t *testing.T) {
+// A row that cannot be decrypted must not fail List or FindByID, and a repair
+// PUT or an unrelated save must not lose or overwrite the stored value.
+func TestClusterRepository_UnreadablePasswordRow(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db := setupTestDBWithAllTables(t)
+	repo := NewGORMClusterRepository(db, testRegistryKey)
+
+	good := registryCluster("good", "good-pw")
+	require.NoError(t, repo.Create(ctx, good))
+	bad := registryCluster("bad", "x")
+	require.NoError(t, repo.Create(ctx, bad))
+	longPlain := strings.Repeat("ab12", 13)
+	require.NoError(t, db.Model(&models.Cluster{}).Where("id = ?", bad.ID).Update("registry_password", longPlain).Error)
+
+	list, err := repo.List(ctx)
+	require.NoError(t, err, "one unreadable row does not fail List")
+	require.Len(t, list, 2)
+	for _, c := range list {
+		if c.ID == good.ID {
+			assert.Equal(t, "good-pw", c.RegistryPassword)
+		} else {
+			assert.Empty(t, c.RegistryPassword)
+			assert.True(t, c.RegistryPasswordUnreadable)
+			assert.Nil(t, c.RegistryConfig(), "no pull secret for this cluster")
+		}
+	}
+
+	found, err := repo.FindByID(ctx, bad.ID)
+	require.NoError(t, err)
+	assert.Empty(t, found.RegistryPassword)
+
+	// A save of the in-memory empty value keeps the stored value.
+	found.Region = "west"
+	require.NoError(t, repo.Update(ctx, found))
+	assert.Equal(t, longPlain, storedPassword(t, db, bad.ID))
+
+	// A repair with a new password replaces it with prefixed ciphertext.
+	found.RegistryPassword = "repaired"
+	require.NoError(t, repo.Update(ctx, found))
+	assert.True(t, strings.HasPrefix(storedPassword(t, db, bad.ID), encryptedPrefix))
+	again, err := repo.FindByID(ctx, bad.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "repaired", again.RegistryPassword)
+	assert.False(t, again.RegistryPasswordUnreadable)
+}
+
+func TestClusterRepository_CountRegistryPasswordsWithoutKey(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	db := setupTestDBWithAllTables(t)
@@ -171,15 +232,29 @@ func TestClusterRepository_CountPlaintextRegistryPasswords(t *testing.T) {
 			require.NoError(t, db.Model(&models.Cluster{}).Where("id = ?", c.ID).Update("registry_password", "plain").Error)
 		}
 	}
-	plain := &models.Cluster{Name: "d", APIServerURL: "https://k8s.example.com"}
-	require.NoError(t, keyed.Create(ctx, plain))
+	none := &models.Cluster{Name: "d", APIServerURL: "https://k8s.example.com"}
+	require.NoError(t, keyed.Create(ctx, none))
 
 	noKey := NewGORMClusterRepository(db, "")
-	n, err := noKey.CountPlaintextRegistryPasswords(ctx)
+	cleartext, encrypted, err := noKey.CountRegistryPasswordsWithoutKey(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, 3, n, "without a key every stored password counts")
+	assert.Equal(t, 2, cleartext)
+	assert.Equal(t, 1, encrypted)
 
-	n, err = keyed.CountPlaintextRegistryPasswords(ctx)
+	cleartext, encrypted, err = keyed.CountRegistryPasswordsWithoutKey(ctx)
 	require.NoError(t, err)
-	assert.Zero(t, n)
+	assert.Zero(t, cleartext+encrypted)
+}
+
+func TestClusterRepository_CheckCredentialsStorable(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db := setupTestDBWithAllTables(t)
+	noKey := NewGORMClusterRepository(db, "")
+	keyed := NewGORMClusterRepository(db, testRegistryKey)
+
+	assert.NoError(t, keyed.CheckCredentialsStorable(ctx, &models.Cluster{KubeconfigData: "kc", RegistryPassword: "pw"}))
+	assert.NoError(t, noKey.CheckCredentialsStorable(ctx, &models.Cluster{}))
+	assert.ErrorIs(t, noKey.CheckCredentialsStorable(ctx, &models.Cluster{RegistryPassword: "pw"}), dberrors.ErrValidation)
+	assert.ErrorIs(t, noKey.CheckCredentialsStorable(ctx, &models.Cluster{KubeconfigData: "kc"}), dberrors.ErrValidation)
 }

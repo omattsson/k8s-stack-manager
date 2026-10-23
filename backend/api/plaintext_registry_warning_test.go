@@ -14,26 +14,29 @@ import (
 
 type countingClusterRepo struct {
 	*mockClusterRepo
-	n   int
-	err error
+	cleartext, encrypted int
+	err                  error
 }
 
-func (r *countingClusterRepo) CountPlaintextRegistryPasswords(context.Context) (int, error) {
-	return r.n, r.err
+func (r *countingClusterRepo) CountRegistryPasswordsWithoutKey(context.Context) (int, int, error) {
+	return r.cleartext, r.encrypted, r.err
 }
 
 // Not parallel: it replaces the default slog logger.
 func TestWarnPlaintextRegistryPasswords(t *testing.T) {
 	tests := []struct {
-		name     string
-		repo     models.ClusterRepository
-		wantWarn bool
-		wantText string
+		name    string
+		repo    models.ClusterRepository
+		want    []string
+		notWant []string
 	}{
-		{"count above zero warns", &countingClusterRepo{mockClusterRepo: newMockClusterRepo(), n: 2}, true, "clusters=2"},
-		{"zero is silent", &countingClusterRepo{mockClusterRepo: newMockClusterRepo()}, false, ""},
-		{"error warns without count", &countingClusterRepo{mockClusterRepo: newMockClusterRepo(), err: errors.New("db down")}, true, "Could not check"},
-		{"repository without counter is silent", newMockClusterRepo(), false, ""},
+		{"cleartext count warns and says to set the password again", &countingClusterRepo{mockClusterRepo: newMockClusterRepo(), cleartext: 2},
+			[]string{"level=WARN", "clusters=2", "plaintext", "set the registry password of these clusters again"}, []string{"encrypted registry password"}},
+		{"encrypted count warns about the missing key", &countingClusterRepo{mockClusterRepo: newMockClusterRepo(), encrypted: 1},
+			[]string{"level=WARN", "clusters=1", "encrypted registry password"}, []string{"in plaintext"}},
+		{"zero is silent", &countingClusterRepo{mockClusterRepo: newMockClusterRepo()}, nil, []string{"plaintext", "encrypted registry password"}},
+		{"error warns without count", &countingClusterRepo{mockClusterRepo: newMockClusterRepo(), err: errors.New("db down")}, []string{"Could not check"}, nil},
+		{"repository without counter is silent", newMockClusterRepo(), nil, []string{"plaintext", "encrypted registry password"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -44,12 +47,12 @@ func TestWarnPlaintextRegistryPasswords(t *testing.T) {
 
 			warnPlaintextRegistryPasswords(tt.repo)
 
-			if !tt.wantWarn {
-				assert.Empty(t, buf.String())
-				return
+			for _, w := range tt.want {
+				assert.Contains(t, buf.String(), w)
 			}
-			assert.Contains(t, buf.String(), "level=WARN")
-			assert.Contains(t, buf.String(), tt.wantText)
+			for _, w := range tt.notWant {
+				assert.NotContains(t, buf.String(), w)
+			}
 		})
 	}
 }

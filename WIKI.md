@@ -504,7 +504,7 @@ A cluster can store **container registry credentials** (`registry_url`, `registr
 
 - When you set them, the backend creates a `kubernetes.io/dockerconfigjson` secret in each stack namespace before the chart installs.
 - A background service refreshes the secret every 4 hours, for short-lived tokens (for example registry tokens).
-- The backend encrypts the registry password at rest with the same AES-GCM scheme as the kubeconfig data. This needs `KUBECONFIG_ENCRYPTION_KEY`. Without the key, the backend rejects a registry password (400). Use the key, or leave the password empty.
+- The backend encrypts the registry password at rest with the same AES-GCM scheme as the kubeconfig data. This needs `KUBECONFIG_ENCRYPTION_KEY`. Without the key, the backend rejects a registry password (400). Use the key, or leave the password empty. If you set the key later, set the registry password of existing clusters again. The backend ignores a stored password that it cannot decrypt.
 
 ### Orphaned Namespaces
 
