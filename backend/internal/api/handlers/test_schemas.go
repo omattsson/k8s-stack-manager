@@ -75,3 +75,17 @@ const errorSchema = `{
 }
 }
 }`
+
+// notificationListSchema is the contract of GET /notifications: total,
+// unread_count and total_capped are always present (#654).
+const notificationListSchema = `{
+"type": "object",
+"required": ["notifications", "total", "unread_count", "total_capped"],
+"additionalProperties": false,
+"properties": {
+"notifications": {"type": ["array", "null"], "items": {"type": "object", "required": ["id", "user_id", "type", "title", "is_read", "created_at"]}},
+"total": {"type": "integer", "minimum": 0},
+"unread_count": {"type": "integer", "minimum": 0},
+"total_capped": {"type": "boolean"}
+}
+}`

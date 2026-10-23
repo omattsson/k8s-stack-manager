@@ -37,17 +37,36 @@ type Trigger struct {
 	TriggerName string `json:"name,omitempty" gorm:"size:255;default:null"`
 }
 
+// NotificationTotalCap is the number of notifications after the requested
+// offset that the notification list counts at most (#654). The list counts
+// at most offset + NotificationTotalCap + 1 rows, not every notification of
+// the user. A larger total gives offset + NotificationTotalCap and
+// PaginatedNotifications.TotalCapped.
+const NotificationTotalCap = 1000
+
 // PaginatedNotifications wraps a page of notification results with metadata.
 type PaginatedNotifications struct {
 	Notifications []Notification `json:"notifications"`
-	Total         int64          `json:"total"`
-	UnreadCount   int64          `json:"unread_count"`
+	// Total is the number of matching notifications. It is exact unless
+	// total_capped is true; then it is offset + 1000, and at least
+	// total + 1 notifications match.
+	Total int64 `json:"total"`
+	// UnreadCount is the exact number of unread notifications of the user.
+	UnreadCount int64 `json:"unread_count"`
+	// TotalCapped (total_capped) is true when more than offset + 1000
+	// notifications match. total is then offset + 1000, a lower bound: at
+	// least total + 1 notifications exist.
+	TotalCapped bool `json:"total_capped"`
 }
 
 // NotificationRepository defines data access operations for notifications.
 type NotificationRepository interface {
 	Create(ctx context.Context, notification *Notification) error
-	ListByUser(ctx context.Context, userID string, unreadOnly bool, limit, offset int) ([]Notification, int64, error)
+	// ListByUser returns one page of the notifications of the user (newest
+	// first), the total and capped. The total counts at most
+	// offset + NotificationTotalCap rows: when more rows match, total is
+	// offset + NotificationTotalCap and capped is true.
+	ListByUser(ctx context.Context, userID string, unreadOnly bool, limit, offset int) (page []Notification, total int64, capped bool, err error)
 	CountUnread(ctx context.Context, userID string) (int64, error)
 	MarkAsRead(ctx context.Context, id string, userID string) error
 	MarkAllAsRead(ctx context.Context, userID string) error

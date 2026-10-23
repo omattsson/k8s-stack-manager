@@ -201,6 +201,7 @@ Developers use this application to configure, store and deploy multi-service Hel
 Details: `docs/claude/operations.md`.
 
 - Paginate every new list endpoint: `page` and `pageSize` (default 25, maximum 100) with `ListPaged(..., limit, offset)`. Select only the columns that the list needs. Give the query an index that covers its filter and its order. Use batch queries (`CountByTemplateIDs`, `FindByIDs`) instead of N+1 loops.
+- The notification list `total` is capped: exact up to offset + 1000, then `total_capped: true` (#654).
 - Add a periodic job as a `leader.Worker` with a restartable `Run(ctx)`. Keep state that must survive a leader change in the database.
 - Send WebSocket messages through `Broadcast`, `BroadcastToInstance` or `BroadcastToUser`. Revoke through `DisconnectUser`, `DisconnectToken` or `DisconnectAPIKey`. Fan-out reaches all replicas.
 - Register every external dependency with `healthChecker.AddCheck()`.

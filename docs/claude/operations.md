@@ -32,6 +32,7 @@ Reference for Claude Code and other agents. The root `CLAUDE.md` links here. Rea
   - Older endpoints (items, audit logs, notifications, delivery logs) take `limit` and `offset`. Small admin lists are not paged.
   - Select only the columns that a list view needs (omit TEXT fields like `description`).
   - Give a list query an index that covers its filter and its order. Example: `notifications (user_id, created_at DESC)` (migration 63, #654), so the notification list reads one page of rows, not all rows of the user.
+  - A list total can be capped when an exact count would read too many rows. The notification list `total` counts at most offset + 1000 rows with a `LIMIT` in a derived table: it is exact up to offset + 1000, then `total_capped: true` (#654). `unread_count` is still an exact count.
   - Use batch queries (`CountByTemplateIDs`, `FindByIDs`) instead of N+1 loops for enrichment data.
 - Use `internal/cache` for short-lived in-memory caching instead of ad-hoc maps. The combined auth, login, dashboard and analytics handlers use it (`LOGIN_CACHE_TTL`). `gitprovider.Registry` keeps its own 5-minute branch cache.
 - Struct field order: put 8-byte fields first for memory alignment.

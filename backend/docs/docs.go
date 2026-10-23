@@ -3593,7 +3593,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "List the authenticated user's notifications with optional filters and pagination",
+                "description": "List the authenticated user's notifications (newest first) with optional filters and pagination. The total counts at most offset + 1000 notifications: it is exact unless total_capped is true; then total is offset + 1000 and at least total + 1 notifications match. unread_count is always exact.",
                 "produces": [
                     "application/json"
                 ],
@@ -14030,9 +14030,15 @@ const docTemplate = `{
                     }
                 },
                 "total": {
+                    "description": "Total is the number of matching notifications. It is exact unless\ntotal_capped is true; then it is offset + 1000, and at least\ntotal + 1 notifications match.",
                     "type": "integer"
                 },
+                "total_capped": {
+                    "description": "TotalCapped (total_capped) is true when more than offset + 1000\nnotifications match. total is then offset + 1000, a lower bound: at\nleast total + 1 notifications exist.",
+                    "type": "boolean"
+                },
                 "unread_count": {
+                    "description": "UnreadCount is the exact number of unread notifications of the user.",
                     "type": "integer"
                 }
             }

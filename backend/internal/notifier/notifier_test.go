@@ -42,8 +42,8 @@ func (m *mockNotificationRepository) Create(_ context.Context, notification *mod
 	return nil
 }
 
-func (m *mockNotificationRepository) ListByUser(_ context.Context, _ string, _ bool, _, _ int) ([]models.Notification, int64, error) {
-	return nil, 0, nil
+func (m *mockNotificationRepository) ListByUser(_ context.Context, _ string, _ bool, _, _ int) ([]models.Notification, int64, bool, error) {
+	return nil, 0, false, nil
 }
 
 func (m *mockNotificationRepository) CountUnread(_ context.Context, _ string) (int64, error) {
@@ -611,8 +611,8 @@ func (m *failOnceMockNotificationRepo) Create(_ context.Context, notification *m
 	return nil
 }
 
-func (m *failOnceMockNotificationRepo) ListByUser(_ context.Context, _ string, _ bool, _, _ int) ([]models.Notification, int64, error) {
-	return nil, 0, nil
+func (m *failOnceMockNotificationRepo) ListByUser(_ context.Context, _ string, _ bool, _, _ int) ([]models.Notification, int64, bool, error) {
+	return nil, 0, false, nil
 }
 func (m *failOnceMockNotificationRepo) CountUnread(_ context.Context, _ string) (int64, error) {
 	return 0, nil

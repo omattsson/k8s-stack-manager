@@ -169,8 +169,9 @@ func TestGORMNotificationRepository_ListByUser(t *testing.T) {
 				require.NoError(t, repo.Create(ctx, &tt.seedNotifs[i]))
 			}
 
-			notifs, total, err := repo.ListByUser(ctx, tt.queryUserID, tt.unreadOnly, tt.limit, tt.offset)
+			notifs, total, capped, err := repo.ListByUser(ctx, tt.queryUserID, tt.unreadOnly, tt.limit, tt.offset)
 			require.NoError(t, err)
+			assert.False(t, capped)
 			assert.Len(t, notifs, tt.wantCount)
 			assert.GreaterOrEqual(t, total, tt.wantTotalGte)
 			assert.LessOrEqual(t, total, tt.wantTotalLte)
@@ -238,7 +239,7 @@ func TestGORMNotificationRepository_MarkAsRead(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify it is now read.
-		notifs, _, err := repo.ListByUser(ctx, "u-mr", true, 10, 0)
+		notifs, _, _, err := repo.ListByUser(ctx, "u-mr", true, 10, 0)
 		require.NoError(t, err)
 		assert.Len(t, notifs, 0, "should have no unread notifications")
 	})

@@ -35,7 +35,7 @@ type updatePreferenceRequest struct {
 
 // List godoc
 // @Summary      List notifications
-// @Description  List the authenticated user's notifications with optional filters and pagination
+// @Description  List the authenticated user's notifications (newest first) with optional filters and pagination. The total counts at most offset + 1000 notifications: it is exact unless total_capped is true; then total is offset + 1000 and at least total + 1 notifications match. unread_count is always exact.
 // @Tags         notifications
 // @Produce      json
 // @Security     BearerAuth
@@ -75,24 +75,30 @@ func (h *NotificationHandler) List(c *gin.Context) {
 		offset = o
 	}
 
-	notifications, total, err := h.repo.ListByUser(c.Request.Context(), userID, unreadOnly, limit, offset)
+	notifications, total, capped, err := h.repo.ListByUser(c.Request.Context(), userID, unreadOnly, limit, offset)
 	if err != nil {
 		slog.Error("Failed to list notifications", "error", err, logKeyUserID, userID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
-	unreadCount, err := h.repo.CountUnread(c.Request.Context(), userID)
-	if err != nil {
-		slog.Error("Failed to count unread notifications", "error", err, logKeyUserID, userID)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
-		return
+	// With unread_only, an exact (not capped) total is the unread count:
+	// skip the second count query (#654).
+	unreadCount := total
+	if !unreadOnly || capped {
+		unreadCount, err = h.repo.CountUnread(c.Request.Context(), userID)
+		if err != nil {
+			slog.Error("Failed to count unread notifications", "error", err, logKeyUserID, userID)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+			return
+		}
 	}
 
 	c.JSON(http.StatusOK, models.PaginatedNotifications{
 		Notifications: notifications,
 		Total:         total,
 		UnreadCount:   unreadCount,
+		TotalCapped:   capped,
 	})
 }
 

@@ -59,7 +59,7 @@ func TestNotificationTriggerMigration(t *testing.T) {
 			Count(&nulls).Error)
 		assert.Equal(t, int64(1), nulls, "the old row has NULL trigger columns")
 
-		list, total, err := NewGORMNotificationRepository(db.DB).ListByUser(context.Background(), "u1", false, 10, 0)
+		list, total, _, err := NewGORMNotificationRepository(db.DB).ListByUser(context.Background(), "u1", false, 10, 0)
 		require.NoError(t, err)
 		require.Equal(t, int64(1), total)
 		assert.Equal(t, models.Trigger{}, list[0].Trigger, "NULL reads as no trigger")
@@ -102,7 +102,7 @@ func TestGORMNotificationRepository_Trigger(t *testing.T) {
 				Trigger: tt.trigger, CreatedAt: time.Now().UTC(),
 			}))
 
-			list, _, err := repo.ListByUser(ctx, "u1", false, 10, 0)
+			list, _, _, err := repo.ListByUser(ctx, "u1", false, 10, 0)
 			require.NoError(t, err)
 			require.Len(t, list, 1)
 			assert.Equal(t, tt.trigger, list[0].Trigger)

@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"fmt"
+	"math"
 
 	"backend/internal/models"
 	"backend/pkg/dberrors"
@@ -17,11 +18,14 @@ var _ models.NotificationRepository = (*GORMNotificationRepository)(nil)
 // GORMNotificationRepository implements NotificationRepository using GORM.
 type GORMNotificationRepository struct {
 	db *gorm.DB
+	// totalCap is the count cap of ListByUser (models.NotificationTotalCap).
+	// Same-package tests lower it.
+	totalCap int
 }
 
 // NewGORMNotificationRepository creates a new GORM-backed notification repository.
 func NewGORMNotificationRepository(db *gorm.DB) *GORMNotificationRepository {
-	return &GORMNotificationRepository{db: db}
+	return &GORMNotificationRepository{db: db, totalCap: models.NotificationTotalCap}
 }
 
 // Create inserts a new notification record. A deadlock with MarkAllAsRead
@@ -41,24 +45,71 @@ func (r *GORMNotificationRepository) Create(ctx context.Context, notification *m
 }
 
 // ListByUser returns notifications for a user with optional unread-only filter and pagination.
-// Results are ordered newest-first. total is the count before pagination.
-func (r *GORMNotificationRepository) ListByUser(ctx context.Context, userID string, unreadOnly bool, limit, offset int) ([]models.Notification, int64, error) {
+// Results are ordered newest-first. total counts the matching rows before
+// pagination, but at most offset + totalCap of them (#654): a user can have
+// many thousands of notifications, and an exact count reads all of them on
+// every list call. When more rows match, total is offset + totalCap and
+// capped is true.
+func (r *GORMNotificationRepository) ListByUser(ctx context.Context, userID string, unreadOnly bool, limit, offset int) ([]models.Notification, int64, bool, error) {
+	if offset < 0 {
+		offset = 0
+	}
+	total, capped, err := r.countWindow(ctx, userID, unreadOnly, offset)
+	if err != nil {
+		return nil, 0, false, err
+	}
+
 	query := r.db.WithContext(ctx).Where("user_id = ?", userID)
 	if unreadOnly {
 		query = query.Where("is_read = ?", false)
 	}
-
-	var total int64
-	if err := query.Model(&models.Notification{}).Count(&total).Error; err != nil {
-		return nil, 0, dberrors.NewDatabaseError("count", err)
-	}
-
 	var notifications []models.Notification
 	if err := query.Order("created_at DESC").Limit(limit).Offset(offset).Find(&notifications).Error; err != nil {
-		return nil, 0, dberrors.NewDatabaseError("list", err)
+		return nil, 0, false, dberrors.NewDatabaseError("list", err)
 	}
 
-	return notifications, total, nil
+	return notifications, total, capped, nil
+}
+
+// The windowed count queries of ListByUser. All values are bound parameters.
+const (
+	notificationCountAll    = "SELECT COUNT(*) FROM (SELECT 1 FROM notifications WHERE user_id = ? LIMIT ?) AS capped"
+	notificationCountUnread = "SELECT COUNT(*) FROM (SELECT 1 FROM notifications WHERE user_id = ? AND is_read = ? LIMIT ?) AS capped"
+)
+
+// countWindow counts the matching notifications of the user, at most
+// offset + totalCap + 1 of them, with a LIMIT in a derived table, so MySQL
+// stops reading the index after that many rows. n is the true count when it
+// is at most offset + totalCap (also for an offset past the end). A count of
+// offset + totalCap + 1 means more rows exist: total is then
+// offset + totalCap and capped is true. For an offset so large that the
+// window overflows int64, the window is math.MaxInt64 (no table has that
+// many rows), so the count is exact.
+func (r *GORMNotificationRepository) countWindow(ctx context.Context, userID string, unreadOnly bool, offset int) (int64, bool, error) {
+	capN := int64(r.totalCap)
+	if capN < 0 {
+		capN = 0
+	}
+	off := int64(offset)
+	window := int64(math.MaxInt64)
+	bounded := off <= math.MaxInt64-capN-1
+	if bounded {
+		window = off + capN + 1
+	}
+
+	stmt, args := notificationCountAll, []any{userID, window}
+	if unreadOnly {
+		stmt, args = notificationCountUnread, []any{userID, false, window}
+	}
+
+	var n int64
+	if err := r.db.WithContext(ctx).Raw(stmt, args...).Scan(&n).Error; err != nil {
+		return 0, false, dberrors.NewDatabaseError("count", err)
+	}
+	if bounded && n >= window {
+		return off + capN, true, nil
+	}
+	return n, false, nil
 }
 
 // CountUnread returns the number of unread notifications for a user.
