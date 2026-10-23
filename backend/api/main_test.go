@@ -1137,3 +1137,5 @@ func (*failOnCreateClusterRepo) NamesByIDs(ctx context.Context, _ []string) (map
 	}
 	return map[string]string{}, nil
 }
+
+func (s *stubPolicyRepo) SetLastRunAt(_ context.Context, _ string, _ time.Time) error { return nil }

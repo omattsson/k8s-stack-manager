@@ -2015,3 +2015,7 @@ func (*stubClusterRepo) CountByHealthStatus(ctx context.Context, status string) 
 	}
 	return 0, nil
 }
+
+func (s *stubCleanupPolicyRepo) SetLastRunAt(_ context.Context, _ string, _ time.Time) error {
+	return nil
+}

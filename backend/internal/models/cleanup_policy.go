@@ -26,6 +26,8 @@ type CleanupPolicyRepository interface {
 	FindByID(ctx context.Context, id string) (*CleanupPolicy, error)
 	Update(ctx context.Context, policy *CleanupPolicy) error
 	Delete(ctx context.Context, id string) error
+	// SetLastRunAt writes last_run_at only, so a concurrent edit of the other fields stays.
+	SetLastRunAt(ctx context.Context, id string, t time.Time) error
 	List(ctx context.Context) ([]CleanupPolicy, error)
 	ListEnabled(ctx context.Context) ([]CleanupPolicy, error)
 }

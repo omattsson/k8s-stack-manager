@@ -56,6 +56,9 @@ var cleanupPolicyRepoCalls = []struct {
 	{name: "Delete", call: func(ctx context.Context, r models.CleanupPolicyRepository) error {
 		return r.Delete(ctx, "p-2")
 	}},
+	{name: "SetLastRunAt", call: func(ctx context.Context, r models.CleanupPolicyRepository) error {
+		return r.SetLastRunAt(ctx, "p-1", time.Now())
+	}},
 	{name: "List", call: func(ctx context.Context, r models.CleanupPolicyRepository) error {
 		_, err := r.List(ctx)
 		return err
@@ -353,4 +356,33 @@ func TestFavoritePolicyAuditRepositories_LogTraceContext(t *testing.T) {
 			})
 		})
 	}
+}
+
+// TestGORMCleanupPolicyRepository_SetLastRunAt checks that SetLastRunAt writes
+// last_run_at only: a concurrent edit of the other fields stays, and a
+// deleted policy gives not found (#656).
+func TestGORMCleanupPolicyRepository_SetLastRunAt(t *testing.T) {
+	t.Parallel()
+
+	repo := setupCleanupPolicyRepo(t)
+	seedContextPolicies(t, repo)
+	stale, err := repo.FindByID(context.Background(), "p-1")
+	require.NoError(t, err)
+	// An admin edit after the read of the run.
+	edited := *stale
+	edited.Name, edited.Enabled = "edited", false
+	require.NoError(t, repo.Update(context.Background(), &edited))
+
+	at := time.Now().UTC().Truncate(time.Second)
+	require.NoError(t, repo.SetLastRunAt(context.Background(), "p-1", at))
+
+	got, err := repo.FindByID(context.Background(), "p-1")
+	require.NoError(t, err)
+	assert.Equal(t, "edited", got.Name)
+	assert.False(t, got.Enabled)
+	require.NotNil(t, got.LastRunAt)
+	assert.True(t, got.LastRunAt.Equal(at))
+
+	err = repo.SetLastRunAt(context.Background(), "p-none", at)
+	assert.ErrorIs(t, err, dberrors.ErrNotFound)
 }

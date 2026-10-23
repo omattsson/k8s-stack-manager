@@ -53,6 +53,19 @@ func (r *GORMCleanupPolicyRepository) Update(ctx context.Context, policy *models
 	return r.BaseRepository.Save(ctx, policy)
 }
 
+// SetLastRunAt writes last_run_at only. A concurrent edit of the other
+// fields stays. It returns ErrNotFound when the policy no longer exists.
+func (r *GORMCleanupPolicyRepository) SetLastRunAt(ctx context.Context, id string, t time.Time) error {
+	result := r.DB.WithContext(ctx).Model(&models.CleanupPolicy{}).Where("id = ?", id).UpdateColumn("last_run_at", t)
+	if result.Error != nil {
+		return dberrors.NewDatabaseError("set_last_run_at", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return dberrors.NewDatabaseError("set_last_run_at", dberrors.ErrNotFound)
+	}
+	return nil
+}
+
 // List returns all cleanup policies.
 func (r *GORMCleanupPolicyRepository) List(ctx context.Context) ([]models.CleanupPolicy, error) {
 	var policies []models.CleanupPolicy

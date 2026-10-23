@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 
 	"backend/internal/models"
 
@@ -45,9 +46,9 @@ func (r *ctxPolicyRepo) FindByID(ctx context.Context, id string) (*models.Cleanu
 	return p, err
 }
 
-func (r *ctxPolicyRepo) Update(ctx context.Context, p *models.CleanupPolicy) error {
-	r.record(ctx, "Update")
-	return r.mockPolicyRepo.Update(ctx, p)
+func (r *ctxPolicyRepo) SetLastRunAt(ctx context.Context, id string, t time.Time) error {
+	r.record(ctx, "SetLastRunAt")
+	return r.mockPolicyRepo.SetLastRunAt(ctx, id, t)
 }
 
 func (r *ctxPolicyRepo) ListEnabled(ctx context.Context) ([]models.CleanupPolicy, error) {
@@ -76,7 +77,7 @@ func TestScheduler_PolicyRepoUsesCallerContext(t *testing.T) {
 		s.executeScheduledPolicy(markedContext("job"), "p1")
 
 		assert.Equal(t, "job", repo.marker("FindByID"))
-		assert.Equal(t, "job", repo.marker("Update"))
+		assert.Equal(t, "job", repo.marker("SetLastRunAt"), "the detached ctx keeps the values")
 	})
 
 	t.Run("reload", func(t *testing.T) {
@@ -203,4 +204,88 @@ func TestScheduler_AuditEntryOfAnExecutedActionSurvivesTheEndOfTheTerm(t *testin
 	require.Equal(t, []string{"i1"}, exec.stopped)
 	require.Len(t, audit.entries, 1, "the stop is audited")
 	assert.Equal(t, "cleanup_policy_executed", audit.entries[0].Action)
+}
+
+// cancelAtLastRunRepo ends the term context when the run writes LastRunAt:
+// the term ends after the check of the context and before the write.
+type cancelAtLastRunRepo struct {
+	*ctxPolicyRepo
+	cancel context.CancelFunc
+}
+
+// FindByID returns a copy, as a database read does: the run must not record
+// LastRunAt by changing the stored object.
+func (r *cancelAtLastRunRepo) FindByID(ctx context.Context, id string) (*models.CleanupPolicy, error) {
+	p, err := r.ctxPolicyRepo.FindByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	cp := *p
+	return &cp, nil
+}
+
+func (r *cancelAtLastRunRepo) SetLastRunAt(ctx context.Context, id string, t time.Time) error {
+	r.cancel()
+	return r.ctxPolicyRepo.SetLastRunAt(ctx, id, t)
+}
+
+// TestScheduler_CompletedRunRecordsLastRunAtWhenTheTermEnds checks that a run
+// that completed keeps its LastRunAt when the leadership term ends right
+// before the write. Else the next leader runs the policy again (#656).
+func TestScheduler_CompletedRunRecordsLastRunAtWhenTheTermEnds(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	repo := &cancelAtLastRunRepo{ctxPolicyRepo: newCtxPolicyRepo(), cancel: cancel}
+	require.NoError(t, repo.mockPolicyRepo.Create(context.Background(), newTestPolicy("p1", "0 2 * * *")))
+	s := NewScheduler(repo, &mockInstanceRepo{}, &mockAuditRepo{}, nil, nil)
+	t.Cleanup(s.Stop)
+
+	s.executeScheduledPolicy(ctx, "p1")
+
+	require.Error(t, ctx.Err(), "the term ended before the write")
+	got, err := repo.mockPolicyRepo.FindByID(context.Background(), "p1")
+	require.NoError(t, err)
+	assert.NotNil(t, got.LastRunAt, "the completed run is recorded")
+}
+
+// editDuringRunExecutor stores an admin edit of the policy while the run
+// executes an action.
+type editDuringRunExecutor struct {
+	mockExecutor
+	repo *mockPolicyRepo
+}
+
+func (e *editDuringRunExecutor) StopInstance(ctx context.Context, inst *models.StackInstance) error {
+	edited := *newTestPolicy("p1", "0 2 * * *")
+	edited.Enabled = false
+	edited.Name = "edited"
+	if err := e.repo.Update(context.Background(), &edited); err != nil {
+		return err
+	}
+	return e.mockExecutor.StopInstance(ctx, inst)
+}
+
+// TestScheduler_ScheduledRunKeepsAnEditMadeDuringTheRun checks that the run
+// writes LastRunAt only: an admin edit during the run is not overwritten with
+// the policy that the run read at its start (#656).
+func TestScheduler_ScheduledRunKeepsAnEditMadeDuringTheRun(t *testing.T) {
+	t.Parallel()
+
+	repo := newMockPolicyRepo()
+	require.NoError(t, repo.Create(context.Background(), newTestPolicy("p1", "0 2 * * *")))
+	exec := &editDuringRunExecutor{repo: repo}
+	s := NewScheduler(repo, &mockInstanceRepo{instances: []models.StackInstance{{ID: "i1", Name: "i1", Status: models.StackStatusStopped}}},
+		&mockAuditRepo{}, exec, nil)
+	t.Cleanup(s.Stop)
+
+	s.executeScheduledPolicy(context.Background(), "p1")
+
+	require.Equal(t, []string{"i1"}, exec.stopped)
+	got, err := repo.FindByID(context.Background(), "p1")
+	require.NoError(t, err)
+	assert.False(t, got.Enabled, "the edit stays")
+	assert.Equal(t, "edited", got.Name)
+	assert.NotNil(t, got.LastRunAt, "the run is recorded")
 }

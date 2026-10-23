@@ -1565,3 +1565,7 @@ func TestBuildHandlers_UniqueInstanceNamesNeedsNameLookup(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "UNIQUE_INSTANCE_NAMES")
 }
+
+func (s *stubCleanupPolicyRepo) SetLastRunAt(_ context.Context, _ string, _ time.Time) error {
+	return nil
+}

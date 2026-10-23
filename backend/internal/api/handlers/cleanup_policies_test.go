@@ -965,3 +965,25 @@ func TestUpdateCleanupPolicy_PartialUpdate(t *testing.T) {
 		})
 	}
 }
+
+func (r *mockCleanupPolicyRepo) SetLastRunAt(ctx context.Context, id string, t time.Time) error {
+	if err := ctxDone(ctx, "set_last_run_at"); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	p, ok := r.policies[id]
+	if !ok {
+		return dberrors.NewDatabaseError("set_last_run_at", dberrors.ErrNotFound)
+	}
+	p.LastRunAt = &t
+	return nil
+}
+
+func (r *failingCleanupPolicyRepo) SetLastRunAt(context.Context, string, time.Time) error {
+	return errors.New("db failure")
+}
+
+func (r *configurableCleanupPolicyRepo) SetLastRunAt(context.Context, string, time.Time) error {
+	return nil
+}

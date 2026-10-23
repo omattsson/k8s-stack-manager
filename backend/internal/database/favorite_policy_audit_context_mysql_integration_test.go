@@ -49,6 +49,10 @@ func TestDatabaseMySQL_FavoritePolicyAuditContextEndsLockWait(t *testing.T) {
 			call: func(ctx context.Context, r repos) error { return r.policies.Delete(ctx, "p-lock") },
 		},
 		{
+			name: "CleanupPolicy.SetLastRunAt", table: "cleanup_policies", query: "id = ?", arg: "p-lock",
+			call: func(ctx context.Context, r repos) error { return r.policies.SetLastRunAt(ctx, "p-lock", time.Now()) },
+		},
+		{
 			name: "AuditLog.Create", table: "audit_logs", query: "id = ?", arg: "a-lock",
 			call: func(ctx context.Context, r repos) error {
 				return r.audit.Create(ctx, &models.AuditLog{ID: "a-lock", UserID: "u1", Action: "create", EntityType: "stack_instance", EntityID: "si-1"})

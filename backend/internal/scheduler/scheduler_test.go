@@ -555,3 +555,17 @@ func TestRunPolicyNotFound(t *testing.T) {
 func (*mockInstanceRepo) CountByStatuses(ctx context.Context, statuses []string) (int, error) {
 	return 0, ctx.Err()
 }
+
+func (r *mockPolicyRepo) SetLastRunAt(ctx context.Context, id string, t time.Time) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	p, ok := r.policies[id]
+	if !ok {
+		return errors.New("not found")
+	}
+	p.LastRunAt = &t
+	return nil
+}

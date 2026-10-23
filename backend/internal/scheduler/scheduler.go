@@ -187,7 +187,9 @@ func (s *Scheduler) Run(ctx context.Context) {
 		if err == nil {
 			break
 		}
-		slog.Error("Cleanup scheduler: failed to load policies, retrying", "error", err, "retry_in", s.reloadInterval)
+		if ctx.Err() == nil {
+			slog.Error("Cleanup scheduler: failed to load policies, retrying", "error", err, "retry_in", s.reloadInterval)
+		}
 		select {
 		case <-ctx.Done():
 			return
@@ -203,7 +205,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := s.Reload(ctx); err != nil {
+			if err := s.Reload(ctx); err != nil && ctx.Err() == nil {
 				slog.Error("Cleanup scheduler: periodic reload failed", "error", err)
 			}
 		}
@@ -427,7 +429,10 @@ func (s *Scheduler) executeScheduledPolicy(ctx context.Context, policyID string)
 	// Update LastRunAt regardless of outcome.
 	now := time.Now().UTC()
 	policy.LastRunAt = &now
-	if updateErr := s.policyRepo.Update(ctx, policy); updateErr != nil {
+	// Detached: a completed run must record its run even when the term ends now,
+	// else the next leader catches it up and runs it twice. Only this column is
+	// written, so an edit made during the run stays.
+	if updateErr := s.policyRepo.SetLastRunAt(context.WithoutCancel(ctx), policy.ID, now); updateErr != nil {
 		slog.Error("Failed to update policy LastRunAt", "policy", policy.ID, "error", updateErr)
 	}
 	slog.Info("Cleanup policy executed", "policy", policy.Name, "results", len(results))
