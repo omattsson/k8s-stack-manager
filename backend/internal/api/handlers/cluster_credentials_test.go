@@ -94,6 +94,7 @@ func TestUpdateCluster_UnreadableRegistryPassword(t *testing.T) {
 	}{
 		{"other edit gets a clear 400", `{"region":"west"}`, http.StatusBadRequest},
 		{"new password repairs the row", `{"registry_password":"new-pw"}`, http.StatusOK},
+		{"removing the registry works", `{"registry_url":"","registry_username":""}`, http.StatusOK},
 	}
 	for _, tt := range tests {
 		tt := tt
@@ -110,7 +111,7 @@ func TestUpdateCluster_UnreadableRegistryPassword(t *testing.T) {
 
 			assert.Equal(t, tt.wantStatus, w.Code, w.Body.String())
 			if tt.wantStatus == http.StatusBadRequest {
-				assert.Contains(t, w.Body.String(), "Set registry_password again")
+				assert.Contains(t, w.Body.String(), "Set registry_password again, or remove the registry")
 			}
 		})
 	}

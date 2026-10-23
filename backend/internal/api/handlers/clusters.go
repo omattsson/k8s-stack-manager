@@ -460,7 +460,7 @@ func (h *ClusterHandler) UpdateCluster(c *gin.Context) {
 	}
 
 	if existing.RegistryPasswordUnreadable && existing.RegistryPassword == "" && existing.RegistryURL != "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "The stored registry password cannot be read. Set registry_password again."})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "The stored registry password cannot be read. Set registry_password again, or remove the registry (registry_url and registry_username empty)."})
 		return
 	}
 

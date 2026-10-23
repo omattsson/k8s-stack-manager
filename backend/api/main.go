@@ -320,7 +320,7 @@ func warnPlaintextRegistryPasswords(clusterRepo models.ClusterRepository) {
 		return
 	}
 	if cleartext > 0 {
-		slog.Warn("Clusters store a registry password in plaintext. Set KUBECONFIG_ENCRYPTION_KEY, then set the registry password of these clusters again. A value that the backend cannot decrypt is ignored.",
+		slog.Warn("Clusters store a registry password in plaintext or in an older encrypted format. Set KUBECONFIG_ENCRYPTION_KEY, then set the registry password of these clusters again. A value that the backend cannot decrypt is ignored.",
 			"clusters", cleartext)
 	}
 	if encrypted > 0 {

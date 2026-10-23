@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"backend/internal/models"
@@ -25,6 +27,9 @@ var _ models.ClusterRepository = (*GORMClusterRepository)(nil)
 type GORMClusterRepository struct {
 	db            *gorm.DB
 	encryptionKey []byte // nil or empty means encryption disabled
+	// warnedUnreadable holds the cluster IDs whose unreadable password was
+	// already logged by this process. A repairing save removes the entry.
+	warnedUnreadable sync.Map
 }
 
 // NewGORMClusterRepository creates a new GORM-backed cluster repository.
@@ -167,8 +172,10 @@ func (r *GORMClusterRepository) decryptRegistryPassword(cluster *models.Cluster)
 func (r *GORMClusterRepository) markUnreadable(cluster *models.Cluster, reason string) {
 	cluster.RegistryPassword = ""
 	cluster.RegistryPasswordUnreadable = true
-	slog.Warn("registry password cannot be decrypted; set it again",
-		"cluster_id", cluster.ID, "reason", reason)
+	if _, seen := r.warnedUnreadable.LoadOrStore(cluster.ID, struct{}{}); !seen {
+		slog.Warn("registry password cannot be decrypted; set it again, or remove the registry",
+			"cluster_id", cluster.ID, "reason", reason)
+	}
 }
 
 // Create inserts a new cluster record.
@@ -264,7 +271,8 @@ func (r *GORMClusterRepository) Update(ctx context.Context, cluster *models.Clus
 
 	omit := []string{"is_default", "health_status"}
 	if cluster.RegistryPasswordUnreadable && cluster.RegistryPassword == "" && cluster.RegistryURL != "" {
-		// Keep the stored value that could not be read.
+		// Defense in depth: UpdateCluster answers 400 first for an unreadable row.
+		// This keeps the stored value that could not be read.
 		omit = append(omit, "registry_password")
 	}
 	dbErr := r.db.WithContext(ctx).Omit(omit...).Save(cluster).Error
@@ -274,6 +282,9 @@ func (r *GORMClusterRepository) Update(ctx context.Context, cluster *models.Clus
 		cluster.KubeconfigData = originalKC
 	}
 	cluster.RegistryPassword = originalRP
+	if dbErr == nil && !slices.Contains(omit, "registry_password") {
+		r.warnedUnreadable.Delete(cluster.ID)
+	}
 
 	if dbErr != nil {
 		// Save can run in a default transaction: keep the context error (#656).

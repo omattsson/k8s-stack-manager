@@ -1,9 +1,11 @@
 package database
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -257,4 +259,71 @@ func TestClusterRepository_CheckCredentialsStorable(t *testing.T) {
 	assert.NoError(t, noKey.CheckCredentialsStorable(ctx, &models.Cluster{}))
 	assert.ErrorIs(t, noKey.CheckCredentialsStorable(ctx, &models.Cluster{RegistryPassword: "pw"}), dberrors.ErrValidation)
 	assert.ErrorIs(t, noKey.CheckCredentialsStorable(ctx, &models.Cluster{KubeconfigData: "kc"}), dberrors.ErrValidation)
+
+	// An unchanged legacy password of a stored cluster passes; a changed one does not.
+	c := registryCluster("legacy", "x")
+	require.NoError(t, keyed.Create(ctx, c))
+	require.NoError(t, db.Model(&models.Cluster{}).Where("id = ?", c.ID).Update("registry_password", "legacy-plain").Error)
+	assert.NoError(t, noKey.CheckCredentialsStorable(ctx, &models.Cluster{ID: c.ID, RegistryPassword: "legacy-plain"}))
+	assert.ErrorIs(t, noKey.CheckCredentialsStorable(ctx, &models.Cluster{ID: c.ID, RegistryPassword: "changed"}), dberrors.ErrValidation)
+}
+
+// Not parallel: it replaces the default slog logger.
+func TestClusterRepository_UnreadableWarningOncePerCluster(t *testing.T) {
+	var buf bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(old)
+
+	ctx := context.Background()
+	db := setupTestDBWithAllTables(t)
+	repo := NewGORMClusterRepository(db, testRegistryKey)
+	bad := registryCluster("bad", "x")
+	require.NoError(t, repo.Create(ctx, bad))
+	longPlain := strings.Repeat("ab12", 13)
+	require.NoError(t, db.Model(&models.Cluster{}).Where("id = ?", bad.ID).Update("registry_password", longPlain).Error)
+
+	for i := 0; i < 3; i++ {
+		_, err := repo.List(ctx)
+		require.NoError(t, err)
+		_, err = repo.FindByID(ctx, bad.ID)
+		require.NoError(t, err)
+	}
+	assert.Equal(t, 1, strings.Count(buf.String(), "cannot be decrypted"), "one line for each cluster and process")
+	assert.Contains(t, buf.String(), bad.ID)
+	assert.NotContains(t, buf.String(), longPlain)
+
+	// A repairing save resets the entry, so a new failure logs again.
+	found, err := repo.FindByID(ctx, bad.ID)
+	require.NoError(t, err)
+	found.RegistryPassword = "repaired"
+	require.NoError(t, repo.Update(ctx, found))
+	require.NoError(t, db.Model(&models.Cluster{}).Where("id = ?", bad.ID).Update("registry_password", longPlain).Error)
+	buf.Reset()
+	_, err = repo.FindByID(ctx, bad.ID)
+	require.NoError(t, err)
+	assert.Equal(t, 1, strings.Count(buf.String(), "cannot be decrypted"))
+}
+
+// Without a key, an unreadable password can only be removed with the registry.
+func TestClusterRepository_RemoveRegistryWithoutKey(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db := setupTestDBWithAllTables(t)
+	keyed := NewGORMClusterRepository(db, testRegistryKey)
+	c := registryCluster("a", "pw")
+	c.KubeconfigPath = "/kc/a"
+	require.NoError(t, keyed.Create(ctx, c))
+	require.True(t, strings.HasPrefix(storedPassword(t, db, c.ID), encryptedPrefix))
+
+	repo := NewGORMClusterRepository(db, "")
+	found, err := repo.FindByID(ctx, c.ID)
+	require.NoError(t, err)
+	require.True(t, found.RegistryPasswordUnreadable)
+
+	found.RegistryURL, found.RegistryUsername = "", ""
+	require.NoError(t, found.Validate())
+	require.NoError(t, repo.CheckCredentialsStorable(ctx, found))
+	require.NoError(t, repo.Update(ctx, found))
+	assert.Empty(t, storedPassword(t, db, c.ID), "the column is cleared")
 }
