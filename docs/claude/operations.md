@@ -4,7 +4,7 @@ Reference for Claude Code and other agents. The root `CLAUDE.md` links here. Rea
 
 ## Scalability Notes
 
-- MySQL connection pool: `DB_MAX_OPEN_CONNS` (25), `DB_MAX_IDLE_CONNS` (5), `DB_CONN_MAX_LIFETIME` (5m).
+- MySQL connection pool: `DB_MAX_OPEN_CONNS` (25), `DB_MAX_IDLE_CONNS` (25; a lower value gave about 100 reconnects per second under load), `DB_CONN_MAX_LIFETIME` (5m).
 - Database retry: 5 attempts, 2s delay at startup.
 - Docker networks: `backend-net` (database, backend) and `frontend-net` (backend, frontend). Keep them separate. Their names are fixed (`backend-network`, `frontend-network`), so `make dev` and `make test-e2e` share them (#581). Remove the old networks once with `docker network prune`.
 - Health checks: register every external dependency with `healthChecker.AddCheck()`.

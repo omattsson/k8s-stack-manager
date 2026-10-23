@@ -23,9 +23,16 @@ data:
   DB_PORT: "3306"
   DB_USER: {{ if .Values.mysql.auth.user }}{{ .Values.mysql.auth.user | quote }}{{ else }}"root"{{ end }}
   DB_NAME: {{ .Values.mysql.auth.database | quote }}
+  {{- /* Pool defaults; an explicit backend.env value wins. Keep replicas x DB_MAX_OPEN_CONNS below mysql max_connections. */}}
+  {{- if not (hasKey .Values.backend.env "DB_MAX_OPEN_CONNS") }}
   DB_MAX_OPEN_CONNS: "25"
-  DB_MAX_IDLE_CONNS: "5"
+  {{- end }}
+  {{- if not (hasKey .Values.backend.env "DB_MAX_IDLE_CONNS") }}
+  DB_MAX_IDLE_CONNS: "25"
+  {{- end }}
+  {{- if not (hasKey .Values.backend.env "DB_CONN_MAX_LIFETIME") }}
   DB_CONN_MAX_LIFETIME: "5m"
+  {{- end }}
   {{- end }}
   {{- /* Leader election: one replica runs the background workers. An explicit backend.env value wins. */}}
   {{- if not (hasKey .Values.backend.env "LEADER_ELECTION_ENABLED") }}

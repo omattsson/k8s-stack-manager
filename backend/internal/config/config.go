@@ -20,8 +20,10 @@ import (
 )
 
 const (
-	defaultMaxOpenConns    int32 = 25
-	defaultMaxIdleConns    int32 = 5
+	defaultMaxOpenConns int32 = 25
+	// Same as defaultMaxOpenConns: with fewer idle slots the pool closed and
+	// reopened about 100 connections per second in the load test.
+	defaultMaxIdleConns    int32 = 25
 	defaultConnMaxLifetime       = 5 * time.Minute
 	defaultReadTimeout           = 10 * time.Second
 	// defaultWriteTimeout is 0 (disabled at the server level) because per-write
@@ -737,7 +739,9 @@ func (c *DatabaseConfig) DSN() string {
 	b.WriteByte(')')
 	b.WriteByte('/')
 	b.WriteString(c.DBName)
-	b.WriteString("?charset=utf8mb4&parseTime=True&loc=UTC")
+	// interpolateParams: one round trip per query instead of prepare, execute
+	// and close (safe with utf8mb4).
+	b.WriteString("?charset=utf8mb4&parseTime=True&loc=UTC&interpolateParams=true")
 
 	if c.MaxOpenConns > 0 {
 		b.WriteString("&maxAllowedPacket=0") // Let server control packet size

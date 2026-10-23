@@ -122,7 +122,7 @@ The backend reads all configuration from environment variables. It also reads a 
 |---|---|---|
 | `DB_HOST`, `DB_PORT` | `localhost`, `3306` | MySQL address |
 | `DB_USER`, `DB_PASSWORD`, `DB_NAME` | `root`, empty, `app` | MySQL credentials and database name |
-| `DB_MAX_OPEN_CONNS`, `DB_MAX_IDLE_CONNS` | `25`, `5` | Connection pool size |
+| `DB_MAX_OPEN_CONNS`, `DB_MAX_IDLE_CONNS` | `25`, `25` | Connection pool size. Keep the idle value equal to the open value: a lower value makes the pool close and reopen connections under load. |
 | `DB_CONN_MAX_LIFETIME` | `5m` | Maximum age of a connection |
 
 ### Authentication and sessions

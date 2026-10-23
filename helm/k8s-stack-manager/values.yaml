@@ -558,6 +558,10 @@ mysql:
     limits:
       memory: 1Gi
       cpu: 500m
+  # Each backend replica keeps up to DB_MAX_OPEN_CONNS (default 25)
+  # connections open. Keep the maximum replica count (rolling surge and HPA
+  # included) x DB_MAX_OPEN_CONNS below max_connections, or lower
+  # backend.env.DB_MAX_OPEN_CONNS and DB_MAX_IDLE_CONNS.
   config: |
     [mysqld]
     max_connections=100

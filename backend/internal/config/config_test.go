@@ -98,7 +98,7 @@ func TestLoadConfig(t *testing.T) {
 		assert.Empty(t, config.Database.Password)
 		assert.Equal(t, "app", config.Database.DBName)
 		assert.Equal(t, int32(25), config.Database.MaxOpenConns)
-		assert.Equal(t, int32(5), config.Database.MaxIdleConns)
+		assert.Equal(t, int32(25), config.Database.MaxIdleConns)
 		assert.Equal(t, 5*time.Minute, config.Database.ConnMaxLifetime)
 
 		// Check default server config
@@ -212,7 +212,7 @@ func TestDatabaseDSN(t *testing.T) {
 		DBName:   "testdb",
 	}
 
-	expected := "testuser:testpass@tcp(testhost:3306)/testdb?charset=utf8mb4&parseTime=True&loc=UTC"
+	expected := "testuser:testpass@tcp(testhost:3306)/testdb?charset=utf8mb4&parseTime=True&loc=UTC&interpolateParams=true"
 	assert.Equal(t, expected, dbConfig.DSN())
 }
 func TestConfigValidate(t *testing.T) {

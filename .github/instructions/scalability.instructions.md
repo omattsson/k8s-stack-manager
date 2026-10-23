@@ -9,7 +9,7 @@ applyTo: "**"
 The MySQL connection pool uses environment variables (set in `docker-compose.yml`) and is applied in `internal/database/factory.go`:
 
 - `DB_MAX_OPEN_CONNS` (default 25): maximum open connections.
-- `DB_MAX_IDLE_CONNS` (default 5): idle connections that stay open.
+- `DB_MAX_IDLE_CONNS` (default 25, the same as the open value): idle connections that stay open.
 - `DB_CONN_MAX_LIFETIME` (default 5m): maximum lifetime of a connection.
 
 The factory sets them with `SetMaxOpenConns`, `SetMaxIdleConns`, and `SetConnMaxLifetime`. Idle connections reduce latency for bursts. MySQL has a `max_connections` limit (see `backend/config/mysql/my.cnf`). Remember that each replica has its own pool.

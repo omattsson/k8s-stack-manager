@@ -707,6 +707,13 @@ helm-test: ## Verify Deployment, Argo Rollout, and External Secrets Helm renders
 		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template > "$$template_file"; \
 	grep -q 'GITHUB_ALLOWED_REPOSITORIES: ""' "$$template_file"; \
 	grep -q 'GITLAB_BASE_URL: ""' "$$template_file"; \
+	test "$$(grep -c 'DB_MAX_IDLE_CONNS:' "$$template_file")" = 1; \
+	grep -q 'DB_MAX_IDLE_CONNS: "25"' "$$template_file"; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
+		--set-string backend.env.DB_MAX_IDLE_CONNS=10 > "$$template_file"; \
+	test "$$(grep -c 'DB_MAX_IDLE_CONNS:' "$$template_file")" = 1; \
+	grep -q 'DB_MAX_IDLE_CONNS: "10"' "$$template_file"; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
 		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
 		--set-string 'backend.env.GITHUB_ALLOWED_REPOSITORIES=example-org/api\,example-org/web' \
