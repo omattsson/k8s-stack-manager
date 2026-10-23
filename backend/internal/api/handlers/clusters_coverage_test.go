@@ -285,12 +285,7 @@ func TestUpdateCluster_FieldUpdates(t *testing.T) {
 
 			// Mark as default for the "cannot unset" and "set as default" tests.
 			if tt.update.IsDefault != nil {
-				_ = clusterRepo.SetDefault(context.Background(), cl.ID)
-				// Update the stored cluster to reflect default status since the mock
-				// SetDefault only records the ID, not the IsDefault flag on the model.
-				stored, _ := clusterRepo.FindByID(context.Background(), cl.ID)
-				stored.IsDefault = true
-				_ = clusterRepo.Update(context.Background(), stored)
+				require.NoError(t, clusterRepo.SetDefault(context.Background(), cl.ID))
 			}
 
 			r := setupClusterRouter(clusterRepo, instanceRepo, nil, "admin")

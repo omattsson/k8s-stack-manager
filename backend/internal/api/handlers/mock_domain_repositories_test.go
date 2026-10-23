@@ -2207,11 +2207,16 @@ func (m *MockClusterRepository) Update(ctx context.Context, cl *models.Cluster) 
 	if m.err != nil {
 		return m.err
 	}
-	if _, ok := m.clusters[cl.ID]; !ok {
+	stored, ok := m.clusters[cl.ID]
+	if !ok {
 		return dberrors.NewDatabaseError("Update", dberrors.ErrNotFound)
 	}
 	cl.UpdatedAt = time.Now()
-	m.clusters[cl.ID] = cl
+	// Like the GORM repository (#678): SetDefault and UpdateHealthStatus own
+	// is_default and health_status.
+	cp := *cl
+	cp.IsDefault, cp.HealthStatus = stored.IsDefault, stored.HealthStatus
+	m.clusters[cl.ID] = &cp
 	return nil
 }
 
@@ -2347,6 +2352,11 @@ func (m *MockClusterRepository) SetDefault(ctx context.Context, id string) error
 		return dberrors.NewDatabaseError("SetDefault", dberrors.ErrNotFound)
 	}
 	m.defaultID = id
+	for cid, cl := range m.clusters {
+		cp := *cl
+		cp.IsDefault = cid == id
+		m.clusters[cid] = &cp
+	}
 	return nil
 }
 
