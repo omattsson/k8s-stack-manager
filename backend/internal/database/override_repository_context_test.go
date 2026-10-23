@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/trace"
 	"gorm.io/gorm"
 )
 
@@ -236,10 +237,17 @@ func TestGORMSharedValuesRepository_LiveContext(t *testing.T) {
 func TestDeleteInstanceRecord_ValueOverrideDeleteTraceContext(t *testing.T) {
 	t.Parallel()
 	db, records := newTraceTestDB(t, &models.ChartBranchOverride{})
-	ctx, traceID, spanID := newTraceTestSpanContext(t)
+	// The tx already carries txCtx; a different span proves that the repository uses the passed ctx.
+	txCtx, traceID, txSpanID := newTraceTestSpanContext(t)
+	spanID, err := trace.SpanIDFromHex("1112131415161718")
+	require.NoError(t, err)
+	require.NotEqual(t, txSpanID, spanID)
+	ctx := trace.ContextWithSpanContext(context.Background(), trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID: traceID, SpanID: spanID, TraceFlags: trace.FlagsSampled,
+	}))
 	inst := &models.StackInstance{ID: "inst-1"}
 
-	err := NewGORMTxRunner(db).RunInTx(ctx, func(repos TxRepos) error {
+	err = NewGORMTxRunner(db).RunInTx(txCtx, func(repos TxRepos) error {
 		return DeleteInstanceRecord(ctx, repos, inst)
 	})
 
