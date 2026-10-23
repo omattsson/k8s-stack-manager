@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"sort"
 	"time"
 
@@ -59,6 +60,25 @@ func InClusterAvailable() bool {
 // send the requests of an in-cluster cluster to the current context of the
 // person who runs the backend (#582).
 func NewClient(kubeconfigPath string) (*Client, error) {
+	return NewClientWithOptions(kubeconfigPath, ClientOptions{})
+}
+
+// Client-side request limit of a cluster client. The client-go default (5 QPS,
+// burst 10) throttled the stack page and the deploy readiness polls under load.
+const (
+	DefaultClientQPS   float32 = 50
+	DefaultClientBurst int     = 100
+)
+
+// ClientOptions sets the client-side request limit of a Client
+// (K8S_CLIENT_QPS, K8S_CLIENT_BURST). A zero field uses its default.
+type ClientOptions struct {
+	QPS   float32
+	Burst int
+}
+
+// NewClientWithOptions is NewClient with an explicit request limit.
+func NewClientWithOptions(kubeconfigPath string, opts ClientOptions) (*Client, error) {
 	var config *rest.Config
 	var err error
 
@@ -75,12 +95,21 @@ func NewClient(kubeconfigPath string) (*Client, error) {
 		}
 	}
 
+	config.QPS = opts.QPS
+	if !(config.QPS > 0) || math.IsInf(float64(config.QPS), 0) { // also NaN
+		config.QPS = DefaultClientQPS
+	}
+	config.Burst = opts.Burst
+	if config.Burst <= 0 {
+		config.Burst = DefaultClientBurst
+	}
+
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return nil, fmt.Errorf("create kubernetes client: %w", err)
 	}
 
-	slog.Info("Kubernetes client initialized", "host", config.Host)
+	slog.Info("Kubernetes client initialized", "host", config.Host, "qps", config.QPS, "burst", config.Burst)
 	return &Client{clientset: clientset, restConfig: config}, nil
 }
 

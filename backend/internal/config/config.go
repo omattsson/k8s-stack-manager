@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"os"
 	"strconv"
@@ -147,8 +148,13 @@ type NamespaceRoleBindingSpec struct {
 type DeploymentConfig struct {
 	DeploymentTimeout         time.Duration
 	ClusterHealthPollInterval time.Duration
-	HelmBinary                string
-	KubeconfigPath            string
+	// K8sClientQPS and K8sClientBurst (K8S_CLIENT_QPS, K8S_CLIENT_BURST) are
+	// the client-side request limit of each cluster client; 0 = the default
+	// of k8s.ClientOptions.
+	K8sClientQPS   float64
+	K8sClientBurst int
+	HelmBinary     string
+	KubeconfigPath string
 	// InClusterFallbackKubeconfig (IN_CLUSTER_FALLBACK_KUBECONFIG) is for
 	// local development only: outside a pod, an in-cluster cluster uses this
 	// kubeconfig for the Kubernetes client and Helm. Empty (default): an
@@ -496,6 +502,11 @@ func (c *Config) Validate() error {
 	}
 	if c.CORS.AllowsAllOrigins() && c.App.Environment == "production" {
 		slog.Warn("CORS_ALLOWED_ORIGINS allows every origin (\"*\") in production; set \"same-origin\" or a list of origins")
+	}
+
+	if qps := c.Deployment.K8sClientQPS; qps < 0 || math.IsNaN(qps) || math.IsInf(qps, 0) || c.Deployment.K8sClientBurst < 0 {
+		return fmt.Errorf("K8S_CLIENT_QPS and K8S_CLIENT_BURST must be finite numbers >= 0 (0 = default), got %v and %d",
+			c.Deployment.K8sClientQPS, c.Deployment.K8sClientBurst)
 	}
 
 	if c.Deployment.KubeconfigEncryptionKey == "" || len(c.Deployment.KubeconfigEncryptionKey) < 16 {
@@ -944,6 +955,8 @@ func loadDeploymentConfig() DeploymentConfig {
 		KubeconfigEncryptionKey:     getEnv("KUBECONFIG_ENCRYPTION_KEY", ""),
 		DeploymentTimeout:           getEnvDuration("DEPLOYMENT_TIMEOUT", 10*time.Minute),
 		ClusterHealthPollInterval:   getEnvDuration("CLUSTER_HEALTH_POLL_INTERVAL", 60*time.Second),
+		K8sClientQPS:                getEnvFloat64("K8S_CLIENT_QPS", 50),
+		K8sClientBurst:              int(getEnvInt32("K8S_CLIENT_BURST", 100)),
 		StabilizeTimeout:            getEnvDuration("DEPLOY_STABILIZE_TIMEOUT", 5*time.Minute),
 		StabilizePollInterval:       getEnvDuration("DEPLOY_STABILIZE_POLL_INTERVAL", 5*time.Second),
 		MaxConcurrentDeploys:        getEnvInt32("MAX_CONCURRENT_DEPLOYS", 5),

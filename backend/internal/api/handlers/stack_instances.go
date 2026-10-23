@@ -29,6 +29,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"golang.org/x/sync/singleflight"
 )
 
 // NamespaceConflictResponse is the response returned when a namespace is already in use.
@@ -178,7 +179,10 @@ type InstanceHandler struct {
 	clusterQuotaRepo   models.ResourceQuotaRepository
 	followerRepo       models.InstanceFollowerRepository
 	actionRuns         models.ActionRunRepository
-	uniqueNames        bool
+	// statusFlight lets concurrent status reads of one namespace share one
+	// set of Kubernetes calls (namespaceStatus).
+	statusFlight singleflight.Group
+	uniqueNames  bool
 }
 
 // WithUniqueInstanceNames turns on UNIQUE_INSTANCE_NAMES: create, rename and
@@ -2242,8 +2246,11 @@ func (h *InstanceHandler) GetInstanceStatus(c *gin.Context) {
 			}
 			return
 		}
-		nsStatus, err := client.GetNamespaceStatus(c.Request.Context(), inst.Namespace, k8s.StatusOptions{})
+		nsStatus, err := h.namespaceStatus(c.Request.Context(), client, inst.ClusterID, inst.Namespace, k8s.StatusOptions{})
 		if err != nil {
+			if respondCancelled(c, err) {
+				return
+			}
 			slog.Error("Failed to get namespace status",
 				logKeyInstanceID, id,
 				"namespace", inst.Namespace,
@@ -2308,9 +2315,12 @@ func (h *InstanceHandler) GetInstancePods(c *gin.Context) {
 		statusCtx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 		defer cancel()
 
-		nsStatus, nsErr := client.GetNamespaceStatus(statusCtx, inst.Namespace, k8s.StatusOptions{IncludeEvents: true})
+		nsStatus, nsErr := h.namespaceStatus(statusCtx, client, inst.ClusterID, inst.Namespace, k8s.StatusOptions{IncludeEvents: true})
 		if nsErr != nil {
-			if statusCtx.Err() == context.DeadlineExceeded {
+			if respondCancelled(c, nsErr) {
+				return
+			}
+			if errors.Is(nsErr, context.DeadlineExceeded) || statusCtx.Err() == context.DeadlineExceeded {
 				slog.Error("Timed out getting namespace status for pods",
 					logKeyInstanceID, id,
 					"namespace", inst.Namespace,
@@ -2332,6 +2342,45 @@ func (h *InstanceHandler) GetInstancePods(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusServiceUnavailable, gin.H{"error": "K8s monitoring not configured"})
+}
+
+// namespaceStatusTimeout bounds one shared namespace status read.
+const namespaceStatusTimeout = 10 * time.Second
+
+// namespaceStatus reads the status of a namespace. Concurrent reads of the same
+// namespace share one read: each read costs 5 or 6 requests of the client-side
+// limit of the cluster. Each caller still stops at its own deadline.
+func (h *InstanceHandler) namespaceStatus(ctx context.Context, client *k8s.Client, clusterID, namespace string, opts k8s.StatusOptions) (*k8s.NamespaceStatus, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	ch := h.statusFlight.DoChan(namespaceStatusKey(clusterID, namespace, opts), func() (_ interface{}, err error) {
+		// DoChan re-panics in a new goroutine when callers wait, which Gin
+		// Recovery cannot catch: turn a panic into an error.
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("namespace status panic: %v", r)
+			}
+		}()
+		// The first caller leaving must not fail the others.
+		readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), namespaceStatusTimeout)
+		defer cancel()
+		return client.GetNamespaceStatus(readCtx, namespace, opts)
+	})
+	select {
+	case res := <-ch:
+		if res.Err != nil {
+			return nil, res.Err
+		}
+		return res.Val.(*k8s.NamespaceStatus), nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// namespaceStatusKey is the singleflight key of one namespace status read.
+func namespaceStatusKey(clusterID, namespace string, opts k8s.StatusOptions) string {
+	return fmt.Sprintf("%s/%s/%t", clusterID, namespace, opts.IncludeEvents)
 }
 
 // checkNamespaceUniqueness checks whether the given namespace is already in use.

@@ -174,6 +174,7 @@ Public GitHub repositories work without a token, at the lower rate limit of GitH
 | `DEPLOY_STABILIZE_POLL_INTERVAL` | `5s` | Poll interval of the readiness wait |
 | `MAX_CONCURRENT_DEPLOYS` | `5` | Number of operations that run at the same time |
 | `CLUSTER_HEALTH_POLL_INTERVAL` | `60s` | Time between cluster health checks |
+| `K8S_CLIENT_QPS`, `K8S_CLIENT_BURST` | `50`, `100` | Client-side request limit of each cluster client (requests per second, burst). `0` uses the default. The limit applies to each replica and each cluster: N replicas send up to N times the limit. The client-go default (5, 10) throttled the stack page and the deploy readiness polls under load. |
 | `ALLOWED_CHART_REPOS` | empty | Comma-separated chart repository URL prefixes (`oci://`, `https://`, `http://`). Empty allows every chart source. See [Chart sources](../WIKI.md#chart-sources). |
 | `NAMESPACE_LABELS` | empty | Extra labels on stack namespaces (`key=value,key=value`) |
 | `STACK_ACCESS_CLUSTER_ROLE`, `STACK_ACCESS_SERVICE_ACCOUNT` | empty | Namespace-scoped access of the backend. The Helm chart sets both. See [Backend rights on the cluster](../WIKI.md#backend-rights-on-the-cluster). |

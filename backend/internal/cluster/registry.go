@@ -50,6 +50,9 @@ type RegistryOptions struct {
 	// a pod (local development). Empty: such a cluster is unreachable. It
 	// never falls back to ~/.kube/config (#582).
 	InClusterFallbackKubeconfig string
+	// K8sClient is the client-side request limit of each k8s client
+	// (K8S_CLIENT_QPS, K8S_CLIENT_BURST); zero fields use the defaults.
+	K8sClient k8s.ClientOptions
 }
 
 // Registry manages per-cluster Kubernetes and Helm clients.
@@ -87,7 +90,9 @@ func NewRegistry(cfg RegistryOptions) *Registry {
 		helmTimeout:     cfg.HelmTimeout,
 		namespaceLabels: cfg.NamespaceLabels,
 		accessBinding:   cfg.AccessBinding,
-		k8sFactory:      k8s.NewClient,
+		k8sFactory: func(kubeconfigPath string) (*k8s.Client, error) {
+			return k8s.NewClientWithOptions(kubeconfigPath, cfg.K8sClient)
+		},
 
 		inClusterFallback:  cfg.InClusterFallbackKubeconfig,
 		inClusterAvailable: k8s.InClusterAvailable,

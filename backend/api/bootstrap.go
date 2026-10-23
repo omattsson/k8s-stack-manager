@@ -234,6 +234,10 @@ func buildDomainServices(
 		AccessBinding:   stackAccessBinding(cfg.Deployment.StackAccess),
 		// Local development only (#582); empty in a pod.
 		InClusterFallbackKubeconfig: cfg.Deployment.InClusterFallbackKubeconfig,
+		K8sClient: k8s.ClientOptions{
+			QPS:   float32(cfg.Deployment.K8sClientQPS),
+			Burst: cfg.Deployment.K8sClientBurst,
+		},
 	})
 
 	// Extended health checks.
