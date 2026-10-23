@@ -105,7 +105,7 @@ func (e *CleanupExecutor) DeleteInstance(ctx context.Context, inst *models.Stack
 		if err != nil {
 			return fmt.Errorf("finding definition: %w", err)
 		}
-		charts, err := e.chartConfigRepo.ListByDefinition(def.ID)
+		charts, err := e.chartConfigRepo.ListByDefinition(dctx, def.ID)
 		if err != nil {
 			return fmt.Errorf("listing charts: %w", err)
 		}
@@ -182,7 +182,7 @@ func (e *CleanupExecutor) resolveCharts(ctx context.Context, inst *models.StackI
 	if err != nil {
 		return nil, fmt.Errorf("finding definition: %w", err)
 	}
-	charts, err := e.chartConfigRepo.ListByDefinition(def.ID)
+	charts, err := e.chartConfigRepo.ListByDefinition(ctx, def.ID)
 	if err != nil {
 		return nil, fmt.Errorf("listing charts: %w", err)
 	}

@@ -193,7 +193,7 @@ func (h *DefinitionHandler) ListDefinitions(c *gin.Context) {
 		ptrs[i] = &defs[i]
 	}
 	setDefinitionOwnerNames(c.Request.Context(), h.userRepo, ptrs...)
-	h.setDefinitionChartCounts(defs)
+	h.setDefinitionChartCounts(c.Request.Context(), defs)
 
 	c.JSON(http.StatusOK, gin.H{
 		"data":     defs,
@@ -205,7 +205,7 @@ func (h *DefinitionHandler) ListDefinitions(c *gin.Context) {
 
 // setDefinitionChartCounts sets ChartCount on each definition with one batch
 // query. On an error it logs and leaves the field out; the list still returns.
-func (h *DefinitionHandler) setDefinitionChartCounts(defs []models.StackDefinition) {
+func (h *DefinitionHandler) setDefinitionChartCounts(ctx context.Context, defs []models.StackDefinition) {
 	if len(defs) == 0 || h.chartRepo == nil {
 		return
 	}
@@ -213,9 +213,9 @@ func (h *DefinitionHandler) setDefinitionChartCounts(defs []models.StackDefiniti
 	for i := range defs {
 		ids[i] = defs[i].ID
 	}
-	counts, err := h.chartRepo.CountByDefinitionIDs(ids)
+	counts, err := h.chartRepo.CountByDefinitionIDs(ctx, ids)
 	if err != nil {
-		slog.Warn("Failed to count charts for definition list", "error", err)
+		logLookupError(ctx, "Failed to count charts for definition list", err)
 		return
 	}
 	for i := range defs {
@@ -301,7 +301,7 @@ func (h *DefinitionHandler) GetDefinition(c *gin.Context) {
 		return
 	}
 
-	charts, err := h.chartRepo.ListByDefinition(id)
+	charts, err := h.chartRepo.ListByDefinition(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, entityChartConfigs)
 		c.JSON(status, gin.H{"error": message})
@@ -463,10 +463,12 @@ func (h *DefinitionHandler) ExportDefinition(c *gin.Context) {
 		return
 	}
 
-	charts, err := h.chartRepo.ListByDefinition(id)
+	charts, err := h.chartRepo.ListByDefinition(c.Request.Context(), id)
 	if err != nil {
-		slog.Error("failed to list charts for export", "definition_id", id, "error", err)
 		status, message := mapError(err, entityChartConfigs)
+		if status == http.StatusInternalServerError {
+			slog.Error("failed to list charts for export", "definition_id", id, "error", err)
+		}
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -629,7 +631,7 @@ func (h *DefinitionHandler) ImportDefinition(c *gin.Context) {
 			return err
 		}
 		for i := range chartModels {
-			if err := repos.ChartConfig.Create(&chartModels[i]); err != nil {
+			if err := repos.ChartConfig.Create(wctx, &chartModels[i]); err != nil {
 				return err
 			}
 		}
@@ -717,7 +719,7 @@ func (h *DefinitionHandler) CheckUpgrade(c *gin.Context) {
 	}
 
 	// Get the definition's current charts.
-	currentCharts, err := h.chartRepo.ListByDefinition(id)
+	currentCharts, err := h.chartRepo.ListByDefinition(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, entityChartConfigs)
 		c.JSON(status, gin.H{"error": message})
@@ -975,7 +977,7 @@ func (h *DefinitionHandler) ApplyUpgrade(c *gin.Context) {
 	}
 
 	// Get the definition's current charts.
-	currentCharts, err := h.chartRepo.ListByDefinition(id)
+	currentCharts, err := h.chartRepo.ListByDefinition(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, entityChartConfigs)
 		c.JSON(status, gin.H{"error": message})
@@ -1001,7 +1003,7 @@ func (h *DefinitionHandler) ApplyUpgrade(c *gin.Context) {
 			newChart.ID = uuid.New().String()
 			newChart.StackDefinitionID = def.ID
 			newChart.CreatedAt = now
-			if err := h.chartRepo.Create(&newChart); err != nil {
+			if err := h.chartRepo.Create(wctx, &newChart); err != nil {
 				slog.Error("failed to create chart during upgrade",
 					"chart_name", tch.ChartName,
 					"definition_id", def.ID,
@@ -1017,7 +1019,7 @@ func (h *DefinitionHandler) ApplyUpgrade(c *gin.Context) {
 		// Existing chart: take the template fields (the same rule as the
 		// check-upgrade diff).
 		*existing = upgradeTargetChart(*existing, tch)
-		if err := h.chartRepo.Update(existing); err != nil {
+		if err := h.chartRepo.Update(wctx, existing); err != nil {
 			slog.Error("failed to update chart during upgrade",
 				"chart_name", tch.ChartName,
 				"definition_id", def.ID,
@@ -1040,8 +1042,9 @@ func (h *DefinitionHandler) ApplyUpgrade(c *gin.Context) {
 		return
 	}
 
-	// Return the updated definition with its charts.
-	updatedCharts, err := h.chartRepo.ListByDefinition(id)
+	// Return the updated definition with its charts. Detached: the upgrade is
+	// committed, so it must answer 200 and keep its audit entry.
+	updatedCharts, err := h.chartRepo.ListByDefinition(wctx, id)
 	if err != nil {
 		status, message := mapError(err, entityChartConfigs)
 		c.JSON(status, gin.H{"error": message})

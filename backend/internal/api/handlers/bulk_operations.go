@@ -72,6 +72,19 @@ func bulkDefinitionError(err error, definitionID string) error {
 	}
 }
 
+// bulkChartListError maps a failed chart list of a bulk operation to the
+// per-instance error. Only a database error is logged.
+func bulkChartListError(err error, definitionID string) error {
+	if errors.Is(err, context.Canceled) {
+		return errors.New("request cancelled")
+	}
+	slog.Error("bulk operation: chart config lookup failed", "definition_id", definitionID, "error", err)
+	return errors.New(msgBulkChartListFailed)
+}
+
+// msgBulkChartListFailed is the per-instance error of a failed chart list.
+const msgBulkChartListFailed = "failed to list chart configs"
+
 // bulkOperationFunc is the signature for a function that operates on a single instance.
 // It receives the instance and returns an optional log ID, and an error.
 type bulkOperationFunc func(c *gin.Context, inst *models.StackInstance) (string, error)
@@ -185,9 +198,9 @@ func (h *InstanceHandler) BulkDeploy(c *gin.Context) {
 			return "", bulkDefinitionError(err, inst.StackDefinitionID)
 		}
 
-		charts, err := h.chartConfigRepo.ListByDefinition(def.ID)
+		charts, err := h.chartConfigRepo.ListByDefinition(c.Request.Context(), def.ID)
 		if err != nil {
-			return "", fmt.Errorf("failed to list chart configs")
+			return "", bulkChartListError(err, def.ID)
 		}
 
 		if len(charts) == 0 {
@@ -284,9 +297,9 @@ func (h *InstanceHandler) BulkStop(c *gin.Context) {
 			return "", bulkDefinitionError(err, inst.StackDefinitionID)
 		}
 
-		charts, err := h.chartConfigRepo.ListByDefinition(def.ID)
+		charts, err := h.chartConfigRepo.ListByDefinition(c.Request.Context(), def.ID)
 		if err != nil {
-			return "", fmt.Errorf("failed to list chart configs")
+			return "", bulkChartListError(err, def.ID)
 		}
 
 		if len(charts) == 0 {
@@ -340,9 +353,9 @@ func (h *InstanceHandler) BulkClean(c *gin.Context) {
 			return "", bulkDefinitionError(err, inst.StackDefinitionID)
 		}
 
-		charts, err := h.chartConfigRepo.ListByDefinition(def.ID)
+		charts, err := h.chartConfigRepo.ListByDefinition(c.Request.Context(), def.ID)
 		if err != nil {
-			return "", fmt.Errorf("failed to list chart configs")
+			return "", bulkChartListError(err, def.ID)
 		}
 
 		logID, err := h.deployManager.Clean(writeCtx(c), inst, charts)

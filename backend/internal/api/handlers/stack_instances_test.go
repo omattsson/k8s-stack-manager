@@ -697,7 +697,7 @@ func TestExportChartValues(t *testing.T) {
 		seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
 		seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusDraft)
 
-		require.NoError(t, ccRepo.Create(&models.ChartConfig{
+		require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{
 			ID:                "c1",
 			StackDefinitionID: "d1",
 			ChartName:         "backend",
@@ -1083,13 +1083,13 @@ func TestDeployPreview(t *testing.T) {
 		require.NoError(t, instRepo.Update(context.Background(), inst))
 
 		// Charts with default values that differ from previously deployed.
-		require.NoError(t, ccRepo.Create(&models.ChartConfig{
+		require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{
 			ID:                "c1",
 			StackDefinitionID: "d1",
 			ChartName:         "backend",
 			DefaultValues:     "replicas: 3\nimage: new\n",
 		}))
-		require.NoError(t, ccRepo.Create(&models.ChartConfig{
+		require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{
 			ID:                "c2",
 			StackDefinitionID: "d1",
 			ChartName:         "frontend",
@@ -1136,7 +1136,7 @@ func TestDeployPreview(t *testing.T) {
 		seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusDraft)
 		// No LastDeployedValues set.
 
-		require.NoError(t, ccRepo.Create(&models.ChartConfig{
+		require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{
 			ID:                "c1",
 			StackDefinitionID: "d1",
 			ChartName:         "backend",
@@ -1239,7 +1239,7 @@ func TestDeployPreview(t *testing.T) {
 		seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
 		seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusDraft)
 
-		require.NoError(t, ccRepo.Create(&models.ChartConfig{
+		require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{
 			ID:                "c1",
 			StackDefinitionID: "d1",
 			ChartName:         "backend",
@@ -1299,7 +1299,7 @@ func TestDeployPreview(t *testing.T) {
 		seedDefinition(t, defRepo, "d1", "My Def", "uid-alice")
 		seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-alice", models.StackStatusRunning)
 
-		require.NoError(t, ccRepo.Create(&models.ChartConfig{
+		require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{
 			ID:                "c1",
 			StackDefinitionID: "d1",
 			ChartName:         "backend",
@@ -1335,7 +1335,7 @@ func TestDeployPreview_SubstitutesImageTag(t *testing.T) {
 	inst.Branch = "feature/slashes-and-mixedCase" // forces SanitizeImageTag transform
 	require.NoError(t, instRepo.Update(context.Background(), inst))
 
-	require.NoError(t, ccRepo.Create(&models.ChartConfig{
+	require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{
 		ID:                "c1",
 		StackDefinitionID: "d1",
 		ChartName:         "backend",

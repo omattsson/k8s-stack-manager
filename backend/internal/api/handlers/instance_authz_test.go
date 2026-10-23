@@ -86,7 +86,7 @@ func newAuthzFixture(t *testing.T, instStatus, callerID, callerRole string) *aut
 	inst.TTLMinutes = 60
 	require.NoError(t, f.instRepo.Update(context.Background(), inst))
 	seedDefinition(t, defRepo, "d1", "My Def", authzOwnerID)
-	require.NoError(t, ccRepo.Create(&models.ChartConfig{
+	require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{
 		ID:                authzChartID,
 		StackDefinitionID: "d1",
 		ChartName:         "app",
@@ -96,7 +96,7 @@ func newAuthzFixture(t *testing.T, instStatus, callerID, callerRole string) *aut
 	require.NoError(t, f.overrideRepo.Create(&models.ValueOverride{
 		ID: "vo-1", StackInstanceID: authzInstanceID, ChartConfigID: authzChartID, Values: "replicas: 1",
 	}))
-	require.NoError(t, f.boRepo.Set(&models.ChartBranchOverride{
+	require.NoError(t, f.boRepo.Set(context.Background(), &models.ChartBranchOverride{
 		ID: "bo-1", StackInstanceID: authzInstanceID, ChartConfigID: authzChartID, Branch: "feature/a",
 	}))
 	pods := 5
@@ -223,7 +223,7 @@ func (f *authzFixture) assertNoSideEffects(t *testing.T, before *models.StackIns
 	require.Len(t, vo, 1, "value overrides unchanged")
 	assert.Equal(t, "replicas: 1", vo[0].Values)
 
-	bo, err := f.boRepo.List(authzInstanceID)
+	bo, err := f.boRepo.List(context.Background(), authzInstanceID)
 	require.NoError(t, err)
 	require.Len(t, bo, 1, "branch overrides unchanged")
 	assert.Equal(t, "feature/a", bo[0].Branch)

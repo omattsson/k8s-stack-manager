@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"time"
@@ -49,7 +50,8 @@ func (h *DefinitionHandler) AddChartConfig(c *gin.Context) {
 		return
 	}
 
-	if err := h.chartRepo.Create(&chart); err != nil {
+	// The audit entry follows the commit: a client that leaves must not cancel the write (#656).
+	if err := h.chartRepo.Create(context.WithoutCancel(c.Request.Context()), &chart); err != nil {
 		status, message := mapError(err, entityChartConfig)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -91,7 +93,7 @@ func (h *DefinitionHandler) requireChartInDefinition(c *gin.Context) (*models.Ch
 	defID := c.Param("id")
 	chartID := c.Param("chartId")
 
-	chart, err := h.chartRepo.FindByID(chartID)
+	chart, err := h.chartRepo.FindByID(c.Request.Context(), chartID)
 	if err != nil {
 		status, message := mapError(err, entityChartConfig)
 		c.JSON(status, gin.H{"error": message})
@@ -207,7 +209,7 @@ func (h *DefinitionHandler) UpdateChartConfig(c *gin.Context) {
 		return
 	}
 
-	if err := h.chartRepo.Update(existing); err != nil {
+	if err := h.chartRepo.Update(context.WithoutCancel(c.Request.Context()), existing); err != nil {
 		status, message := mapError(err, entityChartConfig)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -283,7 +285,7 @@ func (h *DefinitionHandler) DeleteChartConfig(c *gin.Context) {
 		}
 	}
 
-	if err := h.chartRepo.Delete(chartID); err != nil {
+	if err := h.chartRepo.Delete(context.WithoutCancel(c.Request.Context()), chartID); err != nil {
 		status, message := mapError(err, entityChartConfig)
 		c.JSON(status, gin.H{"error": message})
 		return

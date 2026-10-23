@@ -49,7 +49,7 @@ func seedChartConfig(t *testing.T, repo *MockChartConfigRepository, id, defID, c
 		ChartName:         chartName,
 		CreatedAt:         time.Now().UTC(),
 	}
-	require.NoError(t, repo.Create(cc))
+	require.NoError(t, repo.Create(context.Background(), cc))
 	return cc
 }
 
@@ -221,7 +221,7 @@ func TestUpdateChartConfig(t *testing.T) {
 			chartID: "chart-1",
 			body:    `{"chart_name":"updated-nginx","repository_url":"https://charts.example.com"}`,
 			setupChart: func(repo *MockChartConfigRepository) {
-				repo.Create(&models.ChartConfig{
+				repo.Create(context.Background(), &models.ChartConfig{
 					ID: "chart-1", StackDefinitionID: "def-1",
 					ChartName: "nginx", CreatedAt: time.Now().UTC(),
 				})
@@ -245,7 +245,7 @@ func TestUpdateChartConfig(t *testing.T) {
 			chartID: "chart-1",
 			body:    `{not valid json}`,
 			setupChart: func(repo *MockChartConfigRepository) {
-				repo.Create(&models.ChartConfig{
+				repo.Create(context.Background(), &models.ChartConfig{
 					ID: "chart-1", StackDefinitionID: "def-1",
 					ChartName: "nginx", CreatedAt: time.Now().UTC(),
 				})
@@ -257,7 +257,7 @@ func TestUpdateChartConfig(t *testing.T) {
 			chartID: "chart-1",
 			body:    `{"chart_name":"","repository_url":"https://charts.example.com"}`,
 			setupChart: func(repo *MockChartConfigRepository) {
-				repo.Create(&models.ChartConfig{
+				repo.Create(context.Background(), &models.ChartConfig{
 					ID: "chart-1", StackDefinitionID: "def-1",
 					ChartName: "nginx", CreatedAt: time.Now().UTC(),
 				})
@@ -274,7 +274,7 @@ func TestUpdateChartConfig(t *testing.T) {
 			chartID: "chart-1",
 			body:    `{"chart_name":"updated-nginx"}`,
 			setupChart: func(repo *MockChartConfigRepository) {
-				repo.Create(&models.ChartConfig{
+				repo.Create(context.Background(), &models.ChartConfig{
 					ID: "chart-1", StackDefinitionID: "def-1",
 					ChartName: "nginx", CreatedAt: time.Now().UTC(),
 				})
@@ -330,7 +330,7 @@ func TestUpdateChartConfig(t *testing.T) {
 			DeployOrder:       7,
 			CreatedAt:         time.Now().UTC().Truncate(time.Second),
 		}
-		require.NoError(t, chartRepo.Create(seeded))
+		require.NoError(t, chartRepo.Create(context.Background(), seeded))
 
 		router := setupChartConfigRouter(defRepo, chartRepo, NewMockTemplateChartConfigRepository(), "uid-1", "admin")
 		w := httptest.NewRecorder()
@@ -362,7 +362,7 @@ func TestUpdateChartConfig(t *testing.T) {
 			"CreatedAt should be preserved: want %v, got %v", seeded.CreatedAt, got.CreatedAt)
 
 		// And the persisted record matches what we returned.
-		stored, err := chartRepo.FindByID("chart-1")
+		stored, err := chartRepo.FindByID(context.Background(), "chart-1")
 		require.NoError(t, err)
 		assert.Equal(t, "renamed", stored.ChartName)
 		assert.Equal(t, seeded.RepositoryURL, stored.RepositoryURL)
@@ -398,7 +398,7 @@ func TestUpdateChartConfig(t *testing.T) {
 		assert.Equal(t, "Chart config not found", resp["error"])
 
 		// Ensure the chart was not mutated under the wrong definition.
-		stored, err := chartRepo.FindByID("c-1")
+		stored, err := chartRepo.FindByID(context.Background(), "c-1")
 		require.NoError(t, err)
 		assert.Equal(t, "nginx", stored.ChartName)
 		assert.Equal(t, "def-A", stored.StackDefinitionID)
@@ -496,7 +496,7 @@ func TestDeleteChartConfig(t *testing.T) {
 		assert.Equal(t, "Chart config not found", resp["error"])
 
 		// Chart must still be present under its real definition.
-		stored, err := chartRepo.FindByID("c-1")
+		stored, err := chartRepo.FindByID(context.Background(), "c-1")
 		require.NoError(t, err)
 		assert.Equal(t, "def-A", stored.StackDefinitionID)
 	})

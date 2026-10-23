@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -18,18 +19,18 @@ func TestGORMChartConfigRepository_CountByDefinitionIDs(t *testing.T) {
 	repo := NewGORMChartConfigRepository(db)
 
 	for i, defID := range []string{"d1", "d1", "d1", "d2", "d3"} {
-		require.NoError(t, repo.Create(&models.ChartConfig{
+		require.NoError(t, repo.Create(context.Background(), &models.ChartConfig{
 			ID:                fmt.Sprintf("c%d", i),
 			StackDefinitionID: defID,
 			ChartName:         fmt.Sprintf("chart-%d", i),
 		}))
 	}
 
-	got, err := repo.CountByDefinitionIDs([]string{"d1", "d2", "empty"})
+	got, err := repo.CountByDefinitionIDs(context.Background(), []string{"d1", "d2", "empty"})
 	require.NoError(t, err)
 	assert.Equal(t, map[string]int{"d1": 3, "d2": 1}, got)
 
-	none, err := repo.CountByDefinitionIDs(nil)
+	none, err := repo.CountByDefinitionIDs(context.Background(), nil)
 	require.NoError(t, err)
 	assert.Empty(t, none)
 }

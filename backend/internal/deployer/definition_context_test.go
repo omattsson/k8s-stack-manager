@@ -99,7 +99,7 @@ func TestCleanupExecutor_DefinitionReadUsesCallerContext(t *testing.T) {
 		inst.Status = models.StackStatusStopped
 		require.NoError(t, instances.Update(context.Background(), inst))
 		charts := newMockChartConfigRepo()
-		require.NoError(t, charts.Create(&models.ChartConfig{ID: "c1", StackDefinitionID: "def-1", ChartName: "app"}))
+		require.NoError(t, charts.Create(context.Background(), &models.ChartConfig{ID: "c1", StackDefinitionID: "def-1", ChartName: "app"}))
 		mgr := NewManager(ManagerConfig{
 			Registry:      &mockClusterResolver{helm: &mockHelmExecutor{}},
 			InstanceRepo:  instances,

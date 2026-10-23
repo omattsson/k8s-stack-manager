@@ -27,7 +27,7 @@ import (
 type defCtxFixture struct {
 	hooks     *hookInstanceRepo
 	def       *hookDefinitionRepo
-	defCharts *MockChartConfigRepository
+	defCharts *hookChartConfigRepo
 	templates *MockStackTemplateRepository
 	charts    *MockTemplateChartConfigRepository
 	versions  *MockTemplateVersionRepository
@@ -44,13 +44,13 @@ func newDefCtxFixture(t *testing.T) *defCtxFixture {
 	gin.SetMode(gin.TestMode)
 	f := &defCtxFixture{
 		hooks:     newHookInstanceRepo(),
-		defCharts: NewMockChartConfigRepository(),
 		templates: NewMockStackTemplateRepository(),
 		charts:    NewMockTemplateChartConfigRepository(),
 		versions:  NewMockTemplateVersionRepository(),
 		audit:     NewMockAuditLogRepository(),
 	}
 	f.def = &hookDefinitionRepo{MockStackDefinitionRepository: NewMockStackDefinitionRepository(), hooks: f.hooks}
+	f.defCharts = newHookChartConfigRepo(f.hooks)
 	versions := ctxTemplateVersionRepo{f.versions}
 	tx := &mockHandlerTxRunner{repos: database.TxRepos{
 		StackTemplate:   f.templates,
@@ -84,6 +84,9 @@ func newDefCtxFixture(t *testing.T) *defCtxFixture {
 	defs.GET("/:id/check-upgrade", dh.CheckUpgrade)
 	defs.POST("/:id/upgrade", dh.ApplyUpgrade)
 	defs.PUT("/:id/template-link", dh.SetTemplateLink)
+	defs.POST("/:id/charts", dh.AddChartConfig)
+	defs.GET("/:id/charts/:chartId", dh.GetChartConfig)
+	defs.PUT("/:id/charts/:chartId", dh.UpdateChartConfig)
 	defs.DELETE("/:id/charts/:chartId", dh.DeleteChartConfig)
 	f.router = r
 
@@ -107,8 +110,8 @@ func newDefCtxFixture(t *testing.T) *defCtxFixture {
 	} {
 		require.NoError(t, f.def.MockStackDefinitionRepository.Create(context.Background(), d))
 	}
-	require.NoError(t, f.defCharts.Create(&models.ChartConfig{ID: "c1", StackDefinitionID: "d1", ChartName: "web", RepositoryURL: "oci://charts/web", CreatedAt: now}))
-	require.NoError(t, f.defCharts.Create(&models.ChartConfig{ID: "c2", StackDefinitionID: "d2", ChartName: "extra", RepositoryURL: "oci://charts/extra", CreatedAt: now}))
+	require.NoError(t, f.defCharts.Create(context.Background(), &models.ChartConfig{ID: "c1", StackDefinitionID: "d1", ChartName: "web", RepositoryURL: "oci://charts/web", CreatedAt: now}))
+	require.NoError(t, f.defCharts.Create(context.Background(), &models.ChartConfig{ID: "c2", StackDefinitionID: "d2", ChartName: "extra", RepositoryURL: "oci://charts/extra", CreatedAt: now}))
 	// The seed requests above wrote audit entries; the tests count their own.
 	require.Eventually(t, func() bool { return len(f.audit.snapshot()) == 3 }, 2*time.Second, 10*time.Millisecond)
 	f.audit.mu.Lock()
@@ -199,7 +202,7 @@ func TestDefinitionWrites_CancelledAtWriteStillCommit(t *testing.T) {
 			check: func(t *testing.T, f *defCtxFixture, _ *httptest.ResponseRecorder) {
 				defs := f.definitionsNamed(t, "imported")
 				require.Len(t, defs, 1)
-				charts, err := f.defCharts.ListByDefinition(defs[0].ID)
+				charts, err := f.defCharts.ListByDefinition(context.Background(), defs[0].ID)
 				require.NoError(t, err)
 				assert.Len(t, charts, 1)
 			},
@@ -445,7 +448,7 @@ func TestDefinitionGuards_FailedReadStopsTheWrite(t *testing.T) {
 				require.NoError(t, f.def.MockStackDefinitionRepository.Delete(context.Background(), "d2"))
 			},
 			check: func(t *testing.T, f *defCtxFixture, _ *httptest.ResponseRecorder) {
-				_, err := f.defCharts.FindByID("c2")
+				_, err := f.defCharts.FindByID(context.Background(), "c2")
 				assert.Error(t, err, "the chart is deleted")
 			},
 		},
@@ -499,7 +502,7 @@ func TestDefinitionGuards_FailedReadStopsTheWrite(t *testing.T) {
 
 func chartKept(id string) func(t *testing.T, f *defCtxFixture, w *httptest.ResponseRecorder) {
 	return func(t *testing.T, f *defCtxFixture, _ *httptest.ResponseRecorder) {
-		_, err := f.defCharts.FindByID(id)
+		_, err := f.defCharts.FindByID(context.Background(), id)
 		assert.NoError(t, err, "the chart is kept")
 	}
 }

@@ -63,7 +63,7 @@ func newUpgradeCheckEnv(t *testing.T, latest models.TemplateChartSnapshotData) u
 	}))
 	base := upgradeBaseChart()
 	ccRepo := NewMockChartConfigRepository()
-	require.NoError(t, ccRepo.Create(&models.ChartConfig{
+	require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{
 		ID: "cc1", StackDefinitionID: "d1", ChartName: base.ChartName,
 		RepositoryURL: base.RepoURL, DefaultValues: base.DefaultValues, DeployOrder: base.SortOrder,
 		ChartPath: base.ChartPath, ChartVersion: base.ChartVersion,
@@ -185,7 +185,7 @@ func TestCheckUpgrade_ChartVersionOnlyThenUpgrade(t *testing.T) {
 	env.router.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
-	charts, err := env.charts.ListByDefinition("d1")
+	charts, err := env.charts.ListByDefinition(context.Background(), "d1")
 	require.NoError(t, err)
 	require.Len(t, charts, 1)
 	assert.Equal(t, "1.1.0", charts[0].ChartVersion)
@@ -211,7 +211,7 @@ func TestCheckUpgrade_AddedAndRemovedCharts(t *testing.T) {
 		ID: "d1", Name: "My Def", OwnerID: "uid-1", SourceTemplateID: "t1", SourceTemplateVersion: "1.0",
 	}))
 	ccRepo := NewMockChartConfigRepository()
-	require.NoError(t, ccRepo.Create(&models.ChartConfig{ID: "cc1", StackDefinitionID: "d1", ChartName: "legacy"}))
+	require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{ID: "cc1", StackDefinitionID: "d1", ChartName: "legacy"}))
 	verRepo := NewMockTemplateVersionRepository()
 	seedVersion(t, verRepo, "v2", "t1", "2.0", schemaV1SnapshotJSON(t, "2.0", newChart), time.Now())
 	tmplRepo := NewMockStackTemplateRepository()

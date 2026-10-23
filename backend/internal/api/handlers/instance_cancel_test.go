@@ -79,7 +79,7 @@ func valuesCancelRouter(t *testing.T, env *lifecycleEnv, inst *hookInstanceRepo,
 func seedValuesCancelEnv(t *testing.T, env *lifecycleEnv) {
 	t.Helper()
 	seedDefinition(t, env.def, "d1", "def-1", "uid-1")
-	require.NoError(t, env.cc.Create(&models.ChartConfig{ID: "cc1", StackDefinitionID: "d1", ChartName: "web", DefaultValues: "owner: \"{{.Owner}}\"\n"}))
+	require.NoError(t, env.cc.Create(context.Background(), &models.ChartConfig{ID: "cc1", StackDefinitionID: "d1", ChartName: "web", DefaultValues: "owner: \"{{.Owner}}\"\n"}))
 	for _, id := range []string{"i1", "i2"} {
 		require.NoError(t, env.inst.Create(context.Background(), &models.StackInstance{
 			ID: id, StackDefinitionID: "d1", Name: "zz-" + id, Namespace: "stack-zz-" + id + "-alice",

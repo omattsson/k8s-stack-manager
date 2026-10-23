@@ -36,7 +36,7 @@ func (s *ExpiryStopper) StopInstance(ctx context.Context, inst *models.StackInst
 		return fmt.Errorf("finding definition: %w", err)
 	}
 
-	charts, err := s.chartConfigRepo.ListByDefinition(def.ID)
+	charts, err := s.chartConfigRepo.ListByDefinition(ctx, def.ID)
 	if err != nil {
 		return fmt.Errorf("listing charts: %w", err)
 	}

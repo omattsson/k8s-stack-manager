@@ -123,7 +123,7 @@ func TestListDefinitions(t *testing.T) {
 		seedDefinition(t, defRepo, "d2", "Def Two", "owner-1")
 		chartRepo := NewMockChartConfigRepository()
 		for i, name := range []string{"api", "web"} {
-			require.NoError(t, chartRepo.Create(&models.ChartConfig{ID: fmt.Sprintf("c%d", i), StackDefinitionID: "d1", ChartName: name}))
+			require.NoError(t, chartRepo.Create(context.Background(), &models.ChartConfig{ID: fmt.Sprintf("c%d", i), StackDefinitionID: "d1", ChartName: name}))
 		}
 
 		router := setupDefinitionRouter(defRepo, chartRepo, NewMockStackInstanceRepository(), "uid-1", "user")
@@ -379,7 +379,7 @@ func TestGetDefinition(t *testing.T) {
 		defRepo := NewMockStackDefinitionRepository()
 		ccRepo := NewMockChartConfigRepository()
 		seedDefinition(t, defRepo, "d1", "My Stack", "uid-1")
-		require.NoError(t, ccRepo.Create(&models.ChartConfig{
+		require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{
 			ID:                "c1",
 			StackDefinitionID: "d1",
 			ChartName:         "backend",
@@ -609,7 +609,7 @@ func TestExportDefinition(t *testing.T) {
 		defRepo := NewMockStackDefinitionRepository()
 		ccRepo := NewMockChartConfigRepository()
 		seedDefinition(t, defRepo, "d1", "My Stack", "uid-1")
-		require.NoError(t, ccRepo.Create(&models.ChartConfig{
+		require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{
 			ID:                "c1",
 			StackDefinitionID: "d1",
 			ChartName:         "backend",
@@ -621,7 +621,7 @@ func TestExportDefinition(t *testing.T) {
 			DeployOrder:       1,
 			CreatedAt:         time.Now().UTC(),
 		}))
-		require.NoError(t, ccRepo.Create(&models.ChartConfig{
+		require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{
 			ID:                "c2",
 			StackDefinitionID: "d1",
 			ChartName:         "frontend",
@@ -895,7 +895,7 @@ func TestExportImportRoundTrip(t *testing.T) {
 		defRepo := NewMockStackDefinitionRepository()
 		ccRepo := NewMockChartConfigRepository()
 		seedDefinition(t, defRepo, "d1", "Round Trip Stack", "uid-1")
-		require.NoError(t, ccRepo.Create(&models.ChartConfig{
+		require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{
 			ID:                "c1",
 			StackDefinitionID: "d1",
 			ChartName:         "api",

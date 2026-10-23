@@ -112,7 +112,7 @@ func TestBulkDeploy(t *testing.T) {
 				seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusDraft)
 				seedInstance(t, instRepo, "i2", "stack-b", "d1", "uid-2", models.StackStatusDraft)
 				seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
-				require.NoError(t, ccRepo.Create(&models.ChartConfig{
+				require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{
 					ID:                "c1",
 					StackDefinitionID: "d1",
 					ChartName:         "nginx",
@@ -142,7 +142,7 @@ func TestBulkDeploy(t *testing.T) {
 			setup: func(instRepo *MockStackInstanceRepository, defRepo *MockStackDefinitionRepository, ccRepo *MockChartConfigRepository) {
 				seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusDraft)
 				seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
-				require.NoError(t, ccRepo.Create(&models.ChartConfig{
+				require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{
 					ID:                "c1",
 					StackDefinitionID: "d1",
 					ChartName:         "nginx",
@@ -301,7 +301,7 @@ func TestBulkDeploy_RecordsCaller(t *testing.T) {
 	seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusDraft)
 	seedInstance(t, instRepo, "i2", "stack-b", "d1", "uid-2", models.StackStatusDraft)
 	seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
-	require.NoError(t, ccRepo.Create(&models.ChartConfig{
+	require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{
 		ID: "c1", StackDefinitionID: "d1", ChartName: "nginx", RepositoryURL: "oci://example.com/charts/nginx", DeployOrder: 1,
 	}))
 
@@ -373,7 +373,7 @@ func TestBulkDeploy_RestartsTTL(t *testing.T) {
 			inst.ExpiresAt = tt.expiresAt
 			require.NoError(t, instRepo.Update(context.Background(), inst))
 			seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
-			require.NoError(t, ccRepo.Create(&models.ChartConfig{
+			require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{
 				ID: "c1", StackDefinitionID: "d1", ChartName: "nginx", RepositoryURL: "oci://example.com/charts/nginx", DeployOrder: 1,
 			}))
 
@@ -415,7 +415,7 @@ func TestBulkStop(t *testing.T) {
 			setup: func(instRepo *MockStackInstanceRepository, defRepo *MockStackDefinitionRepository, ccRepo *MockChartConfigRepository) {
 				seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusRunning)
 				seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
-				require.NoError(t, ccRepo.Create(&models.ChartConfig{
+				require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{
 					ID:                "c1",
 					StackDefinitionID: "d1",
 					ChartName:         "nginx",
@@ -506,7 +506,7 @@ func TestBulkClean(t *testing.T) {
 			setup: func(instRepo *MockStackInstanceRepository, defRepo *MockStackDefinitionRepository, ccRepo *MockChartConfigRepository) {
 				seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusStopped)
 				seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
-				require.NoError(t, ccRepo.Create(&models.ChartConfig{
+				require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{
 					ID:                "c1",
 					StackDefinitionID: "d1",
 					ChartName:         "nginx",
@@ -584,7 +584,7 @@ func TestBulkDelete(t *testing.T) {
 	seedDefWithChart := func(t *testing.T, defRepo *MockStackDefinitionRepository, ccRepo *MockChartConfigRepository) {
 		t.Helper()
 		seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
-		require.NoError(t, ccRepo.Create(&models.ChartConfig{
+		require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{
 			ID:                "c1",
 			StackDefinitionID: "d1",
 			ChartName:         "nginx",
@@ -857,7 +857,7 @@ func TestBulkDelete_ConcurrentDeletes(t *testing.T) {
 	ccRepo := NewMockChartConfigRepository()
 	seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusRunning)
 	seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
-	require.NoError(t, ccRepo.Create(&models.ChartConfig{ID: "c1", StackDefinitionID: "d1", ChartName: "nginx", DeployOrder: 1}))
+	require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{ID: "c1", StackDefinitionID: "d1", ChartName: "nginx", DeployOrder: 1}))
 
 	logRepo := NewMockDeploymentLogRepository()
 	// The handler and the deploy manager share the repository, so the
@@ -1106,7 +1106,7 @@ func TestBulkDelete_WithBranchOverrides(t *testing.T) {
 		seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusDraft)
 
 		// Seed a branch override for the instance.
-		_ = branchRepo.Set(&models.ChartBranchOverride{
+		_ = branchRepo.Set(context.Background(), &models.ChartBranchOverride{
 			StackInstanceID: "i1",
 			ChartConfigID:   "cc-1",
 			Branch:          "feature/test",
@@ -1131,7 +1131,7 @@ func TestBulkDelete_WithBranchOverrides(t *testing.T) {
 		assert.Error(t, err)
 
 		// Branch overrides for the instance should also be gone.
-		overrides, _ := branchRepo.List("i1")
+		overrides, _ := branchRepo.List(context.Background(), "i1")
 		assert.Empty(t, overrides)
 	})
 

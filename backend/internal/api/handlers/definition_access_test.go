@@ -85,7 +85,7 @@ func TestUpdateChartConfigAccess(t *testing.T) {
 			defRepo := NewMockStackDefinitionRepository()
 			seedDefinition(t, defRepo, "def-1", "Def", "owner")
 			chartRepo := NewMockChartConfigRepository()
-			require.NoError(t, chartRepo.Create(&models.ChartConfig{
+			require.NoError(t, chartRepo.Create(context.Background(), &models.ChartConfig{
 				ID: "chart-1", StackDefinitionID: "def-1", ChartName: "web",
 				RepositoryURL: "oci://registry.example.com/charts", ChartVersion: "1.0.0",
 				CreatedAt: time.Now().UTC(),
@@ -99,7 +99,7 @@ func TestUpdateChartConfigAccess(t *testing.T) {
 
 			assert.Equal(t, tt.wantStatus, w.Code, w.Body.String())
 			if tt.wantStatus == http.StatusForbidden {
-				stored, err := chartRepo.FindByID("chart-1")
+				stored, err := chartRepo.FindByID(context.Background(), "chart-1")
 				require.NoError(t, err)
 				assert.Equal(t, "oci://registry.example.com/charts", stored.RepositoryURL)
 				assert.Empty(t, stored.DefaultValues)

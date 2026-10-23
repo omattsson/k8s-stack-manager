@@ -933,7 +933,10 @@ func NewMockChartConfigRepository() *MockChartConfigRepository {
 	return &MockChartConfigRepository{items: make(map[string]*models.ChartConfig)}
 }
 
-func (m *MockChartConfigRepository) Create(c *models.ChartConfig) error {
+func (m *MockChartConfigRepository) Create(ctx context.Context, c *models.ChartConfig) error {
+	if err := ctxDone(ctx, "create"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -943,7 +946,10 @@ func (m *MockChartConfigRepository) Create(c *models.ChartConfig) error {
 	return nil
 }
 
-func (m *MockChartConfigRepository) FindByID(id string) (*models.ChartConfig, error) {
+func (m *MockChartConfigRepository) FindByID(ctx context.Context, id string) (*models.ChartConfig, error) {
+	if err := ctxDone(ctx, "find_by_id"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	c, ok := m.items[id]
@@ -954,7 +960,10 @@ func (m *MockChartConfigRepository) FindByID(id string) (*models.ChartConfig, er
 	return &cp, nil
 }
 
-func (m *MockChartConfigRepository) Update(c *models.ChartConfig) error {
+func (m *MockChartConfigRepository) Update(ctx context.Context, c *models.ChartConfig) error {
+	if err := ctxDone(ctx, "update"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -967,7 +976,10 @@ func (m *MockChartConfigRepository) Update(c *models.ChartConfig) error {
 	return nil
 }
 
-func (m *MockChartConfigRepository) Delete(id string) error {
+func (m *MockChartConfigRepository) Delete(ctx context.Context, id string) error {
+	if err := ctxDone(ctx, "delete"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.items[id]; !ok {
@@ -977,7 +989,10 @@ func (m *MockChartConfigRepository) Delete(id string) error {
 	return nil
 }
 
-func (m *MockChartConfigRepository) DeleteByDefinition(definitionID string) error {
+func (m *MockChartConfigRepository) DeleteByDefinition(ctx context.Context, definitionID string) error {
+	if err := ctxDone(ctx, "delete_by_definition"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -991,7 +1006,10 @@ func (m *MockChartConfigRepository) DeleteByDefinition(definitionID string) erro
 	return nil
 }
 
-func (m *MockChartConfigRepository) ListByDefinition(definitionID string) ([]models.ChartConfig, error) {
+func (m *MockChartConfigRepository) ListByDefinition(ctx context.Context, definitionID string) ([]models.ChartConfig, error) {
+	if err := ctxDone(ctx, "list_by_definition"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -1006,7 +1024,10 @@ func (m *MockChartConfigRepository) ListByDefinition(definitionID string) ([]mod
 	return out, nil
 }
 
-func (m *MockChartConfigRepository) CountByDefinitionIDs(definitionIDs []string) (map[string]int, error) {
+func (m *MockChartConfigRepository) CountByDefinitionIDs(ctx context.Context, definitionIDs []string) (map[string]int, error) {
+	if err := ctxDone(ctx, "count_by_definition_ids"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {

@@ -126,7 +126,7 @@ func TestCompareInstances(t *testing.T) {
 					ID:   "d1",
 					Name: "def-a",
 				}))
-				require.NoError(t, ccRepo.Create(&models.ChartConfig{
+				require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{
 					ID:                "cc1",
 					StackDefinitionID: "d1",
 					ChartName:         "my-chart",
@@ -156,7 +156,7 @@ func TestCompareInstances(t *testing.T) {
 					ID:   "d1",
 					Name: "def-a",
 				}))
-				require.NoError(t, ccRepo.Create(&models.ChartConfig{
+				require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{
 					ID:                "cc1",
 					StackDefinitionID: "d1",
 					ChartName:         "my-chart",
@@ -206,13 +206,13 @@ func TestCompareInstances(t *testing.T) {
 					ID:   "d2",
 					Name: "def-b",
 				}))
-				require.NoError(t, ccRepo.Create(&models.ChartConfig{
+				require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{
 					ID:                "cc1",
 					StackDefinitionID: "d1",
 					ChartName:         "chart-only-left",
 					DefaultValues:     "a: 1\n",
 				}))
-				require.NoError(t, ccRepo.Create(&models.ChartConfig{
+				require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{
 					ID:                "cc2",
 					StackDefinitionID: "d2",
 					ChartName:         "chart-only-right",
@@ -273,7 +273,7 @@ func TestCompareInstances(t *testing.T) {
 					ID:   "d1",
 					Name: "def-a",
 				}))
-				require.NoError(t, ccRepo.Create(&models.ChartConfig{
+				require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{
 					ID:                "cc1",
 					StackDefinitionID: "d1",
 					ChartName:         "my-chart",

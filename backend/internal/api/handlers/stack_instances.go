@@ -945,7 +945,7 @@ func (h *InstanceHandler) deleteInstance(c *gin.Context, inst *models.StackInsta
 			status, message := mapError(err, entityStackDefinition)
 			return "", &instanceDeleteError{status: status, message: message}
 		}
-		charts, err := h.chartConfigRepo.ListByDefinition(def.ID)
+		charts, err := h.chartConfigRepo.ListByDefinition(wctx, def.ID)
 		if err != nil {
 			status, message := mapError(err, entityChartConfigs)
 			return "", &instanceDeleteError{status: status, message: message}
@@ -1511,12 +1511,12 @@ func cloneInstanceTx(ctx context.Context, repos database.TxRepos, sourceID strin
 		}
 	}
 	if repos.BranchOverride != nil {
-		branches, err := repos.BranchOverride.List(sourceID)
+		branches, err := repos.BranchOverride.List(ctx, sourceID)
 		if err != nil {
 			return "", err
 		}
 		for _, bo := range branches {
-			if err := repos.BranchOverride.Set(&models.ChartBranchOverride{
+			if err := repos.BranchOverride.Set(ctx, &models.ChartBranchOverride{
 				ID:              uuid.New().String(),
 				StackInstanceID: clone.ID,
 				ChartConfigID:   bo.ChartConfigID,
@@ -1632,7 +1632,7 @@ func (h *InstanceHandler) ExportAllValues(c *gin.Context) {
 		return
 	}
 
-	charts, err := h.chartConfigRepo.ListByDefinition(def.ID)
+	charts, err := h.chartConfigRepo.ListByDefinition(c.Request.Context(), def.ID)
 	if err != nil {
 		status, message := mapError(err, entityChartConfigs)
 		c.JSON(status, gin.H{"error": message})
@@ -1727,7 +1727,7 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 		return
 	}
 
-	charts, err := h.chartConfigRepo.ListByDefinition(def.ID)
+	charts, err := h.chartConfigRepo.ListByDefinition(c.Request.Context(), def.ID)
 	if err != nil {
 		status, message := mapError(err, entityChartConfigs)
 		c.JSON(status, gin.H{"error": message})
@@ -1847,7 +1847,7 @@ func (h *InstanceHandler) DeployPreview(c *gin.Context) {
 		return
 	}
 
-	charts, err := h.chartConfigRepo.ListByDefinition(def.ID)
+	charts, err := h.chartConfigRepo.ListByDefinition(c.Request.Context(), def.ID)
 	if err != nil {
 		status, message := mapError(err, entityChartConfigs)
 		c.JSON(status, gin.H{"error": message})
@@ -1958,7 +1958,7 @@ func (h *InstanceHandler) StopInstance(c *gin.Context) {
 		return
 	}
 
-	charts, err := h.chartConfigRepo.ListByDefinition(def.ID)
+	charts, err := h.chartConfigRepo.ListByDefinition(c.Request.Context(), def.ID)
 	if err != nil {
 		status, message := mapError(err, entityChartConfigs)
 		c.JSON(status, gin.H{"error": message})
@@ -2045,7 +2045,7 @@ func (h *InstanceHandler) CleanInstance(c *gin.Context) {
 		return
 	}
 
-	charts, err := h.chartConfigRepo.ListByDefinition(def.ID)
+	charts, err := h.chartConfigRepo.ListByDefinition(c.Request.Context(), def.ID)
 	if err != nil {
 		status, message := mapError(err, entityChartConfigs)
 		c.JSON(status, gin.H{"error": message})
@@ -2673,15 +2673,21 @@ func (h *InstanceHandler) CompareInstances(c *gin.Context) {
 	}
 
 	// Fetch chart configs for both definitions.
-	leftCharts, err := h.chartConfigRepo.ListByDefinition(leftDef.ID)
+	leftCharts, err := h.chartConfigRepo.ListByDefinition(c.Request.Context(), leftDef.ID)
 	if err != nil {
+		if respondCancelled(c, err) {
+			return
+		}
 		slog.Error("compare: failed to fetch left chart configs", "definition_id", leftDef.ID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
-	rightCharts, err := h.chartConfigRepo.ListByDefinition(rightDef.ID)
+	rightCharts, err := h.chartConfigRepo.ListByDefinition(c.Request.Context(), rightDef.ID)
 	if err != nil {
+		if respondCancelled(c, err) {
+			return
+		}
 		slog.Error("compare: failed to fetch right chart configs", "definition_id", rightDef.ID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
@@ -2896,7 +2902,7 @@ func (h *InstanceHandler) RollbackInstance(c *gin.Context) {
 		return
 	}
 
-	charts, err := h.chartConfigRepo.ListByDefinition(def.ID)
+	charts, err := h.chartConfigRepo.ListByDefinition(c.Request.Context(), def.ID)
 	if err != nil {
 		status, message := mapError(err, entityChartConfigs)
 		c.JSON(status, gin.H{"error": message})
@@ -2923,6 +2929,10 @@ func (h *InstanceHandler) RollbackInstance(c *gin.Context) {
 			return
 		}
 		pending, buildErr := h.buildChartValues(c.Request.Context(), inst, def, charts)
+		// A client that left before the first write gets 499 and no rollback (#656).
+		if buildErr != nil && respondCancelled(c, buildErr) {
+			return
+		}
 		if buildErr != nil {
 			logRollbackDriftError(id, buildErr)
 		} else {

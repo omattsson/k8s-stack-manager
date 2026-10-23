@@ -98,10 +98,10 @@ func TestDeleteInstanceWithOwnedDefinition(t *testing.T) {
 			ctx := context.Background()
 
 			require.NoError(t, defRepo.Create(context.Background(), &models.StackDefinition{ID: "d1", Name: "qd", OwnerID: "u1", OwnerInstanceID: tt.owner}))
-			require.NoError(t, ccRepo.Create(&models.ChartConfig{ID: "c1", StackDefinitionID: "d1", ChartName: "web"}))
+			require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{ID: "c1", StackDefinitionID: "d1", ChartName: "web"}))
 			inst := &models.StackInstance{ID: "i1", StackDefinitionID: "d1", Name: "qd", Namespace: "stack-qd-u1", OwnerID: "u1", Status: models.StackStatusDraft}
 			require.NoError(t, instRepo.Create(context.Background(), inst))
-			require.NoError(t, boRepo.Set(&models.ChartBranchOverride{ID: "b1", StackInstanceID: "i1", ChartConfigID: "c1", Branch: "x"}))
+			require.NoError(t, boRepo.Set(context.Background(), &models.ChartBranchOverride{ID: "b1", StackInstanceID: "i1", ChartConfigID: "c1", Branch: "x"}))
 			require.NoError(t, ovRepo.Create(&models.ValueOverride{ID: "v1", StackInstanceID: "i1", ChartConfigID: "c1", Values: "a: 1"}))
 			require.NoError(t, quotaRepo.Upsert(ctx, &models.InstanceQuotaOverride{StackInstanceID: "i1", CPULimit: "1"}))
 			followerRepo := NewGORMInstanceFollowerRepository(db)
@@ -120,7 +120,7 @@ func TestDeleteInstanceWithOwnedDefinition(t *testing.T) {
 
 			_, err := instRepo.FindByID(context.Background(), "i1")
 			assert.Error(t, err, "instance is deleted")
-			bos, err := boRepo.List("i1")
+			bos, err := boRepo.List(context.Background(), "i1")
 			require.NoError(t, err)
 			assert.Empty(t, bos, "branch overrides are deleted")
 			ovs, err := ovRepo.ListByInstance("i1")
@@ -140,7 +140,7 @@ func TestDeleteInstanceWithOwnedDefinition(t *testing.T) {
 
 			_, err = defRepo.FindByID(context.Background(), "d1")
 			assert.Equal(t, tt.wantDefKept, err == nil)
-			charts, err := ccRepo.ListByDefinition("d1")
+			charts, err := ccRepo.ListByDefinition(context.Background(), "d1")
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantDefKept, len(charts) == 1)
 		})

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -44,7 +45,7 @@ func TestBulkDeploy_PreDeployHookCarriesChartBranchOverride(t *testing.T) {
 
 	seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusDraft)
 	seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
-	require.NoError(t, ccRepo.Create(&models.ChartConfig{
+	require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{
 		ID:                "c1",
 		StackDefinitionID: "d1",
 		ChartName:         "app",
@@ -53,7 +54,7 @@ func TestBulkDeploy_PreDeployHookCarriesChartBranchOverride(t *testing.T) {
 		DefaultValues:     "image:\n  tag: \"{{.ImageTag}}\"\n",
 		DeployOrder:       1,
 	}))
-	require.NoError(t, boRepo.Set(&models.ChartBranchOverride{
+	require.NoError(t, boRepo.Set(context.Background(), &models.ChartBranchOverride{
 		ID:              "bo1",
 		StackInstanceID: "i1",
 		ChartConfigID:   "c1",

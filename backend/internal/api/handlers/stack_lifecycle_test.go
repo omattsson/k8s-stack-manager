@@ -276,7 +276,7 @@ func TestCloneInstance_CopiesSettings(t *testing.T) {
 				TTLMinutes: 240, ExpiresAt: &exp,
 			}))
 			require.NoError(t, env.ov.Create(&models.ValueOverride{ID: "ov1", StackInstanceID: "src", ChartConfigID: "cc1", Values: "replicas: 3"}))
-			require.NoError(t, env.bo.Set(&models.ChartBranchOverride{ID: "bo1", StackInstanceID: "src", ChartConfigID: "cc1", Branch: "hotfix"}))
+			require.NoError(t, env.bo.Set(context.Background(), &models.ChartBranchOverride{ID: "bo1", StackInstanceID: "src", ChartConfigID: "cc1", Branch: "hotfix"}))
 			pods := 7
 			require.NoError(t, env.quota.Upsert(context.Background(), &models.InstanceQuotaOverride{
 				StackInstanceID: "src", CPULimit: "2", MemoryLimit: "4Gi", PodLimit: &pods,
@@ -302,7 +302,7 @@ func TestCloneInstance_CopiesSettings(t *testing.T) {
 			require.Len(t, ovs, 1)
 			assert.Equal(t, "replicas: 3", ovs[0].Values)
 
-			bos, err := env.bo.List(clone.ID)
+			bos, err := env.bo.List(context.Background(), clone.ID)
 			require.NoError(t, err)
 			require.Len(t, bos, 1)
 			assert.Equal(t, "hotfix", bos[0].Branch)
@@ -452,7 +452,7 @@ func TestCloneNameCandidate(t *testing.T) {
 func seedRollbackInstance(t *testing.T, env *lifecycleEnv) {
 	t.Helper()
 	seedDefinition(t, env.def, "d1", "def-1", "uid-1")
-	require.NoError(t, env.cc.Create(&models.ChartConfig{ID: "cc1", StackDefinitionID: "d1", ChartName: "web", DefaultValues: "replicas: 1\n"}))
+	require.NoError(t, env.cc.Create(context.Background(), &models.ChartConfig{ID: "cc1", StackDefinitionID: "d1", ChartName: "web", DefaultValues: "replicas: 1\n"}))
 	require.NoError(t, env.inst.Create(context.Background(), &models.StackInstance{
 		ID: "i1", StackDefinitionID: "d1", Name: "zz-life", Namespace: "stack-zz-life-alice",
 		OwnerID: "uid-1", Branch: "master", Status: models.StackStatusRunning,
@@ -645,7 +645,7 @@ func TestDeleteInstance_OwnedDefinition(t *testing.T) {
 
 			_, err := env.def.FindByID(context.Background(), "d1")
 			assert.Equal(t, tt.wantDefKept, err == nil)
-			charts, err := env.cc.ListByDefinition("d1")
+			charts, err := env.cc.ListByDefinition(context.Background(), "d1")
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantDefKept, len(charts) == 1)
 		})

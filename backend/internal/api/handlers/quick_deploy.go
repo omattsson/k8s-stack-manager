@@ -377,7 +377,7 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 			return err
 		}
 		for i := range chartConfigs {
-			if err := repos.ChartConfig.Create(&chartConfigs[i]); err != nil {
+			if err := repos.ChartConfig.Create(wctx, &chartConfigs[i]); err != nil {
 				return err
 			}
 		}
@@ -406,7 +406,7 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 				Branch:          branchName,
 				UpdatedAt:       now,
 			}
-			if err := h.branchOverrideRepo.Set(bo); err != nil {
+			if err := h.branchOverrideRepo.Set(wctx, bo); err != nil {
 				slog.Error("Failed to set branch override during quick deploy",
 					"instance_id", inst.ID,
 					"chart_config_id", chartConfigID,

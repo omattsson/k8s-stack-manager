@@ -200,14 +200,20 @@ func newMockChartConfigRepo() *mockChartConfigRepo {
 	return &mockChartConfigRepo{items: make(map[string][]models.ChartConfig)}
 }
 
-func (m *mockChartConfigRepo) Create(c *models.ChartConfig) error {
+func (m *mockChartConfigRepo) Create(ctx context.Context, c *models.ChartConfig) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.items[c.StackDefinitionID] = append(m.items[c.StackDefinitionID], *c)
 	return nil
 }
 
-func (m *mockChartConfigRepo) FindByID(id string) (*models.ChartConfig, error) {
+func (m *mockChartConfigRepo) FindByID(ctx context.Context, id string) (*models.ChartConfig, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, charts := range m.items {
@@ -220,22 +226,28 @@ func (m *mockChartConfigRepo) FindByID(id string) (*models.ChartConfig, error) {
 	return nil, errors.New("not found")
 }
 
-func (m *mockChartConfigRepo) Update(c *models.ChartConfig) error {
-	return nil
+func (m *mockChartConfigRepo) Update(ctx context.Context, c *models.ChartConfig) error {
+	return ctx.Err()
 }
 
-func (m *mockChartConfigRepo) Delete(id string) error {
-	return nil
+func (m *mockChartConfigRepo) Delete(ctx context.Context, id string) error {
+	return ctx.Err()
 }
 
-func (m *mockChartConfigRepo) DeleteByDefinition(defID string) error {
+func (m *mockChartConfigRepo) DeleteByDefinition(ctx context.Context, defID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.items, defID)
 	return nil
 }
 
-func (m *mockChartConfigRepo) ListByDefinition(defID string) ([]models.ChartConfig, error) {
+func (m *mockChartConfigRepo) ListByDefinition(ctx context.Context, defID string) ([]models.ChartConfig, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -248,7 +260,10 @@ func (m *mockChartConfigRepo) ListByDefinition(defID string) ([]models.ChartConf
 	return charts, nil
 }
 
-func (m *mockChartConfigRepo) CountByDefinitionIDs(defIDs []string) (map[string]int, error) {
+func (m *mockChartConfigRepo) CountByDefinitionIDs(ctx context.Context, defIDs []string) (map[string]int, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	out := make(map[string]int)

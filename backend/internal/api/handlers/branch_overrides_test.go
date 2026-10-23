@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -36,7 +37,10 @@ func (m *MockChartBranchOverrideRepository) key(instanceID, chartConfigID string
 	return instanceID + ":" + chartConfigID
 }
 
-func (m *MockChartBranchOverrideRepository) List(instanceID string) ([]*models.ChartBranchOverride, error) {
+func (m *MockChartBranchOverrideRepository) List(ctx context.Context, instanceID string) ([]*models.ChartBranchOverride, error) {
+	if err := ctxDone(ctx, "list"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -52,7 +56,10 @@ func (m *MockChartBranchOverrideRepository) List(instanceID string) ([]*models.C
 	return out, nil
 }
 
-func (m *MockChartBranchOverrideRepository) Get(instanceID, chartConfigID string) (*models.ChartBranchOverride, error) {
+func (m *MockChartBranchOverrideRepository) Get(ctx context.Context, instanceID, chartConfigID string) (*models.ChartBranchOverride, error) {
+	if err := ctxDone(ctx, "get"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -66,7 +73,10 @@ func (m *MockChartBranchOverrideRepository) Get(instanceID, chartConfigID string
 	return &cp, nil
 }
 
-func (m *MockChartBranchOverrideRepository) Set(override *models.ChartBranchOverride) error {
+func (m *MockChartBranchOverrideRepository) Set(ctx context.Context, override *models.ChartBranchOverride) error {
+	if err := ctxDone(ctx, "set"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -77,7 +87,10 @@ func (m *MockChartBranchOverrideRepository) Set(override *models.ChartBranchOver
 	return nil
 }
 
-func (m *MockChartBranchOverrideRepository) Delete(instanceID, chartConfigID string) error {
+func (m *MockChartBranchOverrideRepository) Delete(ctx context.Context, instanceID, chartConfigID string) error {
+	if err := ctxDone(ctx, "delete"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -91,7 +104,10 @@ func (m *MockChartBranchOverrideRepository) Delete(instanceID, chartConfigID str
 	return nil
 }
 
-func (m *MockChartBranchOverrideRepository) DeleteByInstance(instanceID string) error {
+func (m *MockChartBranchOverrideRepository) DeleteByInstance(ctx context.Context, instanceID string) error {
+	if err := ctxDone(ctx, "delete_by_instance"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -119,9 +135,9 @@ func newBranchTestChartRepo() *MockChartConfigRepository {
 	repo := NewMockChartConfigRepository()
 	for i := 1; i <= 5; i++ {
 		id := "chart-" + string(rune('0'+i))
-		_ = repo.Create(&models.ChartConfig{ID: id, StackDefinitionID: "def-1", ChartName: "app-" + id})
+		_ = repo.Create(context.Background(), &models.ChartConfig{ID: id, StackDefinitionID: "def-1", ChartName: "app-" + id})
 	}
-	_ = repo.Create(&models.ChartConfig{ID: "chart-other", StackDefinitionID: "def-2", ChartName: "other"})
+	_ = repo.Create(context.Background(), &models.ChartConfig{ID: "chart-other", StackDefinitionID: "def-2", ChartName: "other"})
 	return repo
 }
 
@@ -155,7 +171,7 @@ func seedBranchOverride(t *testing.T, repo *MockChartBranchOverrideRepository, i
 		Branch:          branch,
 		UpdatedAt:       time.Now().UTC(),
 	}
-	require.NoError(t, repo.Set(o))
+	require.NoError(t, repo.Set(context.Background(), o))
 	return o
 }
 
@@ -679,7 +695,7 @@ func TestBranchOverride_ChartValidation(t *testing.T) {
 				assert.Equal(t, tt.wantError, resp["error"])
 			}
 			if tt.method == http.MethodPut && tt.wantStatus == http.StatusNotFound {
-				_, err := overrideRepo.Get("inst-1", tt.chartID)
+				_, err := overrideRepo.Get(context.Background(), "inst-1", tt.chartID)
 				assert.Error(t, err, "no row may be stored for an invalid chart")
 			}
 		})
