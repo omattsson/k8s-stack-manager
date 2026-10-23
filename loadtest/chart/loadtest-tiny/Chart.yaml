@@ -1,0 +1,6 @@
+apiVersion: v2
+name: loadtest-tiny
+description: One small unprivileged pod that the deploy load test installs many times
+type: application
+version: 0.1.0
+appVersion: "1.27.4"

@@ -121,6 +121,10 @@ backend:
     # helm --timeout for one chart; a deploy of N charts may take N x this value.
     DEPLOYMENT_TIMEOUT: "10m"
     MAX_CONCURRENT_DEPLOYS: "5"
+    # Client-side request limit of each cluster client (requests per second,
+    # burst). The API server still applies its own priority and fairness.
+    K8S_CLIENT_QPS: "50"
+    K8S_CLIENT_BURST: "100"
     # TTL in minutes of a new instance that does not set one. The create forms
     # of the web UI start with this value (GET /api/v1/ui-config). "0" means no
     # expiry; the maximum is backend.maxInstanceTtlDays (default 30 days, 43200
@@ -554,6 +558,10 @@ mysql:
     limits:
       memory: 1Gi
       cpu: 500m
+  # Each backend replica keeps up to DB_MAX_OPEN_CONNS (default 25)
+  # connections open. Keep the maximum replica count (rolling surge and HPA
+  # included) x DB_MAX_OPEN_CONNS below max_connections, or lower
+  # backend.env.DB_MAX_OPEN_CONNS and DB_MAX_IDLE_CONNS.
   config: |
     [mysqld]
     max_connections=100

@@ -112,6 +112,8 @@ The backend reads all configuration from environment variables. It also reads a 
 | `GIN_MODE` | not set | Gin mode (`debug`, `release`, `test`). It wins over `APP_DEBUG`. |
 | `HEALTH_VERBOSE` | `false` | Show details in the readiness response |
 | `PPROF_ENABLED`, `PPROF_ADDR` | `false`, `127.0.0.1:6060` | Serve Go pprof on a separate address |
+| `PPROF_MUTEX_FRACTION` | `0` | Sample 1 in N mutex contention events (`/debug/pprof/mutex`); `0` is off |
+| `PPROF_BLOCK_RATE` | `0` | Block profile rate in nanoseconds (`/debug/pprof/block`); `0` is off |
 | `DEFAULT_INSTANCE_TTL_MINUTES` | `0` | TTL for a new instance that does not set one. `0` means no TTL. |
 
 ### Database
@@ -120,7 +122,7 @@ The backend reads all configuration from environment variables. It also reads a 
 |---|---|---|
 | `DB_HOST`, `DB_PORT` | `localhost`, `3306` | MySQL address |
 | `DB_USER`, `DB_PASSWORD`, `DB_NAME` | `root`, empty, `app` | MySQL credentials and database name |
-| `DB_MAX_OPEN_CONNS`, `DB_MAX_IDLE_CONNS` | `25`, `5` | Connection pool size |
+| `DB_MAX_OPEN_CONNS`, `DB_MAX_IDLE_CONNS` | `25`, `25` | Connection pool size. Keep the idle value equal to the open value: a lower value makes the pool close and reopen connections under load. |
 | `DB_CONN_MAX_LIFETIME` | `5m` | Maximum age of a connection |
 
 ### Authentication and sessions
@@ -172,6 +174,7 @@ Public GitHub repositories work without a token, at the lower rate limit of GitH
 | `DEPLOY_STABILIZE_POLL_INTERVAL` | `5s` | Poll interval of the readiness wait |
 | `MAX_CONCURRENT_DEPLOYS` | `5` | Number of operations that run at the same time |
 | `CLUSTER_HEALTH_POLL_INTERVAL` | `60s` | Time between cluster health checks |
+| `K8S_CLIENT_QPS`, `K8S_CLIENT_BURST` | `50`, `100` | Client-side request limit of each cluster client (requests per second, burst). `0` uses the default. The limit applies to each replica and each cluster: N replicas send up to N times the limit. The client-go default (5, 10) throttled the stack page and the deploy readiness polls under load. |
 | `ALLOWED_CHART_REPOS` | empty | Comma-separated chart repository URL prefixes (`oci://`, `https://`, `http://`). Empty allows every chart source. See [Chart sources](../WIKI.md#chart-sources). |
 | `NAMESPACE_LABELS` | empty | Extra labels on stack namespaces (`key=value,key=value`) |
 | `STACK_ACCESS_CLUSTER_ROLE`, `STACK_ACCESS_SERVICE_ACCOUNT` | empty | Namespace-scoped access of the backend. The Helm chart sets both. See [Backend rights on the cluster](../WIKI.md#backend-rights-on-the-cluster). |

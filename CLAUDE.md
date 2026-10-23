@@ -41,7 +41,7 @@ startHTTPServer              # main server, optional pprof and metrics servers
 - Docker: nginx (`location /api/` with `proxy_pass http://backend:8081/api/`) and the Vite dev proxy (`/api` to the backend, no rewrite) both keep the `/api` prefix.
 - The backend registers routes under `/api/v1`.
 - Local development without Docker calls `localhost:8081` directly (`frontend/src/api/config.ts`).
-- Optional servers: Prometheus metrics (`METRICS_ENABLED`, `METRICS_ADDR`, default `:9090`) and pprof (`PPROF_ENABLED`, `PPROF_ADDR`, default `127.0.0.1:6060`).
+- Optional servers: Prometheus metrics (`METRICS_ENABLED`, `METRICS_ADDR`, default `:9090`) and pprof (`PPROF_ENABLED`, `PPROF_ADDR`, default `127.0.0.1:6060`; `PPROF_MUTEX_FRACTION` and `PPROF_BLOCK_RATE` turn on the mutex and block profiles, default 0 = off).
 - `make dev-otel`: Grafana on `:3001`, Prometheus on `:9090`.
 
 ## Development Commands

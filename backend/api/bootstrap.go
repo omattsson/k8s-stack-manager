@@ -34,6 +34,7 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"os"
+	"runtime"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -234,6 +235,10 @@ func buildDomainServices(
 		AccessBinding:   stackAccessBinding(cfg.Deployment.StackAccess),
 		// Local development only (#582); empty in a pod.
 		InClusterFallbackKubeconfig: cfg.Deployment.InClusterFallbackKubeconfig,
+		K8sClient: k8s.ClientOptions{
+			QPS:   float32(cfg.Deployment.K8sClientQPS),
+			Burst: cfg.Deployment.K8sClientBurst,
+		},
 	})
 
 	// Extended health checks.
@@ -921,6 +926,10 @@ func startHTTPServer(router *gin.Engine, cfg *config.Config, tel *telemetry.Tele
 
 	// Start pprof server on a separate port when PPROF_ENABLED=true.
 	if cfg.Server.PprofEnabled {
+		runtime.SetMutexProfileFraction(cfg.Server.PprofMutexFraction)
+		runtime.SetBlockProfileRate(cfg.Server.PprofBlockRate)
+		slog.Info("pprof profiles configured",
+			"mutex_fraction", cfg.Server.PprofMutexFraction, "block_rate_ns", cfg.Server.PprofBlockRate)
 		pprofMux := http.NewServeMux()
 		pprofMux.HandleFunc("/debug/pprof/", pprof.Index)
 		pprofMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)

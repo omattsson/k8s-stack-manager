@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"os"
 	"strconv"
@@ -19,8 +20,10 @@ import (
 )
 
 const (
-	defaultMaxOpenConns    int32 = 25
-	defaultMaxIdleConns    int32 = 5
+	defaultMaxOpenConns int32 = 25
+	// Same as defaultMaxOpenConns: with fewer idle slots the pool closed and
+	// reopened about 100 connections per second in the load test.
+	defaultMaxIdleConns    int32 = 25
 	defaultConnMaxLifetime       = 5 * time.Minute
 	defaultReadTimeout           = 10 * time.Second
 	// defaultWriteTimeout is 0 (disabled at the server level) because per-write
@@ -147,8 +150,13 @@ type NamespaceRoleBindingSpec struct {
 type DeploymentConfig struct {
 	DeploymentTimeout         time.Duration
 	ClusterHealthPollInterval time.Duration
-	HelmBinary                string
-	KubeconfigPath            string
+	// K8sClientQPS and K8sClientBurst (K8S_CLIENT_QPS, K8S_CLIENT_BURST) are
+	// the client-side request limit of each cluster client; 0 = the default
+	// of k8s.ClientOptions.
+	K8sClientQPS   float64
+	K8sClientBurst int
+	HelmBinary     string
+	KubeconfigPath string
 	// InClusterFallbackKubeconfig (IN_CLUSTER_FALLBACK_KUBECONFIG) is for
 	// local development only: outside a pod, an in-cluster cluster uses this
 	// kubeconfig for the Kubernetes client and Helm. Empty (default): an
@@ -413,10 +421,19 @@ type ServerConfig struct {
 	WriteTimeout    time.Duration
 	IdleTimeout     time.Duration
 	ShutdownTimeout time.Duration
+	// PprofMutexFraction is PPROF_MUTEX_FRACTION: runtime.SetMutexProfileFraction
+	// (0 = off). Read only when PPROF_ENABLED=true.
+	PprofMutexFraction int
+	// PprofBlockRate is PPROF_BLOCK_RATE in nanoseconds: runtime.SetBlockProfileRate
+	// (0 = off). Read only when PPROF_ENABLED=true.
+	PprofBlockRate int
 	// String fields (8-byte on 64-bit systems)
 	Host      string
 	Port      string
 	PprofAddr string
+	// pprofErr is the first parse error of the PPROF_* profile settings;
+	// Validate returns it.
+	pprofErr error
 	// TrustedProxies are the IPs and CIDR ranges that may set the client IP
 	// with X-Forwarded-For or X-Real-IP (TRUSTED_PROXIES, see
 	// ParseTrustedProxies); nil = no proxy is trusted.
@@ -487,6 +504,11 @@ func (c *Config) Validate() error {
 	}
 	if c.CORS.AllowsAllOrigins() && c.App.Environment == "production" {
 		slog.Warn("CORS_ALLOWED_ORIGINS allows every origin (\"*\") in production; set \"same-origin\" or a list of origins")
+	}
+
+	if qps := c.Deployment.K8sClientQPS; qps < 0 || math.IsNaN(qps) || math.IsInf(qps, 0) || c.Deployment.K8sClientBurst < 0 {
+		return fmt.Errorf("K8S_CLIENT_QPS and K8S_CLIENT_BURST must be finite numbers >= 0 (0 = default), got %v and %d",
+			c.Deployment.K8sClientQPS, c.Deployment.K8sClientBurst)
 	}
 
 	if c.Deployment.KubeconfigEncryptionKey == "" || len(c.Deployment.KubeconfigEncryptionKey) < 16 {
@@ -673,6 +695,10 @@ func (c *AuthConfig) Validate() error {
 }
 
 func (c *ServerConfig) Validate() error {
+	if c.pprofErr != nil {
+		return c.pprofErr
+	}
+
 	if c.Port == "" {
 		return errors.New("port is required")
 	}
@@ -713,7 +739,9 @@ func (c *DatabaseConfig) DSN() string {
 	b.WriteByte(')')
 	b.WriteByte('/')
 	b.WriteString(c.DBName)
-	b.WriteString("?charset=utf8mb4&parseTime=True&loc=UTC")
+	// interpolateParams: one round trip per query instead of prepare, execute
+	// and close (safe with utf8mb4).
+	b.WriteString("?charset=utf8mb4&parseTime=True&loc=UTC&interpolateParams=true")
 
 	if c.MaxOpenConns > 0 {
 		b.WriteString("&maxAllowedPacket=0") // Let server control packet size
@@ -827,7 +855,7 @@ func loadDatabaseConfig() DatabaseConfig {
 }
 
 func loadServerConfig() ServerConfig {
-	return ServerConfig{
+	c := ServerConfig{
 		Host:            getEnv("SERVER_HOST", ""),
 		Port:            getEnv("SERVER_PORT", "8081"),
 		ReadTimeout:     getEnvDuration("SERVER_READ_TIMEOUT", defaultReadTimeout),
@@ -840,6 +868,27 @@ func loadServerConfig() ServerConfig {
 		PprofEnabled:    getEnvBool("PPROF_ENABLED", false),
 		PprofAddr:       getEnv("PPROF_ADDR", "127.0.0.1:6060"),
 	}
+	if c.PprofEnabled {
+		var err1, err2 error
+		c.PprofMutexFraction, err1 = parseNonNegativeEnvInt("PPROF_MUTEX_FRACTION")
+		c.PprofBlockRate, err2 = parseNonNegativeEnvInt("PPROF_BLOCK_RATE")
+		c.pprofErr = errors.Join(err1, err2)
+	}
+	return c
+}
+
+// parseNonNegativeEnvInt reads an integer >= 0 from the environment. An
+// unset or empty variable gives 0.
+func parseNonNegativeEnvInt(key string) (int, error) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return 0, nil
+	}
+	v, err := strconv.Atoi(value)
+	if err != nil || v < 0 {
+		return 0, fmt.Errorf("%s %q must be a whole number >= 0", key, value)
+	}
+	return v, nil
 }
 
 func loadAuthConfig() AuthConfig {
@@ -910,6 +959,8 @@ func loadDeploymentConfig() DeploymentConfig {
 		KubeconfigEncryptionKey:     getEnv("KUBECONFIG_ENCRYPTION_KEY", ""),
 		DeploymentTimeout:           getEnvDuration("DEPLOYMENT_TIMEOUT", 10*time.Minute),
 		ClusterHealthPollInterval:   getEnvDuration("CLUSTER_HEALTH_POLL_INTERVAL", 60*time.Second),
+		K8sClientQPS:                getEnvFloat64("K8S_CLIENT_QPS", 50),
+		K8sClientBurst:              int(getEnvInt32("K8S_CLIENT_BURST", 100)),
 		StabilizeTimeout:            getEnvDuration("DEPLOY_STABILIZE_TIMEOUT", 5*time.Minute),
 		StabilizePollInterval:       getEnvDuration("DEPLOY_STABILIZE_POLL_INTERVAL", 5*time.Second),
 		MaxConcurrentDeploys:        getEnvInt32("MAX_CONCURRENT_DEPLOYS", 5),
