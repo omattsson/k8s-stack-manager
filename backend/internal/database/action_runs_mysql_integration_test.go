@@ -97,7 +97,9 @@ func TestDatabaseMySQL_ActionRuns(t *testing.T) {
 
 	t.Run("cursor paging on millisecond precision", func(t *testing.T) {
 		// Pairs of runs share a stored millisecond: the ID breaks the tie.
-		base := time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)
+		// Relative to now: a fixed date ages into the retention window of the
+		// retention subtest below, which then deletes these rows too.
+		base := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
 		for i := 0; i < 9; i++ {
 			require.NoError(t, repo.Create(ctx, &models.ActionRun{
 				ID:         fmt.Sprintf("page-%02d", i),

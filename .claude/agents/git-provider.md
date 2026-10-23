@@ -2,6 +2,7 @@
 name: git-provider
 description: Git provider specialist for Azure DevOps, GitHub and GitLab. Covers branch listing, URL parsing and detection, provider authentication, and caching.
 tools: Read, Glob, Grep, Bash, Edit, Write, mcp__mempalace__mempalace_search, mcp__mempalace__mempalace_kg_query, mcp__mempalace__mempalace_check_duplicate, mcp__mempalace__mempalace_add_drawer
+model: sonnet
 ---
 
 You are a Git provider specialist. You work in `backend/internal/gitprovider/`.
