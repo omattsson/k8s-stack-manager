@@ -1,4 +1,4 @@
-.PHONY: loadtest-stackctl gosec e2e-prepare test-e2e-isolated dev dev-otel dev-api-only compose-api-only seed dev-backend dev-frontend dev-local dev-local-backend dev-local-frontend prod prod-backend prod-frontend build clean prune test test-backend test-backend-integration test-backend-all test-frontend test-e2e integration-infra-start integration-infra-stop install docs fmt lint loadtest loadtest-start loadtest-start-backend loadtest-start-frontend loadtest-stop loadtest-stop-backend loadtest-stop-frontend loadtest-backend loadtest-backend-run loadtest-stress loadtest-stress-run loadtest-frontend loadtest-frontend-run loadtest-capture loadtest-k8s-config loadtest-start-replica loadtest-stop-replica loadtest-users loadtest-users-run loadtest-mysql-stats-reset loadtest-mysql-stats loadtest-full
+.PHONY: loadtest-stackctl gosec e2e-prepare test-e2e-isolated dev dev-otel dev-api-only compose-api-only seed dev-backend dev-frontend dev-local dev-local-backend dev-local-frontend prod prod-backend prod-frontend build clean prune test test-backend test-backend-integration test-backend-all test-frontend test-e2e integration-infra-start integration-infra-stop install docs fmt lint loadtest loadtest-start loadtest-start-backend loadtest-start-frontend loadtest-stop loadtest-stop-backend loadtest-stop-frontend loadtest-backend loadtest-backend-run loadtest-stress loadtest-stress-run loadtest-frontend loadtest-frontend-run loadtest-capture loadtest-k8s-config loadtest-start-replica loadtest-stop-replica loadtest-users loadtest-users-run loadtest-mysql-stats-reset loadtest-mysql-stats loadtest-full loadtest-ramp
 
 # Development mode for both services
 dev:
@@ -397,6 +397,7 @@ LOADTEST_ENV = \
 	AZURE_DEVOPS_PAT= GITHUB_TOKEN= GITLAB_TOKEN= \
 	PPROF_ENABLED=$${PPROF_ENABLED:-true} PPROF_ADDR=$${PPROF_ADDR:-127.0.0.1:6060} \
 	PPROF_MUTEX_FRACTION=$${PPROF_MUTEX_FRACTION:-5} PPROF_BLOCK_RATE=$${PPROF_BLOCK_RATE:-1000000} \
+	TRUSTED_PROXIES=$${TRUSTED_PROXIES:-127.0.0.1,::1} \
 	$(if $(filter 1 true yes,$(LOADTEST_FANOUT)),WS_FANOUT_ENABLED=true POD_NAME=loadtest-a) \
 	OTEL_TRACE_SAMPLE_RATE=$${OTEL_TRACE_SAMPLE_RATE:-0.05} \
 	RATE_LIMIT=$${RATE_LIMIT:-1000000} LOGIN_RATE_LIMIT=$${LOGIN_RATE_LIMIT:-1000000}
@@ -607,9 +608,20 @@ loadtest-full: ## One run: backend(s), MySQL stats, k6-users.js with capture, re
 	if [ -n "$$sc" ]; then wait $$sc; scrc=$$?; \
 		if [ $$scrc != 0 ]; then echo "stackctl workers failed (exit $$scrc), see $$dir/stackctl.log"; fi; sc=; fi; \
 	$(MAKE) loadtest-mysql-stats LOADTEST_STATS_DIR=$$dir || true; \
+	$(if $(LOADTEST_RAMP_REPORT),loadtest/ramp-report.sh $$dir/k6-summary.json $(RAMP_HOLD) $(RAMP_STEPS) > $$dir/ramp.md && cat $$dir/ramp.md || true;) \
 	$(if $(filter 1 true yes,$(LOADTEST_FANOUT)),$(MAKE) loadtest-stop-replica;) \
 	$(MAKE) loadtest-stop-backend; \
 	echo "Results: $$dir"; exit $$rc
+
+# Ramp: the user journey steps up through RAMP_STEPS VUs (rise RAMP_RISE s,
+# hold RAMP_HOLD s). No deploys, fanout or stackctl, so the steps compare.
+RAMP_STEPS ?= 50,100,200,300,400
+RAMP_HOLD ?= 60
+RAMP_RISE ?= 20
+
+loadtest-ramp: ## Step the user journey up through RAMP_STEPS VUs to find the limit; table in loadtest/results/<timestamp>/ramp.md
+	@$(MAKE) loadtest-full LOADTEST_K8S= LOADTEST_FANOUT= LOADTEST_STACKCTL= LOADTEST_RAMP_REPORT=1 \
+		LOADTEST_K6_EXTRA="$(LOADTEST_K6_EXTRA) --env SCENARIO=user-journey --env RAMP_STEPS=$(RAMP_STEPS) --env RAMP_HOLD=$(RAMP_HOLD) --env RAMP_RISE=$(RAMP_RISE)"
 
 loadtest-frontend: loadtest-start ## Run Playwright frontend load tests (starts/stops backend + frontend)
 	@$(MAKE) loadtest-frontend-run || ($(MAKE) loadtest-stop; exit 1)

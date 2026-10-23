@@ -19,6 +19,7 @@ The Makefile targets build the backend and run it as a local process, not in Doc
    - Release mode (`GIN_MODE=release`, `APP_DEBUG=false`): no debug log of each SQL statement.
    - `SERVER_HOST=127.0.0.1`: the backend is not reachable from other computers.
    - `RATE_LIMIT=1000000` and `LOGIN_RATE_LIMIT=1000000` (requests each minute for each IP address): all k6 users share one IP address, so the default limits give HTTP 429.
+   - `TRUSTED_PROXIES=127.0.0.1,::1`: the backend takes the client IP from `X-Forwarded-For` of local requests. Each virtual user of `k6-users.js` sends its own IP (`10.x.y.z`), so the per-IP rate limiter holds a short list for each client, as with real users. Requests without the header (the k6 setup, stackctl) count for the loopback address.
    - The MySQL container: `DB_HOST=127.0.0.1`, `DB_PORT=3306`, `DB_USER=root`, `DB_PASSWORD=rootpassword`, `DB_NAME=app`.
    - No kubeconfig (`KUBECONFIG`, `KUBECONFIG_PATH` and `IN_CLUSTER_FALLBACK_KUBECONFIG` are empty) and no git provider token. The backend reaches no cluster and no git host.
    - pprof on `127.0.0.1:6060` (`PPROF_ENABLED=true`).
@@ -59,6 +60,9 @@ Note: `make seed` calls the API, so a backend must run. For example, run it afte
 | `STACKCTL_WORKERS` | `10` | Number of stackctl workers. |
 | `STACKCTL_DURATION` | `330` | Run time of the stackctl workers in seconds. |
 | `RATE_LIMIT`, `LOGIN_RATE_LIMIT` | `1000000` | Rate limits (requests each minute for each IP address). |
+| `TRUSTED_PROXIES` | `127.0.0.1,::1` | Proxies whose `X-Forwarded-For` the backend accepts. |
+| `RAMP_STEPS` | `50,100,200,300,400` | `loadtest-ramp`: rising virtual-user counts of the user journey. |
+| `RAMP_HOLD`, `RAMP_RISE` | `60`, `20` | `loadtest-ramp`: seconds each step holds and rises. |
 
 Example: a backend on port 18081 with a MySQL server on port 3307:
 
@@ -250,6 +254,7 @@ Select one with `SCENARIO`. The default runs all scenarios that the environment 
 | `K8S_KUBECONFIG_PATH` | Absolute path of the kubeconfig (set with `LOADTEST_K8S=1`). |
 | `DEPLOY_CHART_PATH` | Absolute path of the chart to deploy (set with `LOADTEST_K8S=1`). |
 | `DEPLOY_VUS`, `DEPLOY_ITERATIONS` | Virtual users and iterations of `deploy-path`. |
+| `RAMP_STEPS`, `RAMP_HOLD`, `RAMP_RISE` | Ramp mode of `user-journey` (see "Find the limit"). `USERS` is then the last step. |
 
 The Makefile passes `API_URL`, `API_URL_2`, `K8S_KUBECONFIG_PATH` and `DEPLOY_CHART_PATH`. k6 reads the other variables from your shell:
 
@@ -331,6 +336,29 @@ The target does these steps:
 6. It stops the backends. It keeps MySQL.
 
 All results go to `loadtest/results/<timestamp>/`: the CSV of RSS and CPU, `profiles/`, `k6-summary.json`, `stackctl-summary.md`, `mysql-digests.md` and `mysql-status.tsv`. The exit code is the code of k6.
+
+### Find the limit: make loadtest-ramp
+
+```bash
+make loadtest-ramp                                   # 50, 100, 200, 300, 400 VUs, 60 s each
+make loadtest-ramp RAMP_STEPS=100,200,400,600,800 RAMP_HOLD=90
+```
+
+The target runs `loadtest-full` with only the `user-journey` scenario (no deploys, no fan-out, no stackctl workers), so the steps compare. The user journey rises to each step in `RAMP_RISE` seconds and holds it for `RAMP_HOLD` seconds. Each group of the journey (home, create, stack page, edit, notifications) takes the tag `step=<VUs>` of the hold that runs when the group starts, and each step gets its own thresholds. Groups that start during a rise or the ramp down are not in a step. `RAMP_STEPS` needs `SCENARIO=user-journey` (the target sets it).
+
+At the end, `ramp.md` in the results folder has one row for each step:
+
+| Column | Meaning |
+|---|---|
+| `req/s` | Requests tagged with the step / `RAMP_HOLD` (an estimate: a group can end after the hold). |
+| `p50 ms` to `max ms` | `http_req_duration` of the user journey in the step. |
+| `page load p95 ms` | The stack page (all its requests) in the step. |
+| `errors` | Share of failed checks in the step. |
+| `result` | `pass`: p95 < 500 ms, p99 < 1000 ms, page load p95 < 1000 ms and errors < 1 %. A step without data is `FAIL`. |
+
+The limit is the last step that passes. Signs of the limit: `req/s` stops rising with the VU count while the latency rises. Then read the profiles and the MySQL report of the same folder (see "Find the bottleneck"). The capture CSV shows the CPU of the backend over time; the steps follow each other after the k6 setup.
+
+The top steps are expected to fail, so k6 exits with code 99. The laptop runs k6, the backend and MySQL together: when k6 itself uses most of a CPU core, the limit is the laptop, not the backend. Check with `top` during the run.
 
 ### stackctl workers
 
@@ -430,6 +458,7 @@ make loadtest-users            # Start the backend (and replica), run the k6 use
 make loadtest-stackctl         # Run the stackctl workers against the running backend
 make loadtest-stop-replica     # Stop the second backend
 make loadtest-full             # One run with capture and MySQL report (see above)
+make loadtest-ramp             # Step the user journey up through RAMP_STEPS VUs; table in ramp.md
 make loadtest-k8s-config       # Write the single-context kubeconfig of the local cluster
 make loadtest-start-replica    # Start a second backend (LOADTEST_FANOUT=1)
 make loadtest-mysql-stats-reset # Reset the MySQL statement statistics

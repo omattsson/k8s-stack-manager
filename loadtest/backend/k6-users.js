@@ -37,11 +37,24 @@
 //   DEPLOY_CHART_PATH   - Absolute path of a small local Helm chart (required with K8S_KUBECONFIG_PATH)
 //   DEPLOY_VUS          - VUs of deploy-path (default: 10)
 //   DEPLOY_ITERATIONS   - Deploy cycles per VU (default: 3)
+//   RAMP_STEPS          - Ramp mode: comma-separated, rising VU counts of
+//                         user-journey (for example 50,100,200). Each step
+//                         rises for RAMP_RISE seconds and holds for RAMP_HOLD
+//                         seconds. Requests in a hold get the tag step=<VUs>,
+//                         and each step gets its own thresholds. USERS is
+//                         then the last step.
+//   RAMP_HOLD           - Seconds each step holds (default: 60)
+//   RAMP_RISE           - Seconds each step rises (default: 20)
+//
+// Each VU sends from its own IP (X-Forwarded-For), so the per-IP rate limiter
+// sees many clients. The backend must trust the k6 host as a proxy
+// (TRUSTED_PROXIES; the Makefile sets 127.0.0.1 and ::1).
 
 import http from 'k6/http';
 import ws from 'k6/ws';
 import { check, group, sleep } from 'k6';
 import { Rate, Trend, Counter } from 'k6/metrics';
+import exec from 'k6/execution';
 import { ensureDefaultCluster } from './lib/cluster.js';
 import {
   adminLogin, createUsers, deleteUsers, newRunId, pickUser, rolePlan, usersOfGroup,
@@ -63,7 +76,21 @@ function intEnv(name, def) {
   return n;
 }
 
-const USERS = intEnv('USERS', 40);
+function rampSteps(raw) {
+  if (!raw) return [];
+  const steps = raw.split(',').map((part) => Number(part.trim()));
+  steps.forEach((n, i) => {
+    if (!Number.isInteger(n) || n < 1 || (i > 0 && n <= steps[i - 1])) {
+      throw new Error(`RAMP_STEPS must be rising positive integers (got "${raw}")`);
+    }
+  });
+  return steps;
+}
+
+const RAMP_STEPS = rampSteps(__ENV.RAMP_STEPS);
+const RAMP_HOLD = intEnv('RAMP_HOLD', 60);
+const RAMP_RISE = intEnv('RAMP_RISE', 20);
+const USERS = RAMP_STEPS.length ? RAMP_STEPS[RAMP_STEPS.length - 1] : intEnv('USERS', 40);
 const USER_MIX = __ENV.USER_MIX || '30:8:2';
 const DEPLOY_VUS = intEnv('DEPLOY_VUS', 10);
 const DEPLOY_ITERATIONS = intEnv('DEPLOY_ITERATIONS', 3);
@@ -109,6 +136,11 @@ if (SELECTED !== '' && !AVAILABLE[SELECTED]) {
 }
 function isEnabled(name) {
   return AVAILABLE[name] && (SELECTED === '' || SELECTED === name);
+}
+
+// The ramp thresholds cover user-journey only.
+if (RAMP_STEPS.length && SELECTED !== 'user-journey') {
+  throw new Error('RAMP_STEPS needs SCENARIO=user-journey');
 }
 
 if (isEnabled('deploy-path') && DEPLOY_MIX.split(':').every((w) => Number(w) === 0)) {
@@ -168,11 +200,19 @@ if (isEnabled('user-journey')) {
   scenarios['user-journey'] = {
     executor: 'ramping-vus',
     startVUs: 0,
-    stages: [
-      { duration: '1m', target: USERS },
-      { duration: '4m', target: USERS },
-      { duration: '30s', target: 0 },
-    ],
+    stages: RAMP_STEPS.length
+      ? [
+        ...RAMP_STEPS.flatMap((target) => [
+          { duration: `${RAMP_RISE}s`, target },
+          { duration: `${RAMP_HOLD}s`, target },
+        ]),
+        { duration: '30s', target: 0 },
+      ]
+      : [
+        { duration: '1m', target: USERS },
+        { duration: '4m', target: USERS },
+        { duration: '30s', target: 0 },
+      ],
     gracefulRampDown: '30s',
     exec: 'userJourney',
     tags: { scenario: 'user-journey' },
@@ -200,10 +240,23 @@ if (isEnabled('fanout')) {
 }
 
 const thresholds = {
-  errors: ['rate<0.05'],
   auth_failure_rate: ['rate<0.001'],
 };
-if (isEnabled('user-journey')) {
+if (RAMP_STEPS.length) {
+  // One set for each step; the summary then shows each step. The top steps
+  // are expected to fail: the first failing step is the limit.
+  for (const step of RAMP_STEPS) {
+    Object.assign(thresholds, {
+      [`http_req_duration{scenario:user-journey,step:${step}}`]: ['p(95)<500', 'p(99)<1000'],
+      [`journey_stack_page_load{step:${step}}`]: ['p(95)<1000'],
+      [`errors{step:${step}}`]: ['rate<0.01'],
+      [`http_reqs{scenario:user-journey,step:${step}}`]: ['count>0'],
+    });
+  }
+} else {
+  thresholds.errors = ['rate<0.05'];
+}
+if (isEnabled('user-journey') && !RAMP_STEPS.length) {
   Object.assign(thresholds, {
     'http_req_duration{scenario:user-journey}': ['p(95)<500', 'p(99)<1000'],
     journey_list_duration: ['p(95)<450'],
@@ -234,6 +287,7 @@ if (isEnabled('fanout')) {
 export const options = {
   scenarios,
   thresholds,
+  summaryTrendStats: ['avg', 'min', 'med', 'max', 'p(90)', 'p(95)', 'p(99)'],
   setupTimeout: '10m',
   teardownTimeout: '15m',
 };
@@ -245,8 +299,15 @@ function traceparent() {
   return `00-${hex(32)}-${hex(16)}-01`;
 }
 
+// vuIP is the client IP of this VU (X-Forwarded-For): 10.x.y.z from __VU.
+function vuIP() {
+  return `10.${(__VU >> 16) & 255}.${(__VU >> 8) & 255}.${__VU & 255}`;
+}
+
 function keyHeaders(apiKey) {
-  return { 'Content-Type': 'application/json', 'X-API-Key': apiKey, traceparent: traceparent() };
+  return {
+    'Content-Type': 'application/json', 'X-API-Key': apiKey, 'X-Forwarded-For': vuIP(), traceparent: traceparent(),
+  };
 }
 
 function jwtHeaders(token) {
@@ -603,7 +664,25 @@ function stackPage(key, id) {
   journeyStackPageLoad.add(Date.now() - start);
 }
 
+// rampStep is the VU count of the step that holds now, or 'rise' during a
+// rise and the ramp down.
+function rampStep() {
+  const elapsed = (Date.now() - exec.scenario.startTime) / 1000;
+  const period = RAMP_RISE + RAMP_HOLD;
+  const i = Math.floor(elapsed / period);
+  if (i >= RAMP_STEPS.length || elapsed - i * period < RAMP_RISE) return 'rise';
+  return String(RAMP_STEPS[i]);
+}
+
+// journeyGroup is group() that first tags the requests with the step that
+// holds now, so a long iteration does not carry an old step.
+function journeyGroup(name, fn) {
+  if (RAMP_STEPS.length) exec.vu.metrics.tags.step = rampStep();
+  return group(name, fn);
+}
+
 export function userJourney(data) {
+  if (RAMP_STEPS.length) exec.vu.metrics.tags.step = rampStep();
   const user = pickUser(data.groups.j, __VU);
   if (!user || !data.journey) {
     sleep(1);
@@ -613,7 +692,7 @@ export function userJourney(data) {
   const j = data.journey;
   const start = Date.now();
 
-  group('Home', () => {
+  journeyGroup('Home', () => {
     apiBatch(key, [
       ['GET', `${BASE_URL}/api/v1/stack-instances?owner=me&page=1&pageSize=25`, null, 'GET /stack-instances?owner=me', [200]],
       ['GET', `${BASE_URL}/api/v1/stack-instances/recent`, null, 'GET /stack-instances/recent', [200]],
@@ -630,7 +709,7 @@ export function userJourney(data) {
   }
 
   let inst = null;
-  group('Create Instance', () => {
+  journeyGroup('Create Instance', () => {
     inst = createInstance(BASE_URL, key, {
       stack_definition_id: j.definitionId,
       name: `${prefix}${__ITER}`,
@@ -646,10 +725,10 @@ export function userJourney(data) {
   const url = `${BASE_URL}/api/v1/stack-instances/${inst.id}`;
 
   try {
-    group('Stack Page', () => stackPage(key, inst.id));
+    journeyGroup('Stack Page', () => stackPage(key, inst.id));
     think(0.5, 1.5);
 
-    group('Edit Instance', () => {
+    journeyGroup('Edit Instance', () => {
       api('PUT', `${url}/overrides/${j.chartId}`, { values: `replicaCount: 2\nimage:\n  tag: k6-${__ITER}` }, key,
         'PUT /stack-instances/:id/overrides/:chartId', [200], journeyWrite);
       api('PUT', `${url}/branches/${j.chartId}`, { branch: `feature/k6-${__VU}` }, key,
@@ -660,7 +739,7 @@ export function userJourney(data) {
     });
     think(0.5, 1.5);
 
-    group('Notifications', () => {
+    journeyGroup('Notifications', () => {
       const list = api('GET', `${BASE_URL}/api/v1/notifications?unread_only=true&limit=20&offset=0`, null, key,
         'GET /notifications', [200], journeyNotifications);
       const unread = (list.status === 200 && json(list, 'notifications')) || [];
@@ -675,7 +754,7 @@ export function userJourney(data) {
     });
 
     if (user.role === 'devops' || user.role === 'admin') {
-      group('Analytics', () => {
+      journeyGroup('Analytics', () => {
         const requests = [
           ['GET', `${BASE_URL}/api/v1/analytics/overview`, null, 'GET /analytics/overview', [200]],
           ['GET', `${BASE_URL}/api/v1/analytics/templates`, null, 'GET /analytics/templates', [200]],
@@ -856,7 +935,7 @@ export function fanoutTest(data) {
   const connectStart = Date.now();
 
   const res = ws.connect(wsUrl, {
-    headers: { 'X-API-Key': key, traceparent: traceparent() },
+    headers: { 'X-API-Key': key, 'X-Forwarded-For': vuIP(), traceparent: traceparent() },
     tags: { name: 'GET /ws (replica 2)' },
   }, (socket) => {
     socket.on('open', () => {
