@@ -327,7 +327,7 @@ backend/
 - The idle limit (`SESSION_IDLE_TIMEOUT`, default 30m) counts from the last authenticated request. The JWT middleware touches the `last_activity` of the family, at most once per minute.
 - `SESSION_MAX_LIFETIME` (default 12h) caps a session. Rotation never extends it.
 - Exceptions: the SSO CLI token has no session and lives for `JWT_EXPIRATION`. API keys have no session. `/ws` traffic is not activity.
-- `/auth/logout` blocklists the `jti` of the current access token in `sessionstore` and revokes the presented refresh token. `/auth/logout-all` also revokes every refresh token of the user.
+- `/auth/logout` blocklists the `jti` of the current access token in `sessionstore` and revokes the session family of the presented refresh token (`RevokeFamily`), so the active successor of a rotated token is revoked too (#673). A failed lookup or revoke still clears the cookie, blocks the `jti` and closes the sockets, but answers 500; an unknown token answers 200. `/auth/logout-all` also revokes every refresh token of the user.
 - JWT auth checks `IsTokenBlocked` and `IsUserBlocked(ctx, userID, issueTime)`.
   - A user block rejects only tokens issued at or before the block time (401).
   - The precision is one millisecond. Access tokens carry `iat_ms`. The block time is stored in ms. A legacy token without `iat_ms` keeps the rule "same second or before".

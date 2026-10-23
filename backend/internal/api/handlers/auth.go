@@ -910,12 +910,13 @@ func authProviderOf(user *models.User) string {
 
 // Logout godoc
 // @Summary     Logout
-// @Description Revokes the current refresh token and blocklists the access token
+// @Description Revokes the session of the refresh token cookie (all refresh tokens of its family), blocklists the access token and closes its WebSockets. When the refresh token lookup or the revoke fails, the cookie is still cleared and the access token blocked, but the answer is 500.
 // @Tags        auth
 // @Accept      json
 // @Produce     json
 // @Success     200 {object} map[string]string
 // @Failure     401 {object} map[string]string
+// @Failure     500 {object} map[string]string
 // @Router      /api/v1/auth/logout [post]
 func (h *AuthHandler) Logout(c *gin.Context) {
 	// Detached: a client that leaves is still logged out (#656).
@@ -945,23 +946,32 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 		}
 	}
 
-	// Revoke the refresh token if present.
+	// Revoke the whole session of the refresh token: a rotated token can
+	// have an active successor (#673). A failure still clears the cookie but
+	// answers 500, because the session can stay valid on the server.
+	revokeFailed := false
 	if h.refreshTokenRepo != nil {
 		if rawToken, err := c.Cookie(refreshTokenCookieName); err == nil && rawToken != "" {
 			tokenHash := hashRefreshToken(rawToken)
 			stored, err := h.refreshTokenRepo.FindByTokenHash(ctx, tokenHash)
 			switch {
 			case err == nil:
-				if revokeErr := h.refreshTokenRepo.RevokeByID(ctx, stored.ID); revokeErr != nil {
-					slog.Error("Failed to revoke refresh token on logout", "user_id", stored.UserID, "error", revokeErr)
+				if revokeErr := h.refreshTokenRepo.RevokeFamily(ctx, stored.SessionFamily()); revokeErr != nil {
+					slog.Error("Failed to revoke the refresh session on logout", "user_id", stored.UserID, "error", revokeErr)
+					revokeFailed = true
 				}
 			case !isNotFoundError(err):
 				slog.Error("Failed to look up refresh token on logout", "error", err)
+				revokeFailed = true
 			}
 		}
 	}
 
 	h.clearRefreshCookie(c)
+	if revokeFailed {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"message": "Logged out successfully"})
 }
 

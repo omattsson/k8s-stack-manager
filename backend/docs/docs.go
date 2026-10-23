@@ -1453,7 +1453,7 @@ const docTemplate = `{
         },
         "/api/v1/auth/logout": {
             "post": {
-                "description": "Revokes the current refresh token and blocklists the access token",
+                "description": "Revokes the session of the refresh token cookie (all refresh tokens of its family), blocklists the access token and closes its WebSockets. When the refresh token lookup or the revoke fails, the cookie is still cleared and the access token blocked, but the answer is 500.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1476,6 +1476,15 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
