@@ -118,7 +118,7 @@ func (h *TemplateVersionHandler) ListVersions(c *gin.Context) {
 	}
 
 	// Verify template exists.
-	if _, err := h.templateRepo.FindByID(id); err != nil {
+	if _, err := h.templateRepo.FindByID(c.Request.Context(), id); err != nil {
 		status, message := mapError(err, entityTemplate)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -353,7 +353,7 @@ func (h *TemplateVersionHandler) diffSide(c *gin.Context, templateID, versionID 
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Working copy comparison is not available"})
 			return nil, false
 		}
-		tmpl, err := h.templateRepo.FindByID(templateID)
+		tmpl, err := h.templateRepo.FindByID(c.Request.Context(), templateID)
 		if err != nil {
 			status, message := mapError(err, entityTemplate)
 			c.JSON(status, gin.H{"error": message})
@@ -364,7 +364,7 @@ func (h *TemplateVersionHandler) diffSide(c *gin.Context, templateID, versionID 
 			c.JSON(http.StatusForbidden, gin.H{"error": "Only the template owner or an admin can see the working copy"})
 			return nil, false
 		}
-		charts, err := h.chartRepo.ListByTemplate(templateID)
+		charts, err := h.chartRepo.ListByTemplate(c.Request.Context(), templateID)
 		if err != nil {
 			status, message := mapError(err, entityTemplateCharts)
 			c.JSON(status, gin.H{"error": message})

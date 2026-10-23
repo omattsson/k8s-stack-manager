@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -46,7 +47,7 @@ func seedTemplateChart(t *testing.T, repo *MockTemplateChartConfigRepository, id
 		ChartName:       chartName,
 		CreatedAt:       time.Now().UTC(),
 	}
-	require.NoError(t, repo.Create(tc))
+	require.NoError(t, repo.Create(context.Background(), tc))
 	return tc
 }
 
@@ -68,7 +69,7 @@ func TestAddTemplateChart(t *testing.T) {
 			templateID: "tmpl-1",
 			body:       `{"chart_name":"nginx","repository_url":"https://charts.example.com"}`,
 			setupTemplate: func(repo *MockStackTemplateRepository) {
-				repo.Create(&models.StackTemplate{
+				repo.Create(context.Background(), &models.StackTemplate{
 					ID: "tmpl-1", Name: "My Template", Category: "Full Stack",
 					Version: "1.0.0", OwnerID: "uid-1",
 					CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
@@ -95,7 +96,7 @@ func TestAddTemplateChart(t *testing.T) {
 			templateID: "tmpl-1",
 			body:       `{not valid json}`,
 			setupTemplate: func(repo *MockStackTemplateRepository) {
-				repo.Create(&models.StackTemplate{
+				repo.Create(context.Background(), &models.StackTemplate{
 					ID: "tmpl-1", Name: "My Template", Category: "Full Stack",
 					Version: "1.0.0", OwnerID: "uid-1",
 					CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
@@ -108,7 +109,7 @@ func TestAddTemplateChart(t *testing.T) {
 			templateID: "tmpl-1",
 			body:       `{"repository_url":"https://charts.example.com"}`,
 			setupTemplate: func(repo *MockStackTemplateRepository) {
-				repo.Create(&models.StackTemplate{
+				repo.Create(context.Background(), &models.StackTemplate{
 					ID: "tmpl-1", Name: "My Template", Category: "Full Stack",
 					Version: "1.0.0", OwnerID: "uid-1",
 					CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
@@ -160,7 +161,7 @@ func TestUpdateTemplateChart(t *testing.T) {
 			chartID: "tc-1",
 			body:    `{"chart_name":"updated-nginx","repository_url":"https://charts.example.com","required":true}`,
 			setupChart: func(repo *MockTemplateChartConfigRepository) {
-				repo.Create(&models.TemplateChartConfig{
+				repo.Create(context.Background(), &models.TemplateChartConfig{
 					ID: "tc-1", StackTemplateID: "tmpl-1",
 					ChartName: "nginx", CreatedAt: time.Now().UTC(),
 				})
@@ -185,7 +186,7 @@ func TestUpdateTemplateChart(t *testing.T) {
 			chartID: "tc-1",
 			body:    `{not valid json}`,
 			setupChart: func(repo *MockTemplateChartConfigRepository) {
-				repo.Create(&models.TemplateChartConfig{
+				repo.Create(context.Background(), &models.TemplateChartConfig{
 					ID: "tc-1", StackTemplateID: "tmpl-1",
 					ChartName: "nginx", CreatedAt: time.Now().UTC(),
 				})

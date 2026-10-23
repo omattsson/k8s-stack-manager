@@ -272,8 +272,8 @@ func TestGetOverview(t *testing.T) {
 				logRepo *mockDeployLogRepo,
 				userRepo *MockUserRepository,
 			) {
-				_ = tmplRepo.Create(&models.StackTemplate{ID: "t1", Name: "Template 1"})
-				_ = tmplRepo.Create(&models.StackTemplate{ID: "t2", Name: "Template 2"})
+				_ = tmplRepo.Create(context.Background(), &models.StackTemplate{ID: "t1", Name: "Template 1"})
+				_ = tmplRepo.Create(context.Background(), &models.StackTemplate{ID: "t2", Name: "Template 2"})
 				_ = defRepo.Create(context.Background(), &models.StackDefinition{ID: "d1", SourceTemplateID: "t1"})
 				_ = instRepo.Create(context.Background(), &models.StackInstance{ID: "i1", StackDefinitionID: "d1", OwnerID: "u1", Status: "running"})
 				_ = instRepo.Create(context.Background(), &models.StackInstance{ID: "i2", StackDefinitionID: "d1", OwnerID: "u2", Status: "stopped"})
@@ -355,8 +355,8 @@ func TestGetTemplateStats(t *testing.T) {
 				logRepo *mockDeployLogRepo,
 				_ *MockUserRepository,
 			) {
-				_ = tmplRepo.Create(&models.StackTemplate{ID: "t1", Name: "Web Stack", Category: "Full Stack", IsPublished: true})
-				_ = tmplRepo.Create(&models.StackTemplate{ID: "t2", Name: "Empty Template", Category: "Other", IsPublished: false})
+				_ = tmplRepo.Create(context.Background(), &models.StackTemplate{ID: "t1", Name: "Web Stack", Category: "Full Stack", IsPublished: true})
+				_ = tmplRepo.Create(context.Background(), &models.StackTemplate{ID: "t2", Name: "Empty Template", Category: "Other", IsPublished: false})
 				_ = defRepo.Create(context.Background(), &models.StackDefinition{ID: "d1", SourceTemplateID: "t1"})
 				_ = defRepo.Create(context.Background(), &models.StackDefinition{ID: "d2", SourceTemplateID: "t1"})
 				_ = defRepo.Create(context.Background(), &models.StackDefinition{ID: "d3"}) // standalone, no template

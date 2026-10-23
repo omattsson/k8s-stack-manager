@@ -28,8 +28,8 @@ type defCtxFixture struct {
 	hooks     *hookInstanceRepo
 	def       *hookDefinitionRepo
 	defCharts *hookChartConfigRepo
-	templates *MockStackTemplateRepository
-	charts    *MockTemplateChartConfigRepository
+	templates *hookTemplateRepo
+	charts    *hookTemplateChartRepo
 	versions  *MockTemplateVersionRepository
 	audit     *MockAuditLogRepository
 	router    *gin.Engine
@@ -43,12 +43,12 @@ func newDefCtxFixture(t *testing.T) *defCtxFixture {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	f := &defCtxFixture{
-		hooks:     newHookInstanceRepo(),
-		templates: NewMockStackTemplateRepository(),
-		charts:    NewMockTemplateChartConfigRepository(),
-		versions:  NewMockTemplateVersionRepository(),
-		audit:     NewMockAuditLogRepository(),
+		hooks:    newHookInstanceRepo(),
+		versions: NewMockTemplateVersionRepository(),
+		audit:    NewMockAuditLogRepository(),
 	}
+	f.templates = newHookTemplateRepo(f.hooks)
+	f.charts = newHookTemplateChartRepo(f.hooks)
 	f.def = &hookDefinitionRepo{MockStackDefinitionRepository: NewMockStackDefinitionRepository(), hooks: f.hooks}
 	f.defCharts = newHookChartConfigRepo(f.hooks)
 	versions := ctxTemplateVersionRepo{f.versions}
@@ -68,11 +68,21 @@ func newDefCtxFixture(t *testing.T) *defCtxFixture {
 	r := gin.New()
 	r.Use(injectAuthContext("uid-dev", "devops"), middleware.NewAuditMiddleware(f.audit))
 	tpl := r.Group("/api/v1/templates")
+	tpl.GET("", th.ListTemplates)
+	tpl.POST("", th.CreateTemplate)
+	tpl.GET("/:id", th.GetTemplate)
 	tpl.PUT("/:id", th.UpdateTemplate)
 	tpl.DELETE("/:id", th.DeleteTemplate)
 	tpl.POST("/:id/publish", th.PublishTemplate)
+	tpl.POST("/:id/unpublish", th.UnpublishTemplate)
+	tpl.POST("/:id/clone", th.CloneTemplate)
 	tpl.POST("/:id/instantiate", th.InstantiateTemplate)
+	tpl.POST("/:id/charts", th.AddTemplateChart)
+	tpl.PUT("/:id/charts/:chartId", th.UpdateTemplateChart)
+	tpl.DELETE("/:id/charts/:chartId", th.DeleteTemplateChart)
 	tpl.POST("/bulk/delete", th.BulkDeleteTemplates)
+	tpl.POST("/bulk/publish", th.BulkPublishTemplates)
+	tpl.POST("/bulk/unpublish", th.BulkUnpublishTemplates)
 	defs := r.Group("/api/v1/stack-definitions")
 	defs.GET("", dh.ListDefinitions)
 	defs.POST("", dh.CreateDefinition)
@@ -91,17 +101,17 @@ func newDefCtxFixture(t *testing.T) *defCtxFixture {
 	f.router = r
 
 	now := time.Now().UTC()
-	require.NoError(t, f.templates.Create(&models.StackTemplate{
+	require.NoError(t, f.templates.Create(context.Background(), &models.StackTemplate{
 		ID: "t1", Name: "Web stack", Version: "1.0.0", OwnerID: "uid-dev", DefaultBranch: "main", CreatedAt: now, UpdatedAt: now,
 	}))
-	require.NoError(t, f.charts.Create(&models.TemplateChartConfig{
+	require.NoError(t, f.charts.Create(context.Background(), &models.TemplateChartConfig{
 		ID: "tc-web", StackTemplateID: "t1", ChartName: "web", RepositoryURL: "oci://charts/web",
 		ChartVersion: "1.0.0", DefaultValues: "replicas: 1", Required: true, DeployOrder: 1, CreatedAt: now,
 	}))
 	f.mustServe(t, http.MethodPost, "/api/v1/templates/t1/publish", `{}`, http.StatusOK)
 	f.mustServe(t, http.MethodPut, "/api/v1/templates/t1", `{"version":"1.1.0"}`, http.StatusOK)
 	f.mustServe(t, http.MethodPost, "/api/v1/templates/t1/publish", `{}`, http.StatusOK)
-	require.NoError(t, f.templates.Create(&models.StackTemplate{
+	require.NoError(t, f.templates.Create(context.Background(), &models.StackTemplate{
 		ID: "t3", Name: "Unused", Version: "0.1.0", OwnerID: "uid-dev", CreatedAt: now, UpdatedAt: now,
 	}))
 	for _, d := range []*models.StackDefinition{
@@ -509,7 +519,7 @@ func chartKept(id string) func(t *testing.T, f *defCtxFixture, w *httptest.Respo
 
 func templateKept(id string) func(t *testing.T, f *defCtxFixture, w *httptest.ResponseRecorder) {
 	return func(t *testing.T, f *defCtxFixture, _ *httptest.ResponseRecorder) {
-		_, err := f.templates.FindByID(id)
+		_, err := f.templates.FindByID(context.Background(), id)
 		assert.NoError(t, err, "the template is kept")
 	}
 }
@@ -646,7 +656,7 @@ func TestQuickDeploy_DefinitionContext(t *testing.T) {
 			logRepo := NewMockDeploymentLogRepository()
 			audit := NewMockAuditLogRepository()
 			seedTemplate(t, tmplRepo, "t1", "My Template", "owner-1", true)
-			require.NoError(t, tmplChartRepo.Create(&models.TemplateChartConfig{
+			require.NoError(t, tmplChartRepo.Create(context.Background(), &models.TemplateChartConfig{
 				ID: "tc1", StackTemplateID: "t1", ChartName: "nginx", RepositoryURL: "oci://example.com/charts/nginx", DeployOrder: 1,
 			}))
 			mgr := newTestManager(instRepo, logRepo)

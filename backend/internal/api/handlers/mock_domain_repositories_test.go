@@ -388,7 +388,10 @@ func NewMockStackTemplateRepository() *MockStackTemplateRepository {
 	return &MockStackTemplateRepository{items: make(map[string]*models.StackTemplate)}
 }
 
-func (m *MockStackTemplateRepository) Create(t *models.StackTemplate) error {
+func (m *MockStackTemplateRepository) Create(ctx context.Context, t *models.StackTemplate) error {
+	if err := ctxDone(ctx, "create"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -398,7 +401,10 @@ func (m *MockStackTemplateRepository) Create(t *models.StackTemplate) error {
 	return nil
 }
 
-func (m *MockStackTemplateRepository) FindByID(id string) (*models.StackTemplate, error) {
+func (m *MockStackTemplateRepository) FindByID(ctx context.Context, id string) (*models.StackTemplate, error) {
+	if err := ctxDone(ctx, "find_by_id"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.fetchErr != nil {
@@ -412,11 +418,17 @@ func (m *MockStackTemplateRepository) FindByID(id string) (*models.StackTemplate
 	return &cp, nil
 }
 
-func (m *MockStackTemplateRepository) FindByIDForUpdate(id string) (*models.StackTemplate, error) {
-	return m.FindByID(id)
+func (m *MockStackTemplateRepository) FindByIDForUpdate(ctx context.Context, id string) (*models.StackTemplate, error) {
+	if err := ctxDone(ctx, "find_by_id_for_update"); err != nil {
+		return nil, err
+	}
+	return m.FindByID(ctx, id)
 }
 
-func (m *MockStackTemplateRepository) Update(t *models.StackTemplate) error {
+func (m *MockStackTemplateRepository) Update(ctx context.Context, t *models.StackTemplate) error {
+	if err := ctxDone(ctx, "update"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -429,7 +441,10 @@ func (m *MockStackTemplateRepository) Update(t *models.StackTemplate) error {
 	return nil
 }
 
-func (m *MockStackTemplateRepository) Delete(id string) error {
+func (m *MockStackTemplateRepository) Delete(ctx context.Context, id string) error {
+	if err := ctxDone(ctx, "delete"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -442,7 +457,10 @@ func (m *MockStackTemplateRepository) Delete(id string) error {
 	return nil
 }
 
-func (m *MockStackTemplateRepository) List() ([]models.StackTemplate, error) {
+func (m *MockStackTemplateRepository) List(ctx context.Context) ([]models.StackTemplate, error) {
+	if err := ctxDone(ctx, "list"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -455,7 +473,10 @@ func (m *MockStackTemplateRepository) List() ([]models.StackTemplate, error) {
 	return out, nil
 }
 
-func (m *MockStackTemplateRepository) ListPaged(limit, offset int, name string) ([]models.StackTemplate, int64, error) {
+func (m *MockStackTemplateRepository) ListPaged(ctx context.Context, limit, offset int, name string) ([]models.StackTemplate, int64, error) {
+	if err := ctxDone(ctx, "list_paged"); err != nil {
+		return nil, 0, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -478,7 +499,10 @@ func (m *MockStackTemplateRepository) ListPaged(limit, offset int, name string) 
 	return all, total, nil
 }
 
-func (m *MockStackTemplateRepository) ListPublishedPaged(limit, offset int, name string) ([]models.StackTemplate, int64, error) {
+func (m *MockStackTemplateRepository) ListPublishedPaged(ctx context.Context, limit, offset int, name string) ([]models.StackTemplate, int64, error) {
+	if err := ctxDone(ctx, "list_published_paged"); err != nil {
+		return nil, 0, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -501,7 +525,10 @@ func (m *MockStackTemplateRepository) ListPublishedPaged(limit, offset int, name
 	return all, total, nil
 }
 
-func (m *MockStackTemplateRepository) ListPublished() ([]models.StackTemplate, error) {
+func (m *MockStackTemplateRepository) ListPublished(ctx context.Context) ([]models.StackTemplate, error) {
+	if err := ctxDone(ctx, "list_published"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -516,7 +543,10 @@ func (m *MockStackTemplateRepository) ListPublished() ([]models.StackTemplate, e
 	return out, nil
 }
 
-func (m *MockStackTemplateRepository) ListByOwner(ownerID string) ([]models.StackTemplate, error) {
+func (m *MockStackTemplateRepository) ListByOwner(ctx context.Context, ownerID string) ([]models.StackTemplate, error) {
+	if err := ctxDone(ctx, "list_by_owner"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	var out []models.StackTemplate
@@ -528,7 +558,10 @@ func (m *MockStackTemplateRepository) ListByOwner(ownerID string) ([]models.Stac
 	return out, nil
 }
 
-func (m *MockStackTemplateRepository) Count() (int64, error) {
+func (m *MockStackTemplateRepository) Count(ctx context.Context) (int64, error) {
+	if err := ctxDone(ctx, "count"); err != nil {
+		return 0, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -561,7 +594,10 @@ func NewMockTemplateChartConfigRepository() *MockTemplateChartConfigRepository {
 	return &MockTemplateChartConfigRepository{items: make(map[string]*models.TemplateChartConfig)}
 }
 
-func (m *MockTemplateChartConfigRepository) Create(c *models.TemplateChartConfig) error {
+func (m *MockTemplateChartConfigRepository) Create(ctx context.Context, c *models.TemplateChartConfig) error {
+	if err := ctxDone(ctx, "create"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -571,7 +607,10 @@ func (m *MockTemplateChartConfigRepository) Create(c *models.TemplateChartConfig
 	return nil
 }
 
-func (m *MockTemplateChartConfigRepository) FindByID(id string) (*models.TemplateChartConfig, error) {
+func (m *MockTemplateChartConfigRepository) FindByID(ctx context.Context, id string) (*models.TemplateChartConfig, error) {
+	if err := ctxDone(ctx, "find_by_id"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	c, ok := m.items[id]
@@ -582,7 +621,10 @@ func (m *MockTemplateChartConfigRepository) FindByID(id string) (*models.Templat
 	return &cp, nil
 }
 
-func (m *MockTemplateChartConfigRepository) Update(c *models.TemplateChartConfig) error {
+func (m *MockTemplateChartConfigRepository) Update(ctx context.Context, c *models.TemplateChartConfig) error {
+	if err := ctxDone(ctx, "update"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -595,7 +637,10 @@ func (m *MockTemplateChartConfigRepository) Update(c *models.TemplateChartConfig
 	return nil
 }
 
-func (m *MockTemplateChartConfigRepository) Delete(id string) error {
+func (m *MockTemplateChartConfigRepository) Delete(ctx context.Context, id string) error {
+	if err := ctxDone(ctx, "delete"); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.items[id]; !ok {
@@ -605,7 +650,10 @@ func (m *MockTemplateChartConfigRepository) Delete(id string) error {
 	return nil
 }
 
-func (m *MockTemplateChartConfigRepository) ListByTemplate(templateID string) ([]models.TemplateChartConfig, error) {
+func (m *MockTemplateChartConfigRepository) ListByTemplate(ctx context.Context, templateID string) ([]models.TemplateChartConfig, error) {
+	if err := ctxDone(ctx, "list_by_template"); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {

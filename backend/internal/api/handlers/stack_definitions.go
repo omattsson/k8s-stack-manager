@@ -500,10 +500,10 @@ func (h *DefinitionHandler) ExportDefinition(c *gin.Context) {
 	if def.SourceTemplateID != "" {
 		src := &SourceTemplateExportData{ID: def.SourceTemplateID, Version: def.SourceTemplateVersion}
 		// The name lets another installation (other IDs) find the template.
-		if tmpl, err := h.templateRepo.FindByID(def.SourceTemplateID); err == nil {
+		if tmpl, err := h.templateRepo.FindByID(c.Request.Context(), def.SourceTemplateID); err == nil {
 			src.Name = tmpl.Name
 		} else if !isNotFoundError(err) {
-			slog.Warn("export: failed to read source template", "template_id", def.SourceTemplateID, "error", err)
+			logLookupError(c.Request.Context(), "export: failed to read source template", err, "template_id", def.SourceTemplateID)
 		}
 		bundle.Definition.SourceTemplate = src
 	}
@@ -870,7 +870,7 @@ func upgradeTargetChart(existing models.ChartConfig, tch models.TemplateChartCon
 // snapshot, gives errNoPublishedVersion.
 func (h *DefinitionHandler) upgradeRelease(ctx context.Context, templateID string) (*templateRelease, error) {
 	if h.templateRepo != nil {
-		tmpl, err := h.templateRepo.FindByID(templateID)
+		tmpl, err := h.templateRepo.FindByID(ctx, templateID)
 		if err != nil {
 			if errors.Is(err, dberrors.ErrNotFound) {
 				return nil, errNoPublishedVersion

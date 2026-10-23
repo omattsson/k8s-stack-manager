@@ -56,8 +56,8 @@ func NewGORMTxRunner(db *gorm.DB) *GORMTxRunner {
 // RunInTx executes fn within a GORM transaction. All repositories in the
 // TxRepos share the same transactional *gorm.DB, so updates are atomic.
 // If fn returns an error, the transaction is rolled back automatically.
-// The statements run with ctx, also those of repositories without a ctx
-// parameter. When ctx ends, the error matches the context error.
+// The statements of the repositories run with the ctx that the caller passes
+// to them. When ctx ends, the error matches the context error.
 func (r *GORMTxRunner) RunInTx(ctx context.Context, fn func(repos TxRepos) error) error {
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		repos := TxRepos{

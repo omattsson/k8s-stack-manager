@@ -115,7 +115,7 @@ func TestQuickDeploy_ReleaseReadContext(t *testing.T) {
 			ovRepo := NewMockValueOverrideRepository()
 			logRepo := NewMockDeploymentLogRepository()
 			seedTemplate(t, tmplRepo, "t1", "My Template", "owner-1", true)
-			require.NoError(t, tmplChartRepo.Create(&models.TemplateChartConfig{
+			require.NoError(t, tmplChartRepo.Create(context.Background(), &models.TemplateChartConfig{
 				ID: "tc1", StackTemplateID: "t1", ChartName: "nginx", RepositoryURL: "oci://example.com/charts/nginx", DeployOrder: 1,
 			}))
 			mgr := newTestManager(instRepo, logRepo)

@@ -36,7 +36,7 @@ func (e *templateLinkError) Error() string { return e.message }
 // means the latest published version. It returns the template and the version
 // to store, or a *templateLinkError (404, 409 or 400) or another error.
 func (h *DefinitionHandler) resolveTemplateLink(ctx context.Context, templateID, version string) (*models.StackTemplate, string, error) {
-	tmpl, err := h.templateRepo.FindByID(templateID)
+	tmpl, err := h.templateRepo.FindByID(ctx, templateID)
 	if err != nil {
 		if isNotFoundError(err) {
 			return nil, "", &templateLinkError{status: http.StatusNotFound, message: "Template not found"}
@@ -173,7 +173,7 @@ func (h *DefinitionHandler) importTemplateLink(ctx context.Context, src *SourceT
 
 	templateID := ""
 	if id != "" {
-		if _, err := h.templateRepo.FindByID(id); err == nil {
+		if _, err := h.templateRepo.FindByID(ctx, id); err == nil {
 			templateID = id
 		} else if !isNotFoundError(err) {
 			slog.Warn("import: template lookup failed", "template_id", id, "error", err)
@@ -183,7 +183,7 @@ func (h *DefinitionHandler) importTemplateLink(ctx context.Context, src *SourceT
 	if templateID == "" && name != "" {
 		// Only a published template can be linked, so drafts with the
 		// same name do not make the name ambiguous.
-		matches, _, err := h.templateRepo.ListPublishedPaged(2, 0, name)
+		matches, _, err := h.templateRepo.ListPublishedPaged(ctx, 2, 0, name)
 		if err != nil {
 			slog.Warn("import: template lookup by name failed", "template_name", name, "error", err)
 			return "", "", fmt.Sprintf("The source template %q could not be checked; the definition is not linked", label)

@@ -59,7 +59,7 @@ func TestQuickDeploy_NotifiesInstanceCreated(t *testing.T) {
 			boRepo := NewMockChartBranchOverrideRepository()
 			ovRepo := NewMockValueOverrideRepository()
 			seedTemplate(t, tmplRepo, "t1", "My Template", "owner-1", tt.published)
-			require.NoError(t, tmplChartRepo.Create(&models.TemplateChartConfig{
+			require.NoError(t, tmplChartRepo.Create(context.Background(), &models.TemplateChartConfig{
 				ID: "tc1", StackTemplateID: "t1", ChartName: "nginx", RepositoryURL: "oci://example.com/charts/nginx", DeployOrder: 1,
 			}))
 			if tt.createErr != nil {

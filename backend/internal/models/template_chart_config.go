@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // TemplateChartConfig represents a chart configuration within a stack template.
 type TemplateChartConfig struct {
@@ -21,9 +24,9 @@ type TemplateChartConfig struct {
 
 // TemplateChartConfigRepository defines data access operations for template chart configs.
 type TemplateChartConfigRepository interface {
-	Create(config *TemplateChartConfig) error
-	FindByID(id string) (*TemplateChartConfig, error)
-	Update(config *TemplateChartConfig) error
-	Delete(id string) error
-	ListByTemplate(templateID string) ([]TemplateChartConfig, error)
+	Create(ctx context.Context, config *TemplateChartConfig) error
+	FindByID(ctx context.Context, id string) (*TemplateChartConfig, error)
+	Update(ctx context.Context, config *TemplateChartConfig) error
+	Delete(ctx context.Context, id string) error
+	ListByTemplate(ctx context.Context, templateID string) ([]TemplateChartConfig, error)
 }

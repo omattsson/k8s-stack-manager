@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"testing"
 
 	"backend/internal/models"
@@ -29,28 +30,28 @@ func TestGORMTemplateChartConfigRepository_CRUD(t *testing.T) {
 		DeployOrder:     1,
 		Required:        true,
 	}
-	err := repo.Create(cfg)
+	err := repo.Create(context.Background(), cfg)
 	require.NoError(t, err)
 	assert.False(t, cfg.CreatedAt.IsZero())
 
 	// FindByID
-	found, err := repo.FindByID("tcc-1")
+	found, err := repo.FindByID(context.Background(), "tcc-1")
 	require.NoError(t, err)
 	assert.Equal(t, "redis", found.ChartName)
 	assert.True(t, found.Required)
 
 	// Update
 	found.ChartVersion = "7.0.0"
-	err = repo.Update(found)
+	err = repo.Update(context.Background(), found)
 	require.NoError(t, err)
-	updated, err := repo.FindByID("tcc-1")
+	updated, err := repo.FindByID(context.Background(), "tcc-1")
 	require.NoError(t, err)
 	assert.Equal(t, "7.0.0", updated.ChartVersion)
 
 	// Delete
-	err = repo.Delete("tcc-1")
+	err = repo.Delete(context.Background(), "tcc-1")
 	require.NoError(t, err)
-	_, err = repo.FindByID("tcc-1")
+	_, err = repo.FindByID(context.Background(), "tcc-1")
 	assert.Error(t, err)
 }
 
@@ -58,7 +59,7 @@ func TestGORMTemplateChartConfigRepository_FindByID_NotFound(t *testing.T) {
 	t.Parallel()
 
 	repo := setupTemplateChartConfigRepo(t)
-	_, err := repo.FindByID("nonexistent")
+	_, err := repo.FindByID(context.Background(), "nonexistent")
 	assert.Error(t, err)
 }
 
@@ -66,7 +67,7 @@ func TestGORMTemplateChartConfigRepository_Delete_NotFound(t *testing.T) {
 	t.Parallel()
 
 	repo := setupTemplateChartConfigRepo(t)
-	err := repo.Delete("nonexistent")
+	err := repo.Delete(context.Background(), "nonexistent")
 	assert.Error(t, err)
 }
 
@@ -74,11 +75,11 @@ func TestGORMTemplateChartConfigRepository_ListByTemplate(t *testing.T) {
 	t.Parallel()
 
 	repo := setupTemplateChartConfigRepo(t)
-	require.NoError(t, repo.Create(&models.TemplateChartConfig{ID: "tcc-l1", StackTemplateID: "tmpl-a", ChartName: "c1", DeployOrder: 2}))
-	require.NoError(t, repo.Create(&models.TemplateChartConfig{ID: "tcc-l2", StackTemplateID: "tmpl-a", ChartName: "c2", DeployOrder: 1}))
-	require.NoError(t, repo.Create(&models.TemplateChartConfig{ID: "tcc-l3", StackTemplateID: "tmpl-b", ChartName: "c3", DeployOrder: 1}))
+	require.NoError(t, repo.Create(context.Background(), &models.TemplateChartConfig{ID: "tcc-l1", StackTemplateID: "tmpl-a", ChartName: "c1", DeployOrder: 2}))
+	require.NoError(t, repo.Create(context.Background(), &models.TemplateChartConfig{ID: "tcc-l2", StackTemplateID: "tmpl-a", ChartName: "c2", DeployOrder: 1}))
+	require.NoError(t, repo.Create(context.Background(), &models.TemplateChartConfig{ID: "tcc-l3", StackTemplateID: "tmpl-b", ChartName: "c3", DeployOrder: 1}))
 
-	configs, err := repo.ListByTemplate("tmpl-a")
+	configs, err := repo.ListByTemplate(context.Background(), "tmpl-a")
 	require.NoError(t, err)
 	assert.Len(t, configs, 2)
 	// Ordered by deploy_order ASC.

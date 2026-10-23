@@ -113,7 +113,7 @@ func TestQuickDeploy(t *testing.T) {
 				_ *MockChartBranchOverrideRepository,
 			) {
 				seedTemplate(t, tmplRepo, "t1", "My Template", "owner-1", true)
-				require.NoError(t, tmplChartRepo.Create(&models.TemplateChartConfig{
+				require.NoError(t, tmplChartRepo.Create(context.Background(), &models.TemplateChartConfig{
 					ID:              "tc1",
 					StackTemplateID: "t1",
 					ChartName:       "nginx",
@@ -199,7 +199,7 @@ func TestQuickDeploy(t *testing.T) {
 				_ *MockChartBranchOverrideRepository,
 			) {
 				seedTemplate(t, tmplRepo, "t1", "My Template", "owner-1", true)
-				require.NoError(t, tmplChartRepo.Create(&models.TemplateChartConfig{
+				require.NoError(t, tmplChartRepo.Create(context.Background(), &models.TemplateChartConfig{
 					ID:              "tc1",
 					StackTemplateID: "t1",
 					ChartName:       "app",
@@ -232,7 +232,7 @@ func TestQuickDeploy(t *testing.T) {
 				_ *MockChartBranchOverrideRepository,
 			) {
 				seedTemplate(t, tmplRepo, "t1", "My Template", "owner-1", true)
-				require.NoError(t, tmplChartRepo.Create(&models.TemplateChartConfig{
+				require.NoError(t, tmplChartRepo.Create(context.Background(), &models.TemplateChartConfig{
 					ID:              "tc1",
 					StackTemplateID: "t1",
 					ChartName:       "svc-a",
@@ -259,7 +259,7 @@ func TestQuickDeploy(t *testing.T) {
 				_ *MockChartBranchOverrideRepository,
 			) {
 				seedTemplate(t, tmplRepo, "t1", "My Template", "owner-1", true)
-				require.NoError(t, tmplChartRepo.Create(&models.TemplateChartConfig{
+				require.NoError(t, tmplChartRepo.Create(context.Background(), &models.TemplateChartConfig{
 					ID:              "tc1",
 					StackTemplateID: "t1",
 					ChartName:       "app",
@@ -288,7 +288,7 @@ func TestQuickDeploy(t *testing.T) {
 				_ *MockChartBranchOverrideRepository,
 			) {
 				seedTemplate(t, tmplRepo, "t1", "My Template", "owner-1", true)
-				require.NoError(t, tmplChartRepo.Create(&models.TemplateChartConfig{
+				require.NoError(t, tmplChartRepo.Create(context.Background(), &models.TemplateChartConfig{
 					ID:              "tc1",
 					StackTemplateID: "t1",
 					ChartName:       "app",
@@ -317,7 +317,7 @@ func TestQuickDeploy(t *testing.T) {
 				_ *MockChartBranchOverrideRepository,
 			) {
 				seedTemplate(t, tmplRepo, "t1", "My Template", "owner-1", true)
-				require.NoError(t, tmplChartRepo.Create(&models.TemplateChartConfig{
+				require.NoError(t, tmplChartRepo.Create(context.Background(), &models.TemplateChartConfig{
 					ID:              "tc1",
 					StackTemplateID: "t1",
 					ChartName:       "app",
@@ -406,9 +406,9 @@ func TestQuickDeploy_UsesTemplateDefaultBranch(t *testing.T) {
 		CreatedAt:     time.Now().UTC(),
 		UpdatedAt:     time.Now().UTC(),
 	}
-	require.NoError(t, tmplRepo.Create(tmpl))
+	require.NoError(t, tmplRepo.Create(context.Background(), tmpl))
 
-	require.NoError(t, tmplChartRepo.Create(&models.TemplateChartConfig{
+	require.NoError(t, tmplChartRepo.Create(context.Background(), &models.TemplateChartConfig{
 		ID:              "tc1",
 		StackTemplateID: "t1",
 		ChartName:       "svc",
@@ -483,7 +483,7 @@ func TestQuickDeploy_DuplicateInstanceName(t *testing.T) {
 	auditRepo := NewMockAuditLogRepository()
 
 	seedTemplate(t, tmplRepo, "t1", "My Template", "owner-1", true)
-	require.NoError(t, tmplChartRepo.Create(&models.TemplateChartConfig{
+	require.NoError(t, tmplChartRepo.Create(context.Background(), &models.TemplateChartConfig{
 		ID:              "tc1",
 		StackTemplateID: "t1",
 		ChartName:       "nginx",
@@ -523,7 +523,7 @@ func TestQuickDeploy_RecordsCaller(t *testing.T) {
 	tmplChartRepo := NewMockTemplateChartConfigRepository()
 	instRepo := NewMockStackInstanceRepository()
 	seedTemplate(t, tmplRepo, "t1", "My Template", "owner-1", true)
-	require.NoError(t, tmplChartRepo.Create(&models.TemplateChartConfig{
+	require.NoError(t, tmplChartRepo.Create(context.Background(), &models.TemplateChartConfig{
 		ID: "tc1", StackTemplateID: "t1", ChartName: "nginx", RepositoryURL: "oci://example.com/charts/nginx", DeployOrder: 1,
 	}))
 	logRepo := NewMockDeploymentLogRepository()

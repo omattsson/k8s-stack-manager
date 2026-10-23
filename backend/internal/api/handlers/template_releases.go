@@ -64,7 +64,7 @@ func latestTemplateRelease(
 	}
 	var working []models.TemplateChartConfig
 	if snapshot.SchemaVersion < 1 && chartRepo != nil {
-		working, err = chartRepo.ListByTemplate(templateID)
+		working, err = chartRepo.ListByTemplate(ctx, templateID)
 		if err != nil {
 			return nil, fmt.Errorf("list template charts: %w", err)
 		}
@@ -96,7 +96,7 @@ func releasedTemplateCharts(
 	if chartRepo == nil {
 		return nil, nil
 	}
-	return chartRepo.ListByTemplate(templateID)
+	return chartRepo.ListByTemplate(ctx, templateID)
 }
 
 // usableTemplateRelease returns the release that Use Template and Quick

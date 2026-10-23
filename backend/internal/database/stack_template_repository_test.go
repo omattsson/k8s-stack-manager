@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"testing"
 
 	"backend/internal/models"
@@ -30,28 +31,28 @@ func TestGORMStackTemplateRepository_CRUD(t *testing.T) {
 		OwnerID:       "owner-1",
 		DefaultBranch: "main",
 	}
-	err := repo.Create(tmpl)
+	err := repo.Create(context.Background(), tmpl)
 	require.NoError(t, err)
 	assert.NotEmpty(t, tmpl.ID)
 
 	// FindByID
-	found, err := repo.FindByID(tmpl.ID)
+	found, err := repo.FindByID(context.Background(), tmpl.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "web-app", found.Name)
 
 	// Update
 	found.Description = "Updated"
-	err = repo.Update(found)
+	err = repo.Update(context.Background(), found)
 	require.NoError(t, err)
 
-	updated, err := repo.FindByID(tmpl.ID)
+	updated, err := repo.FindByID(context.Background(), tmpl.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "Updated", updated.Description)
 
 	// Delete
-	err = repo.Delete(tmpl.ID)
+	err = repo.Delete(context.Background(), tmpl.ID)
 	require.NoError(t, err)
-	_, err = repo.FindByID(tmpl.ID)
+	_, err = repo.FindByID(context.Background(), tmpl.ID)
 	assert.Error(t, err)
 }
 
@@ -59,7 +60,7 @@ func TestGORMStackTemplateRepository_FindByID_NotFound(t *testing.T) {
 	t.Parallel()
 
 	repo := setupStackTemplateRepo(t)
-	_, err := repo.FindByID("nonexistent")
+	_, err := repo.FindByID(context.Background(), "nonexistent")
 	assert.Error(t, err)
 }
 
@@ -67,7 +68,7 @@ func TestGORMStackTemplateRepository_Delete_NotFound(t *testing.T) {
 	t.Parallel()
 
 	repo := setupStackTemplateRepo(t)
-	err := repo.Delete("nonexistent")
+	err := repo.Delete(context.Background(), "nonexistent")
 	assert.Error(t, err)
 }
 
@@ -75,10 +76,10 @@ func TestGORMStackTemplateRepository_List(t *testing.T) {
 	t.Parallel()
 
 	repo := setupStackTemplateRepo(t)
-	require.NoError(t, repo.Create(&models.StackTemplate{Name: "t1", OwnerID: "o1", DefaultBranch: "main"}))
-	require.NoError(t, repo.Create(&models.StackTemplate{Name: "t2", OwnerID: "o2", DefaultBranch: "main"}))
+	require.NoError(t, repo.Create(context.Background(), &models.StackTemplate{Name: "t1", OwnerID: "o1", DefaultBranch: "main"}))
+	require.NoError(t, repo.Create(context.Background(), &models.StackTemplate{Name: "t2", OwnerID: "o2", DefaultBranch: "main"}))
 
-	tmpls, err := repo.List()
+	tmpls, err := repo.List(context.Background())
 	require.NoError(t, err)
 	assert.Len(t, tmpls, 2)
 }
@@ -87,11 +88,11 @@ func TestGORMStackTemplateRepository_ListPublished(t *testing.T) {
 	t.Parallel()
 
 	repo := setupStackTemplateRepo(t)
-	require.NoError(t, repo.Create(&models.StackTemplate{Name: "t1", OwnerID: "o1", DefaultBranch: "main", IsPublished: true}))
-	require.NoError(t, repo.Create(&models.StackTemplate{Name: "t2", OwnerID: "o1", DefaultBranch: "main", IsPublished: false}))
-	require.NoError(t, repo.Create(&models.StackTemplate{Name: "t3", OwnerID: "o1", DefaultBranch: "main", IsPublished: true}))
+	require.NoError(t, repo.Create(context.Background(), &models.StackTemplate{Name: "t1", OwnerID: "o1", DefaultBranch: "main", IsPublished: true}))
+	require.NoError(t, repo.Create(context.Background(), &models.StackTemplate{Name: "t2", OwnerID: "o1", DefaultBranch: "main", IsPublished: false}))
+	require.NoError(t, repo.Create(context.Background(), &models.StackTemplate{Name: "t3", OwnerID: "o1", DefaultBranch: "main", IsPublished: true}))
 
-	tmpls, err := repo.ListPublished()
+	tmpls, err := repo.ListPublished(context.Background())
 	require.NoError(t, err)
 	assert.Len(t, tmpls, 2)
 }
@@ -100,11 +101,11 @@ func TestGORMStackTemplateRepository_ListByOwner(t *testing.T) {
 	t.Parallel()
 
 	repo := setupStackTemplateRepo(t)
-	require.NoError(t, repo.Create(&models.StackTemplate{Name: "t1", OwnerID: "owner-a", DefaultBranch: "main"}))
-	require.NoError(t, repo.Create(&models.StackTemplate{Name: "t2", OwnerID: "owner-a", DefaultBranch: "main"}))
-	require.NoError(t, repo.Create(&models.StackTemplate{Name: "t3", OwnerID: "owner-b", DefaultBranch: "main"}))
+	require.NoError(t, repo.Create(context.Background(), &models.StackTemplate{Name: "t1", OwnerID: "owner-a", DefaultBranch: "main"}))
+	require.NoError(t, repo.Create(context.Background(), &models.StackTemplate{Name: "t2", OwnerID: "owner-a", DefaultBranch: "main"}))
+	require.NoError(t, repo.Create(context.Background(), &models.StackTemplate{Name: "t3", OwnerID: "owner-b", DefaultBranch: "main"}))
 
-	tmpls, err := repo.ListByOwner("owner-a")
+	tmpls, err := repo.ListByOwner(context.Background(), "owner-a")
 	require.NoError(t, err)
 	assert.Len(t, tmpls, 2)
 }
@@ -114,7 +115,7 @@ func TestGORMStackTemplateRepository_FindByIDForUpdate(t *testing.T) {
 
 	repo := setupStackTemplateRepo(t)
 	tmpl := &models.StackTemplate{Name: "locked", Version: "1.0.0", OwnerID: "owner-1"}
-	require.NoError(t, repo.Create(tmpl))
+	require.NoError(t, repo.Create(context.Background(), tmpl))
 
 	tests := []struct {
 		name         string
@@ -128,7 +129,7 @@ func TestGORMStackTemplateRepository_FindByIDForUpdate(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := repo.FindByIDForUpdate(tt.id)
+			got, err := repo.FindByIDForUpdate(context.Background(), tt.id)
 			if tt.wantNotFound {
 				require.Error(t, err)
 				assert.ErrorIs(t, err, dberrors.ErrNotFound)
@@ -150,7 +151,7 @@ func TestGORMStackTemplateRepository_ListPagedNameFilter(t *testing.T) {
 		{Name: "web", OwnerID: "o", IsPublished: false},
 		{Name: "web-2", OwnerID: "o", IsPublished: true},
 	} {
-		require.NoError(t, repo.Create(tmpl))
+		require.NoError(t, repo.Create(context.Background(), tmpl))
 	}
 
 	tests := []struct {
@@ -172,7 +173,7 @@ func TestGORMStackTemplateRepository_ListPagedNameFilter(t *testing.T) {
 			if tt.published {
 				list = repo.ListPublishedPaged
 			}
-			got, total, err := list(10, 0, tt.filter)
+			got, total, err := list(context.Background(), 10, 0, tt.filter)
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, total)
 			assert.Len(t, got, int(tt.want))

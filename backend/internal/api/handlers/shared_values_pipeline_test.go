@@ -122,7 +122,7 @@ func (f *svFixture) lockOnTemplate(t *testing.T, chartName, locked string) {
 	require.NoError(t, err)
 	def.SourceTemplateID = "tmpl-1"
 	require.NoError(t, f.defRepo.Update(context.Background(), def))
-	require.NoError(t, f.tcRepo.Create(&models.TemplateChartConfig{
+	require.NoError(t, f.tcRepo.Create(context.Background(), &models.TemplateChartConfig{
 		ID: "tc-1", StackTemplateID: "tmpl-1", ChartName: chartName, LockedValues: locked,
 	}))
 }
@@ -592,11 +592,11 @@ func TestQuickDeploy_UsesValuesPipeline(t *testing.T) {
 			ovMock := NewMockValueOverrideRepository()
 			svMock := newMockSharedValuesRepo()
 
-			require.NoError(t, tmplRepo.Create(&models.StackTemplate{
+			require.NoError(t, tmplRepo.Create(context.Background(), &models.StackTemplate{
 				ID: "t1", Name: "Template", IsPublished: true, DefaultBranch: "main", OwnerID: "owner-1",
 				CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
 			}))
-			require.NoError(t, tmplChartRepo.Create(&models.TemplateChartConfig{
+			require.NoError(t, tmplChartRepo.Create(context.Background(), &models.TemplateChartConfig{
 				ID: "tc1", StackTemplateID: "t1", ChartName: "svc",
 				RepositoryURL: "oci://example.com/charts/svc", DeployOrder: 1,
 				DefaultValues: "fromDefault: svc\nlockedKey: default\n",

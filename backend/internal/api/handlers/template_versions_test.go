@@ -384,7 +384,7 @@ func TestPublishTemplateCreatesVersion(t *testing.T) {
 		verRepo := NewMockTemplateVersionRepository()
 
 		seedTemplate(t, tmplRepo, "t1", "My Template", "owner-1", false)
-		require.NoError(t, chartRepo.Create(&models.TemplateChartConfig{
+		require.NoError(t, chartRepo.Create(context.Background(), &models.TemplateChartConfig{
 			ID:              "c1",
 			StackTemplateID: "t1",
 			ChartName:       "frontend",
