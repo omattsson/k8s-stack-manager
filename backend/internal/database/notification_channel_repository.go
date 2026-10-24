@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
+	"sync"
 	"time"
 
 	"backend/internal/models"
@@ -23,6 +25,9 @@ var _ models.NotificationChannelRepository = (*GORMNotificationChannelRepository
 type GORMNotificationChannelRepository struct {
 	db            *gorm.DB
 	encryptionKey []byte
+	// warned holds "secret:<id>" and "webhook_url:<id>" of the unreadable
+	// values that this process already logged.
+	warned sync.Map
 }
 
 // NewGORMNotificationChannelRepository creates a new GORM-backed notification channel repository.
@@ -34,33 +39,144 @@ func NewGORMNotificationChannelRepository(db *gorm.DB, encryptionKey string) *GO
 	return repo
 }
 
-func (r *GORMNotificationChannelRepository) encryptSecret(ch *models.NotificationChannel) (string, error) {
-	original := ch.Secret
-	if original == "" || len(r.encryptionKey) == 0 {
-		return original, nil
-	}
-	encrypted, err := crypto.Encrypt([]byte(original), r.encryptionKey)
-	if err != nil {
-		return "", dberrors.NewDatabaseError("encrypt_secret", err)
-	}
-	ch.Secret = base64.StdEncoding.EncodeToString(encrypted)
-	return original, nil
+// errChannelSecretNoKey is the 400 for a secret that cannot be stored without
+// a key. The handler shows models.ErrChannelSecretNoKey as is.
+func errChannelSecretNoKey() error {
+	return dberrors.NewDatabaseError("validation",
+		fmt.Errorf("%w: %w", models.ErrChannelSecretNoKey, dberrors.ErrValidation))
 }
 
-func (r *GORMNotificationChannelRepository) decryptSecret(ch *models.NotificationChannel) {
-	if ch.Secret == "" || len(r.encryptionKey) == 0 {
-		return
+// storedState is the result of reading a stored (encrypted) value.
+type storedState int
+
+const (
+	storedEmpty      storedState = iota
+	storedDecrypted              // ciphertext of this or an older version, decrypted
+	storedPlaintext              // legacy plaintext, used as is
+	storedUnreadable             // prefixed or undecryptable: never used
+)
+
+// decodeStored reads a stored value. A value with encryptedPrefix is
+// ciphertext; without a key, with bad encoding or with a failed decrypt it is
+// unreadable. An unprefixed value is legacy plaintext, except that
+// unprefixedMayBeCipher (the channel secret: older versions wrote unprefixed
+// base64 ciphertext) makes the repository try to decrypt it when a key is set.
+// A reason (never the value) is returned for an unreadable value.
+func decodeStored(stored string, key []byte, unprefixedMayBeCipher bool) (string, storedState, string) {
+	if stored == "" {
+		return "", storedEmpty, ""
 	}
-	decoded, err := base64.StdEncoding.DecodeString(ch.Secret)
+	prefixed := strings.HasPrefix(stored, encryptedPrefix)
+	if !prefixed && (!unprefixedMayBeCipher || len(key) == 0) {
+		return stored, storedPlaintext, ""
+	}
+	if len(key) == 0 {
+		return "", storedUnreadable, "no encryption key"
+	}
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(stored, encryptedPrefix))
+	if err != nil || (!prefixed && len(decoded) < minCiphertextLen) {
+		if prefixed {
+			return "", storedUnreadable, "invalid encoding"
+		}
+		return stored, storedPlaintext, ""
+	}
+	decrypted, err := crypto.Decrypt(decoded, key)
 	if err != nil {
-		return
+		return "", storedUnreadable, "decryption failed"
 	}
-	decrypted, err := crypto.Decrypt(decoded, r.encryptionKey)
+	return string(decrypted), storedDecrypted, ""
+}
+
+func (r *GORMNotificationChannelRepository) encryptValue(plain string) (string, error) {
+	encrypted, err := crypto.Encrypt([]byte(plain), r.encryptionKey)
 	if err != nil {
-		slog.Warn("failed to decrypt channel secret", "channel_id", ch.ID, "error", err)
-		return
+		return "", err
 	}
-	ch.Secret = string(decrypted)
+	return encryptedPrefix + base64.StdEncoding.EncodeToString(encrypted), nil
+}
+
+// warnOnce logs an unreadable value at most once per channel and field in
+// this process. A save that writes the field resets it.
+func (r *GORMNotificationChannelRepository) warnOnce(field, id, reason string) {
+	if _, seen := r.warned.LoadOrStore(field+":"+id, struct{}{}); !seen {
+		slog.Warn("channel "+field+" cannot be decrypted; set it again",
+			"channel_id", id, "reason", reason)
+	}
+}
+
+// decryptFields decrypts Secret and WebhookURL in place after a read. A value
+// that cannot be decrypted never fails the read and is never returned: the
+// field is empty and the matching Unreadable flag is set.
+func (r *GORMNotificationChannelRepository) decryptFields(ch *models.NotificationChannel) {
+	ch.SecretUnreadable, ch.WebhookURLUnreadable = false, false
+	secret, st, reason := decodeStored(ch.Secret, r.encryptionKey, true)
+	ch.Secret = secret
+	if st == storedUnreadable {
+		ch.SecretUnreadable = true
+		r.warnOnce("secret", ch.ID, reason)
+	}
+	// webhook_url: URLs were never encrypted before the prefix existed, so an
+	// unprefixed value is always a plaintext URL.
+	url, st, reason := decodeStored(ch.WebhookURL, r.encryptionKey, false)
+	ch.WebhookURL = url
+	if st == storedUnreadable {
+		ch.WebhookURLUnreadable = true
+		r.warnOnce("webhook_url", ch.ID, reason)
+	}
+}
+
+// storedSecret reads the stored (not decrypted) secret of a channel.
+func (r *GORMNotificationChannelRepository) storedSecret(ctx context.Context, id string) (string, error) {
+	var stored string
+	err := r.db.WithContext(ctx).Model(&models.NotificationChannel{}).Where("id = ?", id).
+		Select("COALESCE(secret, '')").Limit(1).Scan(&stored).Error
+	if err != nil {
+		return "", dberrors.NewDatabaseError("get_channel", err)
+	}
+	return stored, nil
+}
+
+// secretToStore returns the value for the secret column. keep is true when
+// the column stays as it is: without a key, a secret equal to the stored
+// legacy plaintext is no change. An empty secret clears the column. A new
+// secret without a key is refused (nothing is written yet).
+func (r *GORMNotificationChannelRepository) secretToStore(ctx context.Context, ch *models.NotificationChannel) (value string, keep bool, err error) {
+	if ch.Secret == "" {
+		return "", false, nil
+	}
+	if len(r.encryptionKey) == 0 {
+		if ch.ID != "" {
+			stored, serr := r.storedSecret(ctx, ch.ID)
+			if serr != nil {
+				return "", false, serr
+			}
+			if stored == ch.Secret && !strings.HasPrefix(stored, encryptedPrefix) {
+				return "", true, nil
+			}
+		}
+		return "", false, errChannelSecretNoKey()
+	}
+	enc, eerr := r.encryptValue(ch.Secret)
+	if eerr != nil {
+		return "", false, dberrors.NewDatabaseError("encrypt_secret", eerr)
+	}
+	return enc, false, nil
+}
+
+// urlToStore returns the value for the webhook_url column. With a key the URL
+// is encrypted; without a key it is stored in plaintext. The URL is required
+// for every channel (the secret is optional) and the Helm default key is
+// empty, so refusing it would disable channels on installs without a key.
+// Many URLs hold no token.
+func (r *GORMNotificationChannelRepository) urlToStore(url string) (string, error) {
+	if len(r.encryptionKey) == 0 || url == "" {
+		return url, nil
+	}
+	enc, err := r.encryptValue(url)
+	if err != nil {
+		return "", dberrors.NewDatabaseError("encrypt_webhook_url", err)
+	}
+	return enc, nil
 }
 
 // CreateChannel inserts a new notification channel.
@@ -68,11 +184,17 @@ func (r *GORMNotificationChannelRepository) CreateChannel(ctx context.Context, c
 	if channel.Format == "" {
 		channel.Format = models.NotificationChannelFormatGeneric
 	}
-	original, err := r.encryptSecret(channel)
+	secretValue, _, err := r.secretToStore(ctx, channel)
 	if err != nil {
 		return err
 	}
-	defer func() { channel.Secret = original }()
+	urlValue, err := r.urlToStore(channel.WebhookURL)
+	if err != nil {
+		return err
+	}
+	origSecret, origURL := channel.Secret, channel.WebhookURL
+	channel.Secret, channel.WebhookURL = secretValue, urlValue
+	defer func() { channel.Secret, channel.WebhookURL = origSecret, origURL }()
 	if err := r.db.WithContext(ctx).Create(channel).Error; err != nil {
 		if isDuplicateKeyError(err) {
 			return dberrors.NewDatabaseError("create_channel", fmt.Errorf("%w", dberrors.ErrDuplicateKey))
@@ -91,7 +213,7 @@ func (r *GORMNotificationChannelRepository) GetChannel(ctx context.Context, id s
 		}
 		return nil, dberrors.NewDatabaseError("get_channel", err)
 	}
-	r.decryptSecret(&channel)
+	r.decryptFields(&channel)
 	return &channel, nil
 }
 
@@ -108,20 +230,33 @@ func channelFormat(format string) string {
 // to avoid double-encryption when re-saving a decrypted record.
 func (r *GORMNotificationChannelRepository) UpdateChannel(ctx context.Context, channel *models.NotificationChannel, secretChanged bool) error {
 	updates := map[string]interface{}{
-		"name":        channel.Name,
-		"webhook_url": channel.WebhookURL,
-		"enabled":     channel.Enabled,
-		"filters":     channel.Filters,
-		"format":      channelFormat(channel.Format),
-		"updated_at":  time.Now().UTC(),
+		"name":       channel.Name,
+		"enabled":    channel.Enabled,
+		"filters":    channel.Filters,
+		"format":     channelFormat(channel.Format),
+		"updated_at": time.Now().UTC(),
 	}
+	// Checks first: a refused request changes nothing.
+	writeSecret := false
 	if secretChanged {
-		original, err := r.encryptSecret(channel)
+		value, keep, err := r.secretToStore(ctx, channel)
 		if err != nil {
 			return err
 		}
-		updates["secret"] = channel.Secret
-		channel.Secret = original
+		if !keep {
+			updates["secret"] = value
+			writeSecret = true
+		}
+	}
+	// An unreadable URL that the caller did not replace stays as it is, so a
+	// broken channel can still be renamed or disabled.
+	writeURL := !channel.WebhookURLUnreadable || channel.WebhookURL != ""
+	if writeURL {
+		value, err := r.urlToStore(channel.WebhookURL)
+		if err != nil {
+			return err
+		}
+		updates["webhook_url"] = value
 	}
 	result := r.db.WithContext(ctx).Model(&models.NotificationChannel{}).Where("id = ?", channel.ID).Updates(updates)
 	if result.Error != nil {
@@ -132,6 +267,14 @@ func (r *GORMNotificationChannelRepository) UpdateChannel(ctx context.Context, c
 	}
 	if result.RowsAffected == 0 {
 		return dberrors.NewDatabaseError("update_channel", fmt.Errorf("%w", dberrors.ErrNotFound))
+	}
+	if writeSecret {
+		r.warned.Delete("secret:" + channel.ID)
+		channel.SecretUnreadable = false
+	}
+	if writeURL {
+		r.warned.Delete("webhook_url:" + channel.ID)
+		channel.WebhookURLUnreadable = false
 	}
 	return nil
 }
@@ -157,12 +300,15 @@ func (r *GORMNotificationChannelRepository) DeleteChannel(ctx context.Context, i
 	})
 }
 
-// ListChannels returns all notification channels. Secrets are not decrypted
-// since they are json:"-" and never sent to API clients.
+// ListChannels returns all notification channels. The webhook URL is
+// decrypted for the API. The secret is decrypted too, to set SecretUnreadable.
 func (r *GORMNotificationChannelRepository) ListChannels(ctx context.Context) ([]models.NotificationChannel, error) {
 	var channels []models.NotificationChannel
 	if err := r.db.WithContext(ctx).Order("name ASC").Find(&channels).Error; err != nil {
 		return nil, dberrors.NewDatabaseError("list_channels", err)
+	}
+	for i := range channels {
+		r.decryptFields(&channels[i])
 	}
 	return channels, nil
 }
@@ -172,6 +318,9 @@ func (r *GORMNotificationChannelRepository) ListEnabledChannels(ctx context.Cont
 	var channels []models.NotificationChannel
 	if err := r.db.WithContext(ctx).Where("enabled = ?", true).Order("name ASC").Find(&channels).Error; err != nil {
 		return nil, dberrors.NewDatabaseError("list_enabled_channels", err)
+	}
+	for i := range channels {
+		r.decryptFields(&channels[i])
 	}
 	return channels, nil
 }
@@ -242,7 +391,7 @@ func (r *GORMNotificationChannelRepository) FindChannelsByEvent(ctx context.Cont
 		return nil, dberrors.NewDatabaseError("find_channels_by_event", err)
 	}
 	for i := range channels {
-		r.decryptSecret(&channels[i])
+		r.decryptFields(&channels[i])
 	}
 	return channels, nil
 }
@@ -270,4 +419,32 @@ func (r *GORMNotificationChannelRepository) ListDeliveryLogs(ctx context.Context
 	}
 
 	return logs, total, nil
+}
+
+// ChannelSecretStats counts the stored secrets and webhook URLs by state.
+// It never logs or returns the values. plaintextSecrets are secrets in
+// plaintext (without a key also in an older unprefixed encrypted format,
+// which cannot be told apart). unreadableSecrets and unreadableURLs cannot be
+// decrypted with the current key. plaintextURLs are unprefixed URLs.
+func (r *GORMNotificationChannelRepository) ChannelSecretStats(ctx context.Context) (plaintextSecrets, unreadableSecrets, plaintextURLs, unreadableURLs int, err error) {
+	var rows []struct{ Secret, WebhookURL string }
+	if err = r.db.WithContext(ctx).Model(&models.NotificationChannel{}).
+		Select("COALESCE(secret, '') AS secret, webhook_url").Scan(&rows).Error; err != nil {
+		return 0, 0, 0, 0, dberrors.NewDatabaseError("channel_secret_stats", err)
+	}
+	for _, row := range rows {
+		switch _, st, _ := decodeStored(row.Secret, r.encryptionKey, true); st {
+		case storedPlaintext:
+			plaintextSecrets++
+		case storedUnreadable:
+			unreadableSecrets++
+		}
+		switch _, st, _ := decodeStored(row.WebhookURL, r.encryptionKey, false); st {
+		case storedPlaintext:
+			plaintextURLs++
+		case storedUnreadable:
+			unreadableURLs++
+		}
+	}
+	return plaintextSecrets, unreadableSecrets, plaintextURLs, unreadableURLs, nil
 }

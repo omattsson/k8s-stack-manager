@@ -13,12 +13,24 @@ import (
 
 // NotificationChannel represents an outgoing webhook channel for system notifications.
 type NotificationChannel struct {
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
-	ID         string    `json:"id" gorm:"primaryKey;size:36"`
-	Name       string    `json:"name" gorm:"size:255;uniqueIndex;not null"`
-	WebhookURL string    `json:"webhook_url" gorm:"size:2048;not null"`
-	Secret     string    `json:"-" gorm:"type:text"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	ID        string    `json:"id" gorm:"primaryKey;size:36"`
+	Name      string    `json:"name" gorm:"size:255;uniqueIndex;not null"`
+	// WebhookURL is at most MaxWebhookURLLength characters. With
+	// KUBECONFIG_ENCRYPTION_KEY the column holds "enc:v1:" + base64
+	// ciphertext (about 1.4 times longer), so the column is TEXT
+	// (migration 65).
+	WebhookURL string `json:"webhook_url" gorm:"type:text;not null"`
+	Secret     string `json:"-" gorm:"type:text"`
+	// SecretUnreadable is set by the repository when the stored secret cannot
+	// be decrypted. Secret is then empty, the channel sends nothing, and a
+	// PUT with a new secret repairs the row.
+	SecretUnreadable bool `json:"secret_unreadable,omitempty" gorm:"-"`
+	// WebhookURLUnreadable is set by the repository when the stored webhook
+	// URL cannot be decrypted. WebhookURL is then empty, the channel sends
+	// nothing, and a PUT with a new URL repairs the row.
+	WebhookURLUnreadable bool `json:"webhook_url_unreadable,omitempty" gorm:"-"`
 	// Format is the body format of the webhook request:
 	// NotificationChannelFormatGeneric (the event JSON) or
 	// NotificationChannelFormatTeams (a Microsoft Teams Adaptive Card
@@ -32,6 +44,34 @@ type NotificationChannel struct {
 	// handler sets true when the request omits it; the column keeps its
 	// database default (migration 40).
 	Enabled bool `json:"enabled"`
+}
+
+// ErrChannelSecretNoKey is the reason when a channel secret cannot be stored
+// because KUBECONFIG_ENCRYPTION_KEY is not set. The repository wraps it with
+// dberrors.ErrValidation. The message is shown to the client as is.
+var ErrChannelSecretNoKey = errors.New("A channel secret cannot be stored without KUBECONFIG_ENCRYPTION_KEY. Leave the secret empty, or set the key.")
+
+// MaxWebhookURLLength is the maximum length of a webhook URL.
+const MaxWebhookURLLength = 2048
+
+// Fixed delivery log messages of a channel whose stored value cannot be
+// decrypted. They never contain the secret or the URL.
+const (
+	ChannelSecretUnreadableMessage     = "The channel secret cannot be decrypted. Set the secret again."
+	ChannelWebhookURLUnreadableMessage = "The webhook URL cannot be decrypted. Set the URL again."
+)
+
+// UnreadableMessage returns the delivery log message when the channel has a
+// value that the repository could not decrypt (URL first), else "".
+func (c *NotificationChannel) UnreadableMessage() string {
+	switch {
+	case c.WebhookURLUnreadable:
+		return ChannelWebhookURLUnreadableMessage
+	case c.SecretUnreadable:
+		return ChannelSecretUnreadableMessage
+	default:
+		return ""
+	}
 }
 
 // Body formats of a notification channel (NotificationChannel.Format).

@@ -329,6 +329,64 @@ func warnPlaintextRegistryPasswords(clusterRepo models.ClusterRepository) {
 	}
 }
 
+// channelSecretStatser is implemented by the notification channel repository.
+type channelSecretStatser interface {
+	ChannelSecretStats(ctx context.Context) (plaintextSecrets, unreadableSecrets, plaintextURLs, unreadableURLs int, err error)
+}
+
+// warnChannelSecrets logs how many notification channels store a secret or a
+// webhook URL in plaintext, or store a value that the backend cannot decrypt.
+// It logs counts only, never the values.
+func warnChannelSecrets(repo models.NotificationChannelRepository, keySet bool) {
+	stats, ok := repo.(channelSecretStatser)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), instanceBackfillTimeout)
+	defer cancel()
+	plainSecrets, badSecrets, plainURLs, badURLs, err := stats.ChannelSecretStats(ctx)
+	if err != nil {
+		slog.Warn("Could not check the notification channel secrets", "error", err)
+		return
+	}
+	if plainSecrets > 0 {
+		if keySet {
+			slog.Warn("Notification channels store a signing secret in plaintext or in an older format that the backend cannot read. Set the secret of these channels again.",
+				"channels", plainSecrets)
+		} else {
+			slog.Warn("Notification channels store a signing secret in plaintext. Set KUBECONFIG_ENCRYPTION_KEY, then set the secret of these channels again.",
+				"channels", plainSecrets)
+		}
+	}
+	if badSecrets > 0 {
+		if keySet {
+			slog.Warn("Notification channels store a secret that the backend cannot decrypt. Deliveries of these channels fail. Set the secret of these channels again.",
+				"channels", badSecrets)
+		} else {
+			slog.Warn("Notification channels store an encrypted secret, but KUBECONFIG_ENCRYPTION_KEY is not set. The backend ignores these secrets and deliveries of these channels fail until the same key is set or the secret is set again.",
+				"channels", badSecrets)
+		}
+	}
+	if badURLs > 0 {
+		if keySet {
+			slog.Warn("Notification channels store a webhook URL that the backend cannot decrypt. Deliveries of these channels fail. Set the URL again.",
+				"channels", badURLs)
+		} else {
+			slog.Warn("Notification channels store an encrypted webhook URL, but KUBECONFIG_ENCRYPTION_KEY is not set. Deliveries of these channels fail until the same key is set or the URL is set again.",
+				"channels", badURLs)
+		}
+	}
+	if plainURLs > 0 {
+		if keySet {
+			slog.Info("Notification channels store the webhook URL in plaintext. Any save of the channel encrypts it.",
+				"channels", plainURLs)
+		} else {
+			slog.Warn("Notification channels store the webhook URL in plaintext, because KUBECONFIG_ENCRYPTION_KEY is not set.",
+				"channels", plainURLs)
+		}
+	}
+}
+
 // ensureDefaultCluster auto-creates a default cluster from KUBECONFIG_PATH
 // when no clusters exist yet. This provides a migration path for existing
 // single-cluster setups.

@@ -219,6 +219,7 @@ func buildDomainServices(
 	// Auto-create default cluster from KUBECONFIG_PATH for single-cluster migration.
 	ensureDefaultCluster(repos.Cluster, repos.StackInstance, cfg)
 	warnPlaintextRegistryPasswords(repos.Cluster)
+	warnChannelSecrets(repos.NotificationChannel, cfg.Deployment.KubeconfigEncryptionKey != "")
 
 	// Chart repository allowlist (ALLOWED_CHART_REPOS): checked when chart
 	// configs are saved and again at deploy time.
