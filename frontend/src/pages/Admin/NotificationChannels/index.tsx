@@ -20,6 +20,7 @@ import {
   DialogActions,
   TextField,
   FormControlLabel,
+  FormHelperText,
   FormGroup,
   Checkbox,
   Tooltip,
@@ -106,6 +107,7 @@ interface ChannelFormState {
   name: string;
   webhook_url: string;
   secret: string;
+  removeSecret: boolean;
   enabled: boolean;
   format: NotificationChannelFormat;
   filters: NotificationChannelFilters;
@@ -115,6 +117,7 @@ const emptyForm: ChannelFormState = {
   name: '',
   webhook_url: '',
   secret: '',
+  removeSecret: false,
   enabled: true,
   format: 'generic',
   filters: {},
@@ -261,6 +264,7 @@ const NotificationChannels = () => {
       name: channel.name,
       webhook_url: channel.webhook_url,
       secret: '',
+      removeSecret: false,
       enabled: channel.enabled,
       format: channel.format ?? 'generic',
       filters: channel.filters ?? {},
@@ -294,7 +298,7 @@ const NotificationChannels = () => {
       setFormError('Webhook URL must start with https://');
       return;
     }
-    if (form.webhook_url.trim().length > MAX_WEBHOOK_URL_LENGTH) {
+    if ([...form.webhook_url.trim()].length > MAX_WEBHOOK_URL_LENGTH) {
       setFormError(`Webhook URL must be at most ${MAX_WEBHOOK_URL_LENGTH} characters`);
       return;
     }
@@ -315,7 +319,9 @@ const NotificationChannels = () => {
         if (!keepStoredUrl) {
           payload.webhook_url = form.webhook_url.trim();
         }
-        if (form.secret) {
+        if (form.removeSecret) {
+          payload.secret = '';
+        } else if (form.secret) {
           payload.secret = form.secret;
         }
         ({ warnings } = await notificationChannelService.update(editingId, payload));
@@ -554,7 +560,7 @@ const NotificationChannels = () => {
                         <Chip label="Teams" size="small" variant="outlined" sx={{ ml: 1 }} />
                       )}
                       {channel.secret_unreadable === true && (
-                        <Tooltip title="The stored secret cannot be decrypted. Deliveries fail until you set the secret again.">
+                        <Tooltip title="The stored secret cannot be decrypted. Deliveries fail until you set the secret again or remove it.">
                           <Chip label="Secret unreadable" size="small" color="warning" sx={{ ml: 1 }} />
                         </Tooltip>
                       )}
@@ -710,7 +716,7 @@ const NotificationChannels = () => {
             )}
             {editingId && editingChannel?.secret_unreadable === true && (
               <Alert severity="warning">
-                The stored secret cannot be decrypted. Deliveries fail until you set the secret again.
+                The stored secret cannot be decrypted. Deliveries fail until you set the secret again or remove it.
               </Alert>
             )}
             <TextField
@@ -761,8 +767,25 @@ const NotificationChannels = () => {
               onChange={(e) => setForm({ ...form, secret: e.target.value })}
               fullWidth
               type="password"
+              disabled={form.removeSecret}
               helperText={editingId ? `Leave empty to keep the stored secret. ${SECRET_HELP}` : `Optional. ${SECRET_HELP}`}
             />
+            {editingId && (
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={form.removeSecret}
+                    onChange={(e) => setForm({ ...form, removeSecret: e.target.checked, secret: '' })}
+                  />
+                }
+                label="Remove secret"
+              />
+            )}
+            {editingId && (
+              <FormHelperText sx={{ mt: -1 }}>
+                Removes the stored secret, if the channel has one. Requests are then unsigned.
+              </FormHelperText>
+            )}
             <FormControlLabel
               control={
                 <Switch

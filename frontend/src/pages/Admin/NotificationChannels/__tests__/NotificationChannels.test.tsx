@@ -459,7 +459,7 @@ describe('NotificationChannels Page', () => {
       await user.click(await screen.findByRole('button', { name: /edit broken/i }));
       const dialog = await screen.findByRole('dialog');
       expect(within(dialog).getByText('The stored webhook URL cannot be decrypted. Enter the URL again to repair the channel.')).toBeInTheDocument();
-      expect(within(dialog).getByText('The stored secret cannot be decrypted. Deliveries fail until you set the secret again.')).toBeInTheDocument();
+      expect(within(dialog).getByText('The stored secret cannot be decrypted. Deliveries fail until you set the secret again or remove it.')).toBeInTheDocument();
       expect(within(dialog).getByLabelText(/webhook url/i)).toHaveValue('');
 
       await user.click(within(dialog).getByLabelText('Enabled'));
@@ -488,6 +488,75 @@ describe('NotificationChannels Page', () => {
         webhook_url: 'https://hooks.example.com/new',
         secret: 'fresh',
       });
+    });
+
+    it('sends an empty secret when Remove secret is chosen', async () => {
+      const user = userEvent.setup();
+      vi.mocked(notificationChannelService.list).mockResolvedValue([unreadable]);
+      vi.mocked(notificationChannelService.update).mockResolvedValue({ ...unreadable });
+      renderPage();
+
+      await user.click(await screen.findByRole('button', { name: /edit broken/i }));
+      const dialog = await screen.findByRole('dialog');
+      await user.type(within(dialog).getByLabelText(/webhook url/i), 'https://hooks.example.com/new');
+      await user.click(within(dialog).getByRole('checkbox', { name: /remove secret/i }));
+      expect(within(dialog).getByLabelText(/^secret/i)).toBeDisabled();
+      await user.click(within(dialog).getByRole('button', { name: 'Update' }));
+
+      await waitFor(() => expect(notificationChannelService.update).toHaveBeenCalledTimes(1));
+      const payload = vi.mocked(notificationChannelService.update).mock.calls[0][1];
+      expect(payload).toHaveProperty('secret', '');
+    });
+
+    it('sends no secret key when nothing is typed and Remove is not chosen', async () => {
+      const user = userEvent.setup();
+      vi.mocked(notificationChannelService.list).mockResolvedValue([unreadable]);
+      vi.mocked(notificationChannelService.update).mockResolvedValue({ ...unreadable });
+      renderPage();
+
+      await user.click(await screen.findByRole('button', { name: /edit broken/i }));
+      const dialog = await screen.findByRole('dialog');
+      await user.type(within(dialog).getByLabelText(/webhook url/i), 'https://hooks.example.com/new');
+      await user.click(within(dialog).getByRole('button', { name: 'Update' }));
+
+      await waitFor(() => expect(notificationChannelService.update).toHaveBeenCalledTimes(1));
+      expect(vi.mocked(notificationChannelService.update).mock.calls[0][1]).not.toHaveProperty('secret');
+    });
+
+    it('offers Remove secret for a readable channel in edit mode, not in create mode', async () => {
+      const user = userEvent.setup();
+      vi.mocked(notificationChannelService.list).mockResolvedValue([mockChannels[0]]);
+      vi.mocked(notificationChannelService.update).mockResolvedValue({ ...mockChannels[0] });
+      renderPage();
+
+      await user.click(await screen.findByRole('button', { name: /edit slack-prod/i }));
+      let dialog = await screen.findByRole('dialog');
+      await user.click(within(dialog).getByRole('checkbox', { name: /remove secret/i }));
+      await user.click(within(dialog).getByRole('button', { name: 'Update' }));
+      await waitFor(() => expect(notificationChannelService.update).toHaveBeenCalledTimes(1));
+      expect(vi.mocked(notificationChannelService.update).mock.calls[0][1]).toHaveProperty('secret', '');
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: /create channel/i }));
+      dialog = await screen.findByRole('dialog');
+      expect(within(dialog).queryByRole('checkbox', { name: /remove secret/i })).not.toBeInTheDocument();
+    });
+
+    it('counts code points, not UTF-16 units, for the URL length', async () => {
+      const user = userEvent.setup();
+      vi.mocked(notificationChannelService.list).mockResolvedValue([]);
+      vi.mocked(notificationChannelService.create).mockResolvedValue({ ...mockChannels[0] });
+      renderPage();
+
+      await user.click(await screen.findByRole('button', { name: /create channel/i }));
+      const dialog = await screen.findByRole('dialog');
+      await user.type(within(dialog).getByLabelText(/^name/i), 'x');
+      fireEvent.change(within(dialog).getByLabelText(/webhook url/i), {
+        target: { value: 'https://hooks.example.com/' + '\u{1F600}'.repeat(1100) },
+      });
+      await user.click(within(dialog).getByRole('button', { name: 'Create' }));
+
+      await waitFor(() => expect(notificationChannelService.create).toHaveBeenCalledTimes(1));
     });
 
     it('still requires the URL when editing a normal channel', async () => {
