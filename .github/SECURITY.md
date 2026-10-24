@@ -51,7 +51,7 @@ Follow these guidelines when you deploy the application:
 5. Set `ALLOWED_CHART_REPOS` (Helm: `backend.allowedChartRepos`) to the chart repositories that you trust. Helm installs charts with the identity of the backend. An empty list allows every chart source.
 6. Keep `backend.rbac.scope: namespace` (default) and `backend.rbac.admissionPolicy.enabled: true`. Then a stack chart can reach only the stack namespaces, and cannot create cluster-scoped objects. The policy needs Kubernetes 1.30 or later.
 7. Give the `devops` and `admin` roles only to users who must create definitions, templates, and chart sources. A user with the `user` role cannot change chart sources.
-8. Set `KUBECONFIG_ENCRYPTION_KEY`. The backend then encrypts kubeconfig data, registry passwords, and webhook channel secrets at rest. Use a long random value, and keep it stable. A changed key makes the stored data unreadable.
+8. Set `KUBECONFIG_ENCRYPTION_KEY`. The backend then encrypts kubeconfig data, registry passwords, notification channel secrets, and notification channel webhook URLs at rest. Without the key, the backend stores webhook URLs in plaintext. A URL that holds a token (for example a Teams workflow URL) is protected at rest only with the key. Use a long random value, and keep it stable. A changed key makes the stored data unreadable.
 9. Keep `ENABLE_SWAGGER` off in production, unless you need the API documentation.
 10. Use the External Secrets Operator (`externalSecrets.enabled`) or another secret store for the secrets of the chart. Do not put secrets in value overrides or shared values. Every user who can see an instance can see its merged values.
 11. Sign hook and action requests (`secret_env` in the hook configuration). See [EXTENDING.md](../EXTENDING.md).
