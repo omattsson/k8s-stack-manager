@@ -48,6 +48,8 @@ type sessionTestEnv struct {
 	cfg     *config.AuthConfig
 	users   *MockUserRepository
 	refresh *MockRefreshTokenRepository
+	store   *sessionstore.MemoryStore
+	revoker *fakeRevoker
 	router  *gin.Engine
 }
 
@@ -62,13 +64,16 @@ func newSessionTestEnv(t *testing.T, mutate ...func(*config.AuthConfig)) *sessio
 		cfg:     sessionTestConfig(mutate...),
 		users:   NewMockUserRepository(),
 		refresh: NewMockRefreshTokenRepository(),
+		store:   sessionstore.NewMemoryStore(),
+		revoker: &fakeRevoker{},
 	}
-	store := sessionstore.NewMemoryStore()
+	store := env.store
 	t.Cleanup(store.Stop)
 
 	h := NewAuthHandler(env.users, env.cfg, &config.OIDCConfig{})
 	h.SetRefreshTokenRepo(env.refresh)
 	h.SetSessionStore(store)
+	h.SetWebSocketRevoker(env.revoker)
 
 	authMW := middleware.AuthRequiredWithOptions(middleware.JWTAuthOptions{
 		JWTSecret:    env.cfg.JWTSecret,
@@ -122,8 +127,17 @@ func (e *sessionTestEnv) postRefresh(raw string) *httptest.ResponseRecorder {
 }
 
 func (e *sessionTestEnv) postLogout(raw string) *httptest.ResponseRecorder {
+	return e.postLogoutAs("", raw)
+}
+
+// postLogoutAs posts a logout with the refresh cookie raw and, when bearer
+// is not empty, the access token bearer.
+func (e *sessionTestEnv) postLogoutAs(bearer, raw string) *httptest.ResponseRecorder {
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
 	req.AddCookie(&http.Cookie{Name: refreshTokenCookieName, Value: raw})
 	e.router.ServeHTTP(w, req)
 	return w
