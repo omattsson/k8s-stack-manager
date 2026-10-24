@@ -1127,6 +1127,10 @@ func (d *Database) AutoMigrate() error {
 	// Migration 64: notification trigger columns (#652).
 	migrator.AddMigration(notificationTriggerMigration())
 
+	// Migration 65: notification_channels.webhook_url TEXT for the encrypted
+	// URL (#692).
+	migrator.AddMigration(notificationChannelURLMigration())
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err

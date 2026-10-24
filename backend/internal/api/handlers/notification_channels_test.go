@@ -29,6 +29,9 @@ type MockNotificationChannelRepository struct {
 	subscriptions map[string][]models.NotificationChannelSubscription
 	deliveryLogs  map[string][]models.NotificationDeliveryLog
 	err           error
+	// refuseSecret simulates a repository without KUBECONFIG_ENCRYPTION_KEY:
+	// a non-empty secret to store gives the validation error.
+	refuseSecret bool
 }
 
 func NewMockNotificationChannelRepository() *MockNotificationChannelRepository {
@@ -50,6 +53,9 @@ func (m *MockNotificationChannelRepository) CreateChannel(_ context.Context, ch 
 	defer m.mu.Unlock()
 	if m.err != nil {
 		return m.err
+	}
+	if m.refuseSecret && ch.Secret != "" {
+		return dberrors.NewDatabaseError("validation", fmt.Errorf("%w: %w", models.ErrChannelSecretNoKey, dberrors.ErrValidation))
 	}
 	// Check for duplicate name.
 	for _, existing := range m.channels {
@@ -74,11 +80,14 @@ func (m *MockNotificationChannelRepository) GetChannel(_ context.Context, id str
 	return ch, nil
 }
 
-func (m *MockNotificationChannelRepository) UpdateChannel(_ context.Context, ch *models.NotificationChannel, _ bool) error {
+func (m *MockNotificationChannelRepository) UpdateChannel(_ context.Context, ch *models.NotificationChannel, secretChanged bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
 		return m.err
+	}
+	if m.refuseSecret && secretChanged && ch.Secret != "" {
+		return dberrors.NewDatabaseError("validation", fmt.Errorf("%w: %w", models.ErrChannelSecretNoKey, dberrors.ErrValidation))
 	}
 	if _, ok := m.channels[ch.ID]; !ok {
 		return dberrors.NewDatabaseError("update_channel", dberrors.ErrNotFound)

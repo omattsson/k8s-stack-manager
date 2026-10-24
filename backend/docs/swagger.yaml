@@ -1436,6 +1436,12 @@ definitions:
         type: string
       name:
         type: string
+      secret_unreadable:
+        description: |-
+          SecretUnreadable is set by the repository when the stored secret cannot
+          be decrypted. Secret is then empty, the channel sends nothing, and a
+          PUT with a new secret repairs the row.
+        type: boolean
       updated_at:
         type: string
       warnings:
@@ -1446,7 +1452,14 @@ definitions:
           type: string
         type: array
       webhook_url:
+        description: https URL, at most 2048 characters; empty when webhook_url_unreadable.
         type: string
+      webhook_url_unreadable:
+        description: |-
+          WebhookURLUnreadable is set by the repository when the stored webhook
+          URL cannot be decrypted. WebhookURL is then empty, the channel sends
+          nothing, and a PUT with a new URL repairs the row.
+        type: boolean
     type: object
   handlers.notificationChannelWithCount:
     properties:
@@ -1476,12 +1489,25 @@ definitions:
         type: string
       name:
         type: string
+      secret_unreadable:
+        description: |-
+          SecretUnreadable is set by the repository when the stored secret cannot
+          be decrypted. Secret is then empty, the channel sends nothing, and a
+          PUT with a new secret repairs the row.
+        type: boolean
       subscription_count:
         type: integer
       updated_at:
         type: string
       webhook_url:
+        description: https URL, at most 2048 characters; empty when webhook_url_unreadable.
         type: string
+      webhook_url_unreadable:
+        description: |-
+          WebhookURLUnreadable is set by the repository when the stored webhook
+          URL cannot be decrypted. WebhookURL is then empty, the channel sends
+          nothing, and a PUT with a new URL repairs the row.
+        type: boolean
     type: object
   handlers.publishTemplateRequest:
     properties:
@@ -2440,10 +2466,23 @@ definitions:
         type: string
       name:
         type: string
+      secret_unreadable:
+        description: |-
+          SecretUnreadable is set by the repository when the stored secret cannot
+          be decrypted. Secret is then empty, the channel sends nothing, and a
+          PUT with a new secret repairs the row.
+        type: boolean
       updated_at:
         type: string
       webhook_url:
+        description: https URL, at most 2048 characters; empty when webhook_url_unreadable.
         type: string
+      webhook_url_unreadable:
+        description: |-
+          WebhookURLUnreadable is set by the repository when the stored webhook
+          URL cannot be decrypted. WebhookURL is then empty, the channel sends
+          nothing, and a PUT with a new URL repairs the row.
+        type: boolean
     type: object
   models.NotificationChannelFilters:
     properties:
@@ -3168,17 +3207,21 @@ paths:
     post:
       consumes:
       - application/json
-      description: 'Creates a new notification channel. format sets the body of the
-        webhook request: "generic" (default, the event JSON) or "teams" (a Microsoft
-        Teams Adaptive Card envelope for a Teams workflow made from the template "Post
-        to a channel when a webhook request is received"). An unknown format gives
-        400. Optional filters limit the channel to some stack instances: instance_name_patterns
-        (globs, path.Match syntax, case-insensitive), owner_ids, definition_ids and
-        cluster_ids. Each set filter must match (AND); one value of a filter is enough
-        (OR); empty filters match all instances. Events without an instance go only
-        to channels without filters; a cleanup policy run goes to a channel when at
-        least one affected instance matches. An invalid pattern gives 400. An ID that
-        does not exist gives a warning in the response; the channel is saved.'
+      description: 'Creates a new notification channel. A secret needs KUBECONFIG_ENCRYPTION_KEY:
+        without the key a non-empty secret gives 400. With the key the secret and
+        the webhook URL are encrypted at rest; without the key the URL is stored in
+        plaintext. The webhook URL is at most 2048 characters. format sets the body
+        of the webhook request: "generic" (default, the event JSON) or "teams" (a
+        Microsoft Teams Adaptive Card envelope for a Teams workflow made from the
+        template "Post to a channel when a webhook request is received"). An unknown
+        format gives 400. Optional filters limit the channel to some stack instances:
+        instance_name_patterns (globs, path.Match syntax, case-insensitive), owner_ids,
+        definition_ids and cluster_ids. Each set filter must match (AND); one value
+        of a filter is enough (OR); empty filters match all instances. Events without
+        an instance go only to channels without filters; a cleanup policy run goes
+        to a channel when at least one affected instance matches. An invalid pattern
+        gives 400. An ID that does not exist gives a warning in the response; the
+        channel is saved.'
       parameters:
       - description: Channel
         in: body
@@ -3298,11 +3341,15 @@ paths:
     put:
       consumes:
       - application/json
-      description: Updates an existing notification channel. Only the fields in the
-        body change. format ("generic" or "teams") replaces the body format; omit
-        it to keep the format; an unknown format gives 400. filters replaces the channel
-        filters (omit it to keep them, send {} to remove them); the rules are the
-        same as for create. An ID that does not exist gives a warning in the response.
+      description: 'Updates an existing notification channel. Only the fields in the
+        body change. A new non-empty secret needs KUBECONFIG_ENCRYPTION_KEY (400 without
+        it); "secret": "" removes the secret. A secret_unreadable or webhook_url_unreadable
+        channel (stored value that cannot be decrypted) sends nothing until a PUT
+        sets the value again. format ("generic" or "teams") replaces the body format;
+        omit it to keep the format; an unknown format gives 400. filters replaces
+        the channel filters (omit it to keep them, send {} to remove them); the rules
+        are the same as for create. An ID that does not exist gives a warning in the
+        response.'
       parameters:
       - description: Channel ID
         in: path

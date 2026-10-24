@@ -304,8 +304,11 @@ backend:
   secrets:
     JWT_SECRET: "CHANGE-ME-generate-a-random-secret"               # MUST be provided — minimum 16 chars
     ADMIN_PASSWORD: "CHANGE-ME-set-a-secure-password"
-    # Encrypts kubeconfig data and registry passwords at rest. Use 32 or more random characters.
-    # Without it, the backend refuses cluster kubeconfig_data and registry_password (use kubeconfig_path).
+    # Encrypts kubeconfig data, registry passwords, notification channel secrets and
+    # notification channel webhook URLs at rest. Use 32 or more random characters.
+    # Without it, the backend refuses cluster kubeconfig_data and registry_password
+    # (use kubeconfig_path) and a notification channel secret. It stores channel
+    # webhook URLs in plaintext: set the key when a URL holds a token.
     KUBECONFIG_ENCRYPTION_KEY: ""
     # Git providers (optional). Instead of a PAT, Azure DevOps can use workload
     # identity: set backend.env.AZURE_DEVOPS_AUTH=workload-identity plus

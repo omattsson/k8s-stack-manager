@@ -216,7 +216,11 @@ func (d *Dispatcher) runJob(ctx context.Context, job channelJob) {
 	}
 
 	status, statusCode := "failed", 0
-	if body != nil {
+	if msg := ch.UnreadableMessage(); msg != "" {
+		// The channel read (or the queued copy) has a value that cannot be
+		// decrypted: deliver sends nothing and gives the fixed message.
+		status, statusCode, errMsg = d.deliver(ctx, ch, job.eventType, nil)
+	} else if body != nil {
 		status, statusCode, errMsg = d.deliver(ctx, ch, job.eventType, body)
 	}
 

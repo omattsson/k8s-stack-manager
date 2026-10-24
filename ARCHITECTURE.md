@@ -94,7 +94,7 @@ The order from lowest to highest priority (`internal/helm/values_generator.go`):
 - **Secret refresher.** It rotates the container registry pull secrets every 4 hours (for short-lived tokens).
 - **Access reconciler.** It applies the access RoleBinding to the stack namespaces of in-cluster clusters (see [Namespace-scoped backend access](#namespace-scoped-backend-access)).
 
-The application encrypts kubeconfig data at rest with AES-256-GCM. The key comes from `KUBECONFIG_ENCRYPTION_KEY`. Without this key, the backend rejects kubeconfig data.
+The application encrypts kubeconfig data at rest with AES-256-GCM. The key comes from `KUBECONFIG_ENCRYPTION_KEY`. Without this key, the backend rejects kubeconfig data. The key also encrypts registry passwords, notification channel secrets and notification channel webhook URLs. Without the key, the backend refuses a channel secret and stores webhook URLs in plaintext.
 
 ## Deployment Pipeline
 

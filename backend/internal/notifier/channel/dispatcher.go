@@ -125,6 +125,9 @@ func (d *Dispatcher) DispatchTo(ctx context.Context, ch models.NotificationChann
 // "failed"), the HTTP status code (0 when no answer came) and an error
 // message without the webhook URL. It writes no delivery log.
 func (d *Dispatcher) DeliverOnce(ctx context.Context, ch models.NotificationChannel, payload EventPayload) (string, int, string) {
+	if msg := ch.UnreadableMessage(); msg != "" {
+		return "failed", 0, msg
+	}
 	body, err := encodeBody(bodyFormat(&ch), payload)
 	if err != nil {
 		return "failed", 0, "marshal error"
@@ -144,6 +147,13 @@ func (d *Dispatcher) retryWait() time.Duration {
 }
 
 func (d *Dispatcher) deliver(ctx context.Context, ch *models.NotificationChannel, eventType string, body []byte) (status string, statusCode int, errMsg string) {
+	// A secret or URL that the repository could not decrypt: no request, no
+	// retry, and never a request signed with a wrong or empty secret.
+	if msg := ch.UnreadableMessage(); msg != "" {
+		d.failures.add(ch.ID, msgDeliveryFailed,
+			"channel", ch.Name, "channel_id", ch.ID, "event", eventType, "error", msg)
+		return "failed", 0, msg
+	}
 	statusCode, err := d.post(ctx, ch, eventType, body)
 	if err == nil {
 		return "success", statusCode, ""
@@ -169,6 +179,10 @@ func (d *Dispatcher) deliver(ctx context.Context, ch *models.NotificationChannel
 }
 
 func (d *Dispatcher) post(ctx context.Context, ch *models.NotificationChannel, eventType string, body []byte) (int, error) {
+	// The only place that signs and sends: never with an unreadable value.
+	if msg := ch.UnreadableMessage(); msg != "" {
+		return 0, errors.New(msg)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ch.WebhookURL, bytes.NewReader(body))
 	if err != nil {
 		// The parse error contains the webhook URL (it can hold a token).
