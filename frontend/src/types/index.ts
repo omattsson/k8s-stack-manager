@@ -1074,6 +1074,10 @@ export interface NotificationChannel {
   format?: NotificationChannelFormat;
   /** Instance filters; an empty object means all instances. */
   filters?: NotificationChannelFilters;
+  /** True when the stored secret cannot be decrypted. Omitted when false. */
+  secret_unreadable?: boolean;
+  /** True when the stored webhook URL cannot be decrypted (`webhook_url` is then empty). Omitted when false. */
+  webhook_url_unreadable?: boolean;
   created_at: string;
   updated_at: string;
 }

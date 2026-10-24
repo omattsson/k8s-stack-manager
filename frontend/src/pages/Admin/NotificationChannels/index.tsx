@@ -61,6 +61,9 @@ import { useAuth } from '../../../context/AuthContext';
 import ChannelFiltersEditor from './ChannelFiltersEditor';
 import { filtersEmpty, filtersSummary, type FilterOption, type FilterOptions } from './channelFilters';
 
+/** Longest webhook URL that the backend accepts. */
+const MAX_WEBHOOK_URL_LENGTH = 2048;
+
 /** Help text of the Secret field: what the signature is and when it helps. */
 const SECRET_HELP =
   'With a secret, each request has the header X-StackManager-Signature (sha256= and the HMAC-SHA256 of the body). '
@@ -177,6 +180,7 @@ const NotificationChannels = () => {
   // Create/Edit dialog
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingChannel, setEditingChannel] = useState<NotificationChannel | null>(null);
   const [form, setForm] = useState<ChannelFormState>(emptyForm);
   const [formError, setFormError] = useState<string | null>(null);
   const [formTouched, setFormTouched] = useState<Record<string, boolean>>({});
@@ -242,6 +246,7 @@ const NotificationChannels = () => {
   const openCreateDialog = useCallback(() => {
     ensureFilterOptions();
     setEditingId(null);
+    setEditingChannel(null);
     setForm(emptyForm);
     setFormError(null);
     setFormTouched({});
@@ -251,6 +256,7 @@ const NotificationChannels = () => {
   const openEditDialog = useCallback((channel: NotificationChannel) => {
     ensureFilterOptions();
     setEditingId(channel.id);
+    setEditingChannel(channel);
     setForm({
       name: channel.name,
       webhook_url: channel.webhook_url,
@@ -271,17 +277,25 @@ const NotificationChannels = () => {
     setFormTouched({});
   }, []);
 
+  const urlOptional = editingId !== null && editingChannel?.webhook_url_unreadable === true;
+
   const handleSave = useCallback(async () => {
     if (!form.name.trim()) {
       setFormError('Name is required');
       return;
     }
-    if (!form.webhook_url.trim()) {
+    // An empty URL of an unreadable channel means "keep the stored one".
+    const keepStoredUrl = editingId !== null && editingChannel?.webhook_url_unreadable === true && !form.webhook_url.trim();
+    if (!keepStoredUrl && !form.webhook_url.trim()) {
       setFormError('Webhook URL is required');
       return;
     }
-    if (!form.webhook_url.startsWith('https://')) {
+    if (!keepStoredUrl && !form.webhook_url.startsWith('https://')) {
       setFormError('Webhook URL must start with https://');
+      return;
+    }
+    if (form.webhook_url.trim().length > MAX_WEBHOOK_URL_LENGTH) {
+      setFormError(`Webhook URL must be at most ${MAX_WEBHOOK_URL_LENGTH} characters`);
       return;
     }
 
@@ -294,11 +308,13 @@ const NotificationChannels = () => {
       if (editingId) {
         const payload: Partial<NotificationChannel> & { secret?: string } = {
           name: form.name.trim(),
-          webhook_url: form.webhook_url.trim(),
           enabled: form.enabled,
           format: form.format,
           filters,
         };
+        if (!keepStoredUrl) {
+          payload.webhook_url = form.webhook_url.trim();
+        }
         if (form.secret) {
           payload.secret = form.secret;
         }
@@ -329,7 +345,7 @@ const NotificationChannels = () => {
     } finally {
       setSaving(false);
     }
-  }, [form, editingId, fetchChannels, showSuccess, showWarning]);
+  }, [form, editingId, editingChannel, fetchChannels, showSuccess, showWarning]);
 
   // --- Toggle enabled ---
   /**
@@ -537,13 +553,29 @@ const NotificationChannels = () => {
                       {channel.format === 'teams' && (
                         <Chip label="Teams" size="small" variant="outlined" sx={{ ml: 1 }} />
                       )}
+                      {channel.secret_unreadable === true && (
+                        <Tooltip title="The stored secret cannot be decrypted. Deliveries fail until you set the secret again.">
+                          <Chip label="Secret unreadable" size="small" color="warning" sx={{ ml: 1 }} />
+                        </Tooltip>
+                      )}
+                      {channel.webhook_url_unreadable === true && (
+                        <Tooltip title="The stored webhook URL cannot be decrypted. Enter the URL again to repair the channel.">
+                          <Chip label="URL unreadable" size="small" color="warning" sx={{ ml: 1 }} />
+                        </Tooltip>
+                      )}
                     </TableCell>
                     <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>
-                      <Tooltip title={channel.webhook_url}>
-                        <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>
-                          {truncateUrl(channel.webhook_url)}
+                      {channel.webhook_url_unreadable === true ? (
+                        <Typography variant="body2" color="text.secondary">
+                          Cannot be read
                         </Typography>
-                      </Tooltip>
+                      ) : (
+                        <Tooltip title={channel.webhook_url}>
+                          <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>
+                            {truncateUrl(channel.webhook_url)}
+                          </Typography>
+                        </Tooltip>
+                      )}
                     </TableCell>
                     <TableCell>
                       <Switch
@@ -671,6 +703,16 @@ const NotificationChannels = () => {
         <DialogContent>
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
             {formError && <Alert severity="error">{formError}</Alert>}
+            {editingId && editingChannel?.webhook_url_unreadable === true && (
+              <Alert severity="warning">
+                The stored webhook URL cannot be decrypted. Enter the URL again to repair the channel.
+              </Alert>
+            )}
+            {editingId && editingChannel?.secret_unreadable === true && (
+              <Alert severity="warning">
+                The stored secret cannot be decrypted. Deliveries fail until you set the secret again.
+              </Alert>
+            )}
             <TextField
               label="Name"
               value={form.name}
@@ -687,10 +729,13 @@ const NotificationChannels = () => {
               onChange={(e) => setForm({ ...form, webhook_url: e.target.value })}
               onBlur={() => setFormTouched((prev) => ({ ...prev, webhook_url: true }))}
               fullWidth
-              required
-              error={formTouched.webhook_url === true && (!form.webhook_url.trim() || !form.webhook_url.startsWith('https://'))}
+              required={!urlOptional}
+              error={formTouched.webhook_url === true && !(urlOptional && !form.webhook_url.trim())
+                && (!form.webhook_url.trim() || !form.webhook_url.startsWith('https://'))}
               helperText={
-                formTouched.webhook_url === true && !form.webhook_url.trim()
+                urlOptional && !form.webhook_url.trim()
+                  ? 'Leave empty to keep the stored URL.'
+                  : formTouched.webhook_url === true && !form.webhook_url.trim()
                   ? 'Webhook URL is required'
                   : formTouched.webhook_url === true && !form.webhook_url.startsWith('https://')
                     ? 'Must start with https://'
