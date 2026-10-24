@@ -17,12 +17,17 @@ type NotificationChannel struct {
 	UpdatedAt time.Time `json:"updated_at"`
 	ID        string    `json:"id" gorm:"primaryKey;size:36"`
 	Name      string    `json:"name" gorm:"size:255;uniqueIndex;not null"`
-	// WebhookURL is at most MaxWebhookURLLength characters. With
-	// KUBECONFIG_ENCRYPTION_KEY the column holds "enc:v1:" + base64
-	// ciphertext (about 1.4 times longer), so the column is TEXT
+	// Storage: with KUBECONFIG_ENCRYPTION_KEY the column holds "enc:v1:" +
+	// base64 ciphertext (about 1.4 times longer), so the column is TEXT
 	// (migration 65).
+
+	// https URL, at most 2048 characters; empty when webhook_url_unreadable.
 	WebhookURL string `json:"webhook_url" gorm:"type:text;not null"`
 	Secret     string `json:"-" gorm:"type:text"`
+	// StoredSecretRaw is the secret column as the repository read it (set by
+	// decryptFields). UpdateChannel uses it to migrate a legacy secret only
+	// while the column still has this value.
+	StoredSecretRaw string `json:"-" gorm:"-"`
 	// SecretUnreadable is set by the repository when the stored secret cannot
 	// be decrypted. Secret is then empty, the channel sends nothing, and a
 	// PUT with a new secret repairs the row.
@@ -49,7 +54,17 @@ type NotificationChannel struct {
 // ErrChannelSecretNoKey is the reason when a channel secret cannot be stored
 // because KUBECONFIG_ENCRYPTION_KEY is not set. The repository wraps it with
 // dberrors.ErrValidation. The message is shown to the client as is.
-var ErrChannelSecretNoKey = errors.New("A channel secret cannot be stored without KUBECONFIG_ENCRYPTION_KEY. Leave the secret empty, or set the key.")
+var ErrChannelSecretNoKey = errors.New("A channel secret cannot be stored without KUBECONFIG_ENCRYPTION_KEY. Leave the secret empty, or set the key.") //nolint:staticcheck // ST1005: user-facing sentence
+
+// ChannelSecretStats counts the stored channel secrets and webhook URLs by
+// state (counts only, never the values).
+type ChannelSecretStats struct {
+	PlaintextSecrets   int
+	UnreadableSecrets  int
+	MaybeCipherSecrets int
+	PlaintextURLs      int
+	UnreadableURLs     int
+}
 
 // MaxWebhookURLLength is the maximum length of a webhook URL.
 const MaxWebhookURLLength = 2048

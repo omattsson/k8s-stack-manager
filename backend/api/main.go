@@ -331,7 +331,7 @@ func warnPlaintextRegistryPasswords(clusterRepo models.ClusterRepository) {
 
 // channelSecretStatser is implemented by the notification channel repository.
 type channelSecretStatser interface {
-	ChannelSecretStats(ctx context.Context) (plaintextSecrets, unreadableSecrets, plaintextURLs, unreadableURLs int, err error)
+	ChannelSecretStats(ctx context.Context) (models.ChannelSecretStats, error)
 }
 
 // warnChannelSecrets logs how many notification channels store a secret or a
@@ -344,45 +344,49 @@ func warnChannelSecrets(repo models.NotificationChannelRepository, keySet bool) 
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), instanceBackfillTimeout)
 	defer cancel()
-	plainSecrets, badSecrets, plainURLs, badURLs, err := stats.ChannelSecretStats(ctx)
+	st, err := stats.ChannelSecretStats(ctx)
 	if err != nil {
 		slog.Warn("Could not check the notification channel secrets", "error", err)
 		return
 	}
-	if plainSecrets > 0 {
+	if st.PlaintextSecrets > 0 {
 		if keySet {
-			slog.Warn("Notification channels store a signing secret in plaintext or in an older format that the backend cannot read. Set the secret of these channels again.",
-				"channels", plainSecrets)
+			slog.Warn("Notification channels store a signing secret in plaintext. The next save of each channel encrypts it.",
+				"channels", st.PlaintextSecrets)
 		} else {
 			slog.Warn("Notification channels store a signing secret in plaintext. Set KUBECONFIG_ENCRYPTION_KEY, then set the secret of these channels again.",
-				"channels", plainSecrets)
+				"channels", st.PlaintextSecrets)
 		}
 	}
-	if badSecrets > 0 {
+	if st.MaybeCipherSecrets > 0 {
+		slog.Warn("Notification channels store a secret that may be ciphertext of an older version. If KUBECONFIG_ENCRYPTION_KEY was removed, set it again; otherwise ignore this.",
+			"channels", st.MaybeCipherSecrets)
+	}
+	if st.UnreadableSecrets > 0 {
 		if keySet {
 			slog.Warn("Notification channels store a secret that the backend cannot decrypt. Deliveries of these channels fail. Set the secret of these channels again.",
-				"channels", badSecrets)
+				"channels", st.UnreadableSecrets)
 		} else {
-			slog.Warn("Notification channels store an encrypted secret, but KUBECONFIG_ENCRYPTION_KEY is not set. The backend ignores these secrets and deliveries of these channels fail until the same key is set or the secret is set again.",
-				"channels", badSecrets)
+			slog.Warn("Notification channels store an encrypted secret, but KUBECONFIG_ENCRYPTION_KEY is not set. The backend ignores these secrets and deliveries of these channels fail until the same key is set again, or the secret is removed (\"secret\": \"\").",
+				"channels", st.UnreadableSecrets)
 		}
 	}
-	if badURLs > 0 {
+	if st.UnreadableURLs > 0 {
 		if keySet {
 			slog.Warn("Notification channels store a webhook URL that the backend cannot decrypt. Deliveries of these channels fail. Set the URL again.",
-				"channels", badURLs)
+				"channels", st.UnreadableURLs)
 		} else {
 			slog.Warn("Notification channels store an encrypted webhook URL, but KUBECONFIG_ENCRYPTION_KEY is not set. Deliveries of these channels fail until the same key is set or the URL is set again.",
-				"channels", badURLs)
+				"channels", st.UnreadableURLs)
 		}
 	}
-	if plainURLs > 0 {
+	if st.PlaintextURLs > 0 {
 		if keySet {
 			slog.Info("Notification channels store the webhook URL in plaintext. Any save of the channel encrypts it.",
-				"channels", plainURLs)
+				"channels", st.PlaintextURLs)
 		} else {
 			slog.Warn("Notification channels store the webhook URL in plaintext, because KUBECONFIG_ENCRYPTION_KEY is not set.",
-				"channels", plainURLs)
+				"channels", st.PlaintextURLs)
 		}
 	}
 }

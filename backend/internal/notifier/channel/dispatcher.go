@@ -179,6 +179,10 @@ func (d *Dispatcher) deliver(ctx context.Context, ch *models.NotificationChannel
 }
 
 func (d *Dispatcher) post(ctx context.Context, ch *models.NotificationChannel, eventType string, body []byte) (int, error) {
+	// The only place that signs and sends: never with an unreadable value.
+	if msg := ch.UnreadableMessage(); msg != "" {
+		return 0, errors.New(msg)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ch.WebhookURL, bytes.NewReader(body))
 	if err != nil {
 		// The parse error contains the webhook URL (it can hold a token).

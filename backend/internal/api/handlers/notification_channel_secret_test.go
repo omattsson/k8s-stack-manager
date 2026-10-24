@@ -74,6 +74,8 @@ func TestNotificationChannelHandler_WebhookURLTooLong(t *testing.T) {
 	}{
 		{"2048 characters", prefix + strings.Repeat("a", 2048-len(prefix)), http.StatusCreated},
 		{"2049 characters", prefix + strings.Repeat("a", 2049-len(prefix)), http.StatusBadRequest},
+		{"2048 multibyte characters", prefix + strings.Repeat("ä", 2048-len(prefix)), http.StatusCreated},
+		{"2049 multibyte characters", prefix + strings.Repeat("ä", 2049-len(prefix)), http.StatusBadRequest},
 	}
 	for _, tt := range tests {
 		tt := tt
@@ -89,6 +91,7 @@ func TestNotificationChannelHandler_WebhookURLTooLong(t *testing.T) {
 				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
 				assert.Equal(t, msgWebhookURLTooLong, body["error"])
 				assert.NotContains(t, w.Body.String(), "aaaa")
+				assert.NotContains(t, w.Body.String(), "ääää")
 			}
 
 			up := channelRequest(router, http.MethodPut, "/api/v1/admin/notification-channels/ch-1", `{"webhook_url":"`+tt.url+`"}`)
@@ -156,4 +159,23 @@ func TestNotificationChannelHandler_UnreadableChannel(t *testing.T) {
 		get := channelRequest(router, http.MethodGet, "/api/v1/admin/notification-channels/ch-1", ``)
 		assert.NotContains(t, get.Body.String(), "unreadable")
 	})
+}
+
+func TestNotificationChannelHandler_UpdateKeepsUnreadableURL(t *testing.T) {
+	t.Parallel()
+	router, repo := setupNotificationChannelRouter()
+	seedChannel(t, repo, "ch-1", "one", "https://h.example.com/1", true)
+	repo.mu.Lock()
+	repo.channels["ch-1"].WebhookURL, repo.channels["ch-1"].WebhookURLUnreadable = "", true
+	repo.mu.Unlock()
+
+	w := channelRequest(router, http.MethodPut, "/api/v1/admin/notification-channels/ch-1", `{"name":"renamed"}`)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	repo.mu.RLock()
+	defer repo.mu.RUnlock()
+	got := repo.channels["ch-1"]
+	assert.Equal(t, "renamed", got.Name)
+	assert.Empty(t, got.WebhookURL, "the URL stays empty, so the repository omits the column")
+	assert.True(t, got.WebhookURLUnreadable)
 }

@@ -14,10 +14,11 @@ import (
 // KUBECONFIG_ENCRYPTION_KEY the backend stores notification_channels.webhook_url
 // as "enc:v1:" + base64 ciphertext: a URL of 2048 characters gives about 2775.
 // The migration widens the column from VARCHAR(2048) to TEXT NOT NULL. Only
-// MySQL needs it (a new database gets TEXT from AutoMigrate in migration 4;
-// SQLite does not limit the length). Up and Down are idempotent. Down goes
-// back to VARCHAR(2048); MySQL refuses it in strict mode when a stored value
-// is longer, so Down never cuts a URL.
+// MySQL needs it (migration 40 creates the table with raw SQL as
+// VARCHAR(2048), so a new MySQL database runs the ALTER too; SQLite does not
+// limit the length). Up and Down are idempotent. Down goes
+// back to VARCHAR(2048); it returns an error when a stored value is longer, so
+// Down never cuts a URL, also not in non-strict mode.
 func notificationChannelURLMigration() schema.Migration {
 	return schema.Migration{
 		Version:     "20261024000065",
@@ -40,6 +41,13 @@ func notificationChannelURLMigration() schema.Migration {
 			columnType, found, err := channelURLColumnType(tx)
 			if err != nil || !found || columnType == "varchar(2048)" {
 				return err
+			}
+			var tooLong int64
+			if err := tx.Raw("SELECT COUNT(*) FROM notification_channels WHERE CHAR_LENGTH(webhook_url) > 2048").Row().Scan(&tooLong); err != nil {
+				return fmt.Errorf("failed to count long webhook URLs: %w", err)
+			}
+			if tooLong > 0 {
+				return fmt.Errorf("cannot shrink notification_channels.webhook_url: %d value(s) are longer than 2048 characters", tooLong)
 			}
 			return tx.Exec("ALTER TABLE notification_channels MODIFY webhook_url VARCHAR(2048) NOT NULL").Error // #nosec G202 -- constant statement
 		},

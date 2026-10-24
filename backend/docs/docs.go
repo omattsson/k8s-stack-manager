@@ -12546,7 +12546,7 @@ const docTemplate = `{
                     }
                 },
                 "webhook_url": {
-                    "description": "WebhookURL is at most MaxWebhookURLLength characters. With\nKUBECONFIG_ENCRYPTION_KEY the column holds \"enc:v1:\" + base64\nciphertext (about 1.4 times longer), so the column is TEXT\n(migration 65).",
+                    "description": "https URL, at most 2048 characters; empty when webhook_url_unreadable.",
                     "type": "string"
                 },
                 "webhook_url_unreadable": {
@@ -12594,7 +12594,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "webhook_url": {
-                    "description": "WebhookURL is at most MaxWebhookURLLength characters. With\nKUBECONFIG_ENCRYPTION_KEY the column holds \"enc:v1:\" + base64\nciphertext (about 1.4 times longer), so the column is TEXT\n(migration 65).",
+                    "description": "https URL, at most 2048 characters; empty when webhook_url_unreadable.",
                     "type": "string"
                 },
                 "webhook_url_unreadable": {
@@ -13958,7 +13958,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "webhook_url": {
-                    "description": "WebhookURL is at most MaxWebhookURLLength characters. With\nKUBECONFIG_ENCRYPTION_KEY the column holds \"enc:v1:\" + base64\nciphertext (about 1.4 times longer), so the column is TEXT\n(migration 65).",
+                    "description": "https URL, at most 2048 characters; empty when webhook_url_unreadable.",
                     "type": "string"
                 },
                 "webhook_url_unreadable": {

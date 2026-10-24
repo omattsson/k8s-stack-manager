@@ -63,6 +63,27 @@ func TestDatabaseMySQL_ChannelWebhookURLColumn(t *testing.T) {
 	require.NoError(t, mig.Up(db))
 }
 
+// TestDatabaseMySQL_ChannelURLMigrationDown checks that Down refuses to shrink
+// the column while a stored URL is longer than 2048 characters.
+func TestDatabaseMySQL_ChannelURLMigrationDown(t *testing.T) {
+	db := setupChannelMySQL(t)
+	mig := notificationChannelURLMigration()
+	require.NoError(t, mig.Up(db))
+
+	long := "https://hooks.example.com/" + strings.Repeat("a", 2100)
+	require.NoError(t, db.Exec("INSERT INTO notification_channels (id, name, webhook_url, enabled) VALUES (?, ?, ?, ?)", "ch-long", "long", long, true).Error)
+	err := mig.Down(db)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "longer than 2048")
+	columnType, _, cerr := channelURLColumnType(db)
+	require.NoError(t, cerr)
+	assert.Equal(t, "text", columnType, "the column is unchanged")
+
+	require.NoError(t, db.Exec("DELETE FROM notification_channels WHERE id = ?", "ch-long").Error)
+	require.NoError(t, mig.Down(db))
+	require.NoError(t, mig.Up(db))
+}
+
 // TestDatabaseMySQL_ChannelSecretWithoutKey checks on MySQL that a keyless
 // repository refuses a new secret, keeps a legacy plaintext or NULL secret on
 // other edits, clears it on request, and counts the stored values.
@@ -92,12 +113,9 @@ func TestDatabaseMySQL_ChannelSecretWithoutKey(t *testing.T) {
 	require.Error(t, repo.UpdateChannel(ctx, legacy, true))
 	assert.Equal(t, "plain", storedChannelColumn(t, db, "ch-legacy", "secret"))
 
-	plainSecrets, badSecrets, plainURLs, badURLs, err := repo.ChannelSecretStats(ctx)
+	stats, err := repo.ChannelSecretStats(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, 1, plainSecrets)
-	assert.Zero(t, badSecrets)
-	assert.Equal(t, 2, plainURLs)
-	assert.Zero(t, badURLs)
+	assert.Equal(t, models.ChannelSecretStats{PlaintextSecrets: 1, PlaintextURLs: 2}, stats)
 
 	legacy.Secret = ""
 	require.NoError(t, repo.UpdateChannel(ctx, legacy, true))

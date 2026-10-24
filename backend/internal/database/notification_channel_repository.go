@@ -109,6 +109,7 @@ func (r *GORMNotificationChannelRepository) warnOnce(field, id, reason string) {
 // field is empty and the matching Unreadable flag is set.
 func (r *GORMNotificationChannelRepository) decryptFields(ch *models.NotificationChannel) {
 	ch.SecretUnreadable, ch.WebhookURLUnreadable = false, false
+	ch.StoredSecretRaw = ch.Secret
 	secret, st, reason := decodeStored(ch.Secret, r.encryptionKey, true)
 	ch.Secret = secret
 	if st == storedUnreadable {
@@ -140,12 +141,12 @@ func (r *GORMNotificationChannelRepository) storedSecret(ctx context.Context, id
 // the column stays as it is: without a key, a secret equal to the stored
 // legacy plaintext is no change. An empty secret clears the column. A new
 // secret without a key is refused (nothing is written yet).
-func (r *GORMNotificationChannelRepository) secretToStore(ctx context.Context, ch *models.NotificationChannel) (value string, keep bool, err error) {
+func (r *GORMNotificationChannelRepository) secretToStore(ctx context.Context, ch *models.NotificationChannel, existing bool) (value string, keep bool, err error) {
 	if ch.Secret == "" {
 		return "", false, nil
 	}
 	if len(r.encryptionKey) == 0 {
-		if ch.ID != "" {
+		if existing {
 			stored, serr := r.storedSecret(ctx, ch.ID)
 			if serr != nil {
 				return "", false, serr
@@ -184,7 +185,7 @@ func (r *GORMNotificationChannelRepository) CreateChannel(ctx context.Context, c
 	if channel.Format == "" {
 		channel.Format = models.NotificationChannelFormatGeneric
 	}
-	secretValue, _, err := r.secretToStore(ctx, channel)
+	secretValue, _, err := r.secretToStore(ctx, channel, false)
 	if err != nil {
 		return err
 	}
@@ -226,8 +227,11 @@ func channelFormat(format string) string {
 }
 
 // UpdateChannel updates an existing notification channel. If secretChanged is
-// true, the secret field is encrypted and persisted; otherwise it is left untouched
-// to avoid double-encryption when re-saving a decrypted record.
+// true, the secret field is encrypted and persisted. Otherwise, with a key, a
+// readable secret (decryptFields returns plaintext or "") is encrypted again
+// on every save, so a legacy plaintext or old-format secret moves to the
+// "enc:v1:" format with the next save (as the URL does). An unreadable
+// secret, an empty secret and a save without a key leave the column as it is.
 func (r *GORMNotificationChannelRepository) UpdateChannel(ctx context.Context, channel *models.NotificationChannel, secretChanged bool) error {
 	updates := map[string]interface{}{
 		"name":       channel.Name,
@@ -239,7 +243,7 @@ func (r *GORMNotificationChannelRepository) UpdateChannel(ctx context.Context, c
 	// Checks first: a refused request changes nothing.
 	writeSecret := false
 	if secretChanged {
-		value, keep, err := r.secretToStore(ctx, channel)
+		value, keep, err := r.secretToStore(ctx, channel, true)
 		if err != nil {
 			return err
 		}
@@ -247,6 +251,17 @@ func (r *GORMNotificationChannelRepository) UpdateChannel(ctx context.Context, c
 			updates["secret"] = value
 			writeSecret = true
 		}
+	} else if raw := channel.StoredSecretRaw; len(r.encryptionKey) > 0 && !channel.SecretUnreadable &&
+		channel.Secret != "" && raw != "" && !strings.HasPrefix(raw, encryptedPrefix) {
+		// Lazy migration of a legacy plaintext or old-format secret. It is
+		// conditional on the value that was read, so a concurrent change of
+		// the secret wins, and a prefixed secret is never rewritten.
+		value, err := r.encryptValue(channel.Secret)
+		if err != nil {
+			return dberrors.NewDatabaseError("encrypt_secret", err)
+		}
+		updates["secret"] = gorm.Expr("CASE WHEN secret = ? THEN ? ELSE secret END", raw, value)
+		writeSecret = true
 	}
 	// An unreadable URL that the caller did not replace stays as it is, so a
 	// broken channel can still be renamed or disabled.
@@ -422,29 +437,46 @@ func (r *GORMNotificationChannelRepository) ListDeliveryLogs(ctx context.Context
 }
 
 // ChannelSecretStats counts the stored secrets and webhook URLs by state.
-// It never logs or returns the values. plaintextSecrets are secrets in
-// plaintext (without a key also in an older unprefixed encrypted format,
-// which cannot be told apart). unreadableSecrets and unreadableURLs cannot be
-// decrypted with the current key. plaintextURLs are unprefixed URLs.
-func (r *GORMNotificationChannelRepository) ChannelSecretStats(ctx context.Context) (plaintextSecrets, unreadableSecrets, plaintextURLs, unreadableURLs int, err error) {
+// It never logs or returns the values. PlaintextSecrets are secrets in
+// plaintext. Without a key, an unprefixed secret that is valid base64 of at
+// least minCiphertextLen bytes cannot be told apart from ciphertext of an
+// older version (key removed later); it counts in MaybeCipherSecrets, not in
+// PlaintextSecrets. UnreadableSecrets and UnreadableURLs cannot be decrypted
+// with the current key. PlaintextURLs are unprefixed URLs.
+func (r *GORMNotificationChannelRepository) ChannelSecretStats(ctx context.Context) (models.ChannelSecretStats, error) {
+	var stats models.ChannelSecretStats
 	var rows []struct{ Secret, WebhookURL string }
-	if err = r.db.WithContext(ctx).Model(&models.NotificationChannel{}).
+	if err := r.db.WithContext(ctx).Model(&models.NotificationChannel{}).
 		Select("COALESCE(secret, '') AS secret, webhook_url").Scan(&rows).Error; err != nil {
-		return 0, 0, 0, 0, dberrors.NewDatabaseError("channel_secret_stats", err)
+		return stats, dberrors.NewDatabaseError("channel_secret_stats", err)
 	}
 	for _, row := range rows {
 		switch _, st, _ := decodeStored(row.Secret, r.encryptionKey, true); st {
 		case storedPlaintext:
-			plaintextSecrets++
+			if len(r.encryptionKey) == 0 && looksLikeCiphertext(row.Secret) {
+				stats.MaybeCipherSecrets++
+			} else {
+				stats.PlaintextSecrets++
+			}
 		case storedUnreadable:
-			unreadableSecrets++
+			stats.UnreadableSecrets++
 		}
 		switch _, st, _ := decodeStored(row.WebhookURL, r.encryptionKey, false); st {
 		case storedPlaintext:
-			plaintextURLs++
+			stats.PlaintextURLs++
 		case storedUnreadable:
-			unreadableURLs++
+			stats.UnreadableURLs++
 		}
 	}
-	return plaintextSecrets, unreadableSecrets, plaintextURLs, unreadableURLs, nil
+	return stats, nil
+}
+
+// looksLikeCiphertext reports whether an unprefixed value is valid base64 of
+// at least minCiphertextLen bytes.
+func looksLikeCiphertext(stored string) bool {
+	if strings.HasPrefix(stored, encryptedPrefix) {
+		return false
+	}
+	decoded, err := base64.StdEncoding.DecodeString(stored)
+	return err == nil && len(decoded) >= minCiphertextLen
 }

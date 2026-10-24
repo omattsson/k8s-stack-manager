@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"backend/internal/models"
 	"backend/internal/notifier"
@@ -46,7 +47,7 @@ func channelWriteError(c *gin.Context, err error) {
 // URL can hold a token. The dispatcher parses the URL with the same parser,
 // so a URL that passes this check always gives a request.
 func webhookURLError(raw string) string {
-	if len(raw) > models.MaxWebhookURLLength {
+	if utf8.RuneCountInString(raw) > models.MaxWebhookURLLength {
 		return msgWebhookURLTooLong
 	}
 	if !strings.HasPrefix(raw, "https://") {
