@@ -52,6 +52,19 @@ func (h *UserHandler) SetJWTExpiration(d time.Duration)                { h.jwtEx
 // of a revoked user. nil: sockets close at access-token expiry only.
 func (h *UserHandler) SetWebSocketRevoker(r websocket.ClientRevoker) { h.wsRevoker = r }
 
+// userBlockTTL is the lifetime of a user block: the longest access-token
+// lifetime (session token or SSO CLI token), 24 hours when none is set.
+func userBlockTTL(accessTokenExpiration, jwtExpiration time.Duration) time.Duration {
+	ttl := accessTokenExpiration
+	if jwtExpiration > ttl {
+		ttl = jwtExpiration
+	}
+	if ttl <= 0 {
+		ttl = 24 * time.Hour
+	}
+	return ttl
+}
+
 // blockIssuedTokens writes a user block that revokes every access token of
 // the user issued at or before now. It lives until the longest access-token
 // lifetime has passed. Tokens issued later pass. Logs and continues on error.
@@ -59,13 +72,7 @@ func (h *UserHandler) blockIssuedTokens(ctx context.Context, userID string) {
 	if h.sessionStore == nil {
 		return
 	}
-	ttl := h.accessTokenExpiration
-	if h.jwtExpiration > ttl {
-		ttl = h.jwtExpiration
-	}
-	if ttl <= 0 {
-		ttl = 24 * time.Hour
-	}
+	ttl := userBlockTTL(h.accessTokenExpiration, h.jwtExpiration)
 	if err := h.sessionStore.BlockUser(ctx, userID, time.Now().Add(ttl)); err != nil {
 		slog.Warn("Failed to block user in session store", "user_id", userID, "error", err)
 	}
@@ -85,16 +92,20 @@ type revokeOptions struct {
 // revokeUserAccess ends the sessions of a user. DeleteUser, DisableUser,
 // ResetUserPassword and ChangeUserRole call it after their own change
 // succeeds. Steps:
-//  1. Block the user in the session store until the longest access-token
+//  1. Revoke all refresh tokens of the user (explicit; no reliance on a
+//     foreign-key cascade).
+//  2. Block the user in the session store until the longest access-token
 //     lifetime has passed. Access tokens issued at or before the block get
 //     401; tokens issued later (for example after a password reset) work.
-//  2. Revoke all refresh tokens of the user (explicit; no reliance on a
-//     foreign-key cascade).
+//     The block comes after the revoke: a refresh that signs a token after
+//     the block must also pass its session recheck after the block, and
+//     that recheck fails once the revoke has run. With the opposite order, a
+//     refresh could hand out a token issued after the block that stays valid.
 //  3. If opts.deleteAPIKeys is set, delete all API keys of the user in one
 //     statement.
 //  4. Close the open WebSocket connections of the user on this replica,
 //     and with WebSocket fan-out also on the other replicas. The block from
-//     step 1 refuses a reconnect.
+//     step 2 refuses a reconnect.
 //
 // Error policy: log and continue. Each step runs even when an earlier step
 // fails, and the request still succeeds. The caller has already committed its
@@ -106,13 +117,13 @@ type revokeOptions struct {
 // Callers pass context.WithoutCancel(c.Request.Context()) so a client that
 // disconnects after the commit cannot cancel the revocation.
 func (h *UserHandler) revokeUserAccess(ctx context.Context, userID string, opts revokeOptions) {
-	h.blockIssuedTokens(ctx, userID)
-
 	if h.refreshTokenRepo != nil {
 		if err := h.refreshTokenRepo.RevokeAllForUser(ctx, userID); err != nil {
 			slog.Warn("Failed to revoke refresh tokens", "user_id", userID, "error", err)
 		}
 	}
+
+	h.blockIssuedTokens(ctx, userID)
 
 	if opts.deleteAPIKeys && h.apiKeyRepo != nil {
 		if _, err := h.apiKeyRepo.DeleteAllForUser(ctx, userID); err != nil {

@@ -51,6 +51,7 @@ type ClientIdentity struct {
 	IssuedAt  time.Time // access token: iat_ms claim (ms) or iat (whole seconds); the user blocklist compares it with the block time. Zero for an API key
 	UserID    string
 	TokenID   string // jti claim; empty for an API key
+	SessionID string // sid claim (session family); empty for an API key or a token without a session
 	APIKeyID  string // ID of the API key; empty for an access token
 }
 

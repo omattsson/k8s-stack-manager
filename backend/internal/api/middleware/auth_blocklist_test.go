@@ -22,14 +22,20 @@ import (
 type mockSessionStore struct {
 	blockedUsers  map[string]bool
 	blockedTokens map[string]bool
-	userBlockErr  error
-	tokenBlockErr error
+	// blockedSessions and sessionBlockErr drive IsSessionBlocked;
+	// sessionChecks counts its calls.
+	blockedSessions map[string]bool
+	userBlockErr    error
+	tokenBlockErr   error
+	sessionBlockErr error
+	sessionChecks   int
 }
 
 func newMockSessionStore() *mockSessionStore {
 	return &mockSessionStore{
-		blockedUsers:  make(map[string]bool),
-		blockedTokens: make(map[string]bool),
+		blockedUsers:    make(map[string]bool),
+		blockedTokens:   make(map[string]bool),
+		blockedSessions: make(map[string]bool),
 	}
 }
 
@@ -55,6 +61,19 @@ func (m *mockSessionStore) IsUserBlocked(_ context.Context, userID string, _ tim
 		return false, m.userBlockErr
 	}
 	return m.blockedUsers[userID], nil
+}
+
+func (m *mockSessionStore) BlockSession(_ context.Context, sessionID string, _ time.Time) error {
+	m.blockedSessions[sessionID] = true
+	return nil
+}
+
+func (m *mockSessionStore) IsSessionBlocked(_ context.Context, sessionID string) (bool, error) {
+	m.sessionChecks++
+	if m.sessionBlockErr != nil {
+		return false, m.sessionBlockErr
+	}
+	return m.blockedSessions[sessionID], nil
 }
 
 func (m *mockSessionStore) UnblockUser(_ context.Context, userID string) error {

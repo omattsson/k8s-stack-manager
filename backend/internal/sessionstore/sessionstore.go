@@ -122,6 +122,17 @@ type SessionStore interface {
 	// revoked. See userBlockApplies for the rule.
 	IsUserBlocked(ctx context.Context, userID string, issuedAt time.Time) (bool, error)
 	UnblockUser(ctx context.Context, userID string) error
+	// BlockSession revokes every access token of the session (the `sid`
+	// claim, the refresh token family) until `until`. It is a plain block, not
+	// based on the issue time: a revoked session never issues a valid token
+	// again, if the revoke of its refresh token family succeeded. `until` is
+	// the latest expiry of an access token of the session; after a failed
+	// revoke it is the end of the session. A second block keeps the later
+	// expiry.
+	// Replicas of an older version do not read this entry.
+	BlockSession(ctx context.Context, sessionID string, until time.Time) error
+	// IsSessionBlocked reports whether the session has an unexpired block.
+	IsSessionBlocked(ctx context.Context, sessionID string) (bool, error)
 	SaveOIDCState(ctx context.Context, state string, data OIDCStateData, ttl time.Duration) error
 	ConsumeOIDCState(ctx context.Context, state string) (*OIDCStateData, error)
 	SaveCLIAuth(ctx context.Context, sessionID string, data CLIAuthData, ttl time.Duration) error

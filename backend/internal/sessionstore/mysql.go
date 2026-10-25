@@ -22,6 +22,9 @@ const (
 	// update, rollback) keep reading it with their second rule.
 	kindUserBlockMs = "user_block_ms"
 	kindCLIAuth     = "cli_auth"
+	// kindSessionBlock marks a revoked session (sid) until the latest expiry
+	// of its access tokens.
+	kindSessionBlock = "session_block"
 )
 
 type SessionEntry struct {
@@ -122,6 +125,40 @@ func (s *MySQLStore) IsUserBlocked(ctx context.Context, userID string, issuedAt 
 		return false, nil
 	}
 	return userBlockApplies(userBlockTime(secData, hasSec, msData, hasMs), issuedAt), nil
+}
+
+// BlockSession writes one row of kind session_block (no schema change; the
+// cleanup deletes it by expires_at like every kind). A second block keeps the
+// later expiry (GREATEST), so a short block never shortens a long one.
+// expires_at holds Unix seconds, so until.Unix() drops up to one second;
+// sessionBlockSkew in the caller covers it.
+func (s *MySQLStore) BlockSession(ctx context.Context, sessionID string, until time.Time) error {
+	entry := SessionEntry{
+		EntryKey:  sessionID,
+		Kind:      kindSessionBlock,
+		ExpiresAt: until.Unix(),
+	}
+	return s.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "entry_key"}, {Name: "kind"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"expires_at": gorm.Expr("GREATEST(expires_at, VALUES(expires_at))"),
+			}),
+		}).
+		Create(&entry).Error
+}
+
+// IsSessionBlocked is one primary-key lookup.
+func (s *MySQLStore) IsSessionBlocked(ctx context.Context, sessionID string) (bool, error) {
+	var count int64
+	err := s.db.WithContext(ctx).
+		Model(&SessionEntry{}).
+		Where("entry_key = ? AND kind = ? AND expires_at > ?", sessionID, kindSessionBlock, time.Now().Unix()).
+		Count(&count).Error
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 func (s *MySQLStore) UnblockUser(ctx context.Context, userID string) error {

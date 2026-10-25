@@ -38,9 +38,14 @@ type MockRefreshTokenRepository struct {
 	// countHook, when set, runs before each CountActiveInFamily call with the
 	// 1-based call number (outside the lock). Tests use it to revoke tokens
 	// between a handler step and its re-check.
-	countHook  func(call int)
-	countCalls int
-	countErr   error // returned by CountActiveInFamily when set
+	countHook func(call int)
+	// countAfterHook, when set, runs after each CountActiveInFamily call has
+	// computed its result, with the call number (outside the lock). The
+	// caller still gets the result from before the hook: it models a change
+	// that lands right after the re-check of the handler.
+	countAfterHook func(call int)
+	countCalls     int
+	countErr       error // returned by CountActiveInFamily when set
 	// txHook, when set, runs at the start of each WithTx call, before the
 	// transaction reads anything. Tests use it to commit a concurrent write
 	// (for example TouchFamily) between a handler read and its transaction.
@@ -163,6 +168,20 @@ func (m *MockRefreshTokenRepository) CountActiveInFamily(ctx context.Context, fa
 		hook(call)
 	}
 
+	count, err := m.countActive(familyID)
+	m.mu.RLock()
+	after := m.countAfterHook
+	m.mu.RUnlock()
+	if after != nil {
+		// The count is final: a change made by the hook comes too late for
+		// this caller (a revoke that runs after its re-check).
+		after(call)
+	}
+	return count, err
+}
+
+// countActive counts the active tokens of a family under the read lock.
+func (m *MockRefreshTokenRepository) countActive(familyID string) (int64, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.countErr != nil {
@@ -1079,7 +1098,7 @@ func TestLogoutAll_BlocklistsAccessToken(t *testing.T) {
 			withRefreshRepo:  true,
 			revokeAllErr:     errors.New("db failure"),
 			wantStatus:       http.StatusInternalServerError,
-			wantTokenBlocked: true, // blocklist happens before revoke
+			wantTokenBlocked: true, // the blocks are written even when the revoke fails
 		},
 		{
 			name:         "no userID in context returns 401",

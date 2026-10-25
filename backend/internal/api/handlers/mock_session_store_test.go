@@ -18,7 +18,12 @@ type mockSessionStore struct {
 	unblockUserCalls []string // user IDs passed to UnblockUser
 	blockedUsers     map[string]bool
 	blockUserErr     error
-	unblockUserErr   error
+	// BlockSession records: session IDs passed to BlockSession, the blocked
+	// set that IsSessionBlocked reads, and an optional error.
+	blockSessionCalls []string
+	blockedSessions   map[string]bool
+	blockSessionErr   error
+	unblockUserErr    error
 }
 
 func newMockHandlerSessionStore() *mockSessionStore {
@@ -50,6 +55,26 @@ func (m *mockSessionStore) IsUserBlocked(_ context.Context, userID string, _ tim
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.blockedUsers[userID], nil
+}
+
+func (m *mockSessionStore) BlockSession(_ context.Context, sessionID string, _ time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.blockSessionErr != nil {
+		return m.blockSessionErr
+	}
+	m.blockSessionCalls = append(m.blockSessionCalls, sessionID)
+	if m.blockedSessions == nil {
+		m.blockedSessions = make(map[string]bool)
+	}
+	m.blockedSessions[sessionID] = true
+	return nil
+}
+
+func (m *mockSessionStore) IsSessionBlocked(_ context.Context, sessionID string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.blockedSessions[sessionID], nil
 }
 
 func (m *mockSessionStore) UnblockUser(_ context.Context, userID string) error {
