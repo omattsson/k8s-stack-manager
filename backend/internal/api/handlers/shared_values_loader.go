@@ -7,8 +7,9 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
-	"sync"
+	"time"
 
+	"backend/internal/cache"
 	"backend/internal/cluster"
 	"backend/internal/models"
 	"backend/pkg/dberrors"
@@ -114,9 +115,14 @@ func (h *InstanceHandler) SharedValuesConfigured() bool { return h.sharedValuesR
 // Bootstrap logs a warning at startup when it is not.
 func (h *QuickDeployHandler) SharedValuesConfigured() bool { return h.sharedValuesRepo != nil }
 
+// invalidSharedValuesWarnTTL is how long a reported invalid shared values
+// entry version stays quiet: a broken entry is reported again each hour while
+// it stays broken, and the set of reported versions stays bounded (#711).
+const invalidSharedValuesWarnTTL = time.Hour
+
 // warnedInvalidSharedValues records the shared values entries (ID and update
-// time) already reported as invalid, so each version is logged once per process.
-var warnedInvalidSharedValues sync.Map
+// time) reported as invalid in the last invalidSharedValuesWarnTTL.
+var warnedInvalidSharedValues = cache.New[struct{}](invalidSharedValuesWarnTTL, invalidSharedValuesWarnTTL)
 
 // yamlErrLine extracts the line number from a YAML error message.
 var yamlErrLine = regexp.MustCompile(`line (\d+)`)
@@ -124,19 +130,24 @@ var yamlErrLine = regexp.MustCompile(`line (\d+)`)
 // warnInvalidSharedValues logs that a shared values entry is skipped because
 // its YAML is not a mapping. It logs IDs, the name, the error kind and the
 // line only: the YAML error text can quote value content, which may hold
-// secrets. Each entry version is logged once per process.
+// secrets. Each entry version is logged at most once per
+// invalidSharedValuesWarnTTL.
 func warnInvalidSharedValues(clusterID string, sv *models.SharedValues, err error) {
-	warnInvalidSharedValuesTo(slog.Default(), &warnedInvalidSharedValues, clusterID, sv, err)
+	warnInvalidSharedValuesTo(slog.Default(), warnedInvalidSharedValues, clusterID, sv, err)
 }
 
 // warnInvalidSharedValuesTo is warnInvalidSharedValues with an explicit logger
-// and an explicit set of already reported entry versions (warned), so tests can
-// use a fresh set instead of the package-level one.
-func warnInvalidSharedValuesTo(logger *slog.Logger, warned *sync.Map, clusterID string, sv *models.SharedValues, err error) {
+// and an explicit set of recently reported entry versions (warned), so tests
+// can use a fresh cache instead of the package-level one.
+//
+// The Get and the Set are not one atomic step: two concurrent builds of the
+// same broken version can both log it. That is harmless for a warning.
+func warnInvalidSharedValuesTo(logger *slog.Logger, warned *cache.TTLCache[struct{}], clusterID string, sv *models.SharedValues, err error) {
 	key := fmt.Sprintf("%s@%d", sv.ID, sv.UpdatedAt.UnixNano())
-	if _, seen := warned.LoadOrStore(key, struct{}{}); seen {
+	if _, seen := warned.Get(key); seen {
 		return
 	}
+	warned.Set(key, struct{}{})
 	kind := "syntax"
 	var typeErr *yaml.TypeError
 	if errors.As(err, &typeErr) {
