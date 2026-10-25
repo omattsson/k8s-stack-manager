@@ -2,18 +2,18 @@
   "permissions": {
     "allow": [
       "Bash(make:*)",
-      "Bash(npm install:*)",
+      "Bash(npm ci:*)",
       "Bash(npm test:*)",
       "Bash(npm run:*)",
       "Bash(npx playwright:*)",
       "Bash(npx vitest:*)",
       "Bash(npx tsc:*)",
-      "Bash(git checkout:*)",
+      "Bash(git switch:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(git push:*)",
-      "Bash(gh pr:*)",
-      "Bash(gh api:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr list:*)",
+      "Bash(gh pr checks:*)",
       "Bash(go get:*)",
       "Bash(go build:*)",
       "Bash(go mod:*)",
@@ -21,6 +21,17 @@
       "Bash(go tool:*)",
       "Bash(go vet:*)",
       "Bash(docker build:*)"
+    ],
+    "ask": [
+      "Bash(git push:*)",
+      "Bash(gh api:*)",
+      "Bash(gh pr create:*)",
+      "Bash(gh pr merge:*)",
+      "Bash(gh pr close:*)",
+      "Bash(npm install:*)",
+      "Bash(make helm-install:*)",
+      "Bash(make helm-upgrade:*)",
+      "Bash(make helm-uninstall:*)"
     ]
   }
 }
