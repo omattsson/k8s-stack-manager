@@ -124,7 +124,7 @@ jobs:
         if: steps.files.outputs.helm == 'true'
         uses: azure/setup-helm@v5
         with:
-          version: 'v3.17.0'
+          version: 'v3.22.1'
 
       - name: Helm Lint
         if: steps.files.outputs.helm == 'true'
