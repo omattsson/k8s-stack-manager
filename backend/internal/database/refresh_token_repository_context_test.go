@@ -45,6 +45,13 @@ var refreshTokenRepoCalls = []struct {
 	{name: "RevokeFamily", call: func(ctx context.Context, r *GORMRefreshTokenRepository) error {
 		return r.RevokeFamily(ctx, "f1")
 	}},
+	{name: "RevokeFamilyForUser", call: func(ctx context.Context, r *GORMRefreshTokenRepository) error {
+		return r.RevokeFamilyForUser(ctx, "f1", "u1")
+	}},
+	{name: "ListRecentFamiliesForUser", call: func(ctx context.Context, r *GORMRefreshTokenRepository) error {
+		_, err := r.ListRecentFamiliesForUser(ctx, "u1", time.Now().UTC().Add(-time.Hour))
+		return err
+	}},
 	{name: "CountActiveInFamily", call: func(ctx context.Context, r *GORMRefreshTokenRepository) error {
 		_, err := r.CountActiveInFamily(ctx, "f1")
 		return err
@@ -63,7 +70,7 @@ var refreshTokenRepoCalls = []struct {
 		return err
 	}},
 	{name: "DeleteExpired", call: func(ctx context.Context, r *GORMRefreshTokenRepository) error {
-		_, err := r.DeleteExpired(ctx)
+		_, err := r.DeleteExpired(ctx, time.Now())
 		return err
 	}},
 	{name: "CountActiveForUser", call: func(ctx context.Context, r *GORMRefreshTokenRepository) error {

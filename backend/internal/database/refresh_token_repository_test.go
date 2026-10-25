@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -106,6 +107,88 @@ func TestGORMRefreshTokenRepository_RevokeFamily(t *testing.T) {
 		assert.Nil(t, got.RotatedAt, "%s must not get rotated_at", id)
 	}
 	assert.False(t, loadRefreshToken(t, repo, "other-1").Revoked, "other session must stay active")
+}
+
+func TestGORMRefreshTokenRepository_RevokeFamilyForUser(t *testing.T) {
+	t.Parallel()
+	repo := setupRefreshTokenRepo(t)
+
+	seedRefreshToken(t, repo, "legacy-1", "", nil)
+	seedRefreshToken(t, repo, "succ-1", "legacy-1", nil)
+	seedRefreshToken(t, repo, "foreign-1", "foreign-1", func(rt *models.RefreshToken) { rt.UserID = "u2" })
+
+	// A family of another user is left alone.
+	require.NoError(t, repo.RevokeFamilyForUser(context.Background(), "foreign-1", "u1"))
+	assert.False(t, loadRefreshToken(t, repo, "foreign-1").Revoked)
+
+	// A legacy family (family = token ID) of the owner is revoked.
+	require.NoError(t, repo.RevokeFamilyForUser(context.Background(), "legacy-1", "u1"))
+	for _, id := range []string{"legacy-1", "succ-1"} {
+		got := loadRefreshToken(t, repo, id)
+		assert.True(t, got.Revoked, "%s should be revoked", id)
+		assert.Nil(t, got.RotatedAt)
+	}
+
+	require.NoError(t, repo.RevokeFamilyForUser(context.Background(), "foreign-1", "u2"))
+	assert.True(t, loadRefreshToken(t, repo, "foreign-1").Revoked)
+}
+
+func TestGORMRefreshTokenRepository_ListRecentFamiliesForUser(t *testing.T) {
+	t.Parallel()
+	repo := setupRefreshTokenRepo(t)
+	now := time.Now().UTC()
+	since := now.Add(-10 * time.Minute)
+
+	// fam-a: three rows, one family; the revoked row is included.
+	seedRefreshToken(t, repo, "fam-a", "fam-a", func(rt *models.RefreshToken) {
+		rt.Revoked = true
+		rt.CreatedAt = now.Add(-50 * time.Minute)
+	})
+	seedRefreshToken(t, repo, "fam-a-2", "fam-a", func(rt *models.RefreshToken) { rt.CreatedAt = now.Add(-40 * time.Minute) })
+	seedRefreshToken(t, repo, "fam-a-3", "fam-a", func(rt *models.RefreshToken) { rt.CreatedAt = now.Add(-30 * time.Minute) })
+	// fam-b: revoked (idle timeout, token cap), expiry still ahead: included.
+	seedRefreshToken(t, repo, "fam-b", "fam-b", func(rt *models.RefreshToken) {
+		rt.Revoked = true
+		rt.CreatedAt = now.Add(-20 * time.Minute)
+	})
+	// Legacy row: its own family; the newest family comes first.
+	seedRefreshToken(t, repo, "legacy-1", "", func(rt *models.RefreshToken) { rt.CreatedAt = now.Add(-5 * time.Minute) })
+	// Expired before since: excluded. Expired after since: included.
+	seedRefreshToken(t, repo, "old-1", "old-1", func(rt *models.RefreshToken) { rt.ExpiresAt = since.Add(-time.Minute) })
+	seedRefreshToken(t, repo, "just-expired", "just-expired", func(rt *models.RefreshToken) {
+		rt.ExpiresAt = since.Add(time.Minute)
+		rt.CreatedAt = now.Add(-60 * time.Minute)
+	})
+	seedRefreshToken(t, repo, "other-user", "other-user", func(rt *models.RefreshToken) { rt.UserID = "u2" })
+
+	got, err := repo.ListRecentFamiliesForUser(context.Background(), "u1", since)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"legacy-1", "fam-b", "fam-a", "just-expired"}, got, "newest family first")
+
+	got, err = repo.ListRecentFamiliesForUser(context.Background(), "nobody", since)
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}
+
+func TestGORMRefreshTokenRepository_ListRecentFamiliesForUser_Limit(t *testing.T) {
+	t.Parallel()
+	repo := setupRefreshTokenRepo(t)
+	now := time.Now().UTC()
+	rows := make([]models.RefreshToken, 0, models.MaxRecentFamilies+5)
+	for i := 0; i < models.MaxRecentFamilies+5; i++ {
+		id := fmt.Sprintf("f-%04d", i)
+		rows = append(rows, models.RefreshToken{
+			ID: id, UserID: "u1", FamilyID: id, TokenHash: "hash-" + id,
+			ExpiresAt: now.Add(time.Hour), LastActivity: now, SessionStartedAt: now,
+			CreatedAt: now.Add(time.Duration(i) * time.Second),
+		})
+	}
+	require.NoError(t, repo.db.CreateInBatches(&rows, 200).Error)
+
+	got, err := repo.ListRecentFamiliesForUser(context.Background(), "u1", now)
+	require.NoError(t, err)
+	require.Len(t, got, models.MaxRecentFamilies)
+	assert.Equal(t, fmt.Sprintf("f-%04d", models.MaxRecentFamilies+4), got[0], "the newest families are kept")
 }
 
 func TestGORMRefreshTokenRepository_CountActiveInFamily(t *testing.T) {
@@ -252,5 +335,41 @@ func TestGORMRefreshTokenRepository_RevokeOldestForUser(t *testing.T) {
 				assert.Equal(t, want[id], loadRefreshToken(t, repo, id).Revoked, "token %s", id)
 			}
 		})
+	}
+}
+
+// TestGORMRefreshTokenRepository_DeleteExpired checks that only rows that
+// expired before the cutoff are deleted (#706): the cleanup passes a cutoff
+// in the past, so a recently expired row stays listable for logout-all.
+func TestGORMRefreshTokenRepository_DeleteExpired(t *testing.T) {
+	t.Parallel()
+	repo := setupRefreshTokenRepo(t)
+	now := time.Now().UTC()
+	cutoff := now.Add(-20 * time.Minute)
+
+	rows := []struct {
+		id       string
+		expires  time.Time
+		wantKeep bool
+	}{
+		{id: "rt-live", expires: now.Add(time.Hour), wantKeep: true},
+		{id: "rt-just-expired", expires: now.Add(-5 * time.Minute), wantKeep: true},
+		{id: "rt-just-after-cutoff", expires: cutoff.Add(time.Second), wantKeep: true},
+		{id: "rt-before-cutoff", expires: cutoff.Add(-time.Second), wantKeep: false},
+		{id: "rt-long-ago", expires: now.Add(-48 * time.Hour), wantKeep: false},
+	}
+	for _, r := range rows {
+		r := r
+		seedRefreshToken(t, repo, r.id, "fam-"+r.id, func(rt *models.RefreshToken) { rt.ExpiresAt = r.expires })
+	}
+
+	deleted, err := repo.DeleteExpired(context.Background(), cutoff)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), deleted)
+
+	for _, r := range rows {
+		var count int64
+		require.NoError(t, repo.db.Model(&models.RefreshToken{}).Where("id = ?", r.id).Count(&count).Error)
+		assert.Equal(t, r.wantKeep, count == 1, r.id)
 	}
 }

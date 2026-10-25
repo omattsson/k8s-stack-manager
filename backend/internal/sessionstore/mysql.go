@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strconv"
 	"sync"
@@ -127,25 +128,58 @@ func (s *MySQLStore) IsUserBlocked(ctx context.Context, userID string, issuedAt 
 	return userBlockApplies(userBlockTime(secData, hasSec, msData, hasMs), issuedAt), nil
 }
 
+// sessionBlockBatch is the number of rows of one BlockSessions upsert. It
+// keeps a statement (4 values per row, about 35 KB per batch as text with
+// interpolateParams) well below max_allowed_packet.
+const sessionBlockBatch = 500
+
+// sessionBlockUpsert keeps the later expiry when a session is blocked again
+// (GREATEST), so a short block never shortens a long one.
+func sessionBlockUpsert() clause.OnConflict {
+	return clause.OnConflict{
+		Columns: []clause.Column{{Name: "entry_key"}, {Name: "kind"}},
+		DoUpdates: clause.Assignments(map[string]interface{}{
+			"expires_at": gorm.Expr("GREATEST(expires_at, VALUES(expires_at))"),
+		}),
+	}
+}
+
 // BlockSession writes one row of kind session_block (no schema change; the
 // cleanup deletes it by expires_at like every kind). A second block keeps the
 // later expiry (GREATEST), so a short block never shortens a long one.
 // expires_at holds Unix seconds, so until.Unix() drops up to one second;
 // sessionBlockSkew in the caller covers it.
 func (s *MySQLStore) BlockSession(ctx context.Context, sessionID string, until time.Time) error {
-	entry := SessionEntry{
-		EntryKey:  sessionID,
-		Kind:      kindSessionBlock,
-		ExpiresAt: until.Unix(),
+	return s.BlockSessions(ctx, []string{sessionID}, until)
+}
+
+// BlockSessions writes the session_block rows with one multi-row upsert per
+// batch of sessionBlockBatch rows, with the rule of BlockSession. A session
+// ID that appears twice is written once.
+//
+// The batches are separate statements, not one transaction: when a later
+// batch fails, the earlier batches stay written and the error says how many
+// sessions were blocked. That is intended. A block only ever blocks more,
+// a second write of the same block is harmless, and a rollback would leave
+// every session of the call unblocked instead of some.
+func (s *MySQLStore) BlockSessions(ctx context.Context, sessionIDs []string, until time.Time) error {
+	entries := make([]SessionEntry, 0, len(sessionIDs))
+	seen := make(map[string]struct{}, len(sessionIDs))
+	for _, id := range sessionIDs {
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		entries = append(entries, SessionEntry{EntryKey: id, Kind: kindSessionBlock, ExpiresAt: until.Unix()})
 	}
-	return s.db.WithContext(ctx).
-		Clauses(clause.OnConflict{
-			Columns: []clause.Column{{Name: "entry_key"}, {Name: "kind"}},
-			DoUpdates: clause.Assignments(map[string]interface{}{
-				"expires_at": gorm.Expr("GREATEST(expires_at, VALUES(expires_at))"),
-			}),
-		}).
-		Create(&entry).Error
+	for start := 0; start < len(entries); start += sessionBlockBatch {
+		end := min(start+sessionBlockBatch, len(entries))
+		batch := entries[start:end]
+		if err := s.db.WithContext(ctx).Clauses(sessionBlockUpsert()).Create(&batch).Error; err != nil {
+			return fmt.Errorf("blocked %d of %d sessions: %w", start, len(entries), err)
+		}
+	}
+	return nil
 }
 
 // IsSessionBlocked is one primary-key lookup.

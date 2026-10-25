@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -70,6 +71,44 @@ func TestRefreshSID_SessionBlockStoreErrorFailsOpen(t *testing.T) {
 	w := env.postRefresh(a.raw)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	assert.NotEmpty(t, tokenOfRefresh(t, w))
+}
+
+// TestRefreshSID_SessionBlockCancelledAnswers499 checks that a cancelled
+// request context during the session block check answers 499 and leaves the
+// session alone: no family revoke, no cookie change, no token, in the normal
+// path and in the reuse grace path.
+func TestRefreshSID_SessionBlockCancelledAnswers499(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		err         error
+		name        string
+		rotateFirst bool
+	}{
+		{name: "normal path", err: context.Canceled},
+		{name: "normal path wrapped", err: fmt.Errorf("lookup: %w", context.Canceled)},
+		{name: "reuse grace path", rotateFirst: true, err: context.Canceled},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			env := newSIDEnv(t, nil, nil)
+			a := env.loginSession(t)
+			if tt.rotateFirst {
+				_, _ = env.refreshOK(t, a.raw)
+			}
+			activeBefore := env.activeIn(t, a.family)
+			require.Greater(t, activeBefore, int64(0))
+			env.guarded.isBlockedErr = tt.err
+
+			w := env.postRefresh(a.raw)
+			assert.Equal(t, statusClientClosedRequest, w.Code, w.Body.String())
+			assert.NotContains(t, w.Body.String(), `"token"`)
+			assert.Nil(t, findRefreshCookie(w), "the cookie is neither set nor cleared")
+			assert.Equal(t, activeBefore, env.activeIn(t, a.family), "the family is not revoked")
+		})
+	}
 }
 
 // TestLogoutSID_FailedRevokeWritesLongBlock checks the length of the block:

@@ -5,8 +5,11 @@ package sessionstore
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
+
+	"backend/internal/config"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,9 +25,20 @@ func setupMySQLSessionStore(t *testing.T) *MySQLStore {
 	if dsn == "" {
 		dsn = "root:rootpassword@tcp(localhost:3306)/app?charset=utf8mb4&parseTime=True&loc=Local"
 	}
+	// The session variables of the application (sql_mode, time_zone,
+	// foreign_key_checks), so the tests do not depend on the server
+	// defaults; for example the partial-write test needs the strict mode.
+	if strings.Contains(dsn, "?") {
+		dsn += config.MySQLSessionParams
+	} else {
+		dsn += "?" + strings.TrimPrefix(config.MySQLSessionParams, "&")
+	}
 
+	// SkipDefaultTransaction as in production (database.NewFromAppConfig), so
+	// multi-statement writes such as BlockSessions run as they do there.
 	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
+		Logger:                 logger.Default.LogMode(logger.Silent),
+		SkipDefaultTransaction: true,
 	})
 	require.NoError(t, err, "Failed to connect to MySQL — is the container running?")
 

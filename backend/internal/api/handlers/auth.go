@@ -728,36 +728,8 @@ func (h *AuthHandler) findRefreshToken(ctx context.Context, c *gin.Context, toke
 // family (#656).
 func (h *AuthHandler) refreshConsumedToken(readCtx context.Context, c *gin.Context, stored *models.RefreshToken, now time.Time) {
 	family := stored.SessionFamily()
-	if h.withinReuseGrace(stored, now) {
-		user, err := h.userRepo.FindByID(readCtx, stored.UserID)
-		if err != nil && respondCancelled(c, err) {
-			return
-		}
-		if err != nil && !isNotFoundError(err) {
-			slog.Error("Failed to find user for refresh", "user_id", stored.UserID, "error", err)
-			middleware.RecordRefresh("failure")
-			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
-			return
-		}
-		if err == nil && !user.Disabled {
-			active, countErr := h.refreshTokenRepo.CountActiveInFamily(readCtx, family)
-			if countErr != nil {
-				if respondCancelled(c, countErr) {
-					return
-				}
-				slog.Error("Failed to check refresh token family", "user_id", stored.UserID, "error", countErr)
-				middleware.RecordRefresh("failure")
-				c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
-				return
-			}
-			if active > 0 {
-				if h.rejectBlockedSession(readCtx, c, stored.UserID, family) {
-					return
-				}
-				h.respondGraceRefresh(readCtx, c, user, family)
-				return
-			}
-		}
+	if h.withinReuseGrace(stored, now) && h.tryGraceRefresh(readCtx, c, stored, family) {
+		return
 	}
 
 	slog.Warn("Refresh token reuse detected; revoking session", "user_id", stored.UserID, "token_id", stored.ID)
@@ -773,6 +745,45 @@ func (h *AuthHandler) refreshConsumedToken(readCtx context.Context, c *gin.Conte
 	h.clearRefreshCookie(c)
 	middleware.RecordRefresh("revoked")
 	c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
+}
+
+// tryGraceRefresh answers a refresh with a consumed token inside the reuse
+// grace window when the user is active and the session still has an active
+// token. It returns true when it wrote a response (grace answer, 499, 401 for
+// a blocked session or 500); false means the caller treats the token as a
+// replay.
+func (h *AuthHandler) tryGraceRefresh(readCtx context.Context, c *gin.Context, stored *models.RefreshToken, family string) bool {
+	user, err := h.userRepo.FindByID(readCtx, stored.UserID)
+	if err != nil && respondCancelled(c, err) {
+		return true
+	}
+	if err != nil && !isNotFoundError(err) {
+		slog.Error("Failed to find user for refresh", "user_id", stored.UserID, "error", err)
+		middleware.RecordRefresh("failure")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		return true
+	}
+	if err != nil || user.Disabled {
+		return false
+	}
+	active, countErr := h.refreshTokenRepo.CountActiveInFamily(readCtx, family)
+	if countErr != nil {
+		if respondCancelled(c, countErr) {
+			return true
+		}
+		slog.Error("Failed to check refresh token family", "user_id", stored.UserID, "error", countErr)
+		middleware.RecordRefresh("failure")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		return true
+	}
+	if active == 0 {
+		return false
+	}
+	if h.rejectBlockedSession(readCtx, c, stored.UserID, family) {
+		return true
+	}
+	h.respondGraceRefresh(readCtx, c, user, family)
+	return true
 }
 
 // withinReuseGrace reports whether a consumed token may still get an access
@@ -924,8 +935,9 @@ func authProviderOf(user *models.User) string {
 }
 
 // sessionBlockSkew is added to the lifetime of an access token when a session
-// block is written, so a replica with a slow clock still rejects the last
-// token of the session.
+// block is written. The margin covers a token signer whose clock is ahead of
+// the replica that writes the block: its token expires later by that
+// difference, and the block must outlast it.
 const sessionBlockSkew = time.Minute
 
 // sessionBlockUntil is the end of a session block: the latest expiry of an
@@ -941,8 +953,12 @@ func (h *AuthHandler) sessionBlockUntil() time.Time {
 }
 
 // sessionToBlock is a session to block and whether its family revoke failed.
+//
+// userID is the user that owns the session when the request proves it (the
+// refresh token row or the signed bearer token); empty when unknown.
 type sessionToBlock struct {
 	id           string
+	userID       string
 	revokeFailed bool
 }
 
@@ -966,18 +982,33 @@ func (h *AuthHandler) blockSessions(ctx context.Context, userID string, sessions
 	if h.sessionStore == nil || len(sessions) == 0 {
 		return
 	}
-	until := h.sessionBlockUntil()
-	var longUntil time.Time
+	// At most two batched writes (normal and long block), not one write per
+	// session: logout-all can block up to models.MaxRecentFamilies sessions.
+	var normal, long []string
 	for _, sess := range sessions {
-		sessUntil := until
 		if sess.revokeFailed {
-			if longUntil.IsZero() {
-				longUntil = h.sessionLongBlockUntil()
-			}
-			sessUntil = longUntil
+			long = append(long, sess.id)
+		} else {
+			normal = append(normal, sess.id)
 		}
-		if err := h.sessionStore.BlockSession(ctx, sess.id, sessUntil); err != nil {
-			slog.Error("Failed to block session in session store", "user_id", userID, "session_id", sess.id, "error", err)
+	}
+	for _, batch := range []struct {
+		until time.Time
+		kind  string
+		ids   []string
+	}{
+		{kind: "normal", ids: normal, until: h.sessionBlockUntil()},
+		{kind: "long", ids: long, until: h.sessionLongBlockUntil()},
+	} {
+		if len(batch.ids) == 0 {
+			continue
+		}
+		// The MySQL store's error says how many sessions were written before
+		// the failure; the earlier batches stay written. It counts distinct
+		// IDs, so it can be one lower than `sessions` when the presented sid is
+		// also a listed family.
+		if err := h.sessionStore.BlockSessions(ctx, batch.ids, batch.until); err != nil {
+			slog.Error("Failed to block sessions in session store", "user_id", userID, "block", batch.kind, "sessions", len(batch.ids), "first_session_id", batch.ids[0], "error", err)
 		}
 	}
 }
@@ -1042,7 +1073,7 @@ func (h *AuthHandler) revokeLogoutSessions(ctx context.Context, c *gin.Context, 
 		stored, err := h.refreshTokenRepo.FindByTokenHash(ctx, hashRefreshToken(rawToken))
 		switch {
 		case err == nil:
-			sessions = append(sessions, sessionToBlock{id: stored.SessionFamily()})
+			sessions = append(sessions, sessionToBlock{id: stored.SessionFamily(), userID: stored.UserID})
 			userID = stored.UserID
 		case !isNotFoundError(err):
 			slog.Error("Failed to look up refresh token on logout", "error", err)
@@ -1051,14 +1082,23 @@ func (h *AuthHandler) revokeLogoutSessions(ctx context.Context, c *gin.Context, 
 	}
 	if bearer != nil && bearer.SessionID != "" {
 		if len(sessions) == 0 || sessions[0].id != bearer.SessionID {
-			sessions = append(sessions, sessionToBlock{id: bearer.SessionID})
+			sessions = append(sessions, sessionToBlock{id: bearer.SessionID, userID: bearer.UserID})
 		}
 		if userID == "" {
 			userID = bearer.UserID
 		}
 	}
 	for i := range sessions {
-		if err := h.refreshTokenRepo.RevokeFamily(ctx, sessions[i].id); err != nil {
+		// Defense in depth: revoke only a family that belongs to the user that
+		// the credential names.
+		// RevokeFamily is the fallback for a credential without a user ID.
+		var err error
+		if sessions[i].userID != "" {
+			err = h.refreshTokenRepo.RevokeFamilyForUser(ctx, sessions[i].id, sessions[i].userID)
+		} else {
+			err = h.refreshTokenRepo.RevokeFamily(ctx, sessions[i].id)
+		}
+		if err != nil {
 			slog.Error("Failed to revoke the refresh session on logout", "user_id", userID, "session_id", sessions[i].id, "error", err)
 			sessions[i].revokeFailed = true
 			failed = true
@@ -1120,9 +1160,52 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Logged out successfully"})
 }
 
+// recentSessionsToBlock lists the sessions that logout-all blocks: the
+// families of the refresh-token rows of the user that expire after since, plus
+// the sid of the presented token (deduplicated). The rows are not filtered on
+// revoked: a family revoked by idle timeout or the token cap, or whose last
+// row just expired, can still hold a live access token. Run it after the
+// revoke, so a login that committed before the revoke is listed too. A login
+// that commits after the listing is a new family and works.
+//
+// A listing failure is logged and skipped (fail open). When the revoke
+// succeeded, the refresh tokens are gone anyway and only the session block
+// cover is lost, so the request still answers 200. There is no second attempt
+// after a failed revoke: the database is most likely down, and with the
+// default MySQL session store the session store shares it, so a retry would
+// fail the same way and only delay the answer. The bearer sid is still blocked.
+func (h *AuthHandler) recentSessionsToBlock(ctx context.Context, c *gin.Context, userID string) []sessionToBlock {
+	var sessions []sessionToBlock
+	seen := map[string]bool{}
+	add := func(id string) {
+		if id != "" && !seen[id] {
+			seen[id] = true
+			sessions = append(sessions, sessionToBlock{id: id})
+		}
+	}
+	if h.refreshTokenRepo != nil {
+		// A session that can still hold a live access token has a row that
+		// expires after this time (sessionListWindow). The cleanup keeps
+		// rows for the same window, so such a row still exists.
+		since := time.Now().Add(-h.sessionListWindow())
+		families, err := h.refreshTokenRepo.ListRecentFamiliesForUser(ctx, userID, since)
+		if err != nil {
+			slog.Error("Failed to list sessions on logout-all", "user_id", userID, "error", err)
+		}
+		if len(families) >= models.MaxRecentFamilies {
+			slog.Warn("Logout-all session list hit its limit; older sessions are not blocked", "user_id", userID, "limit", models.MaxRecentFamilies)
+		}
+		for _, id := range families {
+			add(id)
+		}
+	}
+	add(middleware.GetSessionIDFromContext(c))
+	return sessions
+}
+
 // LogoutAll godoc
 // @Summary     Logout from all sessions
-// @Description Revokes all refresh tokens for the current user, then blocks every access token of the user issued up to now (user block), so that access tokens issued before it are rejected and cannot open a WebSocket. This holds on replicas with synchronised (NTP) clocks, because the user block has no clock-skew margin. A login after the logout works. The presented access token is blocklisted and all WebSockets of the user close. When the revoke fails, the blocks are still written, the cookie is cleared and the answer is 500.
+// @Description Revokes all refresh tokens for the current user, then blocks every session of the user that has a refresh token row whose expiry is later than now minus (access token lifetime + 1 minute + reuse grace), also when that refresh token was revoked earlier. A session block is a plain block, so every access token of those sessions is rejected, and cannot open a WebSocket, while the replica clocks differ by less than the 1 minute block margin. It also writes a user block that rejects every access token issued up to now. The refresh-token cleanup keeps rows for that window after they expire. A session without such a row (a login whose refresh token could not be stored) and a token without a session (the SSO CLI token) rely on the user block, which holds on replicas with synchronised (NTP) clocks. A login after the logout works. The presented access token is blocklisted and all WebSockets of the user close. When the revoke fails, the sessions get the long block (until the maximum session lifetime), the other blocks are still written, the cookie is cleared and the answer is 500. When only the listing of the sessions fails, the revoke and the user block still run and the answer is 200. When the listing and the revoke both fail, only the presented session is blocked and the answer is 500.
 // @Tags        auth
 // @Accept      json
 // @Produce     json
@@ -1140,10 +1223,11 @@ func (h *AuthHandler) LogoutAll(c *gin.Context) {
 	// Detached: a client that leaves is still logged out everywhere (#656).
 	ctx := context.WithoutCancel(c.Request.Context())
 
-	// Revoke the refresh tokens first, then block the user (same order as
-	// UserHandler.revokeUserAccess): a refresh that passed its session recheck
-	// before the revoke signed its token before the block, and the block covers
-	// it. The steps after the revoke run even when it fails.
+	// Order: revoke, list the sessions, block each session, block the user.
+	// Revoke before block: a refresh that passed its session recheck before the
+	// revoke signed its token before the block, and the block covers it (same
+	// order as UserHandler.revokeUserAccess). The steps after the revoke run
+	// even when it fails.
 	revokeFailed := false
 	if h.refreshTokenRepo != nil {
 		if err := h.refreshTokenRepo.RevokeAllForUser(ctx, userID); err != nil {
@@ -1151,6 +1235,30 @@ func (h *AuthHandler) LogoutAll(c *gin.Context) {
 			revokeFailed = true
 		}
 	}
+	sessions := h.recentSessionsToBlock(ctx, c, userID)
+
+	// Block every listed session, also when the revoke succeeded. The user
+	// block below compares the issue time with the block time, so a token that
+	// a replica with a clock AHEAD of the replica that wrote the block signed
+	// just before the block (iat later than the block time) can pass. We do not
+	// add a margin to the user block: it would also reject tokens issued
+	// within the margin AFTER the block, so a login right after logout-all (or
+	// after a disable or password reset) would get 401. A session block is a
+	// plain block without an issue-time comparison, so every access token of a
+	// session that has a refresh-token row expiring after the listing time is
+	// rejected while the replica clocks differ by less than the block margin,
+	// and a new login (a new family) works. A session without such a row
+	// relies on the user block: a login whose refresh-token create failed
+	// (it still returns a sid token), and a token without a sid (the SSO CLI
+	// token). The cleanup keeps rows for sessionListWindow after they expire,
+	// so it never removes the row of a session that can still hold a live
+	// access token. A failed revoke gets the long block for every
+	// listed family (blocking an already dead family is harmless), because a
+	// refresh token still works; Refresh refuses a blocked family.
+	for i := range sessions {
+		sessions[i].revokeFailed = revokeFailed
+	}
+	h.blockSessions(ctx, userID, sessions)
 
 	if h.sessionStore != nil {
 		// Every access token issued up to now, of every session (and the SSO
@@ -1186,13 +1294,25 @@ func (h *AuthHandler) LogoutAll(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Logged out from all sessions"})
 }
 
-// CleanupExpiredTokens deletes expired refresh tokens from the store. The
-// leader worker refresh-token-cleanup calls it with its own context.
+// sessionListWindow is how far back a refresh-token row's expiry can lie
+// while its session may still hold a live access token: the access token
+// lifetime, the session block margin and the reuse grace. Logout-all lists
+// the families of rows that expire within it, and the cleanup keeps rows for
+// it, so the two cannot drift apart.
+func (h *AuthHandler) sessionListWindow() time.Duration {
+	return h.cfg.AccessTokenExpiration + sessionBlockSkew + h.cfg.RefreshReuseGrace
+}
+
+// CleanupExpiredTokens deletes the refresh tokens that expired more than
+// sessionListWindow ago. A row that expired more recently can belong to a
+// session that still holds a live access token, and logout-all must still
+// find it to block that session. The leader worker refresh-token-cleanup
+// calls it with its own context.
 func (h *AuthHandler) CleanupExpiredTokens(ctx context.Context) {
 	if h.refreshTokenRepo == nil {
 		return
 	}
-	deleted, err := h.refreshTokenRepo.DeleteExpired(ctx)
+	deleted, err := h.refreshTokenRepo.DeleteExpired(ctx, time.Now().Add(-h.sessionListWindow()))
 	if err != nil {
 		if ctx.Err() != nil {
 			// The leader term ended: the next term cleans up.

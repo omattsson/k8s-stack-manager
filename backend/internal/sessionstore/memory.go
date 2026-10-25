@@ -102,13 +102,21 @@ func (s *MemoryStore) IsUserBlocked(_ context.Context, userID string, issuedAt t
 	return userBlockApplies(blockedAt, issuedAt), nil
 }
 
-func (s *MemoryStore) BlockSession(_ context.Context, sessionID string, until time.Time) error {
+func (s *MemoryStore) BlockSession(ctx context.Context, sessionID string, until time.Time) error {
+	return s.BlockSessions(ctx, []string{sessionID}, until)
+}
+
+// BlockSessions blocks every session under one lock, with the rule of
+// BlockSession.
+func (s *MemoryStore) BlockSessions(_ context.Context, sessionIDs []string, until time.Time) error {
 	s.mu.Lock()
-	// Keep the later expiry: a short block never shortens a long one.
-	if cur, ok := s.sessionBlocks[sessionID]; !ok || until.After(cur.expiresAt) {
-		s.sessionBlocks[sessionID] = memBlockEntry{expiresAt: until}
+	defer s.mu.Unlock()
+	for _, id := range sessionIDs {
+		// Keep the later expiry: a short block never shortens a long one.
+		if cur, ok := s.sessionBlocks[id]; !ok || until.After(cur.expiresAt) {
+			s.sessionBlocks[id] = memBlockEntry{expiresAt: until}
+		}
 	}
-	s.mu.Unlock()
 	return nil
 }
 

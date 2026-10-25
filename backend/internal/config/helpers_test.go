@@ -331,7 +331,7 @@ func TestDatabaseDSN_NoPassword(t *testing.T) {
 		DBName:       "testdb",
 		MaxOpenConns: 10,
 	}
-	expected := "root@tcp(localhost:3306)/testdb?charset=utf8mb4&parseTime=True&loc=UTC&interpolateParams=true&maxAllowedPacket=0"
+	expected := "root@tcp(localhost:3306)/testdb?charset=utf8mb4&parseTime=True&loc=UTC&interpolateParams=true" + MySQLSessionParams + "&maxAllowedPacket=0"
 	assert.Equal(t, expected, dbConfig.DSN())
 }
 

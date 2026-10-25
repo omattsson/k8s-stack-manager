@@ -34,6 +34,7 @@ type MockRefreshTokenRepository struct {
 	findErr      error
 	revokeErr    error
 	revokeAllErr error
+	listErr      error // returned by ListRecentFamiliesForUser when set
 	deleteErr    error
 	// countHook, when set, runs before each CountActiveInFamily call with the
 	// 1-based call number (outside the lock). Tests use it to revoke tokens
@@ -154,6 +155,58 @@ func (m *MockRefreshTokenRepository) RevokeFamily(ctx context.Context, familyID 
 		}
 	}
 	return nil
+}
+
+func (m *MockRefreshTokenRepository) RevokeFamilyForUser(ctx context.Context, familyID, userID string) error {
+	if err := m.enter(ctx, "RevokeFamilyForUser"); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.revokeAllErr != nil {
+		return m.revokeAllErr
+	}
+	for _, t := range m.tokens {
+		if (t.FamilyID == familyID || t.ID == familyID) && t.UserID == userID {
+			t.Revoked = true
+		}
+	}
+	return nil
+}
+
+func (m *MockRefreshTokenRepository) ListRecentFamiliesForUser(ctx context.Context, userID string, since time.Time) ([]string, error) {
+	if err := m.enter(ctx, "ListRecentFamiliesForUser"); err != nil {
+		return nil, err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.listErr != nil {
+		return nil, m.listErr
+	}
+	newest := map[string]time.Time{}
+	for _, t := range m.tokens {
+		if t.UserID != userID || !t.ExpiresAt.After(since) {
+			continue
+		}
+		f := t.SessionFamily()
+		if cur, ok := newest[f]; !ok || t.CreatedAt.After(cur) {
+			newest[f] = t.CreatedAt
+		}
+	}
+	out := make([]string, 0, len(newest))
+	for f := range newest {
+		out = append(out, f)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !newest[out[i]].Equal(newest[out[j]]) {
+			return newest[out[i]].After(newest[out[j]])
+		}
+		return out[i] < out[j]
+	})
+	if len(out) > models.MaxRecentFamilies {
+		out = out[:models.MaxRecentFamilies]
+	}
+	return out, nil
 }
 
 func (m *MockRefreshTokenRepository) CountActiveInFamily(ctx context.Context, familyID string) (int64, error) {
@@ -278,7 +331,7 @@ func (m *MockRefreshTokenRepository) RevokeOldestForUser(ctx context.Context, us
 	return n, nil
 }
 
-func (m *MockRefreshTokenRepository) DeleteExpired(ctx context.Context) (int64, error) {
+func (m *MockRefreshTokenRepository) DeleteExpired(ctx context.Context, before time.Time) (int64, error) {
 	if err := m.enter(ctx, "DeleteExpired"); err != nil {
 		return 0, err
 	}
@@ -288,9 +341,8 @@ func (m *MockRefreshTokenRepository) DeleteExpired(ctx context.Context) (int64, 
 		return 0, m.deleteErr
 	}
 	var count int64
-	now := time.Now()
 	for id, t := range m.tokens {
-		if now.After(t.ExpiresAt) {
+		if before.After(t.ExpiresAt) {
 			delete(m.byHash, t.TokenHash)
 			delete(m.tokens, id)
 			count++
@@ -339,6 +391,7 @@ func (m *MockRefreshTokenRepository) WithTx(ctx context.Context, fn func(models.
 		findErr:      m.findErr,
 		revokeErr:    m.revokeErr,
 		revokeAllErr: m.revokeAllErr,
+		listErr:      m.listErr,
 		deleteErr:    m.deleteErr,
 		callHook:     m.callHook,
 	}
@@ -1473,4 +1526,47 @@ func TestEnsureAdminUser_CreateError(t *testing.T) {
 // timePtr is a helper to create a *time.Time for table-driven tests.
 func timePtr(t time.Time) *time.Time {
 	return &t
+}
+
+// TestCleanupExpiredTokens_KeepsRowsInsideSessionWindow checks that the
+// cleanup keeps a row whose expiry lies within sessionListWindow (#706): its
+// session can still hold a live access token, and logout-all lists it to
+// block that session. Older rows are deleted.
+func TestCleanupExpiredTokens_KeepsRowsInsideSessionWindow(t *testing.T) {
+	t.Parallel()
+
+	cfg := testAuthConfigWithRefresh()
+	h := NewAuthHandler(NewMockUserRepository(), cfg, &config.OIDCConfig{})
+	repo := NewMockRefreshTokenRepository()
+	h.SetRefreshTokenRepo(repo)
+	window := h.sessionListWindow()
+	require.Equal(t, cfg.AccessTokenExpiration+sessionBlockSkew+cfg.RefreshReuseGrace, window)
+
+	tests := []struct {
+		id       string
+		expires  time.Duration // from now
+		wantKeep bool
+	}{
+		{id: "rt-live", expires: time.Hour, wantKeep: true},
+		{id: "rt-expired-5m", expires: -5 * time.Minute, wantKeep: true},
+		{id: "rt-inside-window", expires: -window + 30*time.Second, wantKeep: true},
+		{id: "rt-outside-window", expires: -window - 30*time.Second, wantKeep: false},
+		{id: "rt-long-ago", expires: -48 * time.Hour, wantKeep: false},
+	}
+	now := time.Now()
+	for _, tt := range tests {
+		require.NoError(t, repo.Create(context.Background(), &models.RefreshToken{
+			ID: tt.id, UserID: "uid-1", FamilyID: "fam-" + tt.id, TokenHash: "hash-" + tt.id,
+			ExpiresAt: now.Add(tt.expires), CreatedAt: now.Add(-2 * time.Hour),
+		}))
+	}
+
+	h.CleanupExpiredTokens(context.Background())
+
+	repo.mu.RLock()
+	defer repo.mu.RUnlock()
+	for _, tt := range tests {
+		_, kept := repo.tokens[tt.id]
+		assert.Equal(t, tt.wantKeep, kept, tt.id)
+	}
 }

@@ -1271,6 +1271,9 @@ func (s *stubSessionStore) IsUserBlocked(_ context.Context, _ string, _ time.Tim
 	return false, nil
 }
 func (s *stubSessionStore) BlockSession(_ context.Context, _ string, _ time.Time) error { return nil }
+func (s *stubSessionStore) BlockSessions(_ context.Context, _ []string, _ time.Time) error {
+	return nil
+}
 func (s *stubSessionStore) IsSessionBlocked(_ context.Context, _ string) (bool, error) {
 	return false, nil
 }

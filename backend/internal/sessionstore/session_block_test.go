@@ -97,3 +97,48 @@ func TestMemoryStore_SessionBlock_ReblockEarlierDoesNotShorten(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, blocked, "a later until extends the block")
 }
+
+func TestMemoryStore_BlockSessions(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		ids   []string
+		until time.Duration
+		// before blocks fam-long for an hour first, to check that a batch
+		// with an earlier until does not shorten it.
+		before  bool
+		want    map[string]bool
+		notWant []string
+	}{
+		{name: "no sessions", ids: nil, until: time.Hour, notWant: []string{"fam-1"}},
+		{name: "every session of the batch", ids: []string{"fam-1", "fam-2", "fam-3"}, until: time.Hour, want: map[string]bool{"fam-1": true, "fam-2": true, "fam-3": true}},
+		{name: "a duplicate ID is harmless", ids: []string{"fam-1", "fam-1"}, until: time.Hour, want: map[string]bool{"fam-1": true}},
+		{name: "an earlier until does not shorten a block", ids: []string{"fam-long", "fam-new"}, until: -time.Minute, before: true, want: map[string]bool{"fam-long": true, "fam-new": false}},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			s := NewMemoryStore()
+			defer s.Stop()
+			ctx := context.Background()
+			if tt.before {
+				require.NoError(t, s.BlockSession(ctx, "fam-long", time.Now().Add(time.Hour)))
+			}
+
+			require.NoError(t, s.BlockSessions(ctx, tt.ids, time.Now().Add(tt.until)))
+
+			for id, want := range tt.want {
+				blocked, err := s.IsSessionBlocked(ctx, id)
+				require.NoError(t, err)
+				assert.Equal(t, want, blocked, id)
+			}
+			for _, id := range tt.notWant {
+				blocked, err := s.IsSessionBlocked(ctx, id)
+				require.NoError(t, err)
+				assert.False(t, blocked, id)
+			}
+		})
+	}
+}

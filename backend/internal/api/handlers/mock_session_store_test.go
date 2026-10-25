@@ -71,6 +71,16 @@ func (m *mockSessionStore) BlockSession(_ context.Context, sessionID string, _ t
 	return nil
 }
 
+// BlockSessions records each session like BlockSession.
+func (m *mockSessionStore) BlockSessions(ctx context.Context, sessionIDs []string, until time.Time) error {
+	for _, id := range sessionIDs {
+		if err := m.BlockSession(ctx, id, until); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (m *mockSessionStore) IsSessionBlocked(_ context.Context, sessionID string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

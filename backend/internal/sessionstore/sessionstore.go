@@ -131,6 +131,12 @@ type SessionStore interface {
 	// expiry.
 	// Replicas of an older version do not read this entry.
 	BlockSession(ctx context.Context, sessionID string, until time.Time) error
+	// BlockSessions blocks several sessions until the same time, with the
+	// rules of BlockSession, in as few writes as the store allows (MySQL: one
+	// multi-row upsert per batch of sessionBlockBatch rows). Logout-all uses
+	// it, so a user with many sessions does not wait for one write per
+	// session.
+	BlockSessions(ctx context.Context, sessionIDs []string, until time.Time) error
 	// IsSessionBlocked reports whether the session has an unexpired block.
 	IsSessionBlocked(ctx context.Context, sessionID string) (bool, error)
 	SaveOIDCState(ctx context.Context, state string, data OIDCStateData, ttl time.Duration) error

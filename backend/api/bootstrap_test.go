@@ -948,7 +948,7 @@ func (s *stubRefreshTokenRepo) RevokeAllForUser(ctx context.Context, _ string) e
 func (s *stubRefreshTokenRepo) RevokeAllForUserExcept(ctx context.Context, _, _ string) error {
 	return ctx.Err()
 }
-func (s *stubRefreshTokenRepo) DeleteExpired(ctx context.Context) (int64, error) {
+func (s *stubRefreshTokenRepo) DeleteExpired(ctx context.Context, _ time.Time) (int64, error) {
 	return 0, ctx.Err()
 }
 func (s *stubRefreshTokenRepo) CountActiveForUser(ctx context.Context, _ string) (int64, error) {
@@ -964,6 +964,12 @@ func (s *stubRefreshTokenRepo) MarkRotatedIfActive(ctx context.Context, _ string
 	return 0, ctx.Err()
 }
 func (s *stubRefreshTokenRepo) RevokeFamily(ctx context.Context, _ string) error { return ctx.Err() }
+func (s *stubRefreshTokenRepo) RevokeFamilyForUser(ctx context.Context, _, _ string) error {
+	return ctx.Err()
+}
+func (s *stubRefreshTokenRepo) ListRecentFamiliesForUser(ctx context.Context, _ string, _ time.Time) ([]string, error) {
+	return nil, ctx.Err()
+}
 func (s *stubRefreshTokenRepo) CountActiveInFamily(ctx context.Context, _ string) (int64, error) {
 	return 0, ctx.Err()
 }

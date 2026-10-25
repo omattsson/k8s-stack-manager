@@ -54,6 +54,9 @@ func (t *RefreshToken) SessionStart() time.Time {
 	return t.CreatedAt
 }
 
+// MaxRecentFamilies bounds RefreshTokenRepository.ListRecentFamiliesForUser.
+const MaxRecentFamilies = 1000
+
 // RefreshTokenRepository defines data access operations for refresh tokens.
 // Every method runs its queries with ctx (#656).
 type RefreshTokenRepository interface {
@@ -67,6 +70,14 @@ type RefreshTokenRepository interface {
 	// RevokeFamily revokes all active tokens of a session family (including a
 	// legacy token whose own ID is the family ID).
 	RevokeFamily(ctx context.Context, familyID string) error
+	// RevokeFamilyForUser is RevokeFamily limited to tokens of userID: a
+	// family of another user is left alone.
+	RevokeFamilyForUser(ctx context.Context, familyID, userID string) error
+	// ListRecentFamiliesForUser returns the distinct session family IDs of the
+	// user's refresh tokens that expire after since, revoked or not, newest
+	// family first, at most MaxRecentFamilies. A legacy token without a
+	// family returns its own ID.
+	ListRecentFamiliesForUser(ctx context.Context, userID string, since time.Time) ([]string, error)
 	// CountActiveInFamily counts the tokens of a family that are not revoked
 	// and not expired.
 	CountActiveInFamily(ctx context.Context, familyID string) (int64, error)
@@ -81,7 +92,10 @@ type RefreshTokenRepository interface {
 	// that runs at the same time keeps its new session. It returns the
 	// number of revoked tokens.
 	RevokeOldestForUser(ctx context.Context, userID string, keep int, excludeID string) (int64, error)
-	DeleteExpired(ctx context.Context) (int64, error)
+	// DeleteExpired deletes the tokens that expired before `before`. The
+	// cleanup passes a time in the past, so a row stays while its session can
+	// still hold a live access token and logout-all can list it.
+	DeleteExpired(ctx context.Context, before time.Time) (int64, error)
 	CountActiveForUser(ctx context.Context, userID string) (int64, error)
 	// WithTx executes fn within a database transaction that runs with ctx.
 	// The repository passed to fn shares the same transaction; if fn returns

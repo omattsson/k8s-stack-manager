@@ -22,7 +22,7 @@ type deleteRecordingRepo struct {
 	mu   sync.Mutex
 }
 
-func (r *deleteRecordingRepo) DeleteExpired(ctx context.Context) (int64, error) {
+func (r *deleteRecordingRepo) DeleteExpired(ctx context.Context, _ time.Time) (int64, error) {
 	r.mu.Lock()
 	r.ctxs = append(r.ctxs, ctx)
 	r.mu.Unlock()

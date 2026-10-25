@@ -46,6 +46,7 @@ type sidStore struct {
 	isBlockedErr error
 	mu           sync.Mutex
 	untils       map[string]time.Time // last until passed to BlockSession
+	batches      int                  // BlockSessions calls (batched writes)
 }
 
 func (s *sidStore) BlockSession(ctx context.Context, sid string, until time.Time) error {
@@ -59,6 +60,21 @@ func (s *sidStore) BlockSession(ctx context.Context, sid string, until time.Time
 	s.untils[sid] = until
 	s.mu.Unlock()
 	return s.MemoryStore.BlockSession(ctx, sid, until)
+}
+
+// BlockSessions goes through BlockSession for each session, so the recorded
+// until values and the injected error apply to batched writes too (the
+// embedded MemoryStore would bypass them).
+func (s *sidStore) BlockSessions(ctx context.Context, sids []string, until time.Time) error {
+	s.mu.Lock()
+	s.batches++
+	s.mu.Unlock()
+	for _, sid := range sids {
+		if err := s.BlockSession(ctx, sid, until); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *sidStore) IsSessionBlocked(ctx context.Context, sid string) (bool, error) {
@@ -731,7 +747,7 @@ func TestLogoutSID_RefreshCompletesBeforeRevokeIsBlocked(t *testing.T) {
 		},
 		{
 			name:   "logout",
-			method: "RevokeFamily",
+			method: "RevokeFamilyForUser",
 			revoke: func(t *testing.T, env *sidEnv, a sidSession) {
 				require.Equal(t, http.StatusOK, env.doLogout("", a.raw).Code)
 			},
@@ -936,7 +952,7 @@ func TestLogoutSID_RevokesBeforeBlocking(t *testing.T) {
 	}{
 		{
 			name:   "logout",
-			method: "RevokeFamily",
+			method: "RevokeFamilyForUser",
 			run:    func(env *sidEnv, a sidSession) *httptest.ResponseRecorder { return env.doLogout(a.token, a.raw) },
 			blocked: func(t *testing.T, env *sidEnv, a sidSession) bool {
 				return env.sessionBlocked(t, a.family)

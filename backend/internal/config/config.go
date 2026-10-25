@@ -723,6 +723,23 @@ func (c *ServerConfig) Validate() error {
 	return nil
 }
 
+// MySQLSessionParams sets the session variables of every MySQL connection.
+// The driver (go-sql-driver/mysql) runs `SET <name>=<value>` for each DSN
+// parameter it does not know, on every new connection of the pool. A `SET`
+// statement after connecting reached only one pooled connection (#706).
+//   - sql_mode: the MySQL 8.0/8.4 default, explicitly, so the mode does not
+//     depend on the server configuration (a managed database can differ).
+//     Most connections already ran with it, and the integration tests run
+//     against it.
+//   - time_zone: UTC, the same as loc=UTC on the client side.
+//   - foreign_key_checks: on.
+//
+// Values are URL-encoded: %27 is ', %2C is , and %2B is + (a plain + would
+// decode to a space).
+const MySQLSessionParams = "&sql_mode=%27ONLY_FULL_GROUP_BY%2CSTRICT_TRANS_TABLES%2CNO_ZERO_IN_DATE%2CNO_ZERO_DATE%2CERROR_FOR_DIVISION_BY_ZERO%2CNO_ENGINE_SUBSTITUTION%27" +
+	"&time_zone=%27%2B00%3A00%27" +
+	"&foreign_key_checks=1"
+
 // DSN returns the database connection string
 func (c *DatabaseConfig) DSN() string {
 	// Use a builder for better performance and readability
@@ -745,6 +762,7 @@ func (c *DatabaseConfig) DSN() string {
 	// interpolateParams: one round trip per query instead of prepare, execute
 	// and close (safe with utf8mb4).
 	b.WriteString("?charset=utf8mb4&parseTime=True&loc=UTC&interpolateParams=true")
+	b.WriteString(MySQLSessionParams)
 
 	if c.MaxOpenConns > 0 {
 		b.WriteString("&maxAllowedPacket=0") // Let server control packet size

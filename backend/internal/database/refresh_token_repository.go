@@ -50,6 +50,39 @@ func (r *GORMRefreshTokenRepository) RevokeFamily(ctx context.Context, familyID 
 		Update("revoked", true).Error
 }
 
+// RevokeFamilyForUser revokes the active tokens of a family only when they
+// belong to userID (same match as RevokeFamily, plus the owner).
+func (r *GORMRefreshTokenRepository) RevokeFamilyForUser(ctx context.Context, familyID, userID string) error {
+	return r.db.WithContext(ctx).Model(&models.RefreshToken{}).
+		Where("(family_id = ? OR id = ?) AND user_id = ? AND revoked = ?", familyID, familyID, userID, false).
+		Update("revoked", true).Error
+}
+
+// familyExpr is the session family of a row: a legacy row (empty family_id)
+// is its own family. It is a constant, never built from input.
+const familyExpr = "COALESCE(NULLIF(family_id, ''), id)"
+
+// ListRecentFamiliesForUser returns the distinct session families of the
+// refresh tokens of the user that expire after since, whether revoked or not
+// (a family revoked by idle timeout or the token cap can still hold a live
+// access token). Newest family first, at most models.MaxRecentFamilies. The
+// user_id index finds the rows of the user; the user has few rows (the token
+// cap plus recent revoked ones).
+func (r *GORMRefreshTokenRepository) ListRecentFamiliesForUser(ctx context.Context, userID string, since time.Time) ([]string, error) {
+	var families []string
+	err := r.db.WithContext(ctx).Model(&models.RefreshToken{}).
+		Select(familyExpr+" AS family").
+		Where("user_id = ? AND expires_at > ?", userID, since.UTC()).
+		Group(familyExpr).
+		Order("MAX(created_at) DESC").
+		Limit(models.MaxRecentFamilies).
+		Scan(&families).Error
+	if err != nil {
+		return nil, err
+	}
+	return families, nil
+}
+
 func (r *GORMRefreshTokenRepository) CountActiveInFamily(ctx context.Context, familyID string) (int64, error) {
 	var count int64
 	err := r.db.WithContext(ctx).Model(&models.RefreshToken{}).
@@ -107,8 +140,8 @@ func (r *GORMRefreshTokenRepository) RevokeOldestForUser(ctx context.Context, us
 // most MAX_REFRESH_TOKENS_PER_USER active tokens plus a few concurrent ones.
 const maxRevokeBatch = 1000
 
-func (r *GORMRefreshTokenRepository) DeleteExpired(ctx context.Context) (int64, error) {
-	tx := r.db.WithContext(ctx).Where("expires_at < ?", time.Now().UTC()).Delete(&models.RefreshToken{})
+func (r *GORMRefreshTokenRepository) DeleteExpired(ctx context.Context, before time.Time) (int64, error) {
+	tx := r.db.WithContext(ctx).Where("expires_at < ?", before.UTC()).Delete(&models.RefreshToken{})
 	return tx.RowsAffected, tx.Error
 }
 

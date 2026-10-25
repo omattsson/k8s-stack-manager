@@ -98,6 +98,10 @@ func TestDatabaseRefreshTokenSessionFamily(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), count)
 
+	families, err := repo.ListRecentFamiliesForUser(context.Background(), "u1", now.Add(-time.Hour))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"legacy-1"}, families, "a legacy row is its own family")
+
 	require.NoError(t, repo.RevokeFamily(context.Background(), "legacy-1"))
 	count, err = repo.CountActiveInFamily(context.Background(), "legacy-1")
 	require.NoError(t, err)
