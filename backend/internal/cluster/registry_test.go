@@ -1163,3 +1163,27 @@ func TestGetClients_InClusterOutsidePodIsError(t *testing.T) {
 	assert.ErrorIs(t, err, k8s.ErrInClusterUnavailable)
 	assert.Nil(t, cc)
 }
+
+// TestNewRegistry_HelmHistoryMax checks the default Helm factory: it is the
+// only place that builds a HelmClient, so it is where the limit is applied.
+func TestNewRegistry_HelmHistoryMax(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		historyMax int
+	}{
+		{name: "not set", historyMax: 0},
+		{name: "set", historyMax: 3},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			r := NewRegistry(RegistryOptions{HelmBinary: "helm", HelmTimeout: time.Minute, HelmHistoryMax: tt.historyMax})
+			client, ok := r.helmFactory("helm", "", time.Minute).(*deployer.HelmClient)
+			require.True(t, ok, "the default factory builds a *deployer.HelmClient")
+			assert.Equal(t, tt.historyMax, client.HistoryMax())
+		})
+	}
+}

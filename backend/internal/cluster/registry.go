@@ -37,6 +37,9 @@ type RegistryOptions struct {
 	ClusterRepo models.ClusterRepository
 	HelmBinary  string
 	HelmTimeout time.Duration
+	// HelmHistoryMax (HELM_HISTORY_MAX) is the --history-max of every Helm
+	// client; 0 = no flag (Helm default).
+	HelmHistoryMax int
 	// NamespaceLabels are extra labels for every stack namespace
 	// (NAMESPACE_LABELS); each new k8s client gets them.
 	NamespaceLabels map[string]string
@@ -98,7 +101,7 @@ func NewRegistry(cfg RegistryOptions) *Registry {
 		inClusterAvailable: k8s.InClusterAvailable,
 		loadTimeout:        registryLoadTimeout,
 		helmFactory: func(binaryPath, kubeconfig string, timeout time.Duration) deployer.HelmExecutor {
-			return deployer.NewHelmClient(binaryPath, kubeconfig, timeout)
+			return deployer.NewHelmClient(binaryPath, kubeconfig, timeout).WithHistoryMax(cfg.HelmHistoryMax)
 		},
 	}
 }

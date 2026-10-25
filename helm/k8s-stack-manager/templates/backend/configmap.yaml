@@ -144,6 +144,19 @@ data:
   {{- end }}
   MAX_INSTANCE_TTL_DAYS: {{ $maxTtlDays | toString | quote }}
   {{- end }}
+  {{- /* Helm revisions kept for each release (2 or more). Rendered only when set: unset keeps the Helm default (10). An explicit backend.env value wins. */}}
+  {{- $historyMax := .Values.backend.helmHistoryMax }}
+  {{- if and (not (kindIs "invalid" $historyMax)) (ne (trim (toString $historyMax)) "") (not (hasKey .Values.backend.env "HELM_HISTORY_MAX")) }}
+  {{- /* A number from a values file or --set-json is a float64, and toString writes 1e+06 from one million on: convert a whole number to int64 first. */}}
+  {{- $historyMaxText := trim (toString $historyMax) }}
+  {{- if and (kindIs "float64" $historyMax) (eq (float64 (int64 $historyMax)) $historyMax) }}
+  {{- $historyMaxText = toString (int64 $historyMax) }}
+  {{- end }}
+  {{- if or (not (regexMatch "^[0-9]+$" $historyMaxText)) (lt (atoi $historyMaxText) 2) }}
+  {{- fail (printf "backend.helmHistoryMax must be a whole number of 2 or more, got %v" $historyMax) }}
+  {{- end }}
+  HELM_HISTORY_MAX: {{ $historyMaxText | quote }}
+  {{- end }}
   {{- if .Values.metrics.enabled }}
   METRICS_ENABLED: "true"
   METRICS_ADDR: ":{{ .Values.metrics.port }}"

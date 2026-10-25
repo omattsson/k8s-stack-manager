@@ -155,6 +155,10 @@ type DeploymentConfig struct {
 	// of k8s.ClientOptions.
 	K8sClientQPS   float64
 	K8sClientBurst int
+	// HelmHistoryMax (HELM_HISTORY_MAX, see ParseHelmHistoryMax) is passed as
+	// --history-max to helm upgrade --install and helm rollback; 0 = no flag,
+	// so the Helm default (10) applies.
+	HelmHistoryMax int
 	HelmBinary     string
 	KubeconfigPath string
 	// InClusterFallbackKubeconfig (IN_CLUSTER_FALLBACK_KUBECONFIG) is for
@@ -810,6 +814,12 @@ func LoadConfig() (*Config, error) {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 	cfg.Deployment.AllowedChartRepos = chartRepos
+
+	helmHistoryMax, err := ParseHelmHistoryMax(getEnv("HELM_HISTORY_MAX", ""))
+	if err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+	cfg.Deployment.HelmHistoryMax = helmHistoryMax
 
 	trustedProxies, err := ParseTrustedProxies(getEnv("TRUSTED_PROXIES", ""))
 	if err != nil {

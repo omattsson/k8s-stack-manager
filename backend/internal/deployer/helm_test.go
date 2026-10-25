@@ -783,6 +783,56 @@ func TestHelmClient_BuildRollbackArgs(t *testing.T) {
 	}
 }
 
+func TestHelmClient_HistoryMax(t *testing.T) {
+	t.Parallel()
+
+	install := InstallRequest{ReleaseName: "my-app", ChartPath: "nginx", Namespace: "prod", NamespaceReady: true}
+
+	tests := []struct {
+		name         string
+		historyMax   int
+		wantInstall  []string
+		wantRollback []string
+	}{
+		{
+			name:         "not set: no flag, the Helm default applies",
+			historyMax:   0,
+			wantInstall:  []string{"upgrade", "--install", "my-app", "nginx", "-n", "prod", "--timeout", "2m0s"},
+			wantRollback: []string{"rollback", "my-app", "4", "-n", "prod", "--timeout", "2m0s"},
+		},
+		{
+			name:         "set: passed to install and rollback",
+			historyMax:   3,
+			wantInstall:  []string{"upgrade", "--install", "my-app", "nginx", "-n", "prod", "--timeout", "2m0s", "--history-max", "3"},
+			wantRollback: []string{"rollback", "my-app", "4", "-n", "prod", "--timeout", "2m0s", "--history-max", "3"},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			client := NewHelmClient("helm", "", 2*time.Minute).WithHistoryMax(tt.historyMax)
+			assert.Equal(t, tt.historyMax, client.HistoryMax())
+
+			args, err := client.buildInstallArgs(install)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantInstall, args)
+
+			args, err = client.buildRollbackArgs("my-app", "prod", 4)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantRollback, args)
+
+			// The streaming executor of a deploy builds the same arguments.
+			streaming, ok := client.WithLineHandler(func(string) {}).(*streamingHelmClient)
+			require.True(t, ok)
+			args, err = streaming.buildInstallArgs(install)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantInstall, args)
+		})
+	}
+}
+
 func TestHelmClient_WithLineHandler_ReturnsValidExecutor(t *testing.T) {
 	t.Parallel()
 
