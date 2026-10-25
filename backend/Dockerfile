@@ -6,12 +6,24 @@
 FROM --platform=$BUILDPLATFORM golang:1.27.3 AS helm
 
 # Download the helm CLI for the target architecture (download only, so it
-# works from any build platform).
-ARG HELM_VERSION=3.20.1
+# works from any build platform). The checksums are pinned here, not fetched
+# from get.helm.sh, so a changed tarball fails the build. Update them with
+# HELM_VERSION from the release notes (github.com/helm/helm/releases).
+ARG HELM_VERSION=3.22.1
+ARG HELM_SHA256_AMD64=896cf63684a42a723d61c980369d6e588330927deb13676ca0d85006dd6da0ea
+ARG HELM_SHA256_ARM64=4c29e286b279d170fa048ddfc3e4e83dcd069ca9c52102766ba672d7149e694d
 ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
-RUN curl -fsSL https://get.helm.sh/helm-v${HELM_VERSION}-linux-${TARGETARCH}.tar.gz \
-    | tar xz -C /usr/local/bin --strip-components=1 linux-${TARGETARCH}/helm
+RUN set -eu; \
+    case "${TARGETARCH}" in \
+      amd64) sum="${HELM_SHA256_AMD64}" ;; \
+      arm64) sum="${HELM_SHA256_ARM64}" ;; \
+      *) echo "no helm checksum for ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSLo /tmp/helm.tgz https://get.helm.sh/helm-v${HELM_VERSION}-linux-${TARGETARCH}.tar.gz; \
+    echo "${sum}  /tmp/helm.tgz" | sha256sum -c -; \
+    tar xzf /tmp/helm.tgz -C /usr/local/bin --strip-components=1 linux-${TARGETARCH}/helm; \
+    rm /tmp/helm.tgz
 
 # For development mode
 FROM golang:1.27.3 AS development
