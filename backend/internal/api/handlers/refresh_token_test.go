@@ -34,6 +34,7 @@ type MockRefreshTokenRepository struct {
 	findErr      error
 	revokeErr    error
 	revokeAllErr error
+	listErr      error // returned by ListRecentFamiliesForUser when set
 	deleteErr    error
 	// countHook, when set, runs before each CountActiveInFamily call with the
 	// 1-based call number (outside the lock). Tests use it to revoke tokens
@@ -154,6 +155,58 @@ func (m *MockRefreshTokenRepository) RevokeFamily(ctx context.Context, familyID 
 		}
 	}
 	return nil
+}
+
+func (m *MockRefreshTokenRepository) RevokeFamilyForUser(ctx context.Context, familyID, userID string) error {
+	if err := m.enter(ctx, "RevokeFamilyForUser"); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.revokeAllErr != nil {
+		return m.revokeAllErr
+	}
+	for _, t := range m.tokens {
+		if (t.FamilyID == familyID || t.ID == familyID) && t.UserID == userID {
+			t.Revoked = true
+		}
+	}
+	return nil
+}
+
+func (m *MockRefreshTokenRepository) ListRecentFamiliesForUser(ctx context.Context, userID string, since time.Time) ([]string, error) {
+	if err := m.enter(ctx, "ListRecentFamiliesForUser"); err != nil {
+		return nil, err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.listErr != nil {
+		return nil, m.listErr
+	}
+	newest := map[string]time.Time{}
+	for _, t := range m.tokens {
+		if t.UserID != userID || !t.ExpiresAt.After(since) {
+			continue
+		}
+		f := t.SessionFamily()
+		if cur, ok := newest[f]; !ok || t.CreatedAt.After(cur) {
+			newest[f] = t.CreatedAt
+		}
+	}
+	out := make([]string, 0, len(newest))
+	for f := range newest {
+		out = append(out, f)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !newest[out[i]].Equal(newest[out[j]]) {
+			return newest[out[i]].After(newest[out[j]])
+		}
+		return out[i] < out[j]
+	})
+	if len(out) > models.MaxRecentFamilies {
+		out = out[:models.MaxRecentFamilies]
+	}
+	return out, nil
 }
 
 func (m *MockRefreshTokenRepository) CountActiveInFamily(ctx context.Context, familyID string) (int64, error) {
@@ -339,6 +392,7 @@ func (m *MockRefreshTokenRepository) WithTx(ctx context.Context, fn func(models.
 		findErr:      m.findErr,
 		revokeErr:    m.revokeErr,
 		revokeAllErr: m.revokeAllErr,
+		listErr:      m.listErr,
 		deleteErr:    m.deleteErr,
 		callHook:     m.callHook,
 	}

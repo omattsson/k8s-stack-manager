@@ -731,7 +731,7 @@ func TestLogoutSID_RefreshCompletesBeforeRevokeIsBlocked(t *testing.T) {
 		},
 		{
 			name:   "logout",
-			method: "RevokeFamily",
+			method: "RevokeFamilyForUser",
 			revoke: func(t *testing.T, env *sidEnv, a sidSession) {
 				require.Equal(t, http.StatusOK, env.doLogout("", a.raw).Code)
 			},
@@ -936,7 +936,7 @@ func TestLogoutSID_RevokesBeforeBlocking(t *testing.T) {
 	}{
 		{
 			name:   "logout",
-			method: "RevokeFamily",
+			method: "RevokeFamilyForUser",
 			run:    func(env *sidEnv, a sidSession) *httptest.ResponseRecorder { return env.doLogout(a.token, a.raw) },
 			blocked: func(t *testing.T, env *sidEnv, a sidSession) bool {
 				return env.sessionBlocked(t, a.family)

@@ -3998,12 +3998,22 @@ paths:
       consumes:
       - application/json
       description: Revokes all refresh tokens for the current user, then blocks every
-        access token of the user issued up to now (user block), so that access tokens
-        issued before it are rejected and cannot open a WebSocket. This holds on replicas
-        with synchronised (NTP) clocks, because the user block has no clock-skew margin.
-        A login after the logout works. The presented access token is blocklisted
-        and all WebSockets of the user close. When the revoke fails, the blocks are
-        still written, the cookie is cleared and the answer is 500.
+        session of the user that has a refresh token row whose expiry is later than
+        now minus (access token lifetime + 1 minute + reuse grace), also when that
+        refresh token was revoked earlier. A session block is a plain block, so every
+        access token of those sessions is rejected, and cannot open a WebSocket, while
+        the replica clocks differ by less than the 1 minute block margin. It also
+        writes a user block that rejects every access token issued up to now. A session
+        without such a row (a login whose refresh token could not be stored, or a
+        session whose rows the cleanup already deleted) and a token without a session
+        (the SSO CLI token) rely on the user block, which holds on replicas with synchronised
+        (NTP) clocks. A login after the logout works. The presented access token is
+        blocklisted and all WebSockets of the user close. When the revoke fails, the
+        sessions get the long block (until the maximum session lifetime), the other
+        blocks are still written, the cookie is cleared and the answer is 500. When
+        only the listing of the sessions fails, the revoke and the user block still
+        run and the answer is 200. When the listing and the revoke both fail, only
+        the presented session is blocked and the answer is 500.
       produces:
       - application/json
       responses:

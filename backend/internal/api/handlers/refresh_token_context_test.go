@@ -771,6 +771,13 @@ func TestMockRefreshTokenRepository_DoneContext(t *testing.T) {
 			return err
 		}},
 		{"RevokeFamily", func(ctx context.Context, m *MockRefreshTokenRepository) error { return m.RevokeFamily(ctx, "f1") }},
+		{"RevokeFamilyForUser", func(ctx context.Context, m *MockRefreshTokenRepository) error {
+			return m.RevokeFamilyForUser(ctx, "f1", "u1")
+		}},
+		{"ListRecentFamiliesForUser", func(ctx context.Context, m *MockRefreshTokenRepository) error {
+			_, err := m.ListRecentFamiliesForUser(ctx, "u1", time.Now())
+			return err
+		}},
 		{"CountActiveInFamily", func(ctx context.Context, m *MockRefreshTokenRepository) error {
 			_, err := m.CountActiveInFamily(ctx, "f1")
 			return err
