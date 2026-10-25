@@ -982,18 +982,33 @@ func (h *AuthHandler) blockSessions(ctx context.Context, userID string, sessions
 	if h.sessionStore == nil || len(sessions) == 0 {
 		return
 	}
-	until := h.sessionBlockUntil()
-	var longUntil time.Time
+	// At most two batched writes (normal and long block), not one write per
+	// session: logout-all can block up to models.MaxRecentFamilies sessions.
+	var normal, long []string
 	for _, sess := range sessions {
-		sessUntil := until
 		if sess.revokeFailed {
-			if longUntil.IsZero() {
-				longUntil = h.sessionLongBlockUntil()
-			}
-			sessUntil = longUntil
+			long = append(long, sess.id)
+		} else {
+			normal = append(normal, sess.id)
 		}
-		if err := h.sessionStore.BlockSession(ctx, sess.id, sessUntil); err != nil {
-			slog.Error("Failed to block session in session store", "user_id", userID, "session_id", sess.id, "error", err)
+	}
+	for _, batch := range []struct {
+		until time.Time
+		kind  string
+		ids   []string
+	}{
+		{kind: "normal", ids: normal, until: h.sessionBlockUntil()},
+		{kind: "long", ids: long, until: h.sessionLongBlockUntil()},
+	} {
+		if len(batch.ids) == 0 {
+			continue
+		}
+		// The MySQL store's error says how many sessions were written before
+		// the failure; the earlier batches stay written. It counts distinct
+		// IDs, so it can be one lower than `sessions` when the presented sid is
+		// also a listed family.
+		if err := h.sessionStore.BlockSessions(ctx, batch.ids, batch.until); err != nil {
+			slog.Error("Failed to block sessions in session store", "user_id", userID, "block", batch.kind, "sessions", len(batch.ids), "first_session_id", batch.ids[0], "error", err)
 		}
 	}
 }

@@ -68,6 +68,13 @@ func (m *mockSessionStore) BlockSession(_ context.Context, sessionID string, _ t
 	return nil
 }
 
+func (m *mockSessionStore) BlockSessions(_ context.Context, sessionIDs []string, _ time.Time) error {
+	for _, id := range sessionIDs {
+		m.blockedSessions[id] = true
+	}
+	return nil
+}
+
 func (m *mockSessionStore) IsSessionBlocked(_ context.Context, sessionID string) (bool, error) {
 	m.sessionChecks++
 	if m.sessionBlockErr != nil {

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"backend/internal/config"
 	"backend/internal/models"
 
 	"github.com/stretchr/testify/assert"
@@ -66,6 +67,13 @@ func TestLogoutAllSessionBlock_BlocksEveryActiveSession(t *testing.T) {
 					assert.WithinDuration(t, time.Now().Add(wantTTL), until, 10*time.Second, "session %d block expiry", i)
 				}
 			}
+
+			// All sessions share one block lifetime here, so they go to the
+			// store in one batched write, not one write per session.
+			env.guarded.mu.Lock()
+			batches := env.guarded.batches
+			env.guarded.mu.Unlock()
+			assert.Equal(t, 1, batches, "session blocks are written in one BlockSessions call")
 
 			// The user block is written in every case.
 			blocked, err := env.store.IsUserBlocked(context.Background(), "uid-1", time.Now().Add(-time.Hour))
@@ -224,5 +232,39 @@ func TestLogoutAllSessionBlock_BlocksRecentlyRevokedFamily(t *testing.T) {
 			assert.Equal(t, tt.wantBlock, env.sessionBlocked(t, idle.family))
 			assert.True(t, env.sessionBlocked(t, a.family))
 		})
+	}
+}
+
+// TestBlockSessions_GroupsByBlockLifetime checks that blockSessions writes a
+// mix of normal and long blocks in exactly two batched calls, each with its
+// own end time (#706).
+func TestBlockSessions_GroupsByBlockLifetime(t *testing.T) {
+	t.Parallel()
+	env := newSIDEnv(t, nil, nil)
+	h := NewAuthHandler(env.users, env.cfg, &config.OIDCConfig{})
+	h.SetSessionStore(env.guarded)
+
+	h.blockSessions(context.Background(), "uid-1", []sessionToBlock{
+		{id: "fam-a"},
+		{id: "fam-b", revokeFailed: true},
+		{id: "fam-c"},
+	})
+
+	env.guarded.mu.Lock()
+	batches := env.guarded.batches
+	env.guarded.mu.Unlock()
+	assert.Equal(t, 2, batches, "one call for the normal blocks, one for the long blocks")
+
+	for _, tt := range []struct {
+		id  string
+		ttl time.Duration
+	}{
+		{id: "fam-a", ttl: env.cfg.AccessTokenExpiration + sessionBlockSkew},
+		{id: "fam-b", ttl: env.cfg.SessionMaxLifetime + sessionBlockSkew},
+		{id: "fam-c", ttl: env.cfg.AccessTokenExpiration + sessionBlockSkew},
+	} {
+		until, ok := env.guarded.untilOf(tt.id)
+		require.True(t, ok, tt.id)
+		assert.WithinDuration(t, time.Now().Add(tt.ttl), until, 10*time.Second, tt.id)
 	}
 }
