@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"backend/internal/ctxutil"
 	"backend/internal/hooks"
 	"backend/internal/models"
 
@@ -432,9 +433,11 @@ func (s *Scheduler) executeScheduledPolicy(ctx context.Context, policyID string)
 	// Detached: a completed run must record its run even when the term ends now,
 	// else the next leader catches it up and runs it twice. Only this column is
 	// written, so an edit made during the run stays.
-	if updateErr := s.policyRepo.SetLastRunAt(context.WithoutCancel(ctx), policy.ID, now); updateErr != nil {
+	lastRunCtx, cancel := ctxutil.Detach(ctx, ctxutil.WriteTimeout)
+	if updateErr := s.policyRepo.SetLastRunAt(lastRunCtx, policy.ID, now); updateErr != nil {
 		slog.Error("Failed to update policy LastRunAt", "policy", policy.ID, "error", updateErr)
 	}
+	cancel()
 	slog.Info("Cleanup policy executed", "policy", policy.Name, "results", len(results))
 
 	s.notifyPolicyExecuted(ctx, policy, results)
@@ -576,7 +579,9 @@ func (s *Scheduler) createAuditEntry(ctx context.Context, policy *models.Cleanup
 		EntityID:   inst.ID,
 		Details:    string(details),
 	}
-	if err := s.auditRepo.Create(context.WithoutCancel(ctx), entry); err != nil {
+	auditCtx, cancel := ctxutil.Detach(ctx, ctxutil.WriteTimeout)
+	defer cancel()
+	if err := s.auditRepo.Create(auditCtx, entry); err != nil {
 		slog.Error("Failed to create audit log for cleanup", "error", err)
 	}
 }

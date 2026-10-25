@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"backend/internal/cache"
+	"backend/internal/ctxutil"
 	"backend/internal/sessionstore"
 
 	"github.com/gin-gonic/gin"
@@ -186,7 +187,7 @@ func (t *sessionActivityTracker) touch(ctx context.Context, sessionID string) {
 		return
 	}
 	t.lastSeen.Set(sessionID, now)
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sessionActivityTimeout)
+	ctx, cancel := ctxutil.Detach(ctx, sessionActivityTimeout)
 	go func() {
 		defer cancel()
 		if err := t.fn(ctx, sessionID, now); err != nil {

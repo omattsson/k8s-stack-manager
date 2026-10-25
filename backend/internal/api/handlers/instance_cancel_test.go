@@ -9,7 +9,9 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
+	"backend/internal/ctxutil"
 	"backend/internal/database"
 	"backend/internal/deployer"
 	"backend/internal/helm"
@@ -214,20 +216,26 @@ func TestDeployInstance_CancelledRequest(t *testing.T) {
 	}
 }
 
-// ctxNotifier records the context error and the trigger of each
-// NotifyInstance call.
+// ctxNotifier records the context error, the time left until the deadline
+// (-1 without one) and the trigger of each NotifyInstance call.
 type ctxNotifier struct {
 	mu       sync.Mutex
 	types    []string
 	ctxErrs  []error
+	left     []time.Duration
 	triggers []*hooks.Trigger
 }
 
 func (n *ctxNotifier) NotifyInstance(ctx context.Context, _ models.NotificationTarget, notifType, _, _ string, opts ...notifier.InstanceOption) error {
+	left := time.Duration(-1)
+	if d, ok := ctx.Deadline(); ok {
+		left = time.Until(d)
+	}
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.types = append(n.types, notifType)
 	n.ctxErrs = append(n.ctxErrs, ctx.Err())
+	n.left = append(n.left, left)
 	n.triggers = append(n.triggers, notifier.ResolveInstanceOptions(opts...).Trigger)
 	return nil
 }
@@ -311,6 +319,93 @@ func TestDeleteInstance_CancelledRequestAfterDelete(t *testing.T) {
 			assert.NoError(t, notif.ctxErrs[0], "the notification gets a context without the cancel")
 			require.NotNil(t, notif.triggers[0])
 			assert.Equal(t, want, *notif.triggers[0])
+		})
+	}
+}
+
+// TestDeleteInstance_NotifyHasItsOwnBudget checks that instance.deleted does
+// not inherit the write deadline of the delete: the post-delete hooks can
+// outlast it, and the notification must still be sent (#674). The row delete
+// takes 300 ms; with the delete deadline, less than WriteTimeout - 300 ms
+// would be left at the notification.
+func TestDeleteInstance_NotifyHasItsOwnBudget(t *testing.T) {
+	t.Parallel()
+
+	const slowDelete = 300 * time.Millisecond
+	instRepo := newHookInstanceRepo()
+	seedInstance(t, instRepo.MockStackInstanceRepository, "i-1", "to-delete", "d1", "uid-1", models.StackStatusDraft)
+	overrideRepo := NewMockValueOverrideRepository()
+	boRepo := NewMockChartBranchOverrideRepository()
+	h := NewInstanceHandler(instRepo, overrideRepo, boRepo, NewMockStackDefinitionRepository(),
+		NewMockChartConfigRepository(), NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
+		helm.NewValuesGenerator(), NewMockUserRepository(), 0)
+	h.txRunner = &mockHandlerTxRunner{repos: database.TxRepos{
+		StackInstance: instRepo, ValueOverride: overrideRepo, BranchOverride: boRepo,
+	}}
+	notif := &ctxNotifier{}
+	h.WithNotifier(notif)
+	instRepo.setHook(func(point string, _ context.Context) {
+		if point == "before:Delete" {
+			time.Sleep(slowDelete)
+		}
+	})
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(injectAuthContext("uid-1", "user"))
+	r.DELETE("/api/v1/stack-instances/:id", h.DeleteInstance)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, "/api/v1/stack-instances/i-1", nil))
+
+	require.Equal(t, http.StatusNoContent, w.Code, w.Body.String())
+	notif.mu.Lock()
+	defer notif.mu.Unlock()
+	require.Equal(t, []string{"instance.deleted"}, notif.types)
+	assert.NoError(t, notif.ctxErrs[0])
+	assert.Greater(t, notif.left[0], ctxutil.WriteTimeout-slowDelete/2,
+		"the notification starts a fresh WriteTimeout budget after the delete")
+}
+
+// TestPostHookCtx checks the budget of a post-commit hook: WriteTimeout plus
+// the subscriber timeouts of the event, without the cancel and the deadline
+// of the handler context (#674).
+func TestPostHookCtx(t *testing.T) {
+	t.Parallel()
+
+	d, err := hooks.NewDispatcher(hooks.Config{Subscriptions: []hooks.Subscription{
+		{Name: "cmdb", Events: []string{hooks.EventPostInstanceCreate}, URL: "http://127.0.0.1:1/cmdb", TimeoutSeconds: 120},
+		{Name: "audit", Events: []string{hooks.EventPostInstanceCreate, hooks.EventPostInstanceDelete}, URL: "http://127.0.0.1:1/audit", TimeoutSeconds: 60},
+	}}, nil)
+	require.NoError(t, err)
+	h := &InstanceHandler{}
+	h.WithHooks(d)
+
+	tests := []struct {
+		name   string
+		event  string
+		budget time.Duration
+	}{
+		{name: "two subscribers", event: hooks.EventPostInstanceCreate, budget: ctxutil.WriteTimeout + 180*time.Second},
+		{name: "one subscriber", event: hooks.EventPostInstanceDelete, budget: ctxutil.WriteTimeout + 60*time.Second},
+		{name: "no subscriber", event: hooks.EventDeleteCompleted, budget: ctxutil.WriteTimeout},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			// The handler context: a write deadline that has nearly passed,
+			// and a client that leaves.
+			parent, cancelParent := context.WithTimeout(context.Background(), time.Millisecond)
+			cancelParent()
+
+			start := time.Now()
+			ctx, cancel := h.postHookCtx(parent, tt.event)
+			defer cancel()
+
+			assert.NoError(t, ctx.Err(), "the end of the handler context does not end the hook")
+			deadline, ok := ctx.Deadline()
+			require.True(t, ok)
+			assert.WithinDuration(t, start.Add(tt.budget), deadline, time.Second)
 		})
 	}
 }

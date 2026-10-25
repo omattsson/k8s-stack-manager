@@ -11,6 +11,7 @@ import (
 
 	"backend/internal/api/middleware"
 	"backend/internal/cluster"
+	"backend/internal/ctxutil"
 	"backend/internal/database"
 	"backend/internal/deployer"
 	"backend/internal/helm"
@@ -384,7 +385,8 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 
 	// Persist definition + chart configs + instance. From here on a client
 	// that leaves must not stop the create, the deploy or the audit entry.
-	wctx := writeCtx(c)
+	wctx, cancel := writeCtx(c)
+	defer cancel()
 	txErr := h.txRunner.RunInTx(wctx, func(repos database.TxRepos) error {
 		if err := checkInstanceLimit(wctx, repos.StackInstance, limit, inst.OwnerID); err != nil {
 			return err
@@ -438,6 +440,10 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 	// 5. Trigger deploy.
 	logID, deployErr := h.triggerDeploy(wctx, c, inst, def, chartConfigs, username)
 
+	// The error status and the audit entry get a budget of their own: a slow
+	// transaction or deploy start must not leave them without time (#674).
+	finalCtx, cancelFinal := ctxutil.Detach(wctx, ctxutil.WriteTimeout)
+	defer cancelFinal()
 	if deployErr != nil {
 		slog.Error("Quick deploy failed during deployment phase",
 			"instance_id", inst.ID,
@@ -445,12 +451,12 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 		)
 		inst.Status = models.StackStatusError
 		inst.ErrorMessage = "Deployment failed"
-		_ = h.instanceRepo.Update(wctx, inst)
+		_ = h.instanceRepo.Update(finalCtx, inst)
 	}
 
 	// 6. Audit log.
 	if h.auditRepo != nil {
-		if auditErr := h.auditRepo.Create(wctx, &models.AuditLog{
+		if auditErr := h.auditRepo.Create(finalCtx, &models.AuditLog{
 			ID:         uuid.New().String(),
 			UserID:     userID,
 			Username:   username,

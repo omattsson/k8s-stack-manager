@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"backend/internal/api/middleware"
+	"backend/internal/ctxutil"
 	"backend/internal/models"
 	"backend/internal/sessionstore"
 
@@ -414,4 +415,51 @@ func signUserToken(t *testing.T, secret, userID string, iat time.Time) string {
 	signed, err := tok.SignedString([]byte(secret))
 	require.NoError(t, err)
 	return signed
+}
+
+// slowRevokeRepo makes RevokeAllForUser take delay, as a stalled database.
+type slowRevokeRepo struct {
+	*MockRefreshTokenRepository
+	delay time.Duration
+}
+
+func (r *slowRevokeRepo) RevokeAllForUser(ctx context.Context, userID string) error {
+	time.Sleep(r.delay)
+	return r.MockRefreshTokenRepository.RevokeAllForUser(ctx, userID)
+}
+
+// leftAtBlockStore records how much time the context of BlockUser had left.
+type leftAtBlockStore struct {
+	*mockSessionStore
+	left time.Duration
+}
+
+func (s *leftAtBlockStore) BlockUser(ctx context.Context, userID string, until time.Time) error {
+	if d, ok := ctx.Deadline(); ok {
+		s.left = time.Until(d)
+	}
+	return s.mockSessionStore.BlockUser(ctx, userID, until)
+}
+
+// TestRevokeUserAccess_StepsHaveTheirOwnBudget checks that a slow refresh
+// token revoke does not use up the time of the token block: each step of
+// revokeUserAccess gets a WriteTimeout budget of its own (#674).
+func TestRevokeUserAccess_StepsHaveTheirOwnBudget(t *testing.T) {
+	t.Parallel()
+
+	const slowRevoke = 300 * time.Millisecond
+	f := newRevokeFixture(t)
+	store := &leftAtBlockStore{mockSessionStore: f.store}
+	h := NewUserHandler(f.userRepo, &slowRevokeRepo{MockRefreshTokenRepository: f.refreshRepo, delay: slowRevoke}, f.apiKeyRepo)
+	h.SetSessionStore(store)
+	h.SetAccessTokenExpiration(15 * time.Minute)
+
+	ctx, cancel := ctxutil.Detach(context.Background(), ctxutil.WriteTimeout)
+	defer cancel()
+	h.revokeUserAccess(ctx, revokeTargetID, revokeOptions{})
+
+	assert.True(t, f.tokenRevoked("rt-target-1"), "the refresh tokens are revoked")
+	assert.True(t, f.store.wasBlockUserCalledFor(revokeTargetID), "the earlier tokens are blocked")
+	assert.Greater(t, store.left, ctxutil.WriteTimeout-slowRevoke/2,
+		"the block starts a fresh WriteTimeout budget after the slow revoke")
 }

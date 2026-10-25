@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"backend/internal/ctxutil"
 	"backend/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -85,9 +86,11 @@ func NewAuditMiddleware(repo AuditLogger) gin.HandlerFunc {
 			return
 		}
 
-		// Fire and forget — audit failures must not affect the response.
-		ctx := context.WithoutCancel(c.Request.Context())
+		// Fire and forget — audit failures must not affect the response. A
+		// stalled database must not hold the goroutine forever (#674).
+		ctx, cancel := ctxutil.Detach(c.Request.Context(), ctxutil.WriteTimeout)
 		go func() {
+			defer cancel()
 			for _, entry := range entries {
 				if err := repo.Create(ctx, entry); err != nil {
 					slog.Error("failed to create audit log", "error", err)

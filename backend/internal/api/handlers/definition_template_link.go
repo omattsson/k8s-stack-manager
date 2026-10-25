@@ -136,7 +136,8 @@ func (h *DefinitionHandler) SetTemplateLink(c *gin.Context) {
 
 	// A targeted write: a concurrent edit of other fields is not lost.
 	// Detached from here on: a committed link must answer 200 for its audit entry (#656).
-	wctx := context.WithoutCancel(c.Request.Context())
+	wctx, cancel := detachedCtx(c)
+	defer cancel()
 	if err := h.definitionRepo.SetTemplateLink(wctx, def.ID, templateID, version); err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		if status == http.StatusInternalServerError {

@@ -176,7 +176,9 @@ func (h *TemplateHandler) BulkDeleteTemplates(c *gin.Context) {
 		}
 
 		// The audit entry follows the commit: a client that leaves must not cancel the write (#656).
-		if err := h.templateRepo.Delete(context.WithoutCancel(c.Request.Context()), tmpl.ID); err != nil {
+		wctx, cancel := detachedCtx(c)
+		defer cancel()
+		if err := h.templateRepo.Delete(wctx, tmpl.ID); err != nil {
 			slog.Error("bulk delete: failed to delete template", logKeyBulkTemplateID, tmpl.ID, "error", err)
 			return fmt.Errorf("failed to delete template")
 		}
@@ -237,7 +239,9 @@ func (h *TemplateHandler) BulkUnpublishTemplates(c *gin.Context) {
 		tmpl.IsPublished = false
 		tmpl.UpdatedAt = timeNow()
 
-		if err := h.templateRepo.Update(context.WithoutCancel(c.Request.Context()), tmpl); err != nil {
+		wctx, cancel := detachedCtx(c)
+		defer cancel()
+		if err := h.templateRepo.Update(wctx, tmpl); err != nil {
 			slog.Error("bulk unpublish: failed to update template", logKeyBulkTemplateID, tmpl.ID, "error", err)
 			return fmt.Errorf("failed to unpublish template")
 		}

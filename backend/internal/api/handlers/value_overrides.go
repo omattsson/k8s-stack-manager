@@ -148,7 +148,9 @@ func (h *InstanceHandler) SetOverride(c *gin.Context) {
 		existing.UpdatedAt = now
 
 		// The audit entry follows the commit: a client that leaves must not cancel the write (#656).
-		if err := h.overrideRepo.Update(writeCtx(c), existing); err != nil {
+		wctx, cancel := writeCtx(c)
+		defer cancel()
+		if err := h.overrideRepo.Update(wctx, existing); err != nil {
 			status, message := mapError(err, "Value override")
 			c.JSON(status, gin.H{"error": message})
 			return
@@ -167,7 +169,9 @@ func (h *InstanceHandler) SetOverride(c *gin.Context) {
 		UpdatedAt:       now,
 	}
 
-	if err := h.overrideRepo.Create(writeCtx(c), override); err != nil {
+	wctx, cancel := writeCtx(c)
+	defer cancel()
+	if err := h.overrideRepo.Create(wctx, override); err != nil {
 		status, message := mapError(err, "Value override")
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -224,7 +228,9 @@ func (h *InstanceHandler) deleteValueOverride(c *gin.Context, instanceID, chartI
 	if existing == nil {
 		return dberrors.NewDatabaseError("delete", dberrors.ErrNotFound)
 	}
-	return h.overrideRepo.Delete(writeCtx(c), existing.ID)
+	wctx, cancel := writeCtx(c)
+	defer cancel()
+	return h.overrideRepo.Delete(wctx, existing.ID)
 }
 
 // GetOverride godoc

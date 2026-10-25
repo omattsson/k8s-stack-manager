@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"context"
 	"log/slog"
 	"net/http"
 
@@ -98,7 +97,9 @@ func (h *FavoriteHandler) AddFavorite(c *gin.Context) {
 		EntityID:   req.EntityID,
 	}
 
-	if err := h.favoriteRepo.Add(context.WithoutCancel(c.Request.Context()), fav); err != nil {
+	wctx, cancel := detachedCtx(c)
+	defer cancel()
+	if err := h.favoriteRepo.Add(wctx, fav); err != nil {
 		status, message := mapError(err, "Favorite")
 		if status >= http.StatusInternalServerError {
 			slog.Error("Failed to add favorite", "error", err, logKeyFavUserID, userID)
@@ -138,7 +139,9 @@ func (h *FavoriteHandler) RemoveFavorite(c *gin.Context) {
 		return
 	}
 
-	if err := h.favoriteRepo.Remove(context.WithoutCancel(c.Request.Context()), userID, entityType, entityID); err != nil {
+	wctx, cancel := detachedCtx(c)
+	defer cancel()
+	if err := h.favoriteRepo.Remove(wctx, userID, entityType, entityID); err != nil {
 		status, message := mapError(err, "Favorite")
 		if status >= http.StatusInternalServerError {
 			slog.Error("Failed to remove favorite", "error", err, logKeyFavUserID, userID)

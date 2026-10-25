@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"backend/internal/ctxutil"
 	"backend/internal/models"
 	"backend/pkg/dberrors"
 )
@@ -34,7 +35,7 @@ func DeleteInstanceWithOwnedDefinition(ctx context.Context, runner TxRunner, ins
 	}
 	// The instance delete is committed: a cancel must not leave the owned
 	// definition behind. The timeout bounds the FOR UPDATE lock of the cleanup.
-	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), ownedDefinitionCleanupTimeout)
+	cleanupCtx, cancel := ctxutil.Detach(ctx, ownedDefinitionCleanupTimeout)
 	defer cancel()
 	if err := cleanupOwnedDefinitionIfOwned(cleanupCtx, runner, inst); err != nil {
 		slog.Warn("owned definition cleanup failed; the instance is deleted",

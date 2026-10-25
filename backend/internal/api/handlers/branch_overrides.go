@@ -224,7 +224,9 @@ func (h *BranchOverrideHandler) SetBranchOverride(c *gin.Context) {
 	}
 
 	// The audit entry follows the commit: a client that leaves must not cancel the write (#656).
-	if err := h.overrideRepo.Set(writeCtx(c), override); err != nil {
+	wctx, cancel := writeCtx(c)
+	defer cancel()
+	if err := h.overrideRepo.Set(wctx, override); err != nil {
 		status, message := mapError(err, entityBranchOverride)
 		if status == http.StatusInternalServerError {
 			slog.Error("failed to set branch override", logKeyBOInstanceID, instanceID, logKeyBOChartID, chartID, "error", err)
@@ -269,7 +271,9 @@ func (h *BranchOverrideHandler) DeleteBranchOverride(c *gin.Context) {
 		return
 	}
 
-	if err := h.overrideRepo.Delete(writeCtx(c), instanceID, chartID); err != nil {
+	wctx, cancel := writeCtx(c)
+	defer cancel()
+	if err := h.overrideRepo.Delete(wctx, instanceID, chartID); err != nil {
 		if isNotFoundError(err) {
 			// No override: tell an unknown chart apart from a missing override.
 			if _, ok := requireInstanceChart(c, h.chartConfigRepo, inst, chartID); !ok {

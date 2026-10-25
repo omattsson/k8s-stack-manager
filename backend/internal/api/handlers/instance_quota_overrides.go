@@ -11,6 +11,7 @@ import (
 
 	"backend/internal/api/middleware"
 	"backend/internal/cluster"
+	"backend/internal/ctxutil"
 	"backend/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -71,17 +72,19 @@ func shouldApplyQuota(inst *models.StackInstance) bool {
 
 // applyQuotaInBackground writes the effective quota of inst to its namespace
 // in a background goroutine, when there is a quota client and
-// shouldApplyQuota is true.
-func (h *InstanceQuotaOverrideHandler) applyQuotaInBackground(inst *models.StackInstance) {
+// shouldApplyQuota is true. The goroutine gets parent detached before it
+// starts: the request ID and trace stay, the request context does not, and
+// the write ends after quotaApplyTimeout.
+func (h *InstanceQuotaOverrideHandler) applyQuotaInBackground(parent context.Context, inst *models.StackInstance) {
 	if h.quotaClients == nil || !shouldApplyQuota(inst) {
 		return
 	}
 	instCopy := *inst
+	ctx, cancel := ctxutil.Detach(parent, quotaApplyTimeout)
 	go func() {
 		if h.applyDone != nil {
 			defer h.applyDone()
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), quotaApplyTimeout)
 		defer cancel()
 		if err := h.applyEffectiveQuota(ctx, &instCopy); err != nil {
 			slog.Warn("Failed to apply the quota override to the namespace; the next deploy applies it",
@@ -469,7 +472,8 @@ func (h *InstanceQuotaOverrideHandler) SetQuotaOverride(c *gin.Context) {
 
 	// A client that leaves must not cancel the write and then skip the
 	// namespace apply and the audit entry (#656).
-	wctx := context.WithoutCancel(c.Request.Context())
+	wctx, cancel := detachedCtx(c)
+	defer cancel()
 	if err := h.overrideRepo.Upsert(wctx, override); err != nil {
 		status, message := mapError(err, entityInstanceQuotaOverride)
 		if status == http.StatusInternalServerError {
@@ -490,7 +494,7 @@ func (h *InstanceQuotaOverrideHandler) SetQuotaOverride(c *gin.Context) {
 		return
 	}
 
-	h.applyQuotaInBackground(inst)
+	h.applyQuotaInBackground(c.Request.Context(), inst)
 	c.JSON(http.StatusOK, saved)
 }
 
@@ -525,7 +529,9 @@ func (h *InstanceQuotaOverrideHandler) DeleteQuotaOverride(c *gin.Context) {
 	}
 
 	// See SetQuotaOverride.
-	if err := h.overrideRepo.Delete(context.WithoutCancel(c.Request.Context()), instanceID); err != nil {
+	wctx, cancel := detachedCtx(c)
+	defer cancel()
+	if err := h.overrideRepo.Delete(wctx, instanceID); err != nil {
 		status, message := mapError(err, entityInstanceQuotaOverride)
 		if status == http.StatusInternalServerError {
 			slog.Error("failed to delete quota override", logKeyIQOInstanceID, instanceID, "error", err)
@@ -534,6 +540,6 @@ func (h *InstanceQuotaOverrideHandler) DeleteQuotaOverride(c *gin.Context) {
 		return
 	}
 
-	h.applyQuotaInBackground(inst)
+	h.applyQuotaInBackground(c.Request.Context(), inst)
 	c.Status(http.StatusNoContent)
 }

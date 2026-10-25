@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"backend/internal/cache"
+	"backend/internal/ctxutil"
 	"backend/internal/models"
 	"backend/internal/sessionstore"
 	"backend/pkg/dberrors"
@@ -260,7 +261,7 @@ func authenticateAPIKey(ctx context.Context, apiKeyRepo models.APIKeyRepository,
 	prev, exists := lastUsedCache.Get(record.ID)
 	if !exists || now.Sub(prev) > time.Minute {
 		lastUsedCache.Set(record.ID, now)
-		updateCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), lastUsedUpdateTimeout)
+		updateCtx, cancel := ctxutil.Detach(ctx, lastUsedUpdateTimeout)
 		go func(userID, keyID string, ts time.Time) {
 			defer cancel()
 			_ = apiKeyRepo.UpdateLastUsed(updateCtx, userID, keyID, ts)

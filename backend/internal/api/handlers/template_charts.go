@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"context"
 	"net/http"
 	"time"
 
@@ -54,7 +53,9 @@ func (h *TemplateHandler) AddTemplateChart(c *gin.Context) {
 		return
 	}
 
-	if err := h.chartRepo.Create(context.WithoutCancel(c.Request.Context()), &chart); err != nil {
+	wctx, cancel := detachedCtx(c)
+	defer cancel()
+	if err := h.chartRepo.Create(wctx, &chart); err != nil {
 		status, message := mapError(err, entityTemplateChart)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -107,7 +108,9 @@ func (h *TemplateHandler) UpdateTemplateChart(c *gin.Context) {
 		return
 	}
 
-	if err := h.chartRepo.Update(context.WithoutCancel(c.Request.Context()), existing); err != nil {
+	wctx, cancel := detachedCtx(c)
+	defer cancel()
+	if err := h.chartRepo.Update(wctx, existing); err != nil {
 		status, message := mapError(err, entityTemplateChart)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -135,7 +138,9 @@ func (h *TemplateHandler) DeleteTemplateChart(c *gin.Context) {
 		return
 	}
 
-	if err := h.chartRepo.Delete(context.WithoutCancel(c.Request.Context()), chart.ID); err != nil {
+	wctx, cancel := detachedCtx(c)
+	defer cancel()
+	if err := h.chartRepo.Delete(wctx, chart.ID); err != nil {
 		status, message := mapError(err, entityTemplateChart)
 		c.JSON(status, gin.H{"error": message})
 		return

@@ -14,6 +14,7 @@ import (
 
 	"backend/internal/api/middleware"
 	"backend/internal/cluster"
+	"backend/internal/ctxutil"
 	"backend/internal/k8s"
 	"backend/internal/models"
 	"backend/pkg/dberrors"
@@ -291,7 +292,8 @@ func (h *ClusterHandler) CreateCluster(c *gin.Context) {
 
 	// Detached from the first write on: a client that leaves cannot skip the
 	// default or the registry refresh (#656).
-	wctx := context.WithoutCancel(c.Request.Context())
+	wctx, cancel := detachedCtx(c)
+	defer cancel()
 	if err := h.clusterRepo.Create(wctx, cl); err != nil {
 		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
@@ -472,7 +474,8 @@ func (h *ClusterHandler) UpdateCluster(c *gin.Context) {
 	}
 
 	// Detached from the first write on, so the registry refresh always runs (#656).
-	wctx := context.WithoutCancel(c.Request.Context())
+	wctx, cancel := detachedCtx(c)
+	defer cancel()
 	// Refuse credentials without a key before any write, so a failed request
 	// does not change the default cluster.
 	if checker, ok := h.clusterRepo.(models.ClusterCredentialChecker); ok {
@@ -558,7 +561,9 @@ func (h *ClusterHandler) DeleteCluster(c *gin.Context) {
 	}
 
 	// Detached: a client that leaves cannot skip the registry refresh (#656).
-	if err := h.clusterRepo.Delete(context.WithoutCancel(c.Request.Context()), id); err != nil {
+	wctx, cancel := detachedCtx(c)
+	defer cancel()
+	if err := h.clusterRepo.Delete(wctx, id); err != nil {
 		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -663,7 +668,9 @@ func (h *ClusterHandler) SetDefaultCluster(c *gin.Context) {
 	id := c.Param("id")
 
 	// Detached: a cancel during the commit must not skip the registry refresh (#656).
-	if err := h.clusterRepo.SetDefault(context.WithoutCancel(c.Request.Context()), id); err != nil {
+	wctx, cancel := detachedCtx(c)
+	defer cancel()
+	if err := h.clusterRepo.SetDefault(wctx, id); err != nil {
 		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -963,7 +970,8 @@ func (h *ClusterHandler) UpdateQuotas(c *gin.Context) {
 
 	// Detached from the write on: a client that leaves cannot skip the
 	// namespace quota writes (#656).
-	wctx := context.WithoutCancel(c.Request.Context())
+	wctx, cancel := detachedCtx(c)
+	defer cancel()
 	if err := h.quotaRepo.Upsert(wctx, config); err != nil {
 		status, message := mapError(err, entityResourceQuotaConfig)
 		c.JSON(status, gin.H{"error": message})
@@ -973,7 +981,13 @@ func (h *ClusterHandler) UpdateQuotas(c *gin.Context) {
 	// Propagate quotas to all existing stack namespaces in this cluster. It
 	// reads the stored quota itself, so a failed read-back below does not skip it.
 	if h.quotaClients != nil {
-		go h.propagateQuotasToNamespaces(cl)
+		// Detached before the goroutine: it keeps the request ID and trace,
+		// never the request context, and ends after quotaPropagationTimeout.
+		pctx, pcancel := ctxutil.Detach(c.Request.Context(), quotaPropagationTimeout)
+		go func() {
+			defer pcancel()
+			h.propagateQuotasToNamespaces(pctx, cl)
+		}()
 	}
 
 	// Re-read the saved config so timestamps and ID are populated.
@@ -995,10 +1009,11 @@ func (h *ClusterHandler) UpdateQuotas(c *gin.Context) {
 // again (writeNamespaceQuota), so a quota override change during the loop is
 // not undone. Runs in a background goroutine so the API response is not
 // delayed. Errors are logged but do not affect the response.
-func (h *ClusterHandler) propagateQuotasToNamespaces(cl *models.Cluster) {
-	// Its own context: it runs after the response, so never the request context.
-	ctx, cancel := context.WithTimeout(context.Background(), quotaPropagationTimeout)
-	defer cancel()
+//
+// ctx is a detached context with a deadline (the caller uses ctxutil.Detach
+// with quotaPropagationTimeout): it runs after the response, so never the
+// request context.
+func (h *ClusterHandler) propagateQuotasToNamespaces(ctx context.Context, cl *models.Cluster) {
 	clusterID := cl.ID
 
 	k8sClient, err := h.quotaClients(clusterID)
@@ -1083,7 +1098,9 @@ func (h *ClusterHandler) DeleteQuotas(c *gin.Context) {
 		return
 	}
 
-	if err := h.quotaRepo.Delete(context.WithoutCancel(c.Request.Context()), id); err != nil {
+	wctx, cancel := detachedCtx(c)
+	defer cancel()
+	if err := h.quotaRepo.Delete(wctx, id); err != nil {
 		status, message := mapError(err, entityResourceQuotaConfig)
 		c.JSON(status, gin.H{"error": message})
 		return

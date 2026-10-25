@@ -5,6 +5,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -85,7 +86,7 @@ func TestPropagateQuotasToNamespaces_EffectiveQuota(t *testing.T) {
 	h := NewClusterHandlerWithQuotas(NewMockClusterRepository(), registry, instanceRepo, quotaRepo).
 		WithInstanceQuotaOverrides(overrideRepo)
 
-	h.propagateQuotasToNamespaces(&models.Cluster{ID: "cl-1", IsDefault: true})
+	h.propagateQuotasToNamespaces(context.Background(), &models.Cluster{ID: "cl-1", IsDefault: true})
 
 	tests := []struct {
 		name      string
@@ -124,7 +125,7 @@ func TestPropagateQuotasToNamespaces_OverrideLookupFails(t *testing.T) {
 	h := NewClusterHandlerWithQuotas(NewMockClusterRepository(), registry, instanceRepo, quotaRepo).
 		WithInstanceQuotaOverrides(overrideRepo)
 
-	h.propagateQuotasToNamespaces(&models.Cluster{ID: "cl-1"})
+	h.propagateQuotasToNamespaces(context.Background(), &models.Cluster{ID: "cl-1"})
 
 	// The instance namespace is skipped, so no override is lost.
 	assert.Empty(t, quotaHard(t, cs, "stack-override-u", corev1.ResourceLimitsCPU))
@@ -318,4 +319,80 @@ func TestInstanceQuotaOverride_SetAndDeleteApplyAtOnce(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, w.Code, w.Body.String())
 	wait()
 	assert.Equal(t, "4", quotaHard(t, cs, "stack-a-u", corev1.ResourceLimitsCPU))
+}
+
+// bgQuotaCtxKey marks the request context in TestInstanceQuotaOverride_BackgroundApplyContext.
+type bgQuotaCtxKey struct{}
+
+// ctxQuotaRepo records the context state of each GetByClusterID call, read at
+// the call: the background write cancels its context when it ends.
+type ctxQuotaRepo struct {
+	*MockResourceQuotaRepository
+	mu    sync.Mutex
+	calls []ctxCallState
+}
+
+type ctxCallState struct {
+	err   error
+	value any
+	left  time.Duration // -1: no deadline
+}
+
+func (r *ctxQuotaRepo) GetByClusterID(ctx context.Context, clusterID string) (*models.ResourceQuotaConfig, error) {
+	left := time.Duration(-1)
+	if d, ok := ctx.Deadline(); ok {
+		left = time.Until(d)
+	}
+	r.mu.Lock()
+	r.calls = append(r.calls, ctxCallState{err: ctx.Err(), value: ctx.Value(bgQuotaCtxKey{}), left: left})
+	r.mu.Unlock()
+	return r.MockResourceQuotaRepository.GetByClusterID(ctx, clusterID)
+}
+
+// TestInstanceQuotaOverride_BackgroundApplyContext checks the context of the
+// background quota write after an override change (#674): it keeps the
+// request values (request ID, trace), the end of the request does not end
+// it, and it has the quotaApplyTimeout deadline.
+func TestInstanceQuotaOverride_BackgroundApplyContext(t *testing.T) {
+	t.Parallel()
+
+	registry, _ := newQuotaTestRegistry("stack-a-u")
+	instanceRepo := NewMockStackInstanceRepository()
+	overrideRepo := NewMockInstanceQuotaOverrideRepository()
+	quotaRepo := &ctxQuotaRepo{MockResourceQuotaRepository: NewMockResourceQuotaRepository()}
+	seedQuotaInstance(t, instanceRepo, "inst-1", "cl-1", "stack-a-u", models.StackStatusRunning)
+	require.NoError(t, quotaRepo.Upsert(context.Background(), &models.ResourceQuotaConfig{ClusterID: "cl-1", CPULimit: "4"}))
+
+	done := make(chan struct{}, 1)
+	h := NewInstanceQuotaOverrideHandler(overrideRepo, instanceRepo).WithClusterQuotas(quotaRepo, registry)
+	h.applyDone = func() { done <- struct{}{} }
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(injectAuthContext("admin-user", "admin"))
+	r.PUT("/api/v1/stack-instances/:id/quota-overrides", h.SetQuotaOverride)
+
+	reqCtx, endRequest := context.WithCancel(context.WithValue(context.Background(), bgQuotaCtxKey{}, "req-1"))
+	defer endRequest()
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/stack-instances/inst-1/quota-overrides",
+		bytes.NewBufferString(`{"cpu_limit":"8"}`)).WithContext(reqCtx)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	endRequest() // the request ends with the response
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("background quota write did not finish")
+	}
+	quotaRepo.mu.Lock()
+	defer quotaRepo.mu.Unlock()
+	require.NotEmpty(t, quotaRepo.calls, "the background write reads the cluster quota")
+	bg := quotaRepo.calls[len(quotaRepo.calls)-1]
+	assert.NoError(t, bg.err, "the end of the request does not end the background write")
+	assert.Equal(t, "req-1", bg.value, "the background write keeps the request values")
+	assert.Greater(t, bg.left, quotaApplyTimeout-5*time.Second, "the background write has the quotaApplyTimeout deadline")
+	assert.LessOrEqual(t, bg.left, quotaApplyTimeout)
 }

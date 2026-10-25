@@ -241,7 +241,8 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 
 	// Provision or update local user. Detached from here on: a client cancel
 	// must not leave the user sync or link half done (#656).
-	ctx := context.WithoutCancel(c.Request.Context())
+	ctx, cancel := detachedCtx(c)
+	defer cancel()
 	user, err := h.provisionUser(ctx, oidcUser)
 	if err != nil {
 		slog.Error("OIDC user provisioning failed", "error", err)

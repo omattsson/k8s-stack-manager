@@ -18,6 +18,7 @@ import (
 
 	"backend/internal/api/middleware"
 	"backend/internal/cluster"
+	"backend/internal/ctxutil"
 	"backend/internal/database"
 	"backend/internal/deployer"
 	"backend/internal/helm"
@@ -314,10 +315,32 @@ func hookTriggerCtx(c *gin.Context) context.Context {
 	})
 }
 
-// writeCtx is hookTriggerCtx without the request cancel. Use it from the
-// first instance write on (#656).
-func writeCtx(c *gin.Context) context.Context {
-	return context.WithoutCancel(hookTriggerCtx(c))
+// writeCtx is hookTriggerCtx without the request cancel, limited to
+// ctxutil.WriteTimeout. Use it from the first instance write on (#656, #674).
+// The caller must call the cancel function.
+func writeCtx(c *gin.Context) (context.Context, context.CancelFunc) {
+	return ctxutil.Detach(hookTriggerCtx(c), ctxutil.WriteTimeout)
+}
+
+// firePostHook fires a post-commit event of instance on a context of its own:
+// ctx without its cancel and deadline, limited to ctxutil.WriteTimeout plus the
+// timeouts of the subscribers of event. The write deadline of the handler
+// must not cut a subscriber short (timeout_seconds can be up to an hour). The
+// result is ignored: the change is committed.
+func (h *InstanceHandler) firePostHook(ctx context.Context, event string, instance *models.StackInstance) {
+	if h.hooks == nil {
+		return
+	}
+	hookCtx, cancel := h.postHookCtx(ctx, event)
+	defer cancel()
+	_ = h.fireInstanceHook(hookCtx, event, instance)
+}
+
+// postHookCtx is the context of firePostHook: ctx without its cancel and
+// deadline, limited to ctxutil.WriteTimeout plus the subscriber timeouts of
+// event (Dispatcher.TotalTimeout; subscribers run one after the other).
+func (h *InstanceHandler) postHookCtx(ctx context.Context, event string) (context.Context, context.CancelFunc) {
+	return ctxutil.Detach(ctx, ctxutil.WriteTimeout+h.hooks.TotalTimeout(event))
 }
 
 // NewInstanceHandler creates a new InstanceHandler.
@@ -625,7 +648,8 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 		return
 	}
 
-	wctx := writeCtx(c)
+	wctx, cancel := writeCtx(c)
+	defer cancel()
 	create := func(repo models.StackInstanceRepository) error {
 		if err := checkInstanceLimit(wctx, repo, limit, inst.OwnerID); err != nil {
 			return err
@@ -655,7 +679,7 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 	// Post-instance-create hook: ignore-by-default. Cannot undo the create at
 	// this point; subscribers exist for downstream notification (CMDB sync,
 	// audit logs, etc).
-	_ = h.fireInstanceHook(wctx, hooks.EventPostInstanceCreate, &inst)
+	h.firePostHook(wctx, hooks.EventPostInstanceCreate, &inst)
 
 	notifyInstanceCreated(wctx, h.notifier, &inst)
 
@@ -793,7 +817,9 @@ func (h *InstanceHandler) UpdateInstance(c *gin.Context) {
 		return
 	}
 
-	if err := h.instanceRepo.Update(writeCtx(c), existing); err != nil {
+	wctx, cancel := writeCtx(c)
+	defer cancel()
+	if err := h.instanceRepo.Update(wctx, existing); err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -896,8 +922,10 @@ func (h *InstanceHandler) deleteInstance(c *gin.Context, inst *models.StackInsta
 		return "", &instanceDeleteError{status: http.StatusForbidden, message: "pre-instance-delete hook rejected the request"}
 	}
 
-	// A client that leaves must not stop the delete or its side effects (#656).
-	wctx := context.WithoutCancel(ctx)
+	// A client that leaves must not stop the delete or its side effects (#656);
+	// a stalled database must not hold it forever (#674).
+	wctx, cancel := ctxutil.Detach(ctx, ctxutil.WriteTimeout)
+	defer cancel()
 
 	if needsClean {
 		if h.deployManager == nil {
@@ -968,8 +996,8 @@ func (h *InstanceHandler) afterInstanceDeleted(ctx context.Context, inst *models
 	// same message from the deploy manager).
 	h.deployManager.BroadcastInstanceDeleted(inst.ID)
 
-	_ = h.fireInstanceHook(ctx, hooks.EventPostInstanceDelete, inst)
-	_ = h.fireInstanceHook(ctx, hooks.EventDeleteCompleted, inst)
+	h.firePostHook(ctx, hooks.EventPostInstanceDelete, inst)
+	h.firePostHook(ctx, hooks.EventDeleteCompleted, inst)
 
 	if h.notifier != nil {
 		target := models.NewNotificationTarget(inst)
@@ -978,7 +1006,11 @@ func (h *InstanceHandler) afterInstanceDeleted(ctx context.Context, inst *models
 			// The rows are gone: no lookup after the delete.
 			target.FollowerIDs = []string{}
 		}
-		_ = h.notifier.NotifyInstance(ctx, target, "instance.deleted", "Stack deleted",
+		// A budget of its own: the post-delete hooks can take longer than the
+		// write deadline of the delete (as notifyInstanceCreated, #674).
+		nctx, cancel := ctxutil.Detach(ctx, ctxutil.WriteTimeout)
+		defer cancel()
+		_ = h.notifier.NotifyInstance(nctx, target, "instance.deleted", "Stack deleted",
 			fmt.Sprintf("Stack %s has been deleted", inst.Name), notifyTriggerOpt(ctx))
 	}
 }
@@ -994,8 +1026,10 @@ func notifyInstanceCreated(ctx context.Context, n deployer.LifecycleNotifier, in
 	target := models.NewNotificationTarget(inst)
 	target.FollowerIDs = []string{}
 	// The instance is committed: a client that disconnects must not cancel
-	// the notification insert. WithoutCancel keeps the trigger value.
-	_ = n.NotifyInstance(context.WithoutCancel(ctx), target, "instance.created", "Stack created",
+	// the notification insert. Detach keeps the trigger value.
+	nctx, cancel := ctxutil.Detach(ctx, ctxutil.WriteTimeout)
+	defer cancel()
+	_ = n.NotifyInstance(nctx, target, "instance.created", "Stack created",
 		fmt.Sprintf("Stack %s has been created", inst.Name), notifyTriggerOpt(ctx))
 }
 
@@ -1370,7 +1404,8 @@ func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 	quotaPolicy := h.cloneQuotaPolicy(c, source)
 
 	// Instance create + override copies are atomic.
-	wctx := writeCtx(c)
+	wctx, cancel := writeCtx(c)
+	defer cancel()
 	var warning string
 	txErr := h.txRunner.RunInTx(wctx, func(repos database.TxRepos) error {
 		if err := checkInstanceLimit(wctx, repos.StackInstance, limit, clone.OwnerID); err != nil {
@@ -1736,7 +1771,8 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 
 	// Restart the TTL clock on deploy, but never make the expiry earlier: a
 	// redeploy of an instance that was extended keeps the later expiry.
-	wctx := writeCtx(c)
+	wctx, cancel := writeCtx(c)
+	defer cancel()
 	if inst.TTLMinutes > 0 {
 		inst.ExpiresAt = deployExpiry(inst.ExpiresAt, inst.TTLMinutes, h.maxTTL(), time.Now().UTC())
 		_ = h.instanceRepo.Update(wctx, inst)
@@ -1951,7 +1987,9 @@ func (h *InstanceHandler) StopInstance(c *gin.Context) {
 		})
 	}
 
-	logID, err := h.deployManager.StopWithCharts(writeCtx(c), inst, chartInfos)
+	wctx, cancel := writeCtx(c)
+	defer cancel()
+	logID, err := h.deployManager.StopWithCharts(wctx, inst, chartInfos)
 	if err != nil {
 		slog.Error("Failed to start stop operation",
 			logKeyInstanceID, id,
@@ -2026,7 +2064,9 @@ func (h *InstanceHandler) CleanInstance(c *gin.Context) {
 		return
 	}
 
-	logID, err := h.deployManager.Clean(writeCtx(c), inst, charts)
+	wctx, cancel := writeCtx(c)
+	defer cancel()
+	logID, err := h.deployManager.Clean(wctx, inst, charts)
 	if errors.Is(err, models.ErrCleanConflict) {
 		c.JSON(http.StatusConflict, gin.H{"error": msgCleanConflict})
 		return
@@ -2333,7 +2373,7 @@ func (h *InstanceHandler) namespaceStatus(ctx context.Context, client *k8s.Clien
 			}
 		}()
 		// The first caller leaving must not fail the others.
-		readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), namespaceStatusTimeout)
+		readCtx, cancel := ctxutil.Detach(ctx, namespaceStatusTimeout)
 		defer cancel()
 		return client.GetNamespaceStatus(readCtx, namespace, opts)
 	})
@@ -2562,7 +2602,9 @@ func (h *InstanceHandler) ExtendTTL(c *gin.Context) {
 	}
 	inst.UpdatedAt = now
 
-	if err := h.instanceRepo.Update(writeCtx(c), inst); err != nil {
+	wctx, cancel := writeCtx(c)
+	defer cancel()
+	if err := h.instanceRepo.Update(wctx, inst); err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -2968,7 +3010,9 @@ func (h *InstanceHandler) RollbackInstance(c *gin.Context) {
 		chartInfos = append(chartInfos, deployer.ChartDeployInfo{ChartConfig: ch})
 	}
 
-	logID, err := h.deployManager.Rollback(writeCtx(c), deployer.RollbackRequest{
+	wctx, cancel := writeCtx(c)
+	defer cancel()
+	logID, err := h.deployManager.Rollback(wctx, deployer.RollbackRequest{
 		Instance:            inst,
 		Charts:              chartInfos,
 		TargetLogID:         body.TargetLogID,

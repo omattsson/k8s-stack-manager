@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"context"
 	"log/slog"
 	"net/http"
 
@@ -95,7 +94,8 @@ func (h *InstanceHandler) setFollow(c *gin.Context, follow bool) {
 	}
 
 	// A client that leaves must not cancel the write and then skip the audit entry (#656).
-	ctx := context.WithoutCancel(c.Request.Context())
+	ctx, cancel := detachedCtx(c)
+	defer cancel()
 	if follow {
 		err = h.followerRepo.Follow(ctx, userID, inst.ID)
 	} else {
