@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"backend/internal/api/middleware"
+	"backend/internal/ctxutil"
 	"backend/internal/hooks"
 	"backend/internal/models"
 	"backend/pkg/dberrors"
@@ -370,7 +371,7 @@ func actionRunFailureMessage(err error) string {
 // actionRunContext returns the context of an action run write: it ignores a
 // client disconnect and ends after actionRunWriteTimeout.
 func actionRunContext(c *gin.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.WithoutCancel(c.Request.Context()), actionRunWriteTimeout)
+	return ctxutil.Detach(c.Request.Context(), actionRunWriteTimeout)
 }
 
 // recordActionRun stores run before the invoke response, so a list refresh

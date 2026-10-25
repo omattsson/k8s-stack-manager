@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"backend/internal/ctxutil"
 	"backend/internal/models"
 	"backend/pkg/dberrors"
 
@@ -225,7 +226,7 @@ func (d *Dispatcher) runJob(ctx context.Context, job channelJob) {
 	}
 
 	// The row of a request that Stop cancelled is written too.
-	logCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), deliveryLogTimeout)
+	logCtx, cancel := ctxutil.Detach(ctx, deliveryLogTimeout)
 	defer cancel()
 	if logErr := d.repo.CreateDeliveryLog(logCtx, &models.NotificationDeliveryLog{
 		ID:           uuid.New().String(),

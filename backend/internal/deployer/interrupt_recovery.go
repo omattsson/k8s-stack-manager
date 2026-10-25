@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"backend/internal/ctxutil"
 	"backend/internal/models"
 	"backend/internal/replica"
 	"backend/internal/websocket"
@@ -228,7 +229,9 @@ func (r *InterruptRecovery) audit(ctx context.Context, l models.DeploymentLog, i
 		Details:    details,
 		Timestamp:  now,
 	}
-	if err := r.cfg.AuditLog.Create(context.WithoutCancel(ctx), entry); err != nil {
+	auditCtx, cancel := ctxutil.Detach(ctx, ctxutil.WriteTimeout)
+	defer cancel()
+	if err := r.cfg.AuditLog.Create(auditCtx, entry); err != nil {
 		slog.Error("Failed to create audit log for an interrupted operation",
 			"instance_id", l.StackInstanceID, "deploy_log_id", l.ID, "error", err)
 	}

@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"context"
 	"log/slog"
 	"net/http"
 
@@ -97,7 +96,9 @@ func (h *SharedValuesHandler) CreateSharedValues(c *gin.Context) {
 		return
 	}
 
-	if err := h.repo.Create(context.WithoutCancel(c.Request.Context()), &sv); err != nil {
+	wctx, cancel := detachedCtx(c)
+	defer cancel()
+	if err := h.repo.Create(wctx, &sv); err != nil {
 		slog.Error("Failed to create shared values", "cluster_id", clusterID, "error", err)
 		status, message := mapError(err, entitySharedValues)
 		c.JSON(status, gin.H{"error": message})
@@ -155,7 +156,9 @@ func (h *SharedValuesHandler) UpdateSharedValues(c *gin.Context) {
 		return
 	}
 
-	if err := h.repo.Update(context.WithoutCancel(c.Request.Context()), &input); err != nil {
+	wctx, cancel := detachedCtx(c)
+	defer cancel()
+	if err := h.repo.Update(wctx, &input); err != nil {
 		slog.Error("Failed to update shared values", "id", valueID, "error", err)
 		status, message := mapError(err, entitySharedValues)
 		c.JSON(status, gin.H{"error": message})
@@ -186,7 +189,9 @@ func (h *SharedValuesHandler) DeleteSharedValues(c *gin.Context) {
 		return
 	}
 
-	if err := h.repo.Delete(context.WithoutCancel(c.Request.Context()), valueID); err != nil {
+	wctx, cancel := detachedCtx(c)
+	defer cancel()
+	if err := h.repo.Delete(wctx, valueID); err != nil {
 		slog.Error("Failed to delete shared values", "id", valueID, "error", err)
 		status, message := mapError(err, entitySharedValues)
 		c.JSON(status, gin.H{"error": message})

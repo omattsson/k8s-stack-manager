@@ -243,7 +243,8 @@ func (h *InstanceHandler) BulkDeploy(c *gin.Context) {
 		// Restart the TTL clock like DeployInstance (never earlier). Without
 		// it, a bulk deploy of an expired instance kept the old expiry and the
 		// TTL reaper stopped the instance right after the deploy.
-		wctx := writeCtx(c)
+		wctx, cancel := writeCtx(c)
+		defer cancel()
 		if inst.TTLMinutes > 0 {
 			inst.ExpiresAt = deployExpiry(inst.ExpiresAt, inst.TTLMinutes, h.maxTTL(), time.Now().UTC())
 			_ = h.instanceRepo.Update(wctx, inst)
@@ -313,7 +314,9 @@ func (h *InstanceHandler) BulkStop(c *gin.Context) {
 			})
 		}
 
-		logID, err := h.deployManager.StopWithCharts(writeCtx(c), inst, chartInfos)
+		wctx, cancel := writeCtx(c)
+		defer cancel()
+		logID, err := h.deployManager.StopWithCharts(wctx, inst, chartInfos)
 		if err != nil {
 			return "", fmt.Errorf("failed to start stop operation")
 		}
@@ -358,7 +361,9 @@ func (h *InstanceHandler) BulkClean(c *gin.Context) {
 			return "", bulkChartListError(err, def.ID)
 		}
 
-		logID, err := h.deployManager.Clean(writeCtx(c), inst, charts)
+		wctx, cancel := writeCtx(c)
+		defer cancel()
+		logID, err := h.deployManager.Clean(wctx, inst, charts)
 		if errors.Is(err, models.ErrCleanConflict) {
 			return "", errors.New(msgCleanConflict)
 		}

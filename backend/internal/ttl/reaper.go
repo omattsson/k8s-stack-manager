@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"backend/internal/ctxutil"
 	"backend/internal/hooks"
 	"backend/internal/models"
 	"backend/internal/notifier"
@@ -218,9 +219,11 @@ func (r *Reaper) logExpiry(ctx context.Context, inst *models.StackInstance) {
 			Details:    "Instance expired after TTL",
 			Timestamp:  time.Now().UTC(),
 		}
-		if auditErr := r.auditRepo.Create(context.WithoutCancel(ctx), auditEntry); auditErr != nil {
+		auditCtx, cancel := ctxutil.Detach(ctx, ctxutil.WriteTimeout)
+		if auditErr := r.auditRepo.Create(auditCtx, auditEntry); auditErr != nil {
 			slog.Error("Failed to create audit log for expired instance", "instance_id", inst.ID, "error", auditErr)
 		}
+		cancel()
 	}
 
 	if r.hub != nil {

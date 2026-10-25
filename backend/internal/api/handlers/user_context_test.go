@@ -472,11 +472,19 @@ func TestOIDCCallback_ClientLeftDuringProvisioning(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	var provisionCtx atomic.Value
+	// The state of the provisioning context is read at the call: the handler
+	// cancels its detached context when it returns.
+	type provisionCall struct {
+		err         error
+		value       any
+		hasDeadline bool
+	}
+	var provision atomic.Value
 	repo.setHook(func(method string, c context.Context) {
 		if method == "FindByExternalID" {
 			cancel()
-			provisionCtx.Store(c)
+			_, hasDeadline := c.Deadline()
+			provision.Store(provisionCall{err: c.Err(), value: c.Value(userCtxMarkerKey{}), hasDeadline: hasDeadline})
 		}
 	})
 
@@ -491,10 +499,11 @@ func TestOIDCCallback_ClientLeftDuringProvisioning(t *testing.T) {
 	users, err := base.List(context.Background())
 	require.NoError(t, err)
 	assert.Len(t, users, 1, "the user is provisioned")
-	pc, ok := provisionCtx.Load().(context.Context)
+	pc, ok := provision.Load().(provisionCall)
 	require.True(t, ok)
-	assert.Equal(t, "oidc-req", pc.Value(userCtxMarkerKey{}), "the provisioning keeps the request values")
-	assert.NoError(t, pc.Err(), "the request cancel does not reach the provisioning")
+	assert.Equal(t, "oidc-req", pc.value, "the provisioning keeps the request values")
+	assert.NoError(t, pc.err, "the request cancel does not reach the provisioning")
+	assert.True(t, pc.hasDeadline, "the provisioning runs with a deadline (#674)")
 }
 
 // TestUserLookups_CancelledLogLevel checks that a display-name or filter

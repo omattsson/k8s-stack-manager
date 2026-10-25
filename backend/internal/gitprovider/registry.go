@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"backend/internal/ctxutil"
 )
 
 const (
@@ -344,12 +346,20 @@ func (r *Registry) joinBranchFill(ctx context.Context, key string, provider GitP
 		return &branchFill{done: done, cancel: func() {}, branches: branches}
 	}
 
-	fillContext, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	// The fill outlives the caller that started it; it ends when every caller
+	// left (cancel) or, as a backstop to the provider timeouts, after
+	// branchFillTimeout (#674).
+	fillContext, cancel := ctxutil.Detach(ctx, branchFillTimeout)
 	fill := &branchFill{done: make(chan struct{}), cancel: cancel, waiters: 1}
 	r.inflight[key] = fill
 	go r.runBranchFill(fillContext, key, repoURL, provider, fill)
 	return fill
 }
+
+// branchFillTimeout bounds one shared branch listing. Each provider already
+// limits the operation to providerOperationTimeout; the token fetch of Azure
+// DevOps comes on top.
+const branchFillTimeout = 2 * providerOperationTimeout
 
 func (r *Registry) cachedBranches(key string) ([]Branch, bool) {
 	r.mu.RLock()

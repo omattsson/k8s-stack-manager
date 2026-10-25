@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"context"
 	"log/slog"
 	"net/http"
 
@@ -79,14 +78,16 @@ func (h *CleanupPolicyHandler) CreateCleanupPolicy(c *gin.Context) {
 		return
 	}
 
-	if err := h.repo.Create(context.WithoutCancel(c.Request.Context()), &policy); err != nil {
+	wctx, cancel := detachedCtx(c)
+	defer cancel()
+	if err := h.repo.Create(wctx, &policy); err != nil {
 		status, msg := mapError(err, entityCleanupPolicy)
 		c.JSON(status, gin.H{"error": msg})
 		return
 	}
 
 	if h.scheduler != nil {
-		if err := h.scheduler.Reload(context.WithoutCancel(c.Request.Context())); err != nil {
+		if err := h.scheduler.Reload(wctx); err != nil {
 			slog.Error("Failed to reload scheduler after create", "error", err)
 		}
 	}
@@ -182,14 +183,16 @@ func (h *CleanupPolicyHandler) UpdateCleanupPolicy(c *gin.Context) {
 		return
 	}
 
-	if err := h.repo.Update(context.WithoutCancel(c.Request.Context()), policy); err != nil {
+	wctx, cancel := detachedCtx(c)
+	defer cancel()
+	if err := h.repo.Update(wctx, policy); err != nil {
 		status, msg := mapError(err, entityCleanupPolicy)
 		c.JSON(status, gin.H{"error": msg})
 		return
 	}
 
 	if h.scheduler != nil {
-		if err := h.scheduler.Reload(context.WithoutCancel(c.Request.Context())); err != nil {
+		if err := h.scheduler.Reload(wctx); err != nil {
 			slog.Error("Failed to reload scheduler after update", "error", err)
 		}
 	}
@@ -214,14 +217,16 @@ func (h *CleanupPolicyHandler) DeleteCleanupPolicy(c *gin.Context) {
 		return
 	}
 
-	if err := h.repo.Delete(context.WithoutCancel(c.Request.Context()), id); err != nil {
+	wctx, cancel := detachedCtx(c)
+	defer cancel()
+	if err := h.repo.Delete(wctx, id); err != nil {
 		status, msg := mapError(err, entityCleanupPolicy)
 		c.JSON(status, gin.H{"error": msg})
 		return
 	}
 
 	if h.scheduler != nil {
-		if err := h.scheduler.Reload(context.WithoutCancel(c.Request.Context())); err != nil {
+		if err := h.scheduler.Reload(wctx); err != nil {
 			slog.Error("Failed to reload scheduler after delete", "error", err)
 		}
 	}

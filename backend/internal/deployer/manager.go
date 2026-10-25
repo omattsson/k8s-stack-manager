@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"backend/internal/ctxutil"
 	"backend/internal/database"
 	"backend/internal/hooks"
 	"backend/internal/k8s"
@@ -272,7 +273,7 @@ const finalWriteTimeout = 30 * time.Second
 // finalWriteCtx is the context of the final reads and writes. Shutdown
 // cancels m.shutdownCtx before it waits for the operations (#656).
 func (m *Manager) finalWriteCtx() (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.WithoutCancel(m.shutdownCtx), finalWriteTimeout)
+	return ctxutil.Detach(m.shutdownCtx, finalWriteTimeout)
 }
 
 // clearDeleteAfterClean clears the persisted delete mark of the instance
@@ -1096,7 +1097,7 @@ const shutdownStatusTimeout = 5 * time.Second
 // shutdown. Healthy pods count as ready, so a backend restart does not fail
 // a stack that is up. Otherwise it returns ErrDeployInterrupted.
 func (m *Manager) readinessAfterShutdown(k8sClient *k8s.Client, instanceID, namespace, logID string, last *k8s.NamespaceStatus) (*k8s.NamespaceStatus, error) {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(m.shutdownCtx), shutdownStatusTimeout)
+	ctx, cancel := ctxutil.Detach(m.shutdownCtx, shutdownStatusTimeout)
 	defer cancel()
 	nsStatus, err := k8sClient.GetNamespaceStatus(ctx, namespace, k8s.StatusOptions{})
 	if err != nil {

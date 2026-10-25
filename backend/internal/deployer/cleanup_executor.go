@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"backend/internal/ctxutil"
 	"backend/internal/database"
 	"backend/internal/hooks"
 	"backend/internal/models"
@@ -96,8 +97,10 @@ func (e *CleanupExecutor) DeleteInstance(ctx context.Context, inst *models.Stack
 	}
 	// After pre-instance-delete the end of the job must not stop the delete
 	// or its side effects (afterDelete), as for the API delete (#656).
-	// WithoutCancel keeps the trigger.
-	dctx := context.WithoutCancel(ctx)
+	// Detach keeps the trigger; a stalled database must not hold the job
+	// forever (#674).
+	dctx, cancel := ctxutil.Detach(ctx, ctxutil.WriteTimeout)
+	defer cancel()
 	if needsClean {
 		// As the API delete: a definition without charts still gets the
 		// namespace delete.
@@ -152,13 +155,16 @@ func (e *CleanupExecutor) afterDelete(ctx context.Context, inst *models.StackIns
 	if e.manager == nil {
 		return
 	}
-	hookCtx := context.WithoutCancel(ctx)
 	opts := e.triggerOpts(ctx)
 	trigger, ok := hooks.TriggerFromContext(ctx)
 	for _, event := range []string{hooks.EventPostInstanceDelete, hooks.EventDeleteCompleted} {
+		// Each event gets its own budget: the subscriber timeouts (up to an
+		// hour) plus WriteTimeout, not the write deadline of the delete.
+		hookCtx, cancel := ctxutil.Detach(ctx, ctxutil.WriteTimeout+e.manager.hooks.TotalTimeout(event))
 		if err := e.manager.fireDeployHook(hookCtx, event, inst, "", time.Time{}, opts); err != nil {
 			slog.Warn("hook after cleanup delete failed", "event", event, "instance_id", inst.ID, "error", err)
 		}
+		cancel()
 	}
 	message := fmt.Sprintf("Stack %s has been deleted", inst.Name)
 	if ok && trigger.Type == hooks.TriggerCleanupPolicy && trigger.Name != "" {

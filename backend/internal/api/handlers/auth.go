@@ -17,6 +17,7 @@ import (
 	"backend/internal/api/middleware"
 	"backend/internal/cache"
 	"backend/internal/config"
+	"backend/internal/ctxutil"
 	"backend/internal/models"
 	"backend/internal/sessionstore"
 	"backend/internal/websocket"
@@ -316,7 +317,8 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	if h.refreshTokenRepo != nil {
 		// Detached from the first write on: a client that leaves must not skip
 		// the token cap, the session re-check or the abandon revoke (#656).
-		writeCtx := context.WithoutCancel(ctx)
+		writeCtx, cancel := ctxutil.Detach(ctx, ctxutil.WriteTimeout)
+		defer cancel()
 		rawRefresh, refreshExpiry, err := h.issueRefreshTokenWith(writeCtx, c, h.refreshTokenRepo, user.ID, sess, "")
 		if err != nil {
 			slog.Error("Failed to issue refresh token", "user_id", user.ID, "error", err)
@@ -412,7 +414,9 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 	// Detached: a client cancel must not commit the user and then skip the
 	// audit entry (#656).
-	if err := h.userRepo.Create(context.WithoutCancel(c.Request.Context()), user); err != nil {
+	wctx, cancel := detachedCtx(c)
+	defer cancel()
+	if err := h.userRepo.Create(wctx, user); err != nil {
 		status, message := mapError(err, "User")
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -527,9 +531,12 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	// The reads that decide the request use the request context: a client
 	// that leaves gets 499 and nothing changes. Every write uses writeCtx, so
 	// a client that leaves cannot skip a revoke or half-finish a rotation
-	// (#656).
+	// (#656). The write deadline starts here, before the token and user
+	// reads: the writes come between them. A slow read shortens the budget of
+	// the writes (#674).
 	reqCtx := c.Request.Context()
-	writeCtx := context.WithoutCancel(reqCtx)
+	writeCtx, cancel := ctxutil.Detach(reqCtx, ctxutil.WriteTimeout)
+	defer cancel()
 
 	tokenHash := hashRefreshToken(rawToken)
 	stored, ok := h.findRefreshToken(reqCtx, c, tokenHash)
@@ -733,7 +740,8 @@ func (h *AuthHandler) refreshConsumedToken(readCtx context.Context, c *gin.Conte
 	}
 
 	slog.Warn("Refresh token reuse detected; revoking session", "user_id", stored.UserID, "token_id", stored.ID)
-	writeCtx := context.WithoutCancel(c.Request.Context())
+	writeCtx, cancel := detachedCtx(c)
+	defer cancel()
 	revokeErr := h.refreshTokenRepo.RevokeFamily(writeCtx, family)
 	if revokeErr != nil {
 		slog.Error("Failed to revoke refresh token family", "user_id", stored.UserID, "error", revokeErr)
@@ -812,7 +820,9 @@ func (h *AuthHandler) respondGraceRefresh(readCtx context.Context, c *gin.Contex
 		return
 	}
 	if err := recheckUserActive(c.Request.Context(), h.userRepo, user.ID); err != nil {
-		h.rejectRefreshAfterRecheck(context.WithoutCancel(c.Request.Context()), c, user.ID, err)
+		wctx, cancel := detachedCtx(c)
+		defer cancel()
+		h.rejectRefreshAfterRecheck(wctx, c, user.ID, err)
 		return
 	}
 	if err := recheckSessionActive(readCtx, h.refreshTokenRepo, sessionID); err != nil {
@@ -1033,7 +1043,9 @@ func (h *AuthHandler) rejectBlockedSession(reqCtx context.Context, c *gin.Contex
 	if !blocked {
 		return false
 	}
-	if err := h.refreshTokenRepo.RevokeFamily(context.WithoutCancel(reqCtx), family); err != nil {
+	revokeCtx, cancel := ctxutil.Detach(reqCtx, ctxutil.WriteTimeout)
+	defer cancel()
+	if err := h.refreshTokenRepo.RevokeFamily(revokeCtx, family); err != nil {
 		slog.Error("Failed to revoke blocked refresh session", "user_id", userID, "session_id", family, "error", err)
 	}
 	h.clearRefreshCookie(c)
@@ -1117,8 +1129,11 @@ func (h *AuthHandler) revokeLogoutSessions(ctx context.Context, c *gin.Context, 
 // @Failure     500 {object} map[string]string
 // @Router      /api/v1/auth/logout [post]
 func (h *AuthHandler) Logout(c *gin.Context) {
-	// Detached: a client that leaves is still logged out (#656).
-	ctx := context.WithoutCancel(c.Request.Context())
+	// Detached: a client that leaves is still logged out (#656). The blocks
+	// below get a budget of their own: a slow revoke must not leave them
+	// without time (#674).
+	ctx, cancel := detachedCtx(c)
+	defer cancel()
 
 	bearer := h.bearerClaims(c)
 
@@ -1133,7 +1148,9 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 
 	// Block even when a revoke failed: the block ends the access tokens, and
 	// Refresh refuses a blocked session. A failed revoke gets the long block.
-	h.blockSessions(ctx, userID, sessions)
+	blockCtx, cancelBlock := detachedCtx(c)
+	defer cancelBlock()
+	h.blockSessions(blockCtx, userID, sessions)
 
 	// Best-effort blocklist of the presented access token and close of the
 	// sockets opened with it.
@@ -1143,7 +1160,7 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 			if bearer.ExpiresAt != nil {
 				expiry = bearer.ExpiresAt.Time
 			}
-			if blockErr := h.sessionStore.BlockToken(ctx, bearer.ID, expiry); blockErr != nil {
+			if blockErr := h.sessionStore.BlockToken(blockCtx, bearer.ID, expiry); blockErr != nil {
 				slog.Error("Failed to blocklist token on logout", "jti", bearer.ID, "error", blockErr)
 			}
 		}
@@ -1221,7 +1238,10 @@ func (h *AuthHandler) LogoutAll(c *gin.Context) {
 	}
 
 	// Detached: a client that leaves is still logged out everywhere (#656).
-	ctx := context.WithoutCancel(c.Request.Context())
+	// The blocks below get a budget of their own: a slow revoke or listing
+	// must not leave them without time (#674).
+	ctx, cancel := detachedCtx(c)
+	defer cancel()
 
 	// Order: revoke, list the sessions, block each session, block the user.
 	// Revoke before block: a refresh that passed its session recheck before the
@@ -1258,13 +1278,15 @@ func (h *AuthHandler) LogoutAll(c *gin.Context) {
 	for i := range sessions {
 		sessions[i].revokeFailed = revokeFailed
 	}
-	h.blockSessions(ctx, userID, sessions)
+	blockCtx, cancelBlock := detachedCtx(c)
+	defer cancelBlock()
+	h.blockSessions(blockCtx, userID, sessions)
 
 	if h.sessionStore != nil {
 		// Every access token issued up to now, of every session (and the SSO
 		// CLI token). A login after this call is issued later and works.
 		until := time.Now().Add(userBlockTTL(h.cfg.AccessTokenExpiration, h.cfg.JWTExpiration))
-		if err := h.sessionStore.BlockUser(ctx, userID, until); err != nil {
+		if err := h.sessionStore.BlockUser(blockCtx, userID, until); err != nil {
 			slog.Error("Failed to block user on logout-all", "user_id", userID, "error", err)
 		}
 		// Blocklist the current access token.
@@ -1273,7 +1295,7 @@ func (h *AuthHandler) LogoutAll(c *gin.Context) {
 			if !ok {
 				expiry = time.Now().Add(h.cfg.AccessTokenExpiration)
 			}
-			if blockErr := h.sessionStore.BlockToken(ctx, jti, expiry); blockErr != nil {
+			if blockErr := h.sessionStore.BlockToken(blockCtx, jti, expiry); blockErr != nil {
 				slog.Error("Failed to blocklist token on logout-all", "jti", jti, "error", blockErr)
 			}
 		}

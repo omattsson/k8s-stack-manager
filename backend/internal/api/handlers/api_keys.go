@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -89,7 +88,8 @@ func (h *APIKeyHandler) CreateAPIKey(c *gin.Context) {
 
 	// A client cancel must not turn a committed write into a 499 without an
 	// audit entry (#656); the pre-check uses the same context.
-	ctx := context.WithoutCancel(c.Request.Context())
+	ctx, cancel := detachedCtx(c)
+	defer cancel()
 
 	// Verify the target user exists before generating a key for them.
 	if _, err := h.userRepo.FindByID(ctx, userID); err != nil {
@@ -260,7 +260,9 @@ func (h *APIKeyHandler) DeleteAPIKey(c *gin.Context) {
 	}
 
 	// Detached for the reason in CreateAPIKey; the socket close must also run.
-	if err := h.apiKeyRepo.Delete(context.WithoutCancel(c.Request.Context()), userID, keyID); err != nil {
+	wctx, cancel := detachedCtx(c)
+	defer cancel()
+	if err := h.apiKeyRepo.Delete(wctx, userID, keyID); err != nil {
 		status, message := mapError(err, "API key")
 		c.JSON(status, gin.H{"error": message})
 		return

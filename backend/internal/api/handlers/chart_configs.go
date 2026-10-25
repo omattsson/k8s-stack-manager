@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"context"
 	"log/slog"
 	"net/http"
 	"time"
@@ -51,7 +50,9 @@ func (h *DefinitionHandler) AddChartConfig(c *gin.Context) {
 	}
 
 	// The audit entry follows the commit: a client that leaves must not cancel the write (#656).
-	if err := h.chartRepo.Create(context.WithoutCancel(c.Request.Context()), &chart); err != nil {
+	wctx, cancel := detachedCtx(c)
+	defer cancel()
+	if err := h.chartRepo.Create(wctx, &chart); err != nil {
 		status, message := mapError(err, entityChartConfig)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -209,7 +210,9 @@ func (h *DefinitionHandler) UpdateChartConfig(c *gin.Context) {
 		return
 	}
 
-	if err := h.chartRepo.Update(context.WithoutCancel(c.Request.Context()), existing); err != nil {
+	wctx, cancel := detachedCtx(c)
+	defer cancel()
+	if err := h.chartRepo.Update(wctx, existing); err != nil {
 		status, message := mapError(err, entityChartConfig)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -285,7 +288,9 @@ func (h *DefinitionHandler) DeleteChartConfig(c *gin.Context) {
 		}
 	}
 
-	if err := h.chartRepo.Delete(context.WithoutCancel(c.Request.Context()), chartID); err != nil {
+	wctx, cancel := detachedCtx(c)
+	defer cancel()
+	if err := h.chartRepo.Delete(wctx, chartID); err != nil {
 		status, message := mapError(err, entityChartConfig)
 		c.JSON(status, gin.H{"error": message})
 		return

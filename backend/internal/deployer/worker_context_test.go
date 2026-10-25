@@ -18,17 +18,30 @@ func markedCtx() context.Context {
 	return context.WithValue(context.Background(), callerCtxKey{}, "caller")
 }
 
-// ctxRecordingInstanceRepo records the marker and the context of the first
-// FindByID, Update and Delete.
+// ctxCall is the state of a context at a call, read at the call: a detached
+// context is cancelled when the function that made it returns (#674).
+type ctxCall struct {
+	value       any // callerCtxKey{}
+	err         error
+	hasDeadline bool
+}
+
+func ctxCallOf(ctx context.Context) ctxCall {
+	_, hasDeadline := ctx.Deadline()
+	return ctxCall{value: ctx.Value(callerCtxKey{}), err: ctx.Err(), hasDeadline: hasDeadline}
+}
+
+// ctxRecordingInstanceRepo records the marker and the context state of the
+// first FindByID, Update and Delete.
 type ctxRecordingInstanceRepo struct {
 	*mockInstanceRepo
-	mu   sync.Mutex
-	seen map[string]any
-	ctxs map[string]context.Context
+	mu    sync.Mutex
+	seen  map[string]any
+	calls map[string]ctxCall
 }
 
 func newCtxRecordingInstanceRepo() *ctxRecordingInstanceRepo {
-	return &ctxRecordingInstanceRepo{mockInstanceRepo: newMockInstanceRepo(), seen: map[string]any{}, ctxs: map[string]context.Context{}}
+	return &ctxRecordingInstanceRepo{mockInstanceRepo: newMockInstanceRepo(), seen: map[string]any{}, calls: map[string]ctxCall{}}
 }
 
 func (r *ctxRecordingInstanceRepo) record(ctx context.Context, method string) {
@@ -36,34 +49,40 @@ func (r *ctxRecordingInstanceRepo) record(ctx context.Context, method string) {
 	defer r.mu.Unlock()
 	if _, ok := r.seen[method]; !ok {
 		r.seen[method] = ctx.Value(callerCtxKey{})
-		r.ctxs[method] = ctx
+		r.calls[method] = ctxCallOf(ctx)
 	}
 }
 
-func (r *ctxRecordingInstanceRepo) ctxOf(method string) context.Context {
+func (r *ctxRecordingInstanceRepo) callOf(method string) ctxCall {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.ctxs[method]
+	return r.calls[method]
 }
 
-// ctxRecordingNotifier records the context of FollowerIDs.
+// ctxRecordingNotifier records the context state of FollowerIDs. onFollowers,
+// when set, runs at the start of FollowerIDs.
 type ctxRecordingNotifier struct {
 	*mockNotifier
-	mu  sync.Mutex
-	ctx context.Context
+	onFollowers func()
+	mu          sync.Mutex
+	call        *ctxCall
 }
 
 func (n *ctxRecordingNotifier) FollowerIDs(ctx context.Context, instanceID string) []string {
+	if n.onFollowers != nil {
+		n.onFollowers()
+	}
+	call := ctxCallOf(ctx)
 	n.mu.Lock()
-	n.ctx = ctx
+	n.call = &call
 	n.mu.Unlock()
 	return n.mockNotifier.FollowerIDs(ctx, instanceID)
 }
 
-func (n *ctxRecordingNotifier) followersCtx() context.Context {
+func (n *ctxRecordingNotifier) followersCall() *ctxCall {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	return n.ctx
+	return n.call
 }
 
 func (r *ctxRecordingInstanceRepo) get(method string) (any, bool) {
@@ -123,7 +142,8 @@ func TestInterruptRecovery_UsesWorkerContext(t *testing.T) {
 // TestCleanupExecutor_DeleteUsesCallerContext checks that the direct delete
 // of a cleanup policy and its follower read run with the context of the
 // policy run without its cancel: the end of the job must not stop a delete
-// that afterDelete reports (#656).
+// that afterDelete reports (#656). The job ends during the follower read; the
+// detached context has a deadline (#674).
 func TestCleanupExecutor_DeleteUsesCallerContext(t *testing.T) {
 	t.Parallel()
 
@@ -139,7 +159,9 @@ func TestCleanupExecutor_DeleteUsesCallerContext(t *testing.T) {
 			logs := newMockDeployLogRepo()
 			inst := &models.StackInstance{ID: "inst-del", Name: "draft", StackDefinitionID: "def-1", Status: models.StackStatusDraft}
 			require.NoError(t, instances.Create(context.Background(), inst))
-			notif := &ctxRecordingNotifier{mockNotifier: &mockNotifier{}}
+			jobCtx, cancelJob := context.WithCancel(markedCtx())
+			defer cancelJob()
+			notif := &ctxRecordingNotifier{mockNotifier: &mockNotifier{}, onFollowers: cancelJob}
 			cfg := ManagerConfig{InstanceRepo: instances, DeployLogRepo: logs, Notifier: notif}
 			if withTx {
 				cfg.TxRunner = &mockTxRunner{instanceRepo: instances, logRepo: logs}
@@ -147,20 +169,21 @@ func TestCleanupExecutor_DeleteUsesCallerContext(t *testing.T) {
 			mgr := NewManager(cfg)
 			t.Cleanup(mgr.Shutdown)
 			exec := NewCleanupExecutor(mgr, newMockDefinitionRepo(), newMockChartConfigRepo(), instances)
-			jobCtx, cancelJob := context.WithCancel(markedCtx())
-			defer cancelJob()
 
 			require.NoError(t, exec.DeleteInstance(jobCtx, inst))
-			cancelJob()
+			require.Error(t, jobCtx.Err(), "the job ended during the delete")
 
 			v, ok := instances.get("Delete")
 			require.True(t, ok)
 			assert.Equal(t, "caller", v, "Delete runs with the context of the policy run")
-			assert.NoError(t, instances.ctxOf("Delete").Err(), "the end of the job does not cancel the delete")
-			followersCtx := notif.followersCtx()
-			require.NotNil(t, followersCtx, "the followers are read before the delete")
-			assert.Equal(t, "caller", followersCtx.Value(callerCtxKey{}), "FollowerIDs runs with the context of the policy run")
-			assert.NoError(t, followersCtx.Err(), "the end of the job does not cancel the follower read")
+			del := instances.callOf("Delete")
+			assert.NoError(t, del.err, "the end of the job does not cancel the delete")
+			assert.True(t, del.hasDeadline, "the delete runs with a deadline")
+			followers := notif.followersCall()
+			require.NotNil(t, followers, "the followers are read before the delete")
+			assert.Equal(t, "caller", followers.value, "FollowerIDs runs with the context of the policy run")
+			assert.NoError(t, followers.err, "the end of the job does not cancel the follower read")
+			assert.True(t, followers.hasDeadline, "the follower read runs with a deadline")
 		})
 	}
 }

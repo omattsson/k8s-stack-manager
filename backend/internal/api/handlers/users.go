@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"backend/internal/api/middleware"
+	"backend/internal/ctxutil"
 	"backend/internal/models"
 	"backend/internal/sessionstore"
 	"backend/internal/websocket"
@@ -114,21 +115,33 @@ type revokeOptions struct {
 // partial failure: refresh and API-key auth reload the user and reject a
 // deleted or disabled user.
 //
-// Callers pass context.WithoutCancel(c.Request.Context()) so a client that
-// disconnects after the commit cannot cancel the revocation.
+// Callers pass a detached context (detachedCtx) so a client that
+// disconnects after the commit cannot cancel the revocation. Each step gets
+// a WriteTimeout budget of its own (step): a slow commit or a slow earlier
+// step must not leave the token block without time (#674).
 func (h *UserHandler) revokeUserAccess(ctx context.Context, userID string, opts revokeOptions) {
-	if h.refreshTokenRepo != nil {
-		if err := h.refreshTokenRepo.RevokeAllForUser(ctx, userID); err != nil {
-			slog.Warn("Failed to revoke refresh tokens", "user_id", userID, "error", err)
-		}
+	step := func(fn func(context.Context)) {
+		stepCtx, cancel := ctxutil.Detach(ctx, ctxutil.WriteTimeout)
+		defer cancel()
+		fn(stepCtx)
 	}
 
-	h.blockIssuedTokens(ctx, userID)
+	if h.refreshTokenRepo != nil {
+		step(func(ctx context.Context) {
+			if err := h.refreshTokenRepo.RevokeAllForUser(ctx, userID); err != nil {
+				slog.Warn("Failed to revoke refresh tokens", "user_id", userID, "error", err)
+			}
+		})
+	}
+
+	step(func(ctx context.Context) { h.blockIssuedTokens(ctx, userID) })
 
 	if opts.deleteAPIKeys && h.apiKeyRepo != nil {
-		if _, err := h.apiKeyRepo.DeleteAllForUser(ctx, userID); err != nil {
-			slog.Warn("Failed to delete API keys", "user_id", userID, "error", err)
-		}
+		step(func(ctx context.Context) {
+			if _, err := h.apiKeyRepo.DeleteAllForUser(ctx, userID); err != nil {
+				slog.Warn("Failed to delete API keys", "user_id", userID, "error", err)
+			}
+		})
 	}
 
 	if h.wsRevoker != nil {
@@ -190,7 +203,8 @@ func (h *UserHandler) DeleteUser(c *gin.Context) {
 
 	// Detached: a client cancel must not commit the change and then skip the
 	// revocation or the audit entry (#656).
-	ctx := context.WithoutCancel(c.Request.Context())
+	ctx, cancel := detachedCtx(c)
+	defer cancel()
 	user, err := h.userRepo.FindByID(ctx, id)
 	if err != nil {
 		status, message := mapError(err, "User")
@@ -266,7 +280,8 @@ func (h *UserHandler) setDisabled(c *gin.Context, disabled bool) {
 		return
 	}
 
-	ctx := context.WithoutCancel(c.Request.Context()) // see DeleteUser
+	ctx, cancel := detachedCtx(c) // see DeleteUser
+	defer cancel()
 	user, err := h.userRepo.FindByID(ctx, id)
 	if err != nil {
 		status, message := mapError(err, "User")
@@ -334,7 +349,8 @@ func (h *UserHandler) ResetUserPassword(c *gin.Context) {
 		return
 	}
 
-	ctx := context.WithoutCancel(c.Request.Context()) // see DeleteUser
+	ctx, cancel := detachedCtx(c) // see DeleteUser
+	defer cancel()
 	user, err := h.userRepo.FindByID(ctx, id)
 	if err != nil {
 		status, message := mapError(err, "User")
@@ -442,7 +458,8 @@ func (h *UserHandler) ChangeUserRole(c *gin.Context) {
 		return
 	}
 
-	ctx := context.WithoutCancel(c.Request.Context()) // see DeleteUser
+	ctx, cancel := detachedCtx(c) // see DeleteUser
+	defer cancel()
 	user, err := h.userRepo.FindByID(ctx, id)
 	if err != nil {
 		status, message := mapError(err, "User")

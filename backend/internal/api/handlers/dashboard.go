@@ -9,6 +9,7 @@ import (
 
 	"backend/internal/cache"
 	"backend/internal/cluster"
+	"backend/internal/ctxutil"
 	"backend/internal/k8s"
 	"backend/internal/models"
 
@@ -142,8 +143,8 @@ func (h *DashboardHandler) GetDashboard(c *gin.Context) {
 			return cached, nil
 		}
 		// The waiters share this build: the first caller leaving must not
-		// fail them all (#656). WithoutCancel keeps the trace.
-		ctx, cancel := context.WithTimeout(context.WithoutCancel(reqCtx), dashboardBuildTimeout)
+		// fail them all (#656). Detach keeps the trace.
+		ctx, cancel := ctxutil.Detach(reqCtx, dashboardBuildTimeout)
 		defer cancel()
 		return h.buildDashboard(ctx, privileged, cacheStore, cacheKey)
 	})

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"backend/internal/cache"
+	"backend/internal/ctxutil"
 )
 
 // clusterNameCacheTTL is how long the resolver keeps a cluster name. A
@@ -112,7 +113,7 @@ func (r *ClusterNameResolver) names(ctx context.Context, ids []string) map[strin
 	}
 
 	done := make(chan lookupResult, 1)
-	queryCtx, cancelQuery := context.WithTimeout(context.WithoutCancel(ctx), r.queryTimeout)
+	queryCtx, cancelQuery := ctxutil.Detach(ctx, r.queryTimeout)
 	go func() {
 		defer cancelQuery()
 		found, err := r.lookup(queryCtx, missing)

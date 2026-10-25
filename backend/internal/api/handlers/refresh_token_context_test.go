@@ -29,10 +29,14 @@ import (
 // rtCtxKey marks the request context in these tests.
 type rtCtxKey struct{}
 
-// rtCall is one MockRefreshTokenRepository call seen by rtCallLog.
+// rtCall is one MockRefreshTokenRepository call seen by rtCallLog. err and
+// hasDeadline are read at the call: the handler cancels its detached context
+// when it returns.
 type rtCall struct {
-	ctx    context.Context
-	method string
+	ctx         context.Context
+	err         error
+	method      string
+	hasDeadline bool
 }
 
 // rtCallLog records the refresh token calls and cancels the request at call
@@ -49,7 +53,6 @@ type rtCallLog struct {
 func (l *rtCallLog) hook(method string, ctx context.Context) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.calls = append(l.calls, rtCall{method: method, ctx: ctx})
 	if method == l.cancelAt && l.cancel != nil {
 		l.cancelSeen++
 		if l.cancelSeen >= max(l.cancelN, 1) {
@@ -57,6 +60,8 @@ func (l *rtCallLog) hook(method string, ctx context.Context) {
 			l.cancel = nil
 		}
 	}
+	_, hasDeadline := ctx.Deadline()
+	l.calls = append(l.calls, rtCall{method: method, ctx: ctx, err: ctx.Err(), hasDeadline: hasDeadline})
 }
 
 func (l *rtCallLog) methods() []string {
@@ -70,7 +75,8 @@ func (l *rtCallLog) methods() []string {
 }
 
 // assertDetachedFrom checks that every call from the first call of method on
-// ran with a live context that keeps the request values.
+// ran with a live context that keeps the request values and has a deadline
+// (#674).
 func (l *rtCallLog) assertDetachedFrom(t *testing.T, method string) {
 	t.Helper()
 	l.mu.Lock()
@@ -83,7 +89,8 @@ func (l *rtCallLog) assertDetachedFrom(t *testing.T, method string) {
 		if !seen {
 			continue
 		}
-		assert.NoError(t, c.ctx.Err(), "%s runs with a context that the client cannot cancel", c.method)
+		assert.NoError(t, c.err, "%s runs with a context that the client cannot cancel", c.method)
+		assert.True(t, c.hasDeadline, "%s runs with a deadline", c.method)
 		assert.Equal(t, "req", c.ctx.Value(rtCtxKey{}), "%s keeps the request values", c.method)
 	}
 	assert.True(t, seen, "%s was called", method)
@@ -93,29 +100,37 @@ func (l *rtCallLog) assertDetachedFrom(t *testing.T, method string) {
 // MySQL store does.
 type ctxSessionStore struct {
 	*mockSessionStore
-	blocked map[string]context.Context
+	blocked map[string]blockCall
 	mu      sync.Mutex
 }
 
+// blockCall is the context of one BlockToken call, read at the call: the
+// handler cancels its detached context when it returns.
+type blockCall struct {
+	value       any // rtCtxKey{}
+	hasDeadline bool
+}
+
 func newCtxSessionStore() *ctxSessionStore {
-	return &ctxSessionStore{mockSessionStore: newMockHandlerSessionStore(), blocked: map[string]context.Context{}}
+	return &ctxSessionStore{mockSessionStore: newMockHandlerSessionStore(), blocked: map[string]blockCall{}}
 }
 
 func (s *ctxSessionStore) BlockToken(ctx context.Context, jti string, _ time.Time) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	_, hasDeadline := ctx.Deadline()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.blocked[jti] = ctx
+	s.blocked[jti] = blockCall{value: ctx.Value(rtCtxKey{}), hasDeadline: hasDeadline}
 	return nil
 }
 
-func (s *ctxSessionStore) blockCtx(jti string) (context.Context, bool) {
+func (s *ctxSessionStore) blockCall(jti string) (blockCall, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	ctx, ok := s.blocked[jti]
-	return ctx, ok
+	call, ok := s.blocked[jti]
+	return call, ok
 }
 
 type rtCtxEnv struct {
@@ -692,10 +707,11 @@ func TestLogout_ClientLeftStillLogsOut(t *testing.T) {
 
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 		assert.True(t, env.token(t, "rt-a").Revoked, "the refresh token is revoked")
-		blockCtx, ok := env.store.blockCtx(claims.ID)
+		// BlockToken fails on a done context, so a stored call ran on a live one.
+		call, ok := env.store.blockCall(claims.ID)
 		require.True(t, ok, "the access token is blocked")
-		assert.NoError(t, blockCtx.Err())
-		assert.Equal(t, "req", blockCtx.Value(rtCtxKey{}))
+		assert.True(t, call.hasDeadline, "the block runs with a deadline")
+		assert.Equal(t, "req", call.value)
 	})
 
 	t.Run("logout-all", func(t *testing.T) {
@@ -711,10 +727,11 @@ func TestLogout_ClientLeftStillLogsOut(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 		assert.True(t, env.token(t, "rt-a").Revoked)
 		assert.True(t, env.token(t, "rt-b").Revoked)
-		blockCtx, ok := env.store.blockCtx("jti-all")
+		// BlockToken fails on a done context, so a stored call ran on a live one.
+		call, ok := env.store.blockCall("jti-all")
 		require.True(t, ok, "the access token is blocked")
-		assert.NoError(t, blockCtx.Err())
-		assert.Equal(t, "req", blockCtx.Value(rtCtxKey{}))
+		assert.True(t, call.hasDeadline, "the block runs with a deadline")
+		assert.Equal(t, "req", call.value)
 	})
 }
 

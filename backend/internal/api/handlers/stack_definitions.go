@@ -268,7 +268,9 @@ func (h *DefinitionHandler) CreateDefinition(c *gin.Context) {
 	}
 
 	// Detached: a committed create must answer 201, so its audit entry follows (#656).
-	if err := h.definitionRepo.Create(context.WithoutCancel(c.Request.Context()), &def); err != nil {
+	wctx, cancel := detachedCtx(c)
+	defer cancel()
+	if err := h.definitionRepo.Create(wctx, &def); err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -370,7 +372,9 @@ func (h *DefinitionHandler) UpdateDefinition(c *gin.Context) {
 		return
 	}
 
-	if err := h.definitionRepo.Update(context.WithoutCancel(c.Request.Context()), existing); err != nil {
+	wctx, cancel := detachedCtx(c)
+	defer cancel()
+	if err := h.definitionRepo.Update(wctx, existing); err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -429,7 +433,9 @@ func (h *DefinitionHandler) DeleteDefinition(c *gin.Context) {
 		}
 	}
 
-	if err := h.definitionRepo.Delete(context.WithoutCancel(c.Request.Context()), id); err != nil {
+	wctx, cancel := detachedCtx(c)
+	defer cancel()
+	if err := h.definitionRepo.Delete(wctx, id); err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -625,7 +631,8 @@ func (h *DefinitionHandler) ImportDefinition(c *gin.Context) {
 
 	var createdCharts []models.ChartConfig
 	// Detached: a committed import must answer 201, so its audit entry follows (#656).
-	wctx := context.WithoutCancel(c.Request.Context())
+	wctx, cancel := detachedCtx(c)
+	defer cancel()
 	txErr := h.txRunner.RunInTx(wctx, func(repos database.TxRepos) error {
 		if err := repos.StackDefinition.Create(wctx, &def); err != nil {
 			return err
@@ -992,7 +999,8 @@ func (h *DefinitionHandler) ApplyUpgrade(c *gin.Context) {
 	now := time.Now().UTC()
 	// Detached from the first chart write: the chart writes and the definition
 	// update must not stop half way (#656).
-	wctx := context.WithoutCancel(c.Request.Context())
+	wctx, cancel := detachedCtx(c)
+	defer cancel()
 
 	// Apply changes: add new required charts, update existing chart defaults.
 	for _, tch := range release.Charts {

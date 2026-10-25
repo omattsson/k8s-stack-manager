@@ -764,7 +764,7 @@ func TestPropagateQuotasToNamespaces_WithNamespaces(t *testing.T) {
 
 	// Should not panic; exercises the namespace iteration and quota application.
 	require.NoError(t, quotaRepo.Upsert(context.Background(), config))
-	h.propagateQuotasToNamespaces(&models.Cluster{ID: "cl-1"})
+	h.propagateQuotasToNamespaces(context.Background(), &models.Cluster{ID: "cl-1"})
 }
 
 func TestPropagateQuotasToNamespaces_NoNamespaces(t *testing.T) {
@@ -790,7 +790,7 @@ func TestPropagateQuotasToNamespaces_NoNamespaces(t *testing.T) {
 
 	// Should not panic; no stack- namespaces to iterate.
 	require.NoError(t, quotaRepo.Upsert(context.Background(), config))
-	h.propagateQuotasToNamespaces(&models.Cluster{ID: "cl-1"})
+	h.propagateQuotasToNamespaces(context.Background(), &models.Cluster{ID: "cl-1"})
 }
 
 // ---- SetDefaultCluster additional coverage ----

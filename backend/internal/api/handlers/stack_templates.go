@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"backend/internal/api/middleware"
+	"backend/internal/ctxutil"
 	"backend/internal/database"
 	"backend/internal/models"
 
@@ -280,7 +281,8 @@ func (h *TemplateHandler) CreateTemplate(c *gin.Context) {
 	}
 
 	// Detached from the first write: a committed write must answer success, so its audit entry follows (#656).
-	wctx := context.WithoutCancel(c.Request.Context())
+	wctx, cancel := detachedCtx(c)
+	defer cancel()
 
 	// Legacy path: no charts and no publish, no need for a transaction.
 	if len(chartModels) == 0 && !publishAfterCreate {
@@ -518,7 +520,9 @@ func (h *TemplateHandler) UpdateTemplate(c *gin.Context) {
 		return
 	}
 
-	if err := h.templateRepo.Update(context.WithoutCancel(c.Request.Context()), existing); err != nil {
+	wctx, cancel := detachedCtx(c)
+	defer cancel()
+	if err := h.templateRepo.Update(wctx, existing); err != nil {
 		status, message := mapError(err, entityTemplate)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -566,7 +570,9 @@ func (h *TemplateHandler) DeleteTemplate(c *gin.Context) {
 		}
 	}
 
-	if err := h.templateRepo.Delete(context.WithoutCancel(c.Request.Context()), id); err != nil {
+	wctx, cancel := detachedCtx(c)
+	defer cancel()
+	if err := h.templateRepo.Delete(wctx, id); err != nil {
 		status, message := mapError(err, entityTemplate)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -715,7 +721,9 @@ func (h *TemplateHandler) publishWorkingCopy(ctx context.Context, templateID, ve
 		tmpl.Version = version
 		tmpl.IsPublished = true
 		tmpl.UpdatedAt = time.Now().UTC()
-		return tmpl, nil, false, h.templateRepo.Update(context.WithoutCancel(ctx), tmpl)
+		wctx, cancel := ctxutil.Detach(ctx, ctxutil.WriteTimeout)
+		defer cancel()
+		return tmpl, nil, false, h.templateRepo.Update(wctx, tmpl)
 	}
 	if h.txRunner == nil {
 		return nil, nil, false, fmt.Errorf("publish requires a transaction runner")
@@ -727,7 +735,8 @@ func (h *TemplateHandler) publishWorkingCopy(ctx context.Context, templateID, ve
 		created   bool
 	)
 	// The whole transaction runs on the detached context (see CreateTemplate).
-	wctx := context.WithoutCancel(ctx)
+	wctx, cancel := ctxutil.Detach(ctx, ctxutil.WriteTimeout)
+	defer cancel()
 	err := h.txRunner.RunInTx(wctx, func(repos database.TxRepos) error {
 		locked, err := repos.StackTemplate.FindByIDForUpdate(wctx, templateID)
 		if err != nil {
@@ -860,7 +869,9 @@ func (h *TemplateHandler) UnpublishTemplate(c *gin.Context) {
 	tmpl.IsPublished = false
 	tmpl.UpdatedAt = time.Now().UTC()
 
-	if err := h.templateRepo.Update(context.WithoutCancel(c.Request.Context()), tmpl); err != nil {
+	wctx, cancel := detachedCtx(c)
+	defer cancel()
+	if err := h.templateRepo.Update(wctx, tmpl); err != nil {
 		status, message := mapError(err, entityTemplate)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -969,7 +980,8 @@ func (h *TemplateHandler) InstantiateTemplate(c *gin.Context) {
 
 	var chartConfigs []models.ChartConfig
 	// See CreateTemplate for the detached context.
-	wctx := context.WithoutCancel(c.Request.Context())
+	wctx, cancel := detachedCtx(c)
+	defer cancel()
 	txErr := h.txRunner.RunInTx(wctx, func(repos database.TxRepos) error {
 		if err := repos.StackDefinition.Create(wctx, def); err != nil {
 			return err
@@ -1111,7 +1123,8 @@ func (h *TemplateHandler) CloneTemplate(c *gin.Context) {
 	}
 
 	// See CreateTemplate for the detached context.
-	wctx := context.WithoutCancel(c.Request.Context())
+	wctx, cancel := detachedCtx(c)
+	defer cancel()
 	txErr := h.txRunner.RunInTx(wctx, func(repos database.TxRepos) error {
 		if err := repos.StackTemplate.Create(wctx, clone); err != nil {
 			return err
