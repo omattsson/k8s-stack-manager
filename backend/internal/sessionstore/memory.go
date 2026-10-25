@@ -29,10 +29,12 @@ type MemoryStore struct {
 	mu         sync.Mutex
 	blocked    map[string]memBlockEntry
 	userBlocks map[string]memBlockEntry
-	oidcStates map[string]memOIDCEntry
-	cliAuths   map[string]memCLIAuthEntry
-	done       chan struct{}
-	stopOnce   sync.Once
+	// sessionBlocks holds the blocked sessions (sid) by expiry.
+	sessionBlocks map[string]memBlockEntry
+	oidcStates    map[string]memOIDCEntry
+	cliAuths      map[string]memCLIAuthEntry
+	done          chan struct{}
+	stopOnce      sync.Once
 	// blockClock returns the time that BlockUser stores. Tests set a fixed
 	// clock with NewMemoryStoreWithBlockClock.
 	blockClock func() time.Time
@@ -40,12 +42,13 @@ type MemoryStore struct {
 
 func NewMemoryStore() *MemoryStore {
 	s := &MemoryStore{
-		blocked:    make(map[string]memBlockEntry),
-		userBlocks: make(map[string]memBlockEntry),
-		oidcStates: make(map[string]memOIDCEntry),
-		cliAuths:   make(map[string]memCLIAuthEntry),
-		done:       make(chan struct{}),
-		blockClock: time.Now,
+		blocked:       make(map[string]memBlockEntry),
+		userBlocks:    make(map[string]memBlockEntry),
+		sessionBlocks: make(map[string]memBlockEntry),
+		oidcStates:    make(map[string]memOIDCEntry),
+		cliAuths:      make(map[string]memCLIAuthEntry),
+		done:          make(chan struct{}),
+		blockClock:    time.Now,
 	}
 	go s.cleanupLoop()
 	return s
@@ -97,6 +100,26 @@ func (s *MemoryStore) IsUserBlocked(_ context.Context, userID string, issuedAt t
 		strconv.FormatInt(entry.blockedAtMs, 10), entry.blockedAtMs > 0,
 	)
 	return userBlockApplies(blockedAt, issuedAt), nil
+}
+
+func (s *MemoryStore) BlockSession(_ context.Context, sessionID string, until time.Time) error {
+	s.mu.Lock()
+	// Keep the later expiry: a short block never shortens a long one.
+	if cur, ok := s.sessionBlocks[sessionID]; !ok || until.After(cur.expiresAt) {
+		s.sessionBlocks[sessionID] = memBlockEntry{expiresAt: until}
+	}
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *MemoryStore) IsSessionBlocked(_ context.Context, sessionID string) (bool, error) {
+	s.mu.Lock()
+	entry, ok := s.sessionBlocks[sessionID]
+	s.mu.Unlock()
+	if !ok {
+		return false, nil
+	}
+	return time.Now().Before(entry.expiresAt), nil
 }
 
 func (s *MemoryStore) UnblockUser(_ context.Context, userID string) error {
@@ -198,6 +221,11 @@ func (s *MemoryStore) Cleanup(_ context.Context) error {
 	for k, v := range s.userBlocks {
 		if now.After(v.expiresAt) {
 			delete(s.userBlocks, k)
+		}
+	}
+	for k, v := range s.sessionBlocks {
+		if now.After(v.expiresAt) {
+			delete(s.sessionBlocks, k)
 		}
 	}
 	for k, v := range s.oidcStates {

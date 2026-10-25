@@ -221,3 +221,125 @@ func TestMySQLIntegration_BlockUser_IssuedAt(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, blocked)
 }
+
+func TestMySQLIntegration_BlockSession(t *testing.T) {
+	s := setupMySQLSessionStore(t)
+	ctx := context.Background()
+
+	blocked, err := s.IsSessionBlocked(ctx, "sid-1")
+	require.NoError(t, err)
+	assert.False(t, blocked)
+
+	require.NoError(t, s.BlockSession(ctx, "sid-1", time.Now().Add(time.Hour)))
+
+	blocked, err = s.IsSessionBlocked(ctx, "sid-1")
+	require.NoError(t, err)
+	assert.True(t, blocked)
+
+	blocked, err = s.IsSessionBlocked(ctx, "sid-other")
+	require.NoError(t, err)
+	assert.False(t, blocked, "another session must not be blocked")
+}
+
+func TestMySQLIntegration_BlockSession_Expired(t *testing.T) {
+	s := setupMySQLSessionStore(t)
+	ctx := context.Background()
+
+	// expires_at is Unix seconds: a block that ended a second ago is over.
+	require.NoError(t, s.BlockSession(ctx, "sid-exp", time.Now().Add(-time.Second)))
+
+	blocked, err := s.IsSessionBlocked(ctx, "sid-exp")
+	require.NoError(t, err)
+	assert.False(t, blocked, "an expired session block must not apply")
+}
+
+func TestMySQLIntegration_BlockSession_ReblockExtends(t *testing.T) {
+	s := setupMySQLSessionStore(t)
+	ctx := context.Background()
+
+	require.NoError(t, s.BlockSession(ctx, "sid-up", time.Now().Add(-time.Second)))
+	blocked, err := s.IsSessionBlocked(ctx, "sid-up")
+	require.NoError(t, err)
+	require.False(t, blocked)
+
+	require.NoError(t, s.BlockSession(ctx, "sid-up", time.Now().Add(time.Hour)))
+	blocked, err = s.IsSessionBlocked(ctx, "sid-up")
+	require.NoError(t, err)
+	assert.True(t, blocked, "a second block must extend the first")
+
+	var count int64
+	require.NoError(t, s.db.Model(&SessionEntry{}).Where("entry_key = ? AND kind = ?", "sid-up", kindSessionBlock).Count(&count).Error)
+	assert.Equal(t, int64(1), count, "the upsert keeps one row")
+}
+
+func TestMySQLIntegration_BlockSession_ReblockEarlierDoesNotShorten(t *testing.T) {
+	s := setupMySQLSessionStore(t)
+	ctx := context.Background()
+
+	require.NoError(t, s.BlockSession(ctx, "sid-long", time.Now().Add(time.Hour)))
+	require.NoError(t, s.BlockSession(ctx, "sid-long", time.Now().Add(-time.Second)))
+
+	blocked, err := s.IsSessionBlocked(ctx, "sid-long")
+	require.NoError(t, err)
+	assert.True(t, blocked, "a re-block with an earlier until must not shorten the block")
+
+	var row SessionEntry
+	require.NoError(t, s.db.Where("entry_key = ? AND kind = ?", "sid-long", kindSessionBlock).First(&row).Error)
+	assert.Greater(t, row.ExpiresAt, time.Now().Add(30*time.Minute).Unix())
+}
+
+func TestMySQLIntegration_BlockSession_Cleanup(t *testing.T) {
+	s := setupMySQLSessionStore(t)
+	ctx := context.Background()
+
+	require.NoError(t, s.BlockSession(ctx, "sid-old", time.Now().Add(-time.Second)))
+	require.NoError(t, s.BlockSession(ctx, "sid-live", time.Now().Add(time.Hour)))
+
+	require.NoError(t, s.Cleanup(ctx))
+
+	var rows []SessionEntry
+	require.NoError(t, s.db.Where("kind = ?", kindSessionBlock).Find(&rows).Error)
+	require.Len(t, rows, 1, "cleanup removes the expired session block only")
+	assert.Equal(t, "sid-live", rows[0].EntryKey)
+
+	blocked, err := s.IsSessionBlocked(ctx, "sid-live")
+	require.NoError(t, err)
+	assert.True(t, blocked)
+}
+
+// A session block, a token block and a user block with the same key are
+// separate rows (the kind is part of the primary key) and do not affect each
+// other.
+func TestMySQLIntegration_BlockSession_NoCollisionWithOtherKinds(t *testing.T) {
+	s := setupMySQLSessionStore(t)
+	ctx := context.Background()
+	const key = "same-key"
+
+	require.NoError(t, s.BlockToken(ctx, key, time.Now().Add(time.Hour)))
+	blocked, err := s.IsSessionBlocked(ctx, key)
+	require.NoError(t, err)
+	assert.False(t, blocked, "a token block must not block a session")
+
+	require.NoError(t, s.BlockSession(ctx, key, time.Now().Add(time.Hour)))
+	blocked, err = s.IsSessionBlocked(ctx, key)
+	require.NoError(t, err)
+	assert.True(t, blocked)
+	blocked, err = s.IsTokenBlocked(ctx, key)
+	require.NoError(t, err)
+	assert.True(t, blocked, "the token block must survive the session block")
+
+	// Removing the session block leaves the live token block alone (a
+	// re-block with an earlier time would not shorten it).
+	require.NoError(t, s.db.Where("entry_key = ? AND kind = ?", key, kindSessionBlock).Delete(&SessionEntry{}).Error)
+	blocked, err = s.IsSessionBlocked(ctx, key)
+	require.NoError(t, err)
+	assert.False(t, blocked)
+	blocked, err = s.IsTokenBlocked(ctx, key)
+	require.NoError(t, err)
+	assert.True(t, blocked, "removing the session block must not change the token block")
+
+	require.NoError(t, s.BlockUser(ctx, key, time.Now().Add(time.Hour)))
+	blocked, err = s.IsSessionBlocked(ctx, key)
+	require.NoError(t, err)
+	assert.False(t, blocked, "a user block must not block a session")
+}

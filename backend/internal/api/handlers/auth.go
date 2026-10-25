@@ -575,6 +575,12 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		return
 	}
 
+	// A logout or replay whose family revoke failed left a session block:
+	// refuse the refresh and revoke the family now.
+	if h.rejectBlockedSession(reqCtx, c, stored.UserID, stored.SessionFamily()) {
+		return
+	}
+
 	// Look up user to get current role/username.
 	user, err := h.userRepo.FindByID(reqCtx, stored.UserID)
 	if err != nil {
@@ -745,6 +751,9 @@ func (h *AuthHandler) refreshConsumedToken(readCtx context.Context, c *gin.Conte
 				return
 			}
 			if active > 0 {
+				if h.rejectBlockedSession(readCtx, c, stored.UserID, family) {
+					return
+				}
 				h.respondGraceRefresh(readCtx, c, user, family)
 				return
 			}
@@ -752,9 +761,15 @@ func (h *AuthHandler) refreshConsumedToken(readCtx context.Context, c *gin.Conte
 	}
 
 	slog.Warn("Refresh token reuse detected; revoking session", "user_id", stored.UserID, "token_id", stored.ID)
-	if err := h.refreshTokenRepo.RevokeFamily(context.WithoutCancel(c.Request.Context()), family); err != nil {
-		slog.Error("Failed to revoke refresh token family", "user_id", stored.UserID, "error", err)
+	writeCtx := context.WithoutCancel(c.Request.Context())
+	revokeErr := h.refreshTokenRepo.RevokeFamily(writeCtx, family)
+	if revokeErr != nil {
+		slog.Error("Failed to revoke refresh token family", "user_id", stored.UserID, "error", revokeErr)
 	}
+	// The family is compromised: the holder of the replayed token may hold
+	// access tokens of it. Block them too, after the revoke (long block when
+	// the revoke failed).
+	h.blockSessions(writeCtx, stored.UserID, []sessionToBlock{{id: family, revokeFailed: revokeErr != nil}})
 	h.clearRefreshCookie(c)
 	middleware.RecordRefresh("revoked")
 	c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
@@ -908,62 +923,192 @@ func authProviderOf(user *models.User) string {
 	return user.AuthProvider
 }
 
+// sessionBlockSkew is added to the lifetime of an access token when a session
+// block is written, so a replica with a slow clock still rejects the last
+// token of the session.
+const sessionBlockSkew = time.Minute
+
+// sessionBlockUntil is the end of a session block: the latest expiry of an
+// access token of the session (they are signed with AccessTokenExpiration)
+// plus sessionBlockSkew. Call it after the family revoke: a token signed
+// before the revoke expires before the result.
+func (h *AuthHandler) sessionBlockUntil() time.Time {
+	ttl := h.cfg.AccessTokenExpiration
+	if ttl <= 0 {
+		ttl = 24 * time.Hour
+	}
+	return time.Now().Add(ttl + sessionBlockSkew)
+}
+
+// sessionToBlock is a session to block and whether its family revoke failed.
+type sessionToBlock struct {
+	id           string
+	revokeFailed bool
+}
+
+// sessionLongBlockUntil is the end of a block for a session whose family
+// revoke failed: the refresh token keeps working until SESSION_MAX_LIFETIME
+// ends the session, so the block must last that long. Without a maximum
+// lifetime it falls back to sessionBlockUntil.
+func (h *AuthHandler) sessionLongBlockUntil() time.Time {
+	if h.cfg.SessionMaxLifetime <= 0 {
+		return h.sessionBlockUntil()
+	}
+	return time.Now().Add(h.cfg.SessionMaxLifetime + sessionBlockSkew)
+}
+
+// blockSessions blocks the sessions in the session store, so that no access
+// token of them passes the JWT middleware or the /ws upgrade, and the
+// revalidation closes their sockets. A session whose revoke failed gets the
+// long block (sessionLongBlockUntil). A failure is logged only (fail open,
+// like BlockToken).
+func (h *AuthHandler) blockSessions(ctx context.Context, userID string, sessions []sessionToBlock) {
+	if h.sessionStore == nil || len(sessions) == 0 {
+		return
+	}
+	until := h.sessionBlockUntil()
+	var longUntil time.Time
+	for _, sess := range sessions {
+		sessUntil := until
+		if sess.revokeFailed {
+			if longUntil.IsZero() {
+				longUntil = h.sessionLongBlockUntil()
+			}
+			sessUntil = longUntil
+		}
+		if err := h.sessionStore.BlockSession(ctx, sess.id, sessUntil); err != nil {
+			slog.Error("Failed to block session in session store", "user_id", userID, "session_id", sess.id, "error", err)
+		}
+	}
+}
+
+// rejectBlockedSession answers a refresh of a session that the session store
+// reports as blocked (a logout or replay whose family revoke failed): it
+// revokes the family so the next refresh fails without the store, clears the
+// cookie and answers 401. It returns true when it wrote a response (blocked,
+// or 499 for a cancelled read). A store error fails open (log and continue).
+func (h *AuthHandler) rejectBlockedSession(reqCtx context.Context, c *gin.Context, userID, family string) bool {
+	if h.sessionStore == nil {
+		return false
+	}
+	blocked, err := h.sessionStore.IsSessionBlocked(reqCtx, family)
+	if err != nil {
+		if respondCancelled(c, err) {
+			return true
+		}
+		slog.Error("Failed to check session block on refresh", "user_id", userID, "session_id", family, "error", err)
+		return false
+	}
+	if !blocked {
+		return false
+	}
+	if err := h.refreshTokenRepo.RevokeFamily(context.WithoutCancel(reqCtx), family); err != nil {
+		slog.Error("Failed to revoke blocked refresh session", "user_id", userID, "session_id", family, "error", err)
+	}
+	h.clearRefreshCookie(c)
+	middleware.RecordRefresh("revoked")
+	c.JSON(http.StatusUnauthorized, gin.H{"error": "Session revoked"})
+	return true
+}
+
+// bearerClaims returns the claims of a valid bearer token of the request, or
+// nil. Logout is a public route, so the handler parses the header itself. An
+// expired or invalid token is ignored.
+func (h *AuthHandler) bearerClaims(c *gin.Context) *middleware.Claims {
+	parts := strings.SplitN(c.GetHeader("Authorization"), " ", 2)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+		return nil
+	}
+	claims, err := middleware.ValidateJWT(parts[1], h.cfg.JWTSecret)
+	if err != nil {
+		return nil
+	}
+	return claims
+}
+
+// revokeLogoutSessions revokes the sessions that the logout request proves
+// possession of: the family of the refresh token cookie and the session (sid)
+// of a valid bearer token. When they differ it ends both: the caller could end
+// each of them alone with that credential, so ending both gives no new power,
+// and refusing or choosing one would leave a session alive that the client
+// asked to end. It returns the sessions (also the ones whose revoke failed,
+// so the caller can block them), the user ID for logs and whether a lookup or
+// revoke failed.
+func (h *AuthHandler) revokeLogoutSessions(ctx context.Context, c *gin.Context, bearer *middleware.Claims) (sessions []sessionToBlock, userID string, failed bool) {
+	if h.refreshTokenRepo == nil {
+		return nil, "", false
+	}
+	if rawToken, err := c.Cookie(refreshTokenCookieName); err == nil && rawToken != "" {
+		stored, err := h.refreshTokenRepo.FindByTokenHash(ctx, hashRefreshToken(rawToken))
+		switch {
+		case err == nil:
+			sessions = append(sessions, sessionToBlock{id: stored.SessionFamily()})
+			userID = stored.UserID
+		case !isNotFoundError(err):
+			slog.Error("Failed to look up refresh token on logout", "error", err)
+			failed = true
+		}
+	}
+	if bearer != nil && bearer.SessionID != "" {
+		if len(sessions) == 0 || sessions[0].id != bearer.SessionID {
+			sessions = append(sessions, sessionToBlock{id: bearer.SessionID})
+		}
+		if userID == "" {
+			userID = bearer.UserID
+		}
+	}
+	for i := range sessions {
+		if err := h.refreshTokenRepo.RevokeFamily(ctx, sessions[i].id); err != nil {
+			slog.Error("Failed to revoke the refresh session on logout", "user_id", userID, "session_id", sessions[i].id, "error", err)
+			sessions[i].revokeFailed = true
+			failed = true
+		}
+	}
+	return sessions, userID, failed
+}
+
 // Logout godoc
 // @Summary     Logout
-// @Description Revokes the session of the refresh token cookie (all refresh tokens of its family), blocklists the access token and closes its WebSockets. When the refresh token lookup or the revoke fails, the cookie is still cleared and the access token blocked, but the answer is 500.
+// @Description Ends the sessions that the request proves: the session of the refresh token cookie and the session of a valid bearer token (its sid claim), also when the cookie is missing. When both name different sessions, both end. It revokes all refresh tokens of each session, then blocks the session in the session store, so that every access token of it (not only the presented one) gets 401, and its WebSockets close within the revalidation interval. It also blocklists the presented access token and closes its WebSockets. Access tokens of other sessions of the user keep working. A request without a cookie and without a valid bearer token ends nothing and answers 200. When the refresh token lookup or a revoke fails, the cookie is still cleared and the blocks are still written, but the answer is 500.
 // @Tags        auth
 // @Accept      json
 // @Produce     json
 // @Success     200 {object} map[string]string
-// @Failure     401 {object} map[string]string
 // @Failure     500 {object} map[string]string
 // @Router      /api/v1/auth/logout [post]
 func (h *AuthHandler) Logout(c *gin.Context) {
 	// Detached: a client that leaves is still logged out (#656).
 	ctx := context.WithoutCancel(c.Request.Context())
 
-	// Best-effort blocklist of the access token and close of the sockets
-	// opened with it. The route is public (no auth middleware) so we parse
-	// the Authorization header ourselves.
-	if h.sessionStore != nil || h.wsRevoker != nil {
-		if authHeader := c.GetHeader("Authorization"); authHeader != "" {
-			if parts := strings.SplitN(authHeader, " ", 2); len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
-				if claims, err := middleware.ValidateJWT(parts[1], h.cfg.JWTSecret); err == nil && claims.ID != "" {
-					if h.sessionStore != nil {
-						expiry := time.Now().Add(h.cfg.AccessTokenExpiration)
-						if claims.ExpiresAt != nil {
-							expiry = claims.ExpiresAt.Time
-						}
-						if blockErr := h.sessionStore.BlockToken(ctx, claims.ID, expiry); blockErr != nil {
-							slog.Error("Failed to blocklist token on logout", "jti", claims.ID, "error", blockErr)
-						}
-					}
-					if h.wsRevoker != nil {
-						h.wsRevoker.DisconnectToken(claims.ID)
-					}
-				}
+	bearer := h.bearerClaims(c)
+
+	// Revoke the sessions first, then block them. A refresh whose session
+	// recheck (recheckSessionActive) passed before the revoke signed its token
+	// before the block is written, so that token expires before the block
+	// ends. Reversed, a refresh between block and revoke could hand out a token
+	// that nothing rejects. A rotated token can have an active successor
+	// (#673). A failure still clears the cookie but answers 500, because the
+	// session can stay valid on the server.
+	sessions, userID, revokeFailed := h.revokeLogoutSessions(ctx, c, bearer)
+
+	// Block even when a revoke failed: the block ends the access tokens, and
+	// Refresh refuses a blocked session. A failed revoke gets the long block.
+	h.blockSessions(ctx, userID, sessions)
+
+	// Best-effort blocklist of the presented access token and close of the
+	// sockets opened with it.
+	if bearer != nil && bearer.ID != "" {
+		if h.sessionStore != nil {
+			expiry := time.Now().Add(h.cfg.AccessTokenExpiration)
+			if bearer.ExpiresAt != nil {
+				expiry = bearer.ExpiresAt.Time
+			}
+			if blockErr := h.sessionStore.BlockToken(ctx, bearer.ID, expiry); blockErr != nil {
+				slog.Error("Failed to blocklist token on logout", "jti", bearer.ID, "error", blockErr)
 			}
 		}
-	}
-
-	// Revoke the whole session of the refresh token: a rotated token can
-	// have an active successor (#673). A failure still clears the cookie but
-	// answers 500, because the session can stay valid on the server.
-	revokeFailed := false
-	if h.refreshTokenRepo != nil {
-		if rawToken, err := c.Cookie(refreshTokenCookieName); err == nil && rawToken != "" {
-			tokenHash := hashRefreshToken(rawToken)
-			stored, err := h.refreshTokenRepo.FindByTokenHash(ctx, tokenHash)
-			switch {
-			case err == nil:
-				if revokeErr := h.refreshTokenRepo.RevokeFamily(ctx, stored.SessionFamily()); revokeErr != nil {
-					slog.Error("Failed to revoke the refresh session on logout", "user_id", stored.UserID, "error", revokeErr)
-					revokeFailed = true
-				}
-			case !isNotFoundError(err):
-				slog.Error("Failed to look up refresh token on logout", "error", err)
-				revokeFailed = true
-			}
+		if h.wsRevoker != nil {
+			h.wsRevoker.DisconnectToken(bearer.ID)
 		}
 	}
 
@@ -977,7 +1122,7 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 
 // LogoutAll godoc
 // @Summary     Logout from all sessions
-// @Description Revokes all refresh tokens for the current user
+// @Description Revokes all refresh tokens for the current user, then blocks every access token of the user issued up to now (user block), so that access tokens issued before it are rejected and cannot open a WebSocket. This holds on replicas with synchronised (NTP) clocks, because the user block has no clock-skew margin. A login after the logout works. The presented access token is blocklisted and all WebSockets of the user close. When the revoke fails, the blocks are still written, the cookie is cleared and the answer is 500.
 // @Tags        auth
 // @Accept      json
 // @Produce     json
@@ -995,10 +1140,27 @@ func (h *AuthHandler) LogoutAll(c *gin.Context) {
 	// Detached: a client that leaves is still logged out everywhere (#656).
 	ctx := context.WithoutCancel(c.Request.Context())
 
-	// Blocklist the current access token.
+	// Revoke the refresh tokens first, then block the user (same order as
+	// UserHandler.revokeUserAccess): a refresh that passed its session recheck
+	// before the revoke signed its token before the block, and the block covers
+	// it. The steps after the revoke run even when it fails.
+	revokeFailed := false
+	if h.refreshTokenRepo != nil {
+		if err := h.refreshTokenRepo.RevokeAllForUser(ctx, userID); err != nil {
+			slog.Error("Failed to revoke all refresh tokens", "user_id", userID, "error", err)
+			revokeFailed = true
+		}
+	}
+
 	if h.sessionStore != nil {
-		jti := middleware.GetJTIFromContext(c)
-		if jti != "" {
+		// Every access token issued up to now, of every session (and the SSO
+		// CLI token). A login after this call is issued later and works.
+		until := time.Now().Add(userBlockTTL(h.cfg.AccessTokenExpiration, h.cfg.JWTExpiration))
+		if err := h.sessionStore.BlockUser(ctx, userID, until); err != nil {
+			slog.Error("Failed to block user on logout-all", "user_id", userID, "error", err)
+		}
+		// Blocklist the current access token.
+		if jti := middleware.GetJTIFromContext(c); jti != "" {
 			expiry, ok := middleware.GetTokenExpiryFromContext(c)
 			if !ok {
 				expiry = time.Now().Add(h.cfg.AccessTokenExpiration)
@@ -1010,22 +1172,17 @@ func (h *AuthHandler) LogoutAll(c *gin.Context) {
 	}
 
 	// Close the open sockets of all sessions of the user on this replica
-	// (with WebSocket fan-out, also on the other replicas).
-	// The refresh tokens are revoked next, so a reconnect works only until
-	// the access token of a session expires.
+	// (with WebSocket fan-out, also on the other replicas). The user block
+	// refuses a reconnect with an earlier access token.
 	if h.wsRevoker != nil {
 		h.wsRevoker.DisconnectUser(userID)
 	}
 
-	if h.refreshTokenRepo != nil {
-		if err := h.refreshTokenRepo.RevokeAllForUser(ctx, userID); err != nil {
-			slog.Error("Failed to revoke all refresh tokens", "user_id", userID, "error", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
-			return
-		}
-	}
-
 	h.clearRefreshCookie(c)
+	if revokeFailed {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"message": "Logged out from all sessions"})
 }
 

@@ -175,7 +175,7 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 		return
 	}
 
-	identity := websocket.ClientIdentity{UserID: claims.UserID, TokenID: claims.ID}
+	identity := websocket.ClientIdentity{UserID: claims.UserID, TokenID: claims.ID, SessionID: claims.SessionID}
 	if claims.ExpiresAt != nil {
 		identity.ExpiresAt = claims.ExpiresAt.Time
 	}
@@ -479,6 +479,7 @@ func loadSocketAPIKeys(ctx context.Context, repo models.APIKeyRepository, identi
 func tokenRevocationStatus(ctx context.Context, store sessionstore.SessionStore, id websocket.ClientIdentity) (revoked error, lookupErr error) {
 	claims := &middleware.Claims{UserID: id.UserID}
 	claims.ID = id.TokenID
+	claims.SessionID = id.SessionID
 	if !id.IssuedAt.IsZero() {
 		claims.IssuedAt = jwt.NewNumericDate(id.IssuedAt)
 		// Keep the millisecond precision of the identity. For a legacy

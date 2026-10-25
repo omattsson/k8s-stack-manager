@@ -250,15 +250,19 @@ var (
 	// ErrTokenRevoked means the jti of the token is on the token blocklist
 	// (logout).
 	ErrTokenRevoked = errors.New("token revoked")
-	// ErrSessionRevoked means a user block covers the token: the token was
-	// issued at or before the block (user deleted, disabled or password reset).
+	// ErrSessionRevoked means a block covers the token: its session was
+	// blocked (logout of the session), or a user block covers it because it
+	// was issued at or before the block (user deleted, disabled, password
+	// reset, role change or logout-all).
 	ErrSessionRevoked = errors.New("session revoked")
 )
 
 // CheckRevocation checks validated claims against the session store. The JWT
 // middleware and the WebSocket upgrade both use it. It checks:
 //  1. The token blocklist (jti). A match returns ErrTokenRevoked.
-//  2. The user blocklist (user ID and issue time, see Claims.IssueTime). A
+//  2. The session blocklist (the sid claim), for a token with a session. A
+//     match (logout of the session) returns ErrSessionRevoked.
+//  3. The user blocklist (user ID and issue time, see Claims.IssueTime). A
 //     block revokes tokens issued at or before the block (millisecond
 //     precision with the iat_ms claim, else the block second). A token
 //     without iat gets a zero time and counts as blocked. A match returns
@@ -270,7 +274,7 @@ var (
 func CheckRevocation(ctx context.Context, store sessionstore.SessionStore, claims *Claims) error {
 	revoked, lookupErr := RevocationStatus(ctx, store, claims)
 	if lookupErr != nil {
-		slog.Error("Failed to check token or user blocklist",
+		slog.Error("Failed to check token, session or user blocklist",
 			"jti", claims.ID, "user_id", claims.UserID, "error", lookupErr)
 	}
 	return revoked
@@ -278,8 +282,8 @@ func CheckRevocation(ctx context.Context, store sessionstore.SessionStore, claim
 
 // RevocationStatus runs the checks of CheckRevocation without logging. It
 // returns the revocation (ErrTokenRevoked, ErrSessionRevoked or nil) and the
-// store errors (nil when both checks ran). A failed check counts as not
-// revoked (fail open); the other check still runs. Callers that check many
+// store errors (nil when all checks ran). A failed check counts as not
+// revoked (fail open); the other checks still run. Callers that check many
 // tokens (the WebSocket revalidation) use lookupErr to stop early.
 func RevocationStatus(ctx context.Context, store sessionstore.SessionStore, claims *Claims) (revoked error, lookupErr error) {
 	if store == nil || claims == nil {
@@ -292,6 +296,14 @@ func RevocationStatus(ctx context.Context, store sessionstore.SessionStore, clai
 			errs = append(errs, fmt.Errorf("token blocklist: %w", err))
 		} else if blocked {
 			return ErrTokenRevoked, errors.Join(errs...)
+		}
+	}
+	if claims.SessionID != "" {
+		blocked, err := store.IsSessionBlocked(ctx, claims.SessionID)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("session blocklist: %w", err))
+		} else if blocked {
+			return ErrSessionRevoked, errors.Join(errs...)
 		}
 	}
 	if claims.UserID != "" {

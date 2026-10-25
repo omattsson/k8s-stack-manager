@@ -1451,7 +1451,7 @@
         },
         "/api/v1/auth/logout": {
             "post": {
-                "description": "Revokes the session of the refresh token cookie (all refresh tokens of its family), blocklists the access token and closes its WebSockets. When the refresh token lookup or the revoke fails, the cookie is still cleared and the access token blocked, but the answer is 500.",
+                "description": "Ends the sessions that the request proves: the session of the refresh token cookie and the session of a valid bearer token (its sid claim), also when the cookie is missing. When both name different sessions, both end. It revokes all refresh tokens of each session, then blocks the session in the session store, so that every access token of it (not only the presented one) gets 401, and its WebSockets close within the revalidation interval. It also blocklists the presented access token and closes its WebSockets. Access tokens of other sessions of the user keep working. A request without a cookie and without a valid bearer token ends nothing and answers 200. When the refresh token lookup or a revoke fails, the cookie is still cleared and the blocks are still written, but the answer is 500.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1465,15 +1465,6 @@
                 "responses": {
                     "200": {
                         "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -1495,7 +1486,7 @@
         },
         "/api/v1/auth/logout-all": {
             "post": {
-                "description": "Revokes all refresh tokens for the current user",
+                "description": "Revokes all refresh tokens for the current user, then blocks every access token of the user issued up to now (user block), so that access tokens issued before it are rejected and cannot open a WebSocket. This holds on replicas with synchronised (NTP) clocks, because the user block has no clock-skew margin. A login after the logout works. The presented access token is blocklisted and all WebSockets of the user close. When the revoke fails, the blocks are still written, the cookie is cleared and the answer is 500.",
                 "consumes": [
                     "application/json"
                 ],

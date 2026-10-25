@@ -141,9 +141,9 @@ All configuration uses environment variables with a `.env` fallback (godotenv). 
 - Reuse of a rotated token within `REFRESH_REUSE_GRACE` (30s) returns an access token only (no cookie, no revoke). Later reuse revokes the family.
 - Access tokens carry `sid` (the family). The JWT middleware calls `OnSessionActivity` (throttled, asynchronous), so `SESSION_IDLE_TIMEOUT` counts from the last request. `SESSION_MAX_LIFETIME` (12h) caps the family.
 - User blocks use the issue time. `IsUserBlocked(ctx, userID, iat)` rejects only tokens issued at or before the block (401).
-- Logout blocklists the `jti` of the access token in `sessionstore` (`BlockToken`) and revokes the session family of the refresh token (`RevokeFamily`). A failed lookup or revoke answers 500 after all other steps. Logout-all revokes all refresh tokens.
-- JWT auth checks `IsTokenBlocked`. It fails open on store errors (log and continue).
-- `sessionstore` also holds user blocks (`BlockUser`), OIDC state and CLI auth sessions.
+- Logout revokes the session family of the refresh token cookie and of the `sid` of a valid bearer token (`RevokeFamily`), then blocks each session (`BlockSession`, until the access-token lifetime plus 1 minute) and the `jti` of the access token (`BlockToken`). Revoke comes before block. A failed lookup or revoke answers 500 after all other steps. Logout-all revokes all refresh tokens, then writes a user block (`BlockUser`).
+- JWT auth checks `IsTokenBlocked`, `IsSessionBlocked` (token with a `sid`) and `IsUserBlocked` (`middleware.RevocationStatus`, also used by `/ws` and the hub revalidation). It fails open on store errors (log and continue).
+- `sessionstore` also holds session blocks (`BlockSession`), user blocks (`BlockUser`), OIDC state and CLI auth sessions.
 - All auth paths (login, refresh, OIDC, API key) reject `User.Disabled`.
 
 ## OIDC Authentication
