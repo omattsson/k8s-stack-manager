@@ -837,6 +837,7 @@ helm-test: ## Verify Deployment, Argo Rollout, and External Secrets Helm renders
 	if grep -q 'UNIQUE_INSTANCE_NAMES:' "$$template_file"; then echo "UNIQUE_INSTANCE_NAMES must be off by default" >&2; exit 1; fi; \
 	grep -q 'MAX_INSTANCE_TTL_DAYS: "30"' "$$template_file" \
 		|| { echo "backend ConfigMap must have MAX_INSTANCE_TTL_DAYS 30 by default" >&2; exit 1; }; \
+	if grep -q 'HELM_HISTORY_MAX:' "$$template_file"; then echo "HELM_HISTORY_MAX must not render by default" >&2; exit 1; fi; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
 		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template --set backend.maxInstanceTtlDays=7 > "$$template_file"; \
 	grep -q 'MAX_INSTANCE_TTL_DAYS: "7"' "$$template_file" \
@@ -860,6 +861,28 @@ helm-test: ## Verify Deployment, Argo Rollout, and External Secrets Helm renders
 	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
 		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template --set backend.maxInstanceTtlDays=1 \
 		| grep -q 'MAX_INSTANCE_TTL_DAYS: "1"' || { echo "the default TTL (480) must fit backend.maxInstanceTtlDays=1" >&2; exit 1; }; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template --set backend.helmHistoryMax=5 \
+		| grep -q 'HELM_HISTORY_MAX: "5"' || { echo "backend.helmHistoryMax=5 must render HELM_HISTORY_MAX 5" >&2; exit 1; }; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template --set backend.helmHistoryMax=5 \
+		--set-string backend.env.HELM_HISTORY_MAX=3 > "$$template_file"; \
+	test "$$(grep -c 'HELM_HISTORY_MAX:' "$$template_file")" = 1 && grep -q 'HELM_HISTORY_MAX: "3"' "$$template_file" \
+		|| { echo "backend.env.HELM_HISTORY_MAX must win over backend.helmHistoryMax" >&2; exit 1; }; \
+	for flag in '--set-string backend.helmHistoryMax=0' '--set-string backend.helmHistoryMax=1' '--set-string backend.helmHistoryMax=-1' \
+		'--set-string backend.helmHistoryMax=abc' '--set-string backend.helmHistoryMax=2.5' '--set backend.helmHistoryMax=1' \
+		'--set-json backend.helmHistoryMax=1' '--set-json backend.helmHistoryMax=2.5'; do \
+		if helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
+			--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template $$flag > "$$template_file" 2>&1; then \
+			echo "$$flag must fail the render" >&2; exit 1; fi; \
+		grep -q 'backend.helmHistoryMax must be a whole number of 2 or more' "$$template_file" \
+			|| { echo "$$flag must fail with the backend.helmHistoryMax message" >&2; cat "$$template_file" >&2; exit 1; }; \
+	done; \
+	for json in 5 1000000; do \
+		helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
+			--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template --set-json backend.helmHistoryMax=$$json \
+			| grep -q "HELM_HISTORY_MAX: \"$$json\"" || { echo "a number backend.helmHistoryMax=$$json (float64) must render HELM_HISTORY_MAX $$json" >&2; exit 1; }; \
+	done; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
 		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template --set backend.env.TRUSTED_PROXIES=10.1.0.0/16 > "$$template_file"; \
 	test "$$(grep -c 'TRUSTED_PROXIES:' "$$template_file")" = 1 && grep -q 'TRUSTED_PROXIES: "10.1.0.0/16"' "$$template_file" \

@@ -154,6 +154,7 @@ Key values in `values.yaml`:
 - `backend.allowedChartRepos`: chart repository URL prefixes (`ALLOWED_CHART_REPOS`). Empty means all sources.
 - `backend.uniqueInstanceNames`: unique instance names for each cluster (`UNIQUE_INSTANCE_NAMES`, default `false`)
 - `backend.maxInstanceTtlDays`: maximum TTL and stop-time distance in days (`MAX_INSTANCE_TTL_DAYS`, default `30`, 1 to 365; another value fails the render)
+- `backend.helmHistoryMax`: Helm revisions kept for each release (`HELM_HISTORY_MAX`, `--history-max`). Default `null`: not rendered, so Helm's own default applies (`HELM_MAX_HISTORY`, else 10). A value below 2 or not a whole number fails the render; a whole float (values file, `--set-json`) is converted to an integer first. An explicit `backend.env.HELM_HISTORY_MAX` wins.
 - `backend.trustedProxies`: proxies that may set the client IP (`TRUSTED_PROXIES`, default the private IPv4 ranges and `fc00::/7`)
 - `backend.rbac.scope` (`namespace` or `cluster`), `backend.rbac.admissionPolicy.enabled`: backend RBAC (see Key Design Decisions)
 - `backend.priorityClassName`, `frontend.priorityClassName`, `mysql.priorityClassName`, `otel.priorityClassName`: PriorityClass of each pod; empty = cluster default.
@@ -597,7 +598,7 @@ Developers use this application to configure, store and deploy multi-service Hel
   - The check runs in `ChartConfig.Validate` and `TemplateChartConfig.Validate` (repository create and update).
   - It runs again before each Helm install: a deploy marks the chart failed, and a rollback to a target returns an error.
 - **Rollback:** `POST /stack-instances/:id/rollback`
-  - Without `target_log_id`, it rolls the Helm releases back one revision.
+  - Without `target_log_id`, it rolls the Helm releases back one revision. It needs the previous revision in the Helm history, so `HELM_HISTORY_MAX` (`--history-max` on install and rollback) must be 2 or more.
   - With `target_log_id` (a successful deploy of the instance), it upgrades each chart to the values snapshot and the recorded chart version of that deploy (`DeploymentLog.ChartVersions`). This restores values, not images.
   - `pre-rollback` fires in the rollback goroutine, with progress streaming like `pre-deploy`. It carries the pre-deploy chart list, so image gates subscribe to it. A rejection restores the previous instance status.
   - `rollback-completed` fires on either outcome. `post-rollback` fires only on success.

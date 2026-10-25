@@ -57,9 +57,10 @@ func validatePositionalArg(name, value string) error {
 
 // HelmClient wraps the helm CLI binary for install, uninstall, and status operations.
 type HelmClient struct {
+	timeout    time.Duration
+	historyMax int // --history-max of upgrade --install and rollback; 0 = no flag (Helm default 10)
 	binaryPath string
 	kubeconfig string
-	timeout    time.Duration
 }
 
 // InstallRequest contains the parameters for a helm upgrade --install operation.
@@ -124,12 +125,25 @@ func NewHelmClient(binaryPath, kubeconfig string, timeout time.Duration) *HelmCl
 	}
 }
 
+// WithHistoryMax sets the number of revisions Helm keeps for each release
+// (--history-max on helm upgrade --install and helm rollback). 0 passes no
+// flag, so the Helm default applies. It returns h.
+func (h *HelmClient) WithHistoryMax(n int) *HelmClient {
+	h.historyMax = n
+	return h
+}
+
+// HistoryMax returns the --history-max limit; 0 means no flag.
+func (h *HelmClient) HistoryMax() int {
+	return h.historyMax
+}
+
 // Timeout returns the configured timeout duration for helm operations.
 func (h *HelmClient) Timeout() time.Duration {
 	return h.timeout
 }
 
-// Install runs: helm upgrade --install <release> <chart> -f <valuesFile> -n <namespace> [--create-namespace] --timeout <timeout>
+// Install runs: helm upgrade --install <release> <chart> -f <valuesFile> -n <namespace> [--create-namespace] --timeout <timeout> [--history-max <n>]
 // (--create-namespace only when req.NamespaceReady is false).
 // Returns combined stdout+stderr output and error.
 func (h *HelmClient) Install(ctx context.Context, req InstallRequest) (string, error) {
@@ -164,6 +178,7 @@ func (h *HelmClient) buildInstallArgs(req InstallRequest) ([]string, error) {
 		args = append(args, "--create-namespace")
 	}
 	args = append(args, "--timeout", h.timeout.String())
+	args = h.appendHistoryMax(args)
 	if req.RepoURL != "" {
 		args = append(args, "--repo", req.RepoURL)
 	}
@@ -291,7 +306,7 @@ func (h *HelmClient) History(ctx context.Context, releaseName, namespace string,
 	return revisions, nil
 }
 
-// Rollback runs: helm rollback <release> <revision> -n <namespace>
+// Rollback runs: helm rollback <release> <revision> -n <namespace> --timeout <timeout> [--history-max <n>]
 // Returns combined stdout+stderr output and error.
 func (h *HelmClient) Rollback(ctx context.Context, releaseName, namespace string, revision int) (string, error) {
 	args, err := h.buildRollbackArgs(releaseName, namespace, revision)
@@ -305,13 +320,21 @@ func (h *HelmClient) buildRollbackArgs(releaseName, namespace string, revision i
 	if err := validatePositionalArg("release name", releaseName); err != nil {
 		return nil, err
 	}
-	return []string{
+	return h.appendHistoryMax([]string{
 		"rollback",
 		releaseName,
 		strconv.Itoa(revision),
 		"-n", namespace,
 		"--timeout", h.timeout.String(),
-	}, nil
+	}), nil
+}
+
+// appendHistoryMax adds --history-max when a limit is set.
+func (h *HelmClient) appendHistoryMax(args []string) []string {
+	if h.historyMax > 0 {
+		args = append(args, "--history-max", strconv.Itoa(h.historyMax))
+	}
+	return args
 }
 
 // GetValues runs: helm get values <release> -n <namespace> --revision <revision> -o yaml

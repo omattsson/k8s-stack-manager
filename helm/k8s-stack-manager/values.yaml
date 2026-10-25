@@ -252,6 +252,16 @@ backend:
   # with it.
   maxInstanceTtlDays: 30
 
+  # Helm revisions kept for each release of a stack (HELM_HISTORY_MAX, passed
+  # as --history-max to helm upgrade --install and helm rollback). Each
+  # revision is a Secret in the stack namespace (Helm's default storage), and
+  # every deploy adds one for each chart. A whole number of 2 or more: a plain
+  # rollback needs the previous revision. A rollback to a deploy
+  # (target_log_id) uses the stored values and does not need older revisions.
+  # Unset (null): no flag, so Helm's own default applies (its HELM_MAX_HISTORY
+  # environment variable, else 10).
+  helmHistoryMax: null
+
   # Proxies that may set the client IP with X-Forwarded-For or X-Real-IP
   # (TRUSTED_PROXIES): IP addresses or CIDR ranges. The per-IP rate limits
   # (RATE_LIMIT, LOGIN_RATE_LIMIT, the API-key upgrade of /ws) and the IP of a

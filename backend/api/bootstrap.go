@@ -233,6 +233,7 @@ func buildDomainServices(
 		ClusterRepo:     repos.Cluster,
 		HelmBinary:      cfg.Deployment.HelmBinary,
 		HelmTimeout:     cfg.Deployment.DeploymentTimeout,
+		HelmHistoryMax:  cfg.Deployment.HelmHistoryMax,
 		NamespaceLabels: cfg.Deployment.NamespaceLabels,
 		AccessBinding:   stackAccessBinding(cfg.Deployment.StackAccess),
 		// Local development only (#582); empty in a pod.

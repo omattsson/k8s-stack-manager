@@ -84,7 +84,7 @@ Developers use this application to configure, store and deploy multi-service Hel
   - The check runs in `ChartConfig.Validate` and `TemplateChartConfig.Validate` (repository create and update).
   - It runs again before each Helm install: a deploy marks the chart failed, and a rollback to a target returns an error.
 - **Rollback:** `POST /stack-instances/:id/rollback`
-  - Without `target_log_id`, it rolls the Helm releases back one revision.
+  - Without `target_log_id`, it rolls the Helm releases back one revision. It needs the previous revision in the Helm history, so `HELM_HISTORY_MAX` (`--history-max` on install and rollback) must be 2 or more.
   - With `target_log_id` (a successful deploy of the instance), it upgrades each chart to the values snapshot and the recorded chart version of that deploy (`DeploymentLog.ChartVersions`). This restores values, not images.
   - `pre-rollback` fires in the rollback goroutine, with progress streaming like `pre-deploy`. It carries the pre-deploy chart list, so image gates subscribe to it. A rejection restores the previous instance status.
   - `rollback-completed` fires on either outcome. `post-rollback` fires only on success.

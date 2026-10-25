@@ -85,6 +85,7 @@ Key values in `values.yaml`:
 - `backend.allowedChartRepos`: chart repository URL prefixes (`ALLOWED_CHART_REPOS`). Empty means all sources.
 - `backend.uniqueInstanceNames`: unique instance names for each cluster (`UNIQUE_INSTANCE_NAMES`, default `false`)
 - `backend.maxInstanceTtlDays`: maximum TTL and stop-time distance in days (`MAX_INSTANCE_TTL_DAYS`, default `30`, 1 to 365; another value fails the render)
+- `backend.helmHistoryMax`: Helm revisions kept for each release (`HELM_HISTORY_MAX`, `--history-max`). Default `null`: not rendered, so Helm's own default applies (`HELM_MAX_HISTORY`, else 10). A value below 2 or not a whole number fails the render; a whole float (values file, `--set-json`) is converted to an integer first. An explicit `backend.env.HELM_HISTORY_MAX` wins.
 - `backend.trustedProxies`: proxies that may set the client IP (`TRUSTED_PROXIES`, default the private IPv4 ranges and `fc00::/7`)
 - `backend.rbac.scope` (`namespace` or `cluster`), `backend.rbac.admissionPolicy.enabled`: backend RBAC (see Key Design Decisions)
 - `backend.priorityClassName`, `frontend.priorityClassName`, `mysql.priorityClassName`, `otel.priorityClassName`: PriorityClass of each pod; empty = cluster default.
