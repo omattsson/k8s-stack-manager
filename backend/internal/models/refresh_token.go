@@ -92,7 +92,10 @@ type RefreshTokenRepository interface {
 	// that runs at the same time keeps its new session. It returns the
 	// number of revoked tokens.
 	RevokeOldestForUser(ctx context.Context, userID string, keep int, excludeID string) (int64, error)
-	DeleteExpired(ctx context.Context) (int64, error)
+	// DeleteExpired deletes the tokens that expired before `before`. The
+	// cleanup passes a time in the past, so a row stays while its session can
+	// still hold a live access token and logout-all can list it.
+	DeleteExpired(ctx context.Context, before time.Time) (int64, error)
 	CountActiveForUser(ctx context.Context, userID string) (int64, error)
 	// WithTx executes fn within a database transaction that runs with ctx.
 	// The repository passed to fn shares the same transaction; if fn returns

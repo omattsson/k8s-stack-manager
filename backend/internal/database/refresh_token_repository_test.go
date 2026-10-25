@@ -337,3 +337,39 @@ func TestGORMRefreshTokenRepository_RevokeOldestForUser(t *testing.T) {
 		})
 	}
 }
+
+// TestGORMRefreshTokenRepository_DeleteExpired checks that only rows that
+// expired before the cutoff are deleted (#706): the cleanup passes a cutoff
+// in the past, so a recently expired row stays listable for logout-all.
+func TestGORMRefreshTokenRepository_DeleteExpired(t *testing.T) {
+	t.Parallel()
+	repo := setupRefreshTokenRepo(t)
+	now := time.Now().UTC()
+	cutoff := now.Add(-20 * time.Minute)
+
+	rows := []struct {
+		id       string
+		expires  time.Time
+		wantKeep bool
+	}{
+		{id: "rt-live", expires: now.Add(time.Hour), wantKeep: true},
+		{id: "rt-just-expired", expires: now.Add(-5 * time.Minute), wantKeep: true},
+		{id: "rt-just-after-cutoff", expires: cutoff.Add(time.Second), wantKeep: true},
+		{id: "rt-before-cutoff", expires: cutoff.Add(-time.Second), wantKeep: false},
+		{id: "rt-long-ago", expires: now.Add(-48 * time.Hour), wantKeep: false},
+	}
+	for _, r := range rows {
+		r := r
+		seedRefreshToken(t, repo, r.id, "fam-"+r.id, func(rt *models.RefreshToken) { rt.ExpiresAt = r.expires })
+	}
+
+	deleted, err := repo.DeleteExpired(context.Background(), cutoff)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), deleted)
+
+	for _, r := range rows {
+		var count int64
+		require.NoError(t, repo.db.Model(&models.RefreshToken{}).Where("id = ?", r.id).Count(&count).Error)
+		assert.Equal(t, r.wantKeep, count == 1, r.id)
+	}
+}

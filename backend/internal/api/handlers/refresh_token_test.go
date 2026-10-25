@@ -331,7 +331,7 @@ func (m *MockRefreshTokenRepository) RevokeOldestForUser(ctx context.Context, us
 	return n, nil
 }
 
-func (m *MockRefreshTokenRepository) DeleteExpired(ctx context.Context) (int64, error) {
+func (m *MockRefreshTokenRepository) DeleteExpired(ctx context.Context, before time.Time) (int64, error) {
 	if err := m.enter(ctx, "DeleteExpired"); err != nil {
 		return 0, err
 	}
@@ -341,9 +341,8 @@ func (m *MockRefreshTokenRepository) DeleteExpired(ctx context.Context) (int64, 
 		return 0, m.deleteErr
 	}
 	var count int64
-	now := time.Now()
 	for id, t := range m.tokens {
-		if now.After(t.ExpiresAt) {
+		if before.After(t.ExpiresAt) {
 			delete(m.byHash, t.TokenHash)
 			delete(m.tokens, id)
 			count++
@@ -1527,4 +1526,47 @@ func TestEnsureAdminUser_CreateError(t *testing.T) {
 // timePtr is a helper to create a *time.Time for table-driven tests.
 func timePtr(t time.Time) *time.Time {
 	return &t
+}
+
+// TestCleanupExpiredTokens_KeepsRowsInsideSessionWindow checks that the
+// cleanup keeps a row whose expiry lies within sessionListWindow (#706): its
+// session can still hold a live access token, and logout-all lists it to
+// block that session. Older rows are deleted.
+func TestCleanupExpiredTokens_KeepsRowsInsideSessionWindow(t *testing.T) {
+	t.Parallel()
+
+	cfg := testAuthConfigWithRefresh()
+	h := NewAuthHandler(NewMockUserRepository(), cfg, &config.OIDCConfig{})
+	repo := NewMockRefreshTokenRepository()
+	h.SetRefreshTokenRepo(repo)
+	window := h.sessionListWindow()
+	require.Equal(t, cfg.AccessTokenExpiration+sessionBlockSkew+cfg.RefreshReuseGrace, window)
+
+	tests := []struct {
+		id       string
+		expires  time.Duration // from now
+		wantKeep bool
+	}{
+		{id: "rt-live", expires: time.Hour, wantKeep: true},
+		{id: "rt-expired-5m", expires: -5 * time.Minute, wantKeep: true},
+		{id: "rt-inside-window", expires: -window + 30*time.Second, wantKeep: true},
+		{id: "rt-outside-window", expires: -window - 30*time.Second, wantKeep: false},
+		{id: "rt-long-ago", expires: -48 * time.Hour, wantKeep: false},
+	}
+	now := time.Now()
+	for _, tt := range tests {
+		require.NoError(t, repo.Create(context.Background(), &models.RefreshToken{
+			ID: tt.id, UserID: "uid-1", FamilyID: "fam-" + tt.id, TokenHash: "hash-" + tt.id,
+			ExpiresAt: now.Add(tt.expires), CreatedAt: now.Add(-2 * time.Hour),
+		}))
+	}
+
+	h.CleanupExpiredTokens(context.Background())
+
+	repo.mu.RLock()
+	defer repo.mu.RUnlock()
+	for _, tt := range tests {
+		_, kept := repo.tokens[tt.id]
+		assert.Equal(t, tt.wantKeep, kept, tt.id)
+	}
 }

@@ -140,8 +140,8 @@ func (r *GORMRefreshTokenRepository) RevokeOldestForUser(ctx context.Context, us
 // most MAX_REFRESH_TOKENS_PER_USER active tokens plus a few concurrent ones.
 const maxRevokeBatch = 1000
 
-func (r *GORMRefreshTokenRepository) DeleteExpired(ctx context.Context) (int64, error) {
-	tx := r.db.WithContext(ctx).Where("expires_at < ?", time.Now().UTC()).Delete(&models.RefreshToken{})
+func (r *GORMRefreshTokenRepository) DeleteExpired(ctx context.Context, before time.Time) (int64, error) {
+	tx := r.db.WithContext(ctx).Where("expires_at < ?", before.UTC()).Delete(&models.RefreshToken{})
 	return tx.RowsAffected, tx.Error
 }
 

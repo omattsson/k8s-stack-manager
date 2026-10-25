@@ -4003,17 +4003,18 @@ paths:
         refresh token was revoked earlier. A session block is a plain block, so every
         access token of those sessions is rejected, and cannot open a WebSocket, while
         the replica clocks differ by less than the 1 minute block margin. It also
-        writes a user block that rejects every access token issued up to now. A session
-        without such a row (a login whose refresh token could not be stored, or a
-        session whose rows the cleanup already deleted) and a token without a session
-        (the SSO CLI token) rely on the user block, which holds on replicas with synchronised
-        (NTP) clocks. A login after the logout works. The presented access token is
-        blocklisted and all WebSockets of the user close. When the revoke fails, the
-        sessions get the long block (until the maximum session lifetime), the other
-        blocks are still written, the cookie is cleared and the answer is 500. When
-        only the listing of the sessions fails, the revoke and the user block still
-        run and the answer is 200. When the listing and the revoke both fail, only
-        the presented session is blocked and the answer is 500.
+        writes a user block that rejects every access token issued up to now. The
+        refresh-token cleanup keeps rows for that window after they expire. A session
+        without such a row (a login whose refresh token could not be stored) and a
+        token without a session (the SSO CLI token) rely on the user block, which
+        holds on replicas with synchronised (NTP) clocks. A login after the logout
+        works. The presented access token is blocklisted and all WebSockets of the
+        user close. When the revoke fails, the sessions get the long block (until
+        the maximum session lifetime), the other blocks are still written, the cookie
+        is cleared and the answer is 500. When only the listing of the sessions fails,
+        the revoke and the user block still run and the answer is 200. When the listing
+        and the revoke both fail, only the presented session is blocked and the answer
+        is 500.
       produces:
       - application/json
       responses:

@@ -94,7 +94,7 @@ All configuration uses environment variables with a `.env` fallback (godotenv). 
   - TTL reaper, expiry warner, cleanup scheduler.
   - Quota monitor, secret monitor, secret refresher.
   - Cluster health poller, k8s status watcher.
-  - Refresh token cleanup.
+  - Refresh token cleanup. It deletes rows that expired more than the access-token lifetime + 1 minute + `REFRESH_REUSE_GRACE` ago, not at expiry, so logout-all can still list (and block) a session that may hold a live access token.
   - `stack-access-reconcile`, only when `STACK_ACCESS_*` is set.
   - `interrupted-operation-recovery`.
   - `ws-event-cleanup`, only when fan-out is enabled.

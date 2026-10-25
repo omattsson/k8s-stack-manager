@@ -1185,9 +1185,9 @@ func (h *AuthHandler) recentSessionsToBlock(ctx context.Context, c *gin.Context,
 	}
 	if h.refreshTokenRepo != nil {
 		// A session that can still hold a live access token has a row that
-		// expires after this time: the access token lifetime, the block
-		// margin and the reuse grace reach back from now.
-		since := time.Now().Add(-(h.cfg.AccessTokenExpiration + sessionBlockSkew + h.cfg.RefreshReuseGrace))
+		// expires after this time (sessionListWindow). The cleanup keeps
+		// rows for the same window, so such a row still exists.
+		since := time.Now().Add(-h.sessionListWindow())
 		families, err := h.refreshTokenRepo.ListRecentFamiliesForUser(ctx, userID, since)
 		if err != nil {
 			slog.Error("Failed to list sessions on logout-all", "user_id", userID, "error", err)
@@ -1205,7 +1205,7 @@ func (h *AuthHandler) recentSessionsToBlock(ctx context.Context, c *gin.Context,
 
 // LogoutAll godoc
 // @Summary     Logout from all sessions
-// @Description Revokes all refresh tokens for the current user, then blocks every session of the user that has a refresh token row whose expiry is later than now minus (access token lifetime + 1 minute + reuse grace), also when that refresh token was revoked earlier. A session block is a plain block, so every access token of those sessions is rejected, and cannot open a WebSocket, while the replica clocks differ by less than the 1 minute block margin. It also writes a user block that rejects every access token issued up to now. A session without such a row (a login whose refresh token could not be stored, or a session whose rows the cleanup already deleted) and a token without a session (the SSO CLI token) rely on the user block, which holds on replicas with synchronised (NTP) clocks. A login after the logout works. The presented access token is blocklisted and all WebSockets of the user close. When the revoke fails, the sessions get the long block (until the maximum session lifetime), the other blocks are still written, the cookie is cleared and the answer is 500. When only the listing of the sessions fails, the revoke and the user block still run and the answer is 200. When the listing and the revoke both fail, only the presented session is blocked and the answer is 500.
+// @Description Revokes all refresh tokens for the current user, then blocks every session of the user that has a refresh token row whose expiry is later than now minus (access token lifetime + 1 minute + reuse grace), also when that refresh token was revoked earlier. A session block is a plain block, so every access token of those sessions is rejected, and cannot open a WebSocket, while the replica clocks differ by less than the 1 minute block margin. It also writes a user block that rejects every access token issued up to now. The refresh-token cleanup keeps rows for that window after they expire. A session without such a row (a login whose refresh token could not be stored) and a token without a session (the SSO CLI token) rely on the user block, which holds on replicas with synchronised (NTP) clocks. A login after the logout works. The presented access token is blocklisted and all WebSockets of the user close. When the revoke fails, the sessions get the long block (until the maximum session lifetime), the other blocks are still written, the cookie is cleared and the answer is 500. When only the listing of the sessions fails, the revoke and the user block still run and the answer is 200. When the listing and the revoke both fail, only the presented session is blocked and the answer is 500.
 // @Tags        auth
 // @Accept      json
 // @Produce     json
@@ -1249,9 +1249,10 @@ func (h *AuthHandler) LogoutAll(c *gin.Context) {
 	// rejected while the replica clocks differ by less than the block margin,
 	// and a new login (a new family) works. A session without such a row
 	// relies on the user block: a login whose refresh-token create failed
-	// (it still returns a sid token), a session whose rows the cleanup worker
-	// already deleted (it deletes at expires_at, no margin), and a token
-	// without a sid (the SSO CLI token). A failed revoke gets the long block for every
+	// (it still returns a sid token), and a token without a sid (the SSO CLI
+	// token). The cleanup keeps rows for sessionListWindow after they expire,
+	// so it never removes the row of a session that can still hold a live
+	// access token. A failed revoke gets the long block for every
 	// listed family (blocking an already dead family is harmless), because a
 	// refresh token still works; Refresh refuses a blocked family.
 	for i := range sessions {
@@ -1293,13 +1294,25 @@ func (h *AuthHandler) LogoutAll(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Logged out from all sessions"})
 }
 
-// CleanupExpiredTokens deletes expired refresh tokens from the store. The
-// leader worker refresh-token-cleanup calls it with its own context.
+// sessionListWindow is how far back a refresh-token row's expiry can lie
+// while its session may still hold a live access token: the access token
+// lifetime, the session block margin and the reuse grace. Logout-all lists
+// the families of rows that expire within it, and the cleanup keeps rows for
+// it, so the two cannot drift apart.
+func (h *AuthHandler) sessionListWindow() time.Duration {
+	return h.cfg.AccessTokenExpiration + sessionBlockSkew + h.cfg.RefreshReuseGrace
+}
+
+// CleanupExpiredTokens deletes the refresh tokens that expired more than
+// sessionListWindow ago. A row that expired more recently can belong to a
+// session that still holds a live access token, and logout-all must still
+// find it to block that session. The leader worker refresh-token-cleanup
+// calls it with its own context.
 func (h *AuthHandler) CleanupExpiredTokens(ctx context.Context) {
 	if h.refreshTokenRepo == nil {
 		return
 	}
-	deleted, err := h.refreshTokenRepo.DeleteExpired(ctx)
+	deleted, err := h.refreshTokenRepo.DeleteExpired(ctx, time.Now().Add(-h.sessionListWindow()))
 	if err != nil {
 		if ctx.Err() != nil {
 			// The leader term ended: the next term cleans up.

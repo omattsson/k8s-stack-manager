@@ -70,7 +70,7 @@ var refreshTokenRepoCalls = []struct {
 		return err
 	}},
 	{name: "DeleteExpired", call: func(ctx context.Context, r *GORMRefreshTokenRepository) error {
-		_, err := r.DeleteExpired(ctx)
+		_, err := r.DeleteExpired(ctx, time.Now())
 		return err
 	}},
 	{name: "CountActiveForUser", call: func(ctx context.Context, r *GORMRefreshTokenRepository) error {

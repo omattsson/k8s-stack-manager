@@ -724,8 +724,9 @@ func TestLogout_ClientLeftStillLogsOut(t *testing.T) {
 func TestCleanupExpiredTokens_UsesCallerContext(t *testing.T) {
 	t.Parallel()
 	env := newRTCtxEnv(t)
+	// Expired long before the session window that the cleanup keeps.
 	env.seed(t, "rt-expired", "fam-1", func(rt *models.RefreshToken) {
-		rt.ExpiresAt = time.Now().UTC().Add(-time.Minute)
+		rt.ExpiresAt = time.Now().UTC().Add(-48 * time.Hour)
 	})
 	h := NewAuthHandler(env.users, env.cfg, &config.OIDCConfig{})
 	h.SetRefreshTokenRepo(env.refresh)
@@ -794,7 +795,7 @@ func TestMockRefreshTokenRepository_DoneContext(t *testing.T) {
 			return err
 		}},
 		{"DeleteExpired", func(ctx context.Context, m *MockRefreshTokenRepository) error {
-			_, err := m.DeleteExpired(ctx)
+			_, err := m.DeleteExpired(ctx, time.Now())
 			return err
 		}},
 		{"CountActiveForUser", func(ctx context.Context, m *MockRefreshTokenRepository) error {
