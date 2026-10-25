@@ -64,7 +64,7 @@ Order the fields for memory alignment. Put 8-byte fields before smaller fields.
 
 ## Configuration
 All configuration uses environment variables with a `.env` fallback (godotenv). See `internal/config/config.go`. Key groups:
-- `DB_*`, `JWT_*`, `OIDC_*`.
+- `DB_*`, `JWT_*`, `OIDC_*`. MySQL session variables (`sql_mode` = the MySQL 8 default, `time_zone` UTC, `foreign_key_checks`) are DSN parameters (`config.MySQLSessionParams`), which the driver sets on every pooled connection. Never set them with a `SET` statement after connecting: that reaches one connection only.
 - `SESSION_STORE`, `SESSION_IDLE_TIMEOUT`.
 - `RATE_LIMIT` (default 100 per minute), `LOGIN_RATE_LIMIT` (default 10 per minute).
 - `TRUSTED_PROXIES`: IPs or CIDRs that may set the client IP with `X-Forwarded-For` or `X-Real-IP` (`config.ParseTrustedProxies`, applied in `routes.SetupRoutes`). Empty (code default): the client IP is the TCP peer.

@@ -59,6 +59,10 @@ func TestConfigDSN(t *testing.T) {
 		DBName:   "testdb",
 	}
 
-	expected := "testuser:testpass@tcp(testhost:3306)/testdb?charset=utf8mb4&parseTime=True&loc=UTC&interpolateParams=true"
+	// The session variables are DSN parameters, so the driver sets them on
+	// every pooled connection (#706). Spelled out to pin the URL encoding.
+	expected := "testuser:testpass@tcp(testhost:3306)/testdb?charset=utf8mb4&parseTime=True&loc=UTC&interpolateParams=true" +
+		"&sql_mode=%27ONLY_FULL_GROUP_BY%2CSTRICT_TRANS_TABLES%2CNO_ZERO_IN_DATE%2CNO_ZERO_DATE%2CERROR_FOR_DIVISION_BY_ZERO%2CNO_ENGINE_SUBSTITUTION%27" +
+		"&time_zone=%27%2B00%3A00%27&foreign_key_checks=1"
 	assert.Equal(t, expected, config.DSN())
 }
