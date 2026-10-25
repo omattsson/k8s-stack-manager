@@ -82,7 +82,7 @@ func TestDispatch_TransportErrorHidesURL(t *testing.T) {
 	server.Close()
 
 	ch := models.NotificationChannel{ID: "ch-1", Name: "chat", WebhookURL: url, Enabled: true}
-	d := NewDispatcher(&mockChannelRepo{})
+	d := newTestDispatcher(t, &mockChannelRepo{})
 	// The connection error is retried once.
 	d.retryDelay = 10 * time.Millisecond
 	status, _, errMsg := d.DispatchTo(context.Background(), ch, EventPayload{EventType: "deployment.success"})

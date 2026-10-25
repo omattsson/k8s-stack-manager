@@ -56,6 +56,7 @@ startHTTPServer              # main server, optional pprof and metrics servers
 | Seed sample data into a running dev stack | `make seed` |
 | Backend tests (unit, no database) | `cd backend && go test ./... -v -short` |
 | All backend tests (unit and integration) | `make test-backend-all` (starts MySQL) |
+| Changed backend packages with `-race -count=3` (order-dependent tests) | `make test-backend-repeat` (`REPEAT_BASE`, default `origin/main`; `REPEAT_COUNT`) |
 | Frontend tests | `cd frontend && npm test` |
 | Unit tests (backend and frontend) | `make test` |
 | End-to-end tests | `make test-e2e` (starts infrastructure, backend and Playwright; no cluster access unless `E2E_KUBECONFIG` names a local kubeconfig; starts the test stub `frontend/e2e/stub/`: the subscriber of the actions in `frontend/e2e/fixtures/hooks-e2e.json` on http://127.0.0.1:18090, and an HTTPS webhook receiver on port 18443, which the backend trusts on Linux only; `E2E_SPECS=e2e/x.spec.ts` runs only these specs and skips the isolated phase; then restarts the backend with short session limits and runs the `isolated` project; CI: `.github/workflows/e2e.yml`) |

@@ -223,6 +223,7 @@ func TestChannelWorker_Order(t *testing.T) {
 				d.Dispatch(context.Background(), EventPayload{EventType: want[i]})
 			}
 			logs := waitDeliveries(t, repo, tt.events*tt.channels)
+			requireAllSuccess(t, logs)
 
 			for i, s := range servers {
 				got, _ := s.received()
@@ -254,7 +255,7 @@ func TestChannelWorker_IdleExitAndRestart(t *testing.T) {
 	for round := 1; round <= 2; round++ {
 		d.Dispatch(context.Background(), EventPayload{EventType: fmt.Sprintf("test.%d", round)})
 		logs := waitDeliveries(t, repo, round)
-		assert.Equal(t, "success", logs[round-1].Status)
+		requireAllSuccess(t, logs)
 		require.Eventually(t, func() bool {
 			return d.workers.workerCount() == 0 && d.workers.running.Load() == 0
 		}, 5*time.Second, 5*time.Millisecond, "round %d: the idle worker exits", round)
@@ -369,7 +370,7 @@ func TestDispatch_EncodeOncePerFormat(t *testing.T) {
 	}}
 	d := newTestDispatcher(t, repo)
 	d.Dispatch(context.Background(), EventPayload{EventType: "deployment.success", Title: "t"})
-	waitDeliveries(t, repo, 2)
+	requireAllSuccess(t, waitDeliveries(t, repo, 2))
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -493,7 +494,7 @@ func TestChannelWorker_ReadsChannelAgain(t *testing.T) {
 			}
 
 			logs := waitDeliveries(t, repo, 2)
-			assert.Equal(t, "success", logs[1].Status)
+			requireAllSuccess(t, logs)
 			assert.Empty(t, logs[1].ErrorMessage)
 			reqs := gate.requests()[1:]
 			if tt.onOther {
@@ -531,9 +532,7 @@ func TestChannelWorker_LookupErrorUsesQueuedCopy(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		d.Dispatch(context.Background(), EventPayload{EventType: "deployment.success"})
 	}
-	for _, l := range waitDeliveries(t, repo, 3) {
-		assert.Equal(t, "success", l.Status)
-	}
+	requireAllSuccess(t, waitDeliveries(t, repo, 3))
 	lines := buf.lines("channel lookup failed")
 	require.Len(t, lines, 1)
 	assert.Contains(t, lines[0], "channel=chat")

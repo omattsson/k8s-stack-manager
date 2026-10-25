@@ -39,8 +39,23 @@ func (m *mockChannelRepo) Deliveries() []models.NotificationDeliveryLog {
 func newTestDispatcher(t *testing.T, repo models.NotificationChannelRepository) *Dispatcher {
 	t.Helper()
 	d := NewDispatcher(repo)
+	isolateTransport(t, d)
 	t.Cleanup(d.Stop)
 	return d
+}
+
+// isolateTransport gives d its own HTTP transport. The default transport is
+// shared by every parallel test, and httptest.Server.Close closes its idle
+// connections: after another test's Close, the next event of a running test
+// must open a new connection. Under load that exhausts the ephemeral ports
+// ("can't assign requested address") and fails a delivery (#705).
+func isolateTransport(t *testing.T, d *Dispatcher) {
+	t.Helper()
+	base, ok := http.DefaultTransport.(*http.Transport)
+	require.True(t, ok, "the default transport is an *http.Transport")
+	tr := base.Clone()
+	d.client.Transport = tr
+	t.Cleanup(tr.CloseIdleConnections)
 }
 
 // waitDeliveries waits until repo has n delivery logs and returns them.
@@ -51,6 +66,17 @@ func waitDeliveries(t *testing.T, repo *mockChannelRepo, n int) []models.Notific
 	got := repo.Deliveries()
 	require.Len(t, got, n)
 	return got
+}
+
+// requireAllSuccess fails with the status code and error message of every
+// delivery log that is not a success, so a transport failure shows up as
+// itself and not as a missing or duplicated request.
+func requireAllSuccess(t *testing.T, logs []models.NotificationDeliveryLog) {
+	t.Helper()
+	for i, l := range logs {
+		require.Equal(t, "success", l.Status, "delivery log %d (channel %s, event %s): status code %d, error %q",
+			i, l.ChannelID, l.EventType, l.StatusCode, l.ErrorMessage)
+	}
 }
 
 func (m *mockChannelRepo) CreateChannel(_ context.Context, _ *models.NotificationChannel) error {
@@ -166,6 +192,7 @@ func TestDispatch_SendsToSubscribedChannels(t *testing.T) {
 	})
 
 	deliveries := waitDeliveries(t, repo, 2)
+	requireAllSuccess(t, deliveries)
 	assert.Equal(t, int32(2), calls.Load())
 	assert.Equal(t, "success", deliveries[0].Status)
 	assert.Equal(t, "success", deliveries[1].Status)
@@ -256,7 +283,7 @@ func TestDispatch_HMACSignature(t *testing.T) {
 
 	d := newTestDispatcher(t, repo)
 	d.Dispatch(context.Background(), EventPayload{EventType: "test.event", Title: "test"})
-	waitDeliveries(t, repo, 1)
+	requireAllSuccess(t, waitDeliveries(t, repo, 1))
 
 	sig, _ := gotSig.Load().(string)
 	require.NotEmpty(t, sig)
@@ -282,7 +309,7 @@ func TestDispatch_NoSignatureWithoutSecret(t *testing.T) {
 
 	d := newTestDispatcher(t, repo)
 	d.Dispatch(context.Background(), EventPayload{EventType: "test.event"})
-	waitDeliveries(t, repo, 1)
+	requireAllSuccess(t, waitDeliveries(t, repo, 1))
 
 	sig, ok := gotSig.Load().(string)
 	require.True(t, ok, "the channel got the request")
@@ -298,7 +325,7 @@ func TestDispatchTo_SingleChannel(t *testing.T) {
 	defer server.Close()
 
 	repo := &mockChannelRepo{}
-	d := NewDispatcher(repo)
+	d := newTestDispatcher(t, repo)
 
 	status, code, errMsg := d.DispatchTo(context.Background(),
 		models.NotificationChannel{ID: "ch-1", Name: "test", WebhookURL: server.URL},
@@ -360,7 +387,7 @@ func TestDispatch_ChannelFilters(t *testing.T) {
 			})
 
 			if tt.wantSent {
-				waitDeliveries(t, repo, 1)
+				requireAllSuccess(t, waitDeliveries(t, repo, 1))
 				assert.Equal(t, int32(1), calls.Load())
 			} else {
 				assert.Zero(t, d.workers.workerCount(), "no job was queued")

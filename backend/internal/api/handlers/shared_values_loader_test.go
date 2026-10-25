@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -110,6 +111,8 @@ func TestWarnInvalidSharedValues(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
+	// A fresh set per run: the package-level set would make a repeated run (-count) log nothing.
+	var warned sync.Map
 	logger := slog.New(slog.NewTextHandler(&buf, nil))
 	sv := &models.SharedValues{ID: "sv-warn-test-1", Name: "broken", ClusterID: "cl-1", UpdatedAt: time.Unix(100, 0),
 		Values: "password: s3cr3t-value\n- oops\n"}
@@ -117,8 +120,8 @@ func TestWarnInvalidSharedValues(t *testing.T) {
 	yamlErr := yaml.Unmarshal([]byte(sv.Values), &parsed)
 	require.Error(t, yamlErr)
 
-	warnInvalidSharedValuesTo(logger, "cl-1", sv, yamlErr)
-	warnInvalidSharedValuesTo(logger, "cl-1", sv, yamlErr)
+	warnInvalidSharedValuesTo(logger, &warned, "cl-1", sv, yamlErr)
+	warnInvalidSharedValuesTo(logger, &warned, "cl-1", sv, yamlErr)
 
 	out := buf.String()
 	assert.Equal(t, 1, strings.Count(out, "skipping shared values with invalid YAML"), "logged once per entry version")
@@ -130,6 +133,35 @@ func TestWarnInvalidSharedValues(t *testing.T) {
 
 	// A new version of the entry is reported again.
 	sv.UpdatedAt = time.Unix(200, 0)
-	warnInvalidSharedValuesTo(logger, "cl-1", sv, yamlErr)
+	warnInvalidSharedValuesTo(logger, &warned, "cl-1", sv, yamlErr)
 	assert.Equal(t, 2, strings.Count(buf.String(), "skipping shared values with invalid YAML"))
+}
+
+// TestWarnInvalidSharedValues_PackageLevelDedup checks that the production
+// wrapper dedupes through the package-level set: the same entry version is
+// logged once, a new version again.
+//
+// It does not call t.Parallel(): it replaces slog.Default(), which is global
+// state. The ID is unique per run so that -count=N works with the
+// package-level set, which is never reset.
+func TestWarnInvalidSharedValues_PackageLevelDedup(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	sv := &models.SharedValues{ID: fmt.Sprintf("sv-dedup-%d", time.Now().UnixNano()), Name: "broken", ClusterID: "cl-1",
+		UpdatedAt: time.Unix(100, 0), Values: "- oops\n"}
+	var parsed map[string]any
+	yamlErr := yaml.Unmarshal([]byte(sv.Values), &parsed)
+	require.Error(t, yamlErr)
+
+	warnInvalidSharedValues("cl-1", sv, yamlErr)
+	warnInvalidSharedValues("cl-1", sv, yamlErr)
+	const msg = "skipping shared values with invalid YAML"
+	assert.Equal(t, 1, strings.Count(buf.String(), msg), "same entry version logged once")
+
+	sv.UpdatedAt = time.Unix(200, 0)
+	warnInvalidSharedValues("cl-1", sv, yamlErr)
+	assert.Equal(t, 2, strings.Count(buf.String(), msg), "new entry version logged again")
 }

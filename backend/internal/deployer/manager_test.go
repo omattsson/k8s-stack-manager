@@ -623,25 +623,43 @@ func TestManager_Deploy_CreatesLogAndUpdatesStatus(t *testing.T) {
 	}
 	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
+	// Hold the Helm installs (every call blocks until release) until the test
+	// has checked the in-between state, so the async deploy cannot finish
+	// first. The gate is released on every path.
+	gate := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(gate) }) }
+	t.Cleanup(release)
+	helmMock := &mockHelmExecutor{installStarted: make(chan struct{}), installGate: gate}
+
 	mgr := NewManager(ManagerConfig{
-		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
+		Registry:      &mockClusterResolver{helm: helmMock},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
 		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
 		Hub:           hub,
 		MaxConcurrent: 2,
 	})
+	t.Cleanup(mgr.Shutdown) // runs before release: the goroutine cannot outlive the test
 
 	req := DeployRequest{
 		Instance:   inst,
 		Definition: &models.StackDefinition{ID: "def-1", Name: "test-def"},
-		Charts:     []ChartDeployInfo{}, // No charts = quick finish.
+		Charts:     []ChartDeployInfo{{ChartConfig: models.ChartConfig{ChartName: "app", DeployOrder: 1}}},
 		UserID:     "user-2",
 	}
 
 	logID, err := mgr.Deploy(context.Background(), req)
 	assert.NoError(t, err)
 	assert.NotEmpty(t, logID)
+
+	// Wait until the deploy goroutine is inside the held install.
+	select {
+	case <-helmMock.installStarted:
+	case <-time.After(10 * time.Second):
+		release()
+		require.FailNow(t, "the deploy never reached the install")
+	}
 
 	// Verify deployment log was created.
 	log, err := logRepo.FindByID(context.Background(), logID)
@@ -656,8 +674,10 @@ func TestManager_Deploy_CreatesLogAndUpdatesStatus(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, models.StackStatusDeploying, updated.Status)
 
-	// Give goroutine time to finish (no charts = quick).
-	time.Sleep(200 * time.Millisecond)
+	// The in-between state is checked; let the deploy finish.
+	release()
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
+	waitForLogDone(t, logRepo, logID)
 
 	// Verify final status after async completion.
 	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
@@ -669,6 +689,12 @@ func TestManager_Deploy_CreatesLogAndUpdatesStatus(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, models.DeployLogSuccess, finalLog.Status)
 	assert.NotNil(t, finalLog.CompletedAt)
+
+	// The single chart was installed exactly once.
+	helmMock.mu.Lock()
+	require.Len(t, helmMock.installCalls, 1)
+	assert.Equal(t, "app", helmMock.installCalls[0].ReleaseName)
+	helmMock.mu.Unlock()
 
 	// Verify broadcasts were sent.
 	assert.Greater(t, hub.messageCount(), 0)
@@ -752,34 +778,60 @@ func TestManager_Stop_CreatesLogAndUpdatesStatus(t *testing.T) {
 	}
 	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
+	// Hold the Helm uninstalls (every call blocks until release) until the
+	// test has checked the in-between state, so the async stop cannot finish
+	// first. The gate is released on every path.
+	gate := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(gate) }) }
+	t.Cleanup(release)
+	helmMock := &mockHelmExecutor{uninstallStarted: make(chan struct{}), uninstallGate: gate}
+
 	mgr := NewManager(ManagerConfig{
-		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
+		Registry:      &mockClusterResolver{helm: helmMock},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
 		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
 		Hub:           hub,
 		MaxConcurrent: 2,
 	})
+	t.Cleanup(mgr.Shutdown) // runs before release: the goroutine cannot outlive the test
 
-	logID, err := mgr.StopWithCharts(context.Background(), inst, nil)
+	charts := []ChartDeployInfo{{ChartConfig: models.ChartConfig{ChartName: "app", DeployOrder: 1}}}
+	logID, err := mgr.StopWithCharts(context.Background(), inst, charts)
 	assert.NoError(t, err)
 	assert.NotEmpty(t, logID)
 
-	// Verify deployment log was created with stop action. The async goroutine
-	// may complete before we read, so accept either intermediate or final state.
+	// Wait until the stop goroutine is inside the held uninstall.
+	select {
+	case <-helmMock.uninstallStarted:
+	case <-time.After(10 * time.Second):
+		release()
+		require.FailNow(t, "the stop never reached the uninstall")
+	}
+
+	// Verify deployment log was created with stop action and is running.
 	log, err := logRepo.FindByID(context.Background(), logID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.DeployActionStop, log.Action)
-	assert.Contains(t, []string{models.DeployLogRunning, models.DeployLogSuccess}, log.Status)
+	assert.Equal(t, models.DeployLogRunning, log.Status)
 	assert.Equal(t, inst.ID, log.StackInstanceID)
 
-	// Wait for async completion.
-	time.Sleep(200 * time.Millisecond)
+	updated, err := instanceRepo.FindByID(context.Background(), inst.ID)
+	assert.NoError(t, err)
+	assert.Equal(t, models.StackStatusStopping, updated.Status)
 
-	// Verify final status (StopWithCharts without charts finalizes to stopped).
+	// The in-between state is checked; let the stop finish.
+	release()
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
+	waitForLogDone(t, logRepo, logID)
+
 	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.StackStatusStopped, final.Status)
+	finalLog, err := logRepo.FindByID(context.Background(), logID)
+	assert.NoError(t, err)
+	assert.Equal(t, models.DeployLogSuccess, finalLog.Status)
 }
 
 func TestManager_StopWithCharts_NoCharts(t *testing.T) {
@@ -811,7 +863,8 @@ func TestManager_StopWithCharts_NoCharts(t *testing.T) {
 	assert.NotEmpty(t, logID)
 
 	// Wait for async completion.
-	time.Sleep(200 * time.Millisecond)
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
+	waitForLogDone(t, logRepo, logID)
 
 	// Verify instance is stopped.
 	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
@@ -948,7 +1001,8 @@ func TestManager_Deploy_NilHub(t *testing.T) {
 	assert.NotEmpty(t, logID)
 
 	// Wait for async completion — verify no panic.
-	time.Sleep(200 * time.Millisecond)
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
+	waitForLogDone(t, logRepo, logID)
 
 	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
 	assert.NoError(t, err)
@@ -1110,7 +1164,8 @@ func TestManager_StopWithCharts_Success_NoCharts(t *testing.T) {
 	assert.NotEmpty(t, logID)
 
 	// Wait for async.
-	time.Sleep(200 * time.Millisecond)
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
+	waitForLogDone(t, logRepo, logID)
 
 	// No charts to uninstall means success.
 	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
@@ -1657,13 +1712,35 @@ type mockHelmExecutor struct {
 	getValuesFunc  func(ctx context.Context, releaseName, namespace string, revision int) (string, error)
 	installCalls   []InstallRequest
 	uninstallCalls []UninstallRequest
-	timeout        time.Duration
+	// uninstallStarted and uninstallGate are optional (nil by default). When
+	// uninstallGate is set, every Uninstall call closes uninstallStarted (once,
+	// so any number of waiters work) and then blocks until the gate is closed
+	// or the context ends. Tests use it to assert the in-between state of an
+	// async operation deterministically. installStarted and installGate work
+	// the same way for Install.
+	uninstallStarted chan struct{}
+	uninstallGate    chan struct{}
+	installStarted   chan struct{}
+	installGate      chan struct{}
+	uninstallOnce    sync.Once
+	installOnce      sync.Once
+	timeout          time.Duration
 }
 
 func (m *mockHelmExecutor) Install(ctx context.Context, req InstallRequest) (string, error) {
 	m.mu.Lock()
 	m.installCalls = append(m.installCalls, req)
 	m.mu.Unlock()
+	if m.installGate != nil {
+		if m.installStarted != nil {
+			m.installOnce.Do(func() { close(m.installStarted) })
+		}
+		select {
+		case <-m.installGate:
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
 	if m.installFunc != nil {
 		return m.installFunc(ctx, req)
 	}
@@ -1674,6 +1751,16 @@ func (m *mockHelmExecutor) Uninstall(ctx context.Context, req UninstallRequest) 
 	m.mu.Lock()
 	m.uninstallCalls = append(m.uninstallCalls, req)
 	m.mu.Unlock()
+	if m.uninstallGate != nil {
+		if m.uninstallStarted != nil {
+			m.uninstallOnce.Do(func() { close(m.uninstallStarted) })
+		}
+		select {
+		case <-m.uninstallGate:
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
 	if m.uninstallFunc != nil {
 		return m.uninstallFunc(ctx, req)
 	}
@@ -1887,7 +1974,14 @@ func TestManager_Clean_Success(t *testing.T) {
 	}
 	require.NoError(t, instanceRepo.Create(context.Background(), inst))
 
-	helmMock := &mockHelmExecutor{}
+	// Hold the Helm uninstalls (every call blocks until release) until the
+	// test has checked the in-between status, so the async clean cannot finish
+	// first. The gate is released on every path.
+	gate := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(gate) }) }
+	t.Cleanup(release)
+	helmMock := &mockHelmExecutor{uninstallStarted: make(chan struct{}), uninstallGate: gate}
 
 	// Create a real k8s.Client with a fake clientset that has the namespace.
 	fakeCS := fake.NewSimpleClientset(&corev1.Namespace{
@@ -1903,6 +1997,7 @@ func TestManager_Clean_Success(t *testing.T) {
 		Hub:           hub,
 		MaxConcurrent: 2,
 	})
+	t.Cleanup(mgr.Shutdown) // runs before release: the goroutine cannot outlive the test
 
 	charts := []models.ChartConfig{
 		{ChartName: "redis", DeployOrder: 1},
@@ -1912,6 +2007,14 @@ func TestManager_Clean_Success(t *testing.T) {
 	logID, err := mgr.Clean(context.Background(), inst, charts)
 	assert.NoError(t, err)
 	assert.NotEmpty(t, logID)
+
+	// Wait until the clean goroutine is inside the held uninstall.
+	select {
+	case <-helmMock.uninstallStarted:
+	case <-time.After(10 * time.Second):
+		release()
+		require.FailNow(t, "the clean never reached the uninstall")
+	}
 
 	// Verify deployment log was created with clean action.
 	log, err := logRepo.FindByID(context.Background(), logID)
@@ -1924,8 +2027,12 @@ func TestManager_Clean_Success(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, models.StackStatusCleaning, updated.Status)
 
+	// The in-between state is checked; let the clean finish.
+	release()
+
 	// Wait for async completion.
 	waitForTerminalStatus(t, instanceRepo, inst.ID)
+	waitForLogDone(t, logRepo, logID)
 
 	// Verify final status is draft.
 	final, err := instanceRepo.FindByID(context.Background(), inst.ID)
@@ -1941,6 +2048,8 @@ func TestManager_Clean_Success(t *testing.T) {
 	assert.Equal(t, models.DeployLogSuccess, finalLog.Status)
 	assert.NotNil(t, finalLog.CompletedAt)
 	assert.Contains(t, finalLog.Output, "Namespace stack-clean-test deleted")
+	assert.NotContains(t, finalLog.Output, "ERROR")
+	assert.NotContains(t, finalLog.Output, "WARNING")
 
 	// Verify uninstall was called for each chart in reverse order.
 	uninstalls := helmMock.getUninstallCalls()

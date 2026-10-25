@@ -1,4 +1,4 @@
-.PHONY: loadtest-stackctl gosec e2e-prepare test-e2e-isolated dev dev-otel dev-api-only compose-api-only seed dev-backend dev-frontend dev-local dev-local-backend dev-local-frontend prod prod-backend prod-frontend build clean prune test test-backend test-backend-integration test-backend-all test-frontend test-e2e integration-infra-start integration-infra-stop install docs fmt lint loadtest loadtest-start loadtest-start-backend loadtest-start-frontend loadtest-stop loadtest-stop-backend loadtest-stop-frontend loadtest-backend loadtest-backend-run loadtest-stress loadtest-stress-run loadtest-frontend loadtest-frontend-run loadtest-capture loadtest-k8s-config loadtest-start-replica loadtest-stop-replica loadtest-users loadtest-users-run loadtest-mysql-stats-reset loadtest-mysql-stats loadtest-full loadtest-ramp
+.PHONY: loadtest-stackctl gosec e2e-prepare test-e2e-isolated dev dev-otel dev-api-only compose-api-only seed dev-backend dev-frontend dev-local dev-local-backend dev-local-frontend prod prod-backend prod-frontend build clean prune test test-backend test-backend-integration test-backend-all test-backend-repeat test-frontend test-e2e integration-infra-start integration-infra-stop install docs fmt lint loadtest loadtest-start loadtest-start-backend loadtest-start-frontend loadtest-stop loadtest-stop-backend loadtest-stop-frontend loadtest-backend loadtest-backend-run loadtest-stress loadtest-stress-run loadtest-frontend loadtest-frontend-run loadtest-capture loadtest-k8s-config loadtest-start-replica loadtest-stop-replica loadtest-users loadtest-users-run loadtest-mysql-stats-reset loadtest-mysql-stats loadtest-full loadtest-ramp
 
 # Development mode for both services
 dev:
@@ -86,6 +86,37 @@ test-backend-integration: integration-infra-start
 test-backend-all: integration-infra-start
 	cd backend && go test -tags integration ./... -v
 	$(MAKE) integration-infra-stop
+
+# Run the tests of the changed backend packages repeatedly (-race -count) to catch order-dependent tests.
+# Changed = .go files vs the merge-base of REPEAT_BASE and HEAD (this includes uncommitted changes), plus untracked files.
+# -race needs cgo (CGO_ENABLED=1 and a C toolchain).
+# The variables are exported and read from the environment in the recipe, never expanded into the shell text.
+REPEAT_BASE ?= origin/main
+REPEAT_COUNT ?= 3
+export REPEAT_BASE REPEAT_COUNT
+test-backend-repeat:
+	@case "$$REPEAT_COUNT" in ''|*[!0-9]*|0|0[0-9]*) echo "ERROR: REPEAT_COUNT must be a positive integer, got '$$REPEAT_COUNT'"; exit 1;; esac; \
+	base=$$(git merge-base "$$REPEAT_BASE" HEAD) || { echo "ERROR: cannot find merge-base with REPEAT_BASE=$$REPEAT_BASE; fetch it or set REPEAT_BASE"; exit 1; }; \
+	tracked=$$(git diff --name-only "$$base" -- backend) || { echo "ERROR: git diff failed"; exit 1; }; \
+	untracked=$$(git ls-files --others --exclude-standard -- backend) || { echo "ERROR: git ls-files failed"; exit 1; }; \
+	all=$$(printf '%s\n%s\n' "$$tracked" "$$untracked"); \
+	files=$$(printf '%s\n' "$$all" | grep '\.go$$' | sort -u); \
+	if printf '%s\n' "$$all" | grep -E '^backend/go\.(mod|sum)$$' >/dev/null; then \
+		echo "NOTICE: go.mod or go.sum changed; dependency changes select no package. For a full check run: cd backend && go test -race -count=3 -short ./..."; \
+	fi; \
+	pkgs=""; \
+	for f in $$files; do \
+		[ -f "$$f" ] && grep -q '^//go:build' "$$f" && echo "NOTICE: $$f has a //go:build constraint; go test -short without tags may not compile it"; \
+		d=$$(dirname "$${f#backend/}"); \
+		[ -d "backend/$$d" ] || continue; \
+		ls backend/$$d/*.go >/dev/null 2>&1 || continue; \
+		[ "$$d" = "." ] || d="./$$d"; \
+		pkgs="$$pkgs $$d"; \
+	done; \
+	pkgs=$$(printf '%s\n' $$pkgs | sort -u | tr '\n' ' '); \
+	if [ -z "$$(echo $$pkgs)" ]; then echo "No changed backend Go packages vs $$REPEAT_BASE; nothing to repeat."; exit 0; fi; \
+	echo "Repeating tests ($$REPEAT_COUNT x, -race) for: $$pkgs"; \
+	cd backend && go test -short -race -count="$$REPEAT_COUNT" $$pkgs
 
 test-frontend:
 	cd frontend && npm test
