@@ -344,7 +344,7 @@ func TestDeliverOnce_UsesChannelFormat(t *testing.T) {
 			defer server.Close()
 
 			ch := models.NotificationChannel{ID: "c", Name: "c", WebhookURL: server.URL, Format: tt.format}
-			status, code, msg := NewDispatcher(&mockChannelRepo{}).DeliverOnce(context.Background(), ch,
+			status, code, msg := newTestDispatcher(t, &mockChannelRepo{}).DeliverOnce(context.Background(), ch,
 				EventPayload{EventType: models.NotificationChannelTestEvent, Title: "Test notification"})
 			assert.Equal(t, "success", status)
 			assert.Equal(t, http.StatusOK, code)

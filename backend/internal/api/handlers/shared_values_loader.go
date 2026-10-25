@@ -126,13 +126,15 @@ var yamlErrLine = regexp.MustCompile(`line (\d+)`)
 // line only: the YAML error text can quote value content, which may hold
 // secrets. Each entry version is logged once per process.
 func warnInvalidSharedValues(clusterID string, sv *models.SharedValues, err error) {
-	warnInvalidSharedValuesTo(slog.Default(), clusterID, sv, err)
+	warnInvalidSharedValuesTo(slog.Default(), &warnedInvalidSharedValues, clusterID, sv, err)
 }
 
-// warnInvalidSharedValuesTo is warnInvalidSharedValues with an explicit logger.
-func warnInvalidSharedValuesTo(logger *slog.Logger, clusterID string, sv *models.SharedValues, err error) {
+// warnInvalidSharedValuesTo is warnInvalidSharedValues with an explicit logger
+// and an explicit set of already reported entry versions (warned), so tests can
+// use a fresh set instead of the package-level one.
+func warnInvalidSharedValuesTo(logger *slog.Logger, warned *sync.Map, clusterID string, sv *models.SharedValues, err error) {
 	key := fmt.Sprintf("%s@%d", sv.ID, sv.UpdatedAt.UnixNano())
-	if _, seen := warnedInvalidSharedValues.LoadOrStore(key, struct{}{}); seen {
+	if _, seen := warned.LoadOrStore(key, struct{}{}); seen {
 		return
 	}
 	kind := "syntax"
