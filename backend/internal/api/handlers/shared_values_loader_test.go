@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
+	"backend/internal/cache"
 	"backend/internal/cluster"
 	"backend/internal/models"
 
@@ -106,13 +106,14 @@ func TestLoadSharedValues_OrderAndInvalidYAML(t *testing.T) {
 
 // TestWarnInvalidSharedValues checks that the skip warning names the entry,
 // does not log value content from the YAML error, and is logged once per
-// entry version.
+// entry version within the TTL.
 func TestWarnInvalidSharedValues(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	// A fresh set per run: the package-level set would make a repeated run (-count) log nothing.
-	var warned sync.Map
+	// A fresh cache per run: the package-level one would make a repeated run (-count) log nothing.
+	warned := cache.New[struct{}](invalidSharedValuesWarnTTL, invalidSharedValuesWarnTTL)
+	t.Cleanup(warned.Stop)
 	logger := slog.New(slog.NewTextHandler(&buf, nil))
 	sv := &models.SharedValues{ID: "sv-warn-test-1", Name: "broken", ClusterID: "cl-1", UpdatedAt: time.Unix(100, 0),
 		Values: "password: s3cr3t-value\n- oops\n"}
@@ -120,8 +121,8 @@ func TestWarnInvalidSharedValues(t *testing.T) {
 	yamlErr := yaml.Unmarshal([]byte(sv.Values), &parsed)
 	require.Error(t, yamlErr)
 
-	warnInvalidSharedValuesTo(logger, &warned, "cl-1", sv, yamlErr)
-	warnInvalidSharedValuesTo(logger, &warned, "cl-1", sv, yamlErr)
+	warnInvalidSharedValuesTo(logger, warned, "cl-1", sv, yamlErr)
+	warnInvalidSharedValuesTo(logger, warned, "cl-1", sv, yamlErr)
 
 	out := buf.String()
 	assert.Equal(t, 1, strings.Count(out, "skipping shared values with invalid YAML"), "logged once per entry version")
@@ -133,8 +134,37 @@ func TestWarnInvalidSharedValues(t *testing.T) {
 
 	// A new version of the entry is reported again.
 	sv.UpdatedAt = time.Unix(200, 0)
-	warnInvalidSharedValuesTo(logger, &warned, "cl-1", sv, yamlErr)
+	warnInvalidSharedValuesTo(logger, warned, "cl-1", sv, yamlErr)
 	assert.Equal(t, 2, strings.Count(buf.String(), "skipping shared values with invalid YAML"))
+}
+
+// TestWarnInvalidSharedValues_ReportedAgainAfterTTL checks that a reported
+// entry version is forgotten after the TTL (#711): the set of reported
+// versions stays bounded, and a broken entry is reported again while it stays
+// broken.
+func TestWarnInvalidSharedValues_ReportedAgainAfterTTL(t *testing.T) {
+	t.Parallel()
+
+	const ttl = 50 * time.Millisecond
+	warned := cache.New[struct{}](ttl, ttl)
+	t.Cleanup(warned.Stop)
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	sv := &models.SharedValues{ID: "sv-ttl-1", Name: "broken", ClusterID: "cl-1", UpdatedAt: time.Unix(100, 0), Values: "- oops\n"}
+	var parsed map[string]any
+	yamlErr := yaml.Unmarshal([]byte(sv.Values), &parsed)
+	require.Error(t, yamlErr)
+	const msg = "skipping shared values with invalid YAML"
+
+	warnInvalidSharedValuesTo(logger, warned, "cl-1", sv, yamlErr)
+	warnInvalidSharedValuesTo(logger, warned, "cl-1", sv, yamlErr)
+	assert.Equal(t, 1, strings.Count(buf.String(), msg), "the same version is logged once within the TTL")
+
+	time.Sleep(2 * ttl)
+	_, kept := warned.Get(fmt.Sprintf("%s@%d", sv.ID, sv.UpdatedAt.UnixNano()))
+	assert.False(t, kept, "the reported version is forgotten after the TTL")
+	warnInvalidSharedValuesTo(logger, warned, "cl-1", sv, yamlErr)
+	assert.Equal(t, 2, strings.Count(buf.String(), msg), "the same version is logged again after the TTL")
 }
 
 // TestWarnInvalidSharedValues_PackageLevelDedup checks that the production
@@ -143,7 +173,7 @@ func TestWarnInvalidSharedValues(t *testing.T) {
 //
 // It does not call t.Parallel(): it replaces slog.Default(), which is global
 // state. The ID is unique per run so that -count=N works with the
-// package-level set, which is never reset.
+// package-level cache, which a test never resets.
 func TestWarnInvalidSharedValues_PackageLevelDedup(t *testing.T) {
 	var buf bytes.Buffer
 	prev := slog.Default()
