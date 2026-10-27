@@ -17,6 +17,10 @@ import { STUB_HTTP_PORT, STUB_HTTP_URL, STUB_HTTPS_PORT, type StubRecord } from 
  *   POST /actions/job       202 with a job_id; GET /jobs/{job_id}/log serves
  *                           its log: two polls "running", then "succeeded"
  *   POST /actions/redirect  302 to a URL with a token, HTML body
+ *   POST /ext/<name>/actions/refresh-db  200 {"ok": true, "extension": <name>}
+ *   POST /ext/<name>/hooks/event         200 {"allowed": true}
+ *                           (<name> is postgres or mysql: two extensions of
+ *                           two teams, see e2e/team-extensions.spec.ts)
  *
  * HTTPS on 127.0.0.1:18443: a webhook receiver for the notification
  * channels (#592). POST /webhook/<key> records the request and answers 200. The backend
@@ -127,6 +131,12 @@ async function handleHttp(req: http.IncomingMessage, res: http.ServerResponse) {
       return;
     }
     send(res, 200, { ok: true, echo: params, request_id: envelope.request_id ?? '' });
+    return;
+  }
+  const extMatch = /^\/ext\/([a-z0-9-]+)\/(actions\/refresh-db|hooks\/event)$/.exec(url.pathname);
+  if (req.method === 'POST' && extMatch) {
+    if (extMatch[2] === 'hooks/event') send(res, 200, { allowed: true });
+    else send(res, 200, { ok: true, extension: extMatch[1], request_id: parseJSON(rec.body).request_id ?? '' });
     return;
   }
   if (req.method === 'POST' && url.pathname === '/actions/job') {

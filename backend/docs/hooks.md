@@ -84,6 +84,71 @@ therefore commit the file to version control.
 - `blocking`: optional. Default `false`. Only for `post-deploy`: the subscription must list `post-deploy`, or the startup fails. See [Blocking post-deploy subscribers](#blocking-post-deploy-subscribers).
 - `failure_policy`: optional. Default `ignore`. Set `fail` to block on an error.
 - `secret_env`: optional. It names an environment variable that holds the HMAC (hash-based message authentication code) secret. If you set it, the variable must be non-empty in the process environment. Otherwise the startup fails (fail closed).
+- `applies_to`: optional. Calls the subscriber only for some instances. See [Limit to some instances](#limit-to-some-instances-applies_to). Not allowed with `cleanup-policy-executed` (one event for many instances): the startup fails.
+
+### Limit to some instances (`applies_to`)
+
+A subscription or an action can apply to some instances only, for example
+the stacks of one team:
+
+```json
+{
+  "actions": [
+    {"name": "refresh-db-postgres", "url": "https://handlers.example.com/postgres", "label": "Refresh database",
+     "applies_to": {"template_categories": ["team-a"]}},
+    {"name": "refresh-db-mysql", "url": "https://handlers.example.com/mysql", "label": "Refresh database",
+     "applies_to": {"template_categories": ["team-b"], "cluster_ids": ["cluster-dev"]}}
+  ],
+  "subscriptions": [
+    {"name": "team-a-schema-gate", "events": ["pre-deploy"], "url": "https://handlers.example.com/gate",
+     "failure_policy": "fail", "applies_to": {"template_ids": ["6c9f1e14-..."]}}
+  ]
+}
+```
+
+| Field | Matches |
+|---|---|
+| `template_ids` | The template of the instance's definition (`source_template_id`): instantiate, quick deploy, import or `PUT /stack-definitions/:id/template-link` set it. |
+| `template_categories` | The `category` of that template. Trimmed, case-insensitive, exact (no globs). |
+| `definition_ids` | The `stack_definition_id` of the instance. |
+| `cluster_ids` | The `cluster_id` of the instance. |
+
+Rules:
+- The fields combine with AND, the values inside one field with OR.
+- A missing or empty `applies_to` applies to every instance, as before.
+- An instance whose definition has no template, or whose template was deleted, never matches `template_ids` or `template_categories`.
+- The current template decides, not a published version. The server keeps the template of a definition in a cache for at most one minute: a changed category or template link applies after that time.
+- At most 50 values per field. A value must not be empty; an ID has at most 36 characters, a category or a cluster ID at most 255. An unknown field in `applies_to` (for example a typo), or a misspelt `applies_to` key itself (for example `appliesTo` or `applies-to`), stops the startup, so a scope can never become empty by mistake.
+- `cluster_ids` must not contain `all` (the cleanup policy value): no instance has it. Omit `cluster_ids` to match every cluster. An instance without a `cluster_id` matches no `cluster_ids`.
+- The server does not check that the IDs exist.
+
+When the scope needs the template and the template cannot be read (the
+lookup fails, or takes longer than 2 seconds), the server does not guess:
+
+| Path | Result |
+|---|---|
+| `GET .../actions` | The action is left out, and the response has `"scope_incomplete": true`. Actions without a template scope are listed. |
+| `POST .../actions/:name` | 503 "Could not check where the action applies. Try again." The subscriber is not called, and no run is stored. |
+| Event, `failure_policy: fail` | The operation fails with `<event> hook "<name>" failed (could not check where it applies; try again)`. A gate is never skipped silently. As for any failed `fail` subscriber, the later subscribers of the event are not called. `POST /stack-instances` and `DELETE /stack-instances/:id` answer 503 "Could not check where the pre-instance-create (or pre-instance-delete) hook applies. Try again." instead of the 403 of a denial. |
+| Event, `failure_policy: ignore` | The subscriber is skipped, with a warning in the log. |
+
+An action outside its scope:
+- `GET .../actions` does not list it.
+- `POST .../actions/:name` answers 404 `unknown action "<name>"`, the same answer as for an action that does not exist.
+- The job log (`GET .../actions/:name/jobs/:job_id/log`) does not check the scope, so a run that started before a config change keeps its log. The modify rule and the instance check of the subscriber still apply.
+- The [action run history](#action-run-history) is not filtered.
+
+A blocking `post-deploy` subscriber counts only for the instances it
+applies to: an instance without a matching blocking subscriber never becomes
+`stabilizing`, also during a server shutdown. `post_deploy_hook_until` uses
+the timeouts of the matching subscribers, and of the ones whose scope could
+not be checked (the phase then fails or skips them as above). The deploy
+deadline still counts all blocking subscribers (an upper bound).
+
+**Server version.** A k8s-stack-manager version without `applies_to`
+ignores the field: the subscription or the action then applies to every
+instance. Upgrade the server before you add `applies_to` to a shared
+config, and check the `hooks configured` startup log line.
 
 ### Request envelope
 
@@ -119,7 +184,10 @@ The body has `apiVersion: hooks.k8sstackmanager.io/v1`:
     "branch": "main",
     "cluster_id": "cluster-1",
     "cluster_name": "Production",
-    "status": "draft"
+    "status": "draft",
+    "template_id": "tpl-...",
+    "template_name": "Team A web stack",
+    "template_category": "team-a"
   },
   "deployment": {
     "id": "log-...",
@@ -145,6 +213,14 @@ A subscriber (for example a chat notifier) can show it without an API call.
 - The server waits at most 2 seconds for the lookup, so a slow database does not delay a gate such as `pre-deploy`.
 - The field is omitted when `cluster_id` is empty, when the cluster no longer exists, or when the lookup fails or times out. The server sends the event in all cases.
 - Action requests (`instance` in the request of `POST .../actions/:name`) have the same field.
+
+`instance.template_id`, `instance.template_name` and `instance.template_category`
+describe the template of the instance's definition (`source_template_id`), so
+one subscriber can route by team without an API call.
+- The category is sent as stored (not in lower case).
+- The server keeps the template of a definition in a cache for at most one minute, and waits at most 2 seconds for the lookup. The template and the cluster name lookups run at the same time.
+- The fields are omitted when the definition has no template, when the template no longer exists, or when the lookup fails or times out.
+- Action requests have the same fields.
 
 `trigger` tells what started the operation of the event:
 
@@ -276,14 +352,17 @@ the deploy waits for the subscriber:
 ```
 
 1. After the Helm releases are ready (and after the readiness wait), the
-   deployer calls the blocking subscribers one after the other, in
-   registration order. The instance has the status `stabilizing`.
+   deployer calls the blocking subscribers that apply to the instance
+   (`applies_to`) one after the other, in registration order. The instance
+   has the status `stabilizing`. When none applies, the phase does not
+   start.
 2. The subscriber can stream `LOG: <message>` lines (the same protocol as
    `pre-deploy`). They go to the deploy log and to the WebSocket log stream.
    The deploy log keeps the last 16 KiB of these lines.
 3. Each call is limited by its `timeout_seconds` (maximum 3600). The blocking
    phase has its own time limit: the sum of the timeouts of the blocking
-   subscribers plus one minute. It does not change the Helm deploy budget.
+   subscribers that apply to the instance plus one minute. It does not
+   change the Helm deploy budget.
 4. After all blocking subscribers returned, the instance gets `running`, the
    owner gets "Deployment succeeded", the core calls the non-blocking
    `post-deploy` subscribers, and `deploy-finalized` fires.
@@ -451,6 +530,7 @@ Content-Type: application/json
 | `confirm` | no | Warning text in the run dialog. Use it for destructive actions. Maximum 1000 characters. |
 | `parameters` | no | Parameter schema for the UI form (see below). Maximum 20 parameters. |
 | `log_path` | no | Path template of the job log of an asynchronous action (see [Asynchronous actions](#asynchronous-actions-and-the-job-log)). |
+| `applies_to` | no | Lists and runs the action only for some instances. See [Limit to some instances](#limit-to-some-instances-applies_to). |
 
 The UI fields are optional. A config without them stays valid. The backend
 checks them at startup. An invalid field stops the startup.
@@ -480,8 +560,9 @@ validate all parameters in the subscriber.
 GET /api/v1/stack-instances/:id/actions
 ```
 
-Any authenticated user who can view the instance gets the list. The response
-never contains `url`, `secret_env` or the secret:
+Any authenticated user who can view the instance gets the list. It holds the
+actions that apply to the instance (`applies_to`). The response never
+contains `url`, `secret_env`, `applies_to` or the secret:
 
 ```json
 {
@@ -509,6 +590,9 @@ never contains `url`, `secret_env` or the secret:
 same rule as deploy). The list is sorted by action name. Without an action
 registry, the list is empty (200). A parameter with `sensitive: true` in the
 config has `"sensitive": true` in the list (omitted when false).
+`scope_incomplete: true` (omitted when false) means that actions limited to
+templates were left out because the template of the instance could not be
+read; the web UI shows "Some actions could not be loaded".
 
 ### Request envelope
 
@@ -582,9 +666,9 @@ API error mappings:
 | 200 | The subscriber responded. See `result`. `status_code` echoes the HTTP code of the subscriber. |
 | 400 | Invalid parameters, malformed body, or a parameter that does not match the declared schema. |
 | 403 | The caller is not the owner, an admin or a devops user. |
-| 404 | Unknown instance, or unknown action name. |
+| 404 | Unknown instance, unknown action name, or an action whose `applies_to` does not match the instance. |
 | 502 | The subscriber is unreachable, returned a transport error, or returned a non-JSON body (status below 400). |
-| 503 | The action registry is not configured on this server. |
+| 503 | The action registry is not configured on this server, or the template of the instance could not be read to check the `applies_to` of the action. |
 
 ### Asynchronous actions and the job log
 
@@ -813,7 +897,10 @@ The `hooks` OpenTelemetry meter scope emits these metrics:
 | `hook.action_invocation_duration` | Histogram (s) | `hook.action` |
 
 `hook.outcome` is a small, stable set: `success`, `denied`, `http_error`,
-`transport_error`, `timeout`, `unknown_action`, `marshal_error`.
+`transport_error`, `timeout`, `unknown_action`, `scope_unknown`,
+`marshal_error`. An action invoked for an instance outside its `applies_to`
+counts as `unknown_action`; `scope_unknown` counts invokes whose scope could
+not be checked.
 
 ### Traces
 

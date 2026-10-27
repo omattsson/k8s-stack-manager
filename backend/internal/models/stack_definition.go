@@ -36,6 +36,14 @@ type StackDefinitionFilter struct {
 	OwnerID string
 }
 
+// DefinitionTemplateRef is the template of a stack definition
+// (TemplateRefsByIDs).
+type DefinitionTemplateRef struct {
+	TemplateID       string
+	TemplateName     string
+	TemplateCategory string
+}
+
 // StackDefinitionRepository defines data access operations for stack definitions.
 type StackDefinitionRepository interface {
 	Create(ctx context.Context, definition *StackDefinition) error
@@ -57,6 +65,10 @@ type StackDefinitionRepository interface {
 	// NamesByIDs returns the name of each definition in ids that exists,
 	// keyed by ID, in one query.
 	NamesByIDs(ctx context.Context, ids []string) (map[string]string, error)
+	// TemplateRefsByIDs returns the template of each definition in ids whose
+	// source_template_id names an existing template, keyed by definition ID,
+	// in one query. A definition without a template is missing.
+	TemplateRefsByIDs(ctx context.Context, ids []string) (map[string]DefinitionTemplateRef, error)
 	ListByOwner(ctx context.Context, ownerID string) ([]StackDefinition, error)
 	ListByTemplate(ctx context.Context, templateID string) ([]StackDefinition, error)
 	CountByTemplateIDs(ctx context.Context, templateIDs []string) (map[string]int, error)

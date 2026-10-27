@@ -31,7 +31,11 @@ type ActionSubscription struct {
 	LogPath        string            `json:"log_path,omitempty"`
 	Parameters     []ActionParameter `json:"parameters,omitempty"`
 	TimeoutSeconds int               `json:"timeout_seconds,omitempty"`
-	Secret         string            `json:"-"`
+	// AppliesTo limits the action to some instances (#720): the list
+	// endpoint shows it only for them, and an invoke for another instance
+	// answers as for an unknown action. Empty: every instance.
+	AppliesTo Scope  `json:"applies_to"`
+	Secret    string `json:"-"`
 }
 
 // ActionRequest is the JSON payload posted to action subscribers.
@@ -75,6 +79,9 @@ type ActionRegistry struct {
 	// clusterNames sets instance.cluster_name in requests
 	// (WithClusterNames); nil leaves it empty.
 	clusterNames *ClusterNameResolver
+	// templates sets the template fields of the instance and decides the
+	// applies_to scopes that need them (WithTemplates).
+	templates *TemplateResolver
 }
 
 // NewActionRegistry validates each subscription, normalizes optional fields,
@@ -116,15 +123,54 @@ func (r *ActionRegistry) Lookup(name string) (ActionSubscription, bool) {
 	return s, ok
 }
 
-// ErrUnknownAction is returned by Invoke when the action is not registered.
+// ErrUnknownAction is returned by Invoke and LookupFor when the action is
+// not registered, or when its applies_to does not match the instance (the
+// same answer, so the list and the invoke agree).
 type ErrUnknownAction struct{ Name string }
 
 func (e ErrUnknownAction) Error() string {
 	return fmt.Sprintf("unknown action %q", e.Name)
 }
 
+// LookupFor returns the action name for the instance ref, and ref with the
+// template fields set (pass it to Invoke, so the instance is not looked up
+// again). It returns ErrUnknownAction when the action is not registered or
+// does not apply to the instance, and ErrScopeUnknown when its applies_to
+// needs the template and the lookup did not answer. Both errors are counted
+// in the action metrics, as an unknown action in Invoke.
+func (r *ActionRegistry) LookupFor(ctx context.Context, name string, ref *InstanceRef) (ActionSubscription, *InstanceRef, error) {
+	sub, ok := r.Lookup(name)
+	if !ok {
+		return ActionSubscription{}, ref, r.refuse(ctx, name, ErrUnknownAction{Name: name})
+	}
+	if sub.AppliesTo.needsTemplate() {
+		ref = r.templates.resolve(ctx, ref)
+	}
+	switch sub.AppliesTo.decide(ref) {
+	case scopeNoMatch:
+		return ActionSubscription{}, ref, r.refuse(ctx, name, ErrUnknownAction{Name: name})
+	case scopeUnknown:
+		return ActionSubscription{}, ref, r.refuse(ctx, name, ErrScopeUnknown)
+	}
+	return sub, ref, nil
+}
+
+// refuse records an invocation that did not reach a subscriber and returns
+// err.
+func (r *ActionRegistry) refuse(ctx context.Context, name string, err error) error {
+	outcome := outcomeUnknownAction
+	if errors.Is(err, ErrScopeUnknown) {
+		outcome = outcomeScopeUnknown
+	}
+	_, _, finish := startActionSpan(ctx, name, "")
+	finish(outcome, err, 0)
+	return err
+}
+
 // Invoke posts an ActionRequest to the subscriber and returns its raw response.
-// Returns ErrUnknownAction when name is not registered. Network/HTTP errors
+// Returns ErrUnknownAction when name is not registered or its applies_to does
+// not match the instance, and ErrScopeUnknown when the scope cannot be
+// checked (see LookupFor); the subscriber is then not called. Network/HTTP errors
 // propagate; non-2xx responses are returned as ActionResult with the status
 // and body for the caller to surface. A redirect is not followed: the 3xx
 // response is returned like any other non-2xx response.
@@ -134,15 +180,17 @@ func (e ErrUnknownAction) Error() string {
 // The outbound request carries W3C traceparent so subscribers can stitch
 // their own spans as children.
 func (r *ActionRegistry) Invoke(ctx context.Context, name string, instance *InstanceRef, params map[string]any) (ActionResult, error) {
-	sub, ok := r.Lookup(name)
-	if !ok {
-		// Record an outcome metric for unknown actions too — operators want to
-		// see spikes in bad action names, not just invocation successes.
-		_, _, finish := startActionSpan(ctx, name, "")
-		err := ErrUnknownAction{Name: name}
-		finish(outcomeUnknownAction, err, 0)
+	// Unknown and out-of-scope actions are counted too: operators want to
+	// see spikes in bad action names, not just invocation successes.
+	sub, instance, err := r.LookupFor(ctx, name, instance)
+	if err != nil {
 		return ActionResult{}, err
 	}
+	// The request carries the template fields also when the scope does not
+	// need them (no second lookup when LookupFor resolved the instance). The
+	// template and cluster name lookups run at the same time.
+	template := r.templates.startResolve(ctx, instance)
+	instance = withTemplateOf(r.clusterNames.instanceRef(ctx, instance), template())
 
 	req := ActionRequest{
 		APIVersion: envelopeAPIVersion,
@@ -150,7 +198,7 @@ func (r *ActionRegistry) Invoke(ctx context.Context, name string, instance *Inst
 		Action:     name,
 		Timestamp:  r.now(),
 		RequestID:  newRequestID(),
-		Instance:   r.clusterNames.instanceRef(ctx, instance),
+		Instance:   instance,
 		Parameters: params,
 	}
 
@@ -258,6 +306,9 @@ func validateAction(a *ActionSubscription) error {
 		return fmt.Errorf("confirm must be at most %d characters", maxActionConfirmLen)
 	}
 	if err := validateLogPath(a.LogPath); err != nil {
+		return err
+	}
+	if err := a.AppliesTo.Validate(); err != nil {
 		return err
 	}
 	// Copy before normalizing so the caller's slice stays unchanged.

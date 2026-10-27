@@ -355,6 +355,7 @@ An operator can register custom actions on the server, for example "refresh-db" 
 
 - The instance detail page has an **Actions** menu. The custom actions are the first group of the menu. The menu also has Export values, Clone, and (for a user who can change the instance) Clean namespace and Delete.
 - Every user who can see the instance sees the custom actions. Only the owner, an `admin`, or a `devops` user can run an action. For other users the items are disabled.
+- An action can be limited to some stacks, for example the stacks of one team's templates (`applies_to`, see [EXTENDING.md](EXTENDING.md#per-team-hooks-and-actions)). A stack shows only the actions that apply to it. When the server cannot check this, the menu shows "Some actions could not be loaded."
 - A click on an action opens a dialog. The dialog shows the description of the action and, if the action has one, a warning text. Read the warning before you click **Run**.
 - Some actions have parameters. The dialog shows a form with a text field, a switch, or a list. A field marked with `*` is required. A secret parameter (`sensitive: true`) shows as a password field.
 - After the run, the dialog shows the status code and the result of the action. A status code that is not 2xx is an error.

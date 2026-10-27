@@ -171,6 +171,38 @@ func (r *GORMStackDefinitionRepository) NamesByIDs(ctx context.Context, ids []st
 	return namesByIDs(r.db.WithContext(ctx), &models.StackDefinition{}, ids)
 }
 
+// TemplateRefsByIDs returns the template of each definition in ids whose
+// source_template_id names an existing template, keyed by definition ID. One
+// query joins the template on its primary key and selects only the ID, name
+// and category.
+func (r *GORMStackDefinitionRepository) TemplateRefsByIDs(ctx context.Context, ids []string) (map[string]models.DefinitionTemplateRef, error) {
+	result := make(map[string]models.DefinitionTemplateRef, len(ids))
+	if len(ids) == 0 {
+		return result, nil
+	}
+	var rows []struct {
+		DefinitionID     string
+		TemplateID       string
+		TemplateName     string
+		TemplateCategory string
+	}
+	if err := r.db.WithContext(ctx).Model(&models.StackDefinition{}).
+		Select("stack_definitions.id AS definition_id, stack_templates.id AS template_id, stack_templates.name AS template_name, stack_templates.category AS template_category").
+		Joins("JOIN stack_templates ON stack_templates.id = stack_definitions.source_template_id").
+		Where("stack_definitions.id IN ?", ids).
+		Find(&rows).Error; err != nil {
+		return nil, dberrors.NewDatabaseError("template_refs_by_ids", err)
+	}
+	for _, row := range rows {
+		result[row.DefinitionID] = models.DefinitionTemplateRef{
+			TemplateID:       row.TemplateID,
+			TemplateName:     row.TemplateName,
+			TemplateCategory: row.TemplateCategory,
+		}
+	}
+	return result, nil
+}
+
 // Count returns the total number of stack definitions.
 func (r *GORMStackDefinitionRepository) Count(ctx context.Context) (int64, error) {
 	var count int64

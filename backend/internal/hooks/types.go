@@ -135,6 +135,17 @@ type InstanceRef struct {
 	// cluster is unknown (deleted, no cluster_id, or the lookup failed).
 	ClusterName string `json:"cluster_name,omitempty"`
 	Status      string `json:"status,omitempty"`
+	// TemplateID, TemplateName and TemplateCategory describe the template of
+	// the instance's definition (source_template_id). The dispatcher and the
+	// action registry set them (WithTemplates). Omitted when the definition
+	// has no template, the template is gone, or the lookup failed (#720).
+	TemplateID       string `json:"template_id,omitempty"`
+	TemplateName     string `json:"template_name,omitempty"`
+	TemplateCategory string `json:"template_category,omitempty"`
+	// templateResolved is set when the template fields come from a lookup
+	// that answered (also "no template"). Without it, an applies_to scope
+	// that needs the template is unknown.
+	templateResolved bool
 }
 
 // DeploymentRef identifies a deployment in progress.
@@ -178,6 +189,9 @@ type Subscription struct {
 	// subscriber (progress lines go to the deploy log) before the instance
 	// becomes running. Fire and FireWithProgress skip a blocking
 	// subscription for post-deploy; FireBlocking calls it.
-	Blocking bool   `json:"blocking,omitempty"`
-	Secret   string `json:"-"`
+	Blocking bool `json:"blocking,omitempty"`
+	// AppliesTo limits the subscription to some instances (#720). Empty:
+	// every instance.
+	AppliesTo Scope  `json:"applies_to"`
+	Secret    string `json:"-"`
 }

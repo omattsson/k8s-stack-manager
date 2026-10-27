@@ -46,6 +46,15 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("subscription %q: blocking requires the %s event", s.Name, EventPostDeploy)
 		}
 
+		if err := s.AppliesTo.Validate(); err != nil {
+			return fmt.Errorf("subscription %q: %w", s.Name, err)
+		}
+		// cleanup-policy-executed is one event for many instances: an
+		// instance scope cannot apply to it.
+		if !s.AppliesTo.IsEmpty() && hasEvent(s.Events, EventCleanupPolicyExecuted) {
+			return fmt.Errorf("subscription %q: applies_to cannot be used with the %s event", s.Name, EventCleanupPolicyExecuted)
+		}
+
 		if s.URL == "" {
 			return fmt.Errorf("subscription %q: url is required", s.Name)
 		}

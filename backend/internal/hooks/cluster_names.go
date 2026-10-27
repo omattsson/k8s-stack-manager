@@ -2,12 +2,10 @@ package hooks
 
 import (
 	"context"
-	"log/slog"
 	"sync"
 	"time"
 
 	"backend/internal/cache"
-	"backend/internal/ctxutil"
 )
 
 // clusterNameCacheTTL is how long the resolver keeps a cluster name. A
@@ -86,61 +84,11 @@ func (a *ActionRegistry) WithClusterNames(r *ClusterNameResolver) *ActionRegistr
 	return a
 }
 
-// lookupResult is the answer of one lookup call.
-type lookupResult struct {
-	names map[string]string
-	err   error
-}
-
-// names returns the name of each ID in ids ("" when unknown); one query reads the uncached IDs.
-// The wait ends at the timeout or ctx end; the query keeps ctx values, not its cancel (#656).
+// names returns the name of each ID in ids ("" when unknown or when the
+// lookup did not answer, see batchLookup).
 func (r *ClusterNameResolver) names(ctx context.Context, ids []string) map[string]string {
-	out := make(map[string]string, len(ids))
-	var missing []string
-	for _, id := range ids {
-		if _, done := out[id]; done {
-			continue
-		}
-		if name, ok := r.cache.Get(id); ok {
-			out[id] = name
-			continue
-		}
-		out[id] = ""
-		missing = append(missing, id)
-	}
-	if len(missing) == 0 {
-		return out
-	}
-
-	done := make(chan lookupResult, 1)
-	queryCtx, cancelQuery := ctxutil.Detach(ctx, r.queryTimeout)
-	go func() {
-		defer cancelQuery()
-		found, err := r.lookup(queryCtx, missing)
-		if err == nil {
-			for _, id := range missing {
-				r.cache.Set(id, found[id])
-			}
-		}
-		done <- lookupResult{names: found, err: err}
-	}()
-
-	timer := time.NewTimer(r.timeout)
-	defer timer.Stop()
-	select {
-	case res := <-done:
-		if res.err != nil {
-			// Display data only: the dispatch goes on without the name.
-			slog.Warn("hooks: cluster name lookup failed", "error", res.err)
-			return out
-		}
-		for _, id := range missing {
-			out[id] = res.names[id]
-		}
-	case <-timer.C:
-		slog.Warn("hooks: cluster name lookup timed out", "timeout", r.timeout)
-	case <-ctx.Done():
-	}
+	// Display data only: the dispatch goes on without the name.
+	out, _ := batchLookup(ctx, r.cache, ids, r.timeout, r.queryTimeout, "cluster name", r.lookup)
 	return out
 }
 

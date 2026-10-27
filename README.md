@@ -100,6 +100,7 @@ There are two mechanisms:
 
 - **Event hooks.** The application sends HTTP POST requests to subscribers on lifecycle events (`pre-deploy`, `post-instance-create`, and others). A subscriber with `failure_policy: fail` can stop an operation, for example to enforce a policy.
 - **Actions.** `POST /api/v1/stack-instances/:id/actions/:name` sends a request to a subscriber that you register. The application returns the answer of the subscriber to the caller. stackctl can show actions as subcommands through [plugin discovery](https://github.com/omattsson/stackctl/blob/main/EXTENDING.md).
+- **Per-team extensions.** `applies_to` limits an action or an event hook to some templates, template categories, definitions or clusters, so each team's stacks get their own extensions (see [EXTENDING.md](EXTENDING.md#per-team-hooks-and-actions)).
 
 Both mechanisms use plain HTTP with HMAC (hash-based message authentication code) signing. See the examples in Python ([backend/examples/webhook-handler-python/](backend/examples/webhook-handler-python/)) and in Go ([backend/examples/webhook-handler/](backend/examples/webhook-handler/)).
 

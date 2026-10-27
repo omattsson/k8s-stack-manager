@@ -9,6 +9,21 @@ import ActionDialog from './ActionDialog';
 /** Secondary text of an action that the current user may not run. */
 export const ACTION_NOT_ALLOWED_TEXT = 'Only the owner, an admin or a devops user can run this action';
 
+/** Menu text when the server left out actions it could not check (`scope_incomplete`). */
+export const ACTIONS_INCOMPLETE_TEXT = 'Some actions could not be loaded. Try again later.';
+
+/**
+ * Disabled menu item that tells the user that some actions are missing
+ * from the menu (the server could not check where they apply).
+ *
+ * @returns The menu item.
+ */
+export const ActionsIncompleteItem = () => (
+  <MenuItem disabled>
+    <ListItemText secondary={ACTIONS_INCOMPLETE_TEXT} />
+  </MenuItem>
+);
+
 /**
  * Secondary text of an action menu item: the action description, or
  * {@link ACTION_NOT_ALLOWED_TEXT} when the current user may not run it.
@@ -23,6 +38,8 @@ export const actionSecondaryText = (action: InstanceAction): string | undefined 
 export interface InstanceActionsState {
   /** Custom actions that the server lists. Empty when it lists none or the list call fails. */
   actions: InstanceAction[];
+  /** True when the server left out actions that it could not check for this instance. */
+  scopeIncomplete: boolean;
   /** Open the dialog of an action (confirmation text and parameter form). */
   openAction: (action: InstanceAction) => void;
   /** The open action dialog, or null. Render it once in the page. */
@@ -49,6 +66,7 @@ export const useInstanceActions = (
   options: InstanceActionsOptions = {},
 ): InstanceActionsState => {
   const [actions, setActions] = useState<InstanceAction[]>([]);
+  const [scopeIncomplete, setScopeIncomplete] = useState(false);
   const [selected, setSelected] = useState<InstanceAction | null>(null);
 
   useEffect(() => {
@@ -57,11 +75,15 @@ export const useInstanceActions = (
     instanceService
       .listActions(instanceId)
       .then((res) => {
-        if (!cancelled) setActions(Array.isArray(res?.actions) ? res.actions : []);
+        if (cancelled) return;
+        setActions(Array.isArray(res?.actions) ? res.actions : []);
+        setScopeIncomplete(res?.scope_incomplete === true);
       })
       .catch(() => {
         // The actions are optional: without the list, the menu shows none.
-        if (!cancelled) setActions([]);
+        if (cancelled) return;
+        setActions([]);
+        setScopeIncomplete(false);
       });
     return () => {
       cancelled = true;
@@ -81,7 +103,7 @@ export const useInstanceActions = (
     />
   ) : null;
 
-  return { actions, openAction, dialog };
+  return { actions, scopeIncomplete, openAction, dialog };
 };
 
 interface InstanceActionsMenuProps {
@@ -91,18 +113,18 @@ interface InstanceActionsMenuProps {
 
 /**
  * "Actions" button with a menu of the custom actions registered on the
- * server. Hidden when no action is registered. An action that the current
- * user may not run is shown disabled. A click opens a dialog with the
- * confirmation text and the parameter form.
+ * server for the instance. Hidden when there is no action and no action was
+ * left out. An action that the current user may not run is shown disabled.
+ * A click opens a dialog with the confirmation text and the parameter form.
  */
 const InstanceActionsMenu = ({ instanceId }: InstanceActionsMenuProps) => {
-  const { actions, openAction, dialog } = useInstanceActions(instanceId);
+  const { actions, scopeIncomplete, openAction, dialog } = useInstanceActions(instanceId);
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const baseId = useId();
   const buttonId = `${baseId}-button`;
   const menuId = `${baseId}-menu`;
 
-  if (actions.length === 0) return null;
+  if (actions.length === 0 && !scopeIncomplete) return null;
 
   return (
     <>
@@ -136,6 +158,7 @@ const InstanceActionsMenu = ({ instanceId }: InstanceActionsMenuProps) => {
             <ListItemText primary={a.label} secondary={actionSecondaryText(a)} />
           </MenuItem>
         ))}
+        {scopeIncomplete && <ActionsIncompleteItem />}
       </Menu>
       {dialog}
     </>

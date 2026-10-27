@@ -768,7 +768,7 @@ func TestManager_BlockingPostDeploy_ShutdownBeforePhase(t *testing.T) {
 	tests := []struct {
 		name string
 		// atPhaseRead cancels the shutdown context at the first instance
-		// read of the phase, after its shutdown check.
+		// read of the phase, before its shutdown check.
 		atPhaseRead bool
 	}{
 		{name: "shutdown during the Helm install"},

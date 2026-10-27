@@ -230,6 +230,33 @@ Event subscriptions and action subscriptions are both in the `HOOKS_CONFIG_FILE`
 - `failure_policy`: `fail` or `ignore`. The default is `ignore`.
 - `name` must be unique, and `url` must be an `http` or `https` URL.
 - Actions also accept optional UI fields: `label`, `confirm`, `parameters` and `log_path`. See [Actions in the web UI](#actions-in-the-web-ui).
+- `applies_to` (optional, subscriptions and actions) limits a subscriber or an action to some instances. See [Per-team hooks and actions](#per-team-hooks-and-actions).
+
+### Per-team hooks and actions
+
+Teams often need different extensions: team A's templates use Postgres and
+team B's use MySQL, so each needs its own "Refresh database". Give each
+action an `applies_to`, and each team's stacks show and run only their own:
+
+```json
+{
+  "actions": [
+    {"name": "refresh-db-postgres", "url": "http://refresh-db.extensions.svc.cluster.local:8080/postgres",
+     "label": "Refresh database", "applies_to": {"template_categories": ["team-a"]}},
+    {"name": "refresh-db-mysql", "url": "http://refresh-db.extensions.svc.cluster.local:8080/mysql",
+     "label": "Refresh database", "applies_to": {"template_categories": ["team-b"]}}
+  ]
+}
+```
+
+- `applies_to` takes `template_ids`, `template_categories` (trimmed, case-insensitive), `definition_ids` and `cluster_ids`. Fields combine with AND, values with OR. Empty: every instance.
+- The template is the one of the instance's definition (`source_template_id`). A stack whose definition has no template matches no template scope.
+- An action outside its scope is not listed, and an invoke answers 404, as for an unknown action.
+- An event subscription with `applies_to` runs only for those instances. A `pre-deploy` gate with `failure_policy: fail` fails the deploy when the template cannot be read: it is never skipped silently.
+- One subscriber can also route by itself: the envelope and the action request carry `instance.template_id`, `template_name` and `template_category`.
+- A server version without `applies_to` ignores the field, and the action or subscription applies to every stack. Upgrade the server first.
+
+The full rules, limits and failure answers are in [backend/docs/hooks.md](backend/docs/hooks.md#limit-to-some-instances-applies_to).
 
 ## Request envelope: EventEnvelope
 
@@ -261,7 +288,10 @@ The body has `apiVersion: hooks.k8sstackmanager.io/v1` and `kind: EventEnvelope`
     "branch": "main",
     "cluster_id": "cluster-1",
     "cluster_name": "Production",
-    "status": "draft"
+    "status": "draft",
+    "template_id": "tpl-...",
+    "template_name": "Team A web stack",
+    "template_category": "team-a"
   },
   "deployment": { "id": "log-...", "started_at": "..." },
   "charts":   [{"name": "web", "release_name": "web", "version": "1.2.3", "source_repo_url": "https://git.example.com/org/web", "build_pipeline_id": "42", "branch": "main", "image_tag": "main"}],
@@ -274,6 +304,8 @@ The body has `apiVersion: hooks.k8sstackmanager.io/v1` and `kind: EventEnvelope`
 The core does not fill every field for every event. A handler must check that a field is present before it uses the field.
 
 `instance.cluster_name` (and `cleanup_policy.cluster_name`) is the name of the cluster of `cluster_id`. The core omits it when the cluster is unknown. See [backend/docs/hooks.md](backend/docs/hooks.md).
+
+`instance.template_id`, `template_name` and `template_category` describe the template of the instance's definition. The core omits them when the definition has no template or the lookup fails.
 
 ### Response
 
@@ -347,7 +379,7 @@ A normal `post-deploy` subscriber is fire-and-forget. The stack is `running` and
 
 - The deployer calls the blocking subscriber after the Helm releases are ready and waits for it. The stack stays `stabilizing`.
 - `LOG:` lines (the streaming protocol above) go to the deploy log and to the live log view.
-- `timeout_seconds` (maximum 3600) limits the call. The wait has its own time limit: the sum of the blocking timeouts plus one minute. The Helm deploy budget does not change.
+- `timeout_seconds` (maximum 3600) limits the call. The wait has its own time limit: the sum of the timeouts of the blocking subscribers that apply to the stack plus one minute. The Helm deploy budget does not change.
 - Only after the subscriber returned: status `running`, "Deployment succeeded", the other `post-deploy` subscribers, `deploy-finalized`.
 - A failure, a denial or a timeout has this result:
   - With `failure_policy: fail`, the deploy fails. The status is `error`, and `error_message` has the hook reason (never the URL).
@@ -645,6 +677,7 @@ A "refresh-db" operation is the typical action use case. It wipes the per-instan
 - A per-job progress log on disk for real-time tailing. The server serves it on `log_path` (for example `/jobs/{job_id}/log`), so the web UI shows the progress.
 - HMAC signature verification on every request.
 - Deployment as a Kubernetes Deployment with a ClusterRole and a Service.
+- Teams with different databases: register one action per database with `applies_to` (see [Per-team hooks and actions](#per-team-hooks-and-actions)), or one action whose handler routes on `instance.template_category`.
 
 The time from the webhook request to the end of the `kubectl` orchestration depends on the database size. It is typically several minutes.
 

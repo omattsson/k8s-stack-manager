@@ -107,7 +107,7 @@ The application encrypts kubeconfig data at rest with AES-256-GCM. The key comes
 7. The backend checks each chart against `ALLOWED_CHART_REPOS`. A chart that is not allowed counts as failed.
 8. The backend runs `helm upgrade --install` for each chart, in deploy-order sequence. A pod event watcher writes the pod problems to the deploy log.
 9. The instance status changes to `stabilizing`. The backend polls the namespace until the pods are ready, or until `DEPLOY_STABILIZE_TIMEOUT` ends.
-10. Blocking `post-deploy` hooks run. The instance stays `stabilizing` during this time. The backend then writes the final status (`running`, `partial`, or `error`). It fires the `post-deploy` hook (only when the deploy succeeded or was partial) and the `deploy-finalized` hook.
+10. Blocking `post-deploy` hooks run, the ones that apply to the instance (`applies_to`). The instance stays `stabilizing` during this time. The backend then writes the final status (`running`, `partial`, or `error`). It fires the `post-deploy` hook (only when the deploy succeeded or was partial) and the `deploy-finalized` hook.
 11. `k8s.Watcher` polls the namespace for pod and deployment status. The backend broadcasts status updates through WebSocket.
 
 `GET /api/v1/stack-instances/:id/deploy-preview` returns the merged values without a deploy.

@@ -55,6 +55,7 @@ type domainServices struct {
 	DeployManager     *deployer.Manager
 	HookDispatcher    *hooks.Dispatcher
 	ClusterNames      *hooks.ClusterNameResolver // cluster_name for hooks, actions and notification channels; nil without all three
+	TemplateRefs      *hooks.TemplateResolver    // template fields and applies_to for hooks and actions; nil without both
 	ActionRegistry    *hooks.ActionRegistry
 	LifecycleNotifier *notifier.Notifier
 	CleanupExecutor   *deployer.CleanupExecutor
@@ -269,14 +270,23 @@ func buildDomainServices(
 		clusterNames = hooks.NewClusterNameResolver(repos.Cluster.NamesByIDs)
 	}
 
+	// The template of the instance in hook envelopes and action requests,
+	// and the applies_to scopes that need it (#720): one batch query,
+	// cached and with a bounded wait, like cluster_name.
+	var templateRefs *hooks.TemplateResolver
+	if len(hookCfg.Subscriptions) > 0 || len(actionSpecs) > 0 {
+		templateRefs = hooks.NewTemplateResolver(templateRefLookup(repos.StackDefinition))
+	}
+
 	var hookDispatcher *hooks.Dispatcher
 	if len(hookCfg.Subscriptions) > 0 {
 		hookDispatcher, hookErr = hooks.NewDispatcher(hookCfg, http.DefaultClient)
 		if hookErr != nil {
 			clusterNames.Stop()
+			templateRefs.Stop()
 			return nil, fmt.Errorf("build hooks dispatcher: %w", hookErr)
 		}
-		hookDispatcher.WithClusterNames(clusterNames)
+		hookDispatcher.WithClusterNames(clusterNames).WithTemplates(templateRefs)
 	}
 
 	var actionRegistry *hooks.ActionRegistry
@@ -284,9 +294,10 @@ func buildDomainServices(
 		actionRegistry, hookErr = hooks.NewActionRegistry(actionSpecs, http.DefaultClient)
 		if hookErr != nil {
 			clusterNames.Stop()
+			templateRefs.Stop()
 			return nil, fmt.Errorf("build action registry: %w", hookErr)
 		}
-		actionRegistry.WithClusterNames(clusterNames)
+		actionRegistry.WithClusterNames(clusterNames).WithTemplates(templateRefs)
 	}
 
 	// Cluster health poller.
@@ -410,6 +421,7 @@ func buildDomainServices(
 		DeployManager:     deployManager,
 		HookDispatcher:    hookDispatcher,
 		ClusterNames:      clusterNames,
+		TemplateRefs:      templateRefs,
 		ActionRegistry:    actionRegistry,
 		LifecycleNotifier: lifecycleNotifier,
 		CleanupExecutor:   cleanupExecutor,
@@ -1015,4 +1027,23 @@ func ginMode(envMode string, debug bool) string {
 		return gin.DebugMode
 	}
 	return gin.ReleaseMode
+}
+
+// templateRefLookup adapts the definition repository to the template
+// lookup of the hooks package, which does not import models.
+func templateRefLookup(repo models.StackDefinitionRepository) hooks.TemplateRefLookup {
+	if repo == nil {
+		return nil
+	}
+	return func(ctx context.Context, definitionIDs []string) (map[string]hooks.TemplateRef, error) {
+		refs, err := repo.TemplateRefsByIDs(ctx, definitionIDs)
+		if err != nil {
+			return nil, err
+		}
+		out := make(map[string]hooks.TemplateRef, len(refs))
+		for id, ref := range refs {
+			out[id] = hooks.TemplateRef{ID: ref.TemplateID, Name: ref.TemplateName, Category: ref.TemplateCategory}
+		}
+		return out, nil
+	}
 }

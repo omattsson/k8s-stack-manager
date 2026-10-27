@@ -159,6 +159,56 @@ func TestCreateInstance_FiresPreAndPostHooks(t *testing.T) {
 		rec.names())
 }
 
+// TestCreateInstance_PreHookScopeUnknownReturns503 checks that a
+// template-scoped fail gate whose scope cannot be checked (no template
+// resolver here) answers a retryable 503, not a policy 403 (#720).
+func TestCreateInstance_PreHookScopeUnknownReturns503(t *testing.T) {
+	t.Parallel()
+	rec := newHandlerHookRecorder(t)
+	d, err := hooks.NewDispatcher(hooks.Config{Subscriptions: []hooks.Subscription{{
+		Name: "team-gate", Events: []string{hooks.EventPreInstanceCreate}, URL: rec.server.URL,
+		FailurePolicy: hooks.FailurePolicyFail, AppliesTo: hooks.Scope{TemplateCategories: []string{"team-a"}},
+	}}}, rec.server.Client())
+	require.NoError(t, err)
+
+	instRepo := NewMockStackInstanceRepository()
+	defRepo := NewMockStackDefinitionRepository()
+	seedDefinition(t, defRepo, "d1", "Demo Def", "uid-1")
+	router := setupInstanceRouterWithHooks(instRepo, defRepo, d, "uid-1", "alice")
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-instances",
+		bytes.NewBufferString(`{"stack_definition_id":"d1","name":"hooked"}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
+	assert.Equal(t, "Could not check where the pre-instance-create hook applies. Try again.", decodeObject(t, w.Body.Bytes())["error"])
+	assert.Empty(t, rec.names(), "the gate was not called")
+}
+
+func TestPreHookRefusal(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantMsg    string
+	}{
+		{"denial", &hooks.FailedError{Hook: "g", Err: &hooks.DeniedError{Message: "no"}}, http.StatusForbidden, "pre-instance-delete hook rejected the request"},
+		{"scope unknown", &hooks.FailedError{Hook: "g", Err: hooks.ErrScopeUnknown}, http.StatusServiceUnavailable, "Could not check where the pre-instance-delete hook applies. Try again."},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			status, msg := preHookRefusal(hooks.EventPreInstanceDelete, tt.err)
+			assert.Equal(t, tt.wantStatus, status)
+			assert.Equal(t, tt.wantMsg, msg)
+		})
+	}
+}
+
 func TestCreateInstance_PreHookDenialReturns403(t *testing.T) {
 	t.Parallel()
 	rec := newHandlerHookRecorder(t)

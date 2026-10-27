@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import InstanceActionsMenu from '..';
+import InstanceActionsMenu, { ACTIONS_INCOMPLETE_TEXT } from '..';
 import {
   JOB_LOG_CUT_MARKER,
   JOB_LOG_MAX_BACKOFF_MS,
@@ -174,6 +174,27 @@ describe('InstanceActionsMenu', () => {
     expect(items[1]).toHaveTextContent('seed-data');
     expect(items[1]).toHaveAttribute('aria-disabled', 'true');
     expect(items[1]).toHaveTextContent(/Only the owner, an admin or a devops user/);
+  });
+
+  it('shows a hint when the server left out actions it could not check', async () => {
+    const user = userEvent.setup();
+    listActions.mockResolvedValue({ instance_id: 'i1', can_invoke: true, actions: [seedAction], scope_incomplete: true });
+    render(<InstanceActionsMenu instanceId="i1" />);
+
+    await user.click(await screen.findByRole('button', { name: 'Actions' }));
+    const items = screen.getAllByRole('menuitem');
+    expect(items).toHaveLength(2);
+    expect(items[1]).toHaveTextContent(ACTIONS_INCOMPLETE_TEXT);
+    expect(items[1]).toHaveAttribute('aria-disabled', 'true');
+  });
+
+  it('shows the menu with only the hint when every action was left out', async () => {
+    const user = userEvent.setup();
+    listActions.mockResolvedValue({ instance_id: 'i1', can_invoke: true, actions: [], scope_incomplete: true });
+    render(<InstanceActionsMenu instanceId="i1" />);
+
+    await user.click(await screen.findByRole('button', { name: 'Actions' }));
+    expect(screen.getByRole('menuitem')).toHaveTextContent(ACTIONS_INCOMPLETE_TEXT);
   });
 
   it('runs an action without parameters and shows the result', async () => {

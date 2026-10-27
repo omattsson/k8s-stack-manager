@@ -30,6 +30,7 @@ const actionListSchema = `{
 "properties": {
 "instance_id": {"type": "string"},
 "can_invoke": {"type": "boolean"},
+"scope_incomplete": {"const": true},
 "actions": {
 "type": "array",
 "items": {

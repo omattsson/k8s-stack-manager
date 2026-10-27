@@ -64,6 +64,9 @@ func UserMessage(err error, event, operation string) string {
 		}
 		return fmt.Sprintf("%s hook %q denied the %s: %s", event, hook, operation, sanitizeDenyMessage(denied.Message))
 	}
+	if hook != "" && errors.Is(err, ErrScopeUnknown) {
+		return fmt.Sprintf("%s hook %q failed (could not check where it applies; try again)", event, hook)
+	}
 	var redirect *RedirectError
 	if hook != "" && errors.As(err, &redirect) {
 		return fmt.Sprintf("%s hook %q failed (the subscriber answered with a redirect)", event, hook)

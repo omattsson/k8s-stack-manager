@@ -56,7 +56,7 @@ import { downloadBlob } from '../../utils/download';
 import ExtendTtlMenu from '../../components/ExtendTtlMenu';
 import { useBranding } from '../../context/BrandingContext';
 import { formatStopTime, hasFixedStopTime, stopTimeBounds, stopTimeError } from '../../utils/stopTime';
-import { useInstanceActions, actionSecondaryText } from '../../components/InstanceActionsMenu';
+import { useInstanceActions, actionSecondaryText, ActionsIncompleteItem } from '../../components/InstanceActionsMenu';
 import { successfulDeploys, currentDeployLogId, defaultRollbackTarget } from '../../utils/deployHistory';
 import { mergeInstanceUpdate } from '../../utils/instanceState';
 import CloneDialog from './CloneDialog';
@@ -775,6 +775,7 @@ const Detail = () => {
         <ListItemText primary={a.label} secondary={actionSecondaryText(a)} />
       </MenuItem>
     ));
+    if (instanceActions.scopeIncomplete) items.push(<ActionsIncompleteItem key="actions-incomplete" />);
     if (items.length > 0) items.push(<Divider key="divider-custom" />);
     items.push(
       <MenuItem

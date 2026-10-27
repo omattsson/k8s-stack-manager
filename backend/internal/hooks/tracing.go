@@ -43,7 +43,8 @@ const (
 	outcomeHTTPError      = "http_error"      // non-2xx from subscriber
 	outcomeTransportError = "transport_error" // connection refused, DNS, etc.
 	outcomeTimeout        = "timeout"         // ctx deadline exceeded
-	outcomeUnknownAction  = "unknown_action"  // action name not registered
+	outcomeUnknownAction  = "unknown_action"  // action name not registered, or applies_to does not match
+	outcomeScopeUnknown   = "scope_unknown"   // applies_to needs the template, the lookup did not answer
 	outcomeMarshalError   = "marshal_error"   // envelope serialisation failed
 )
 

@@ -1150,6 +1150,11 @@ export interface InstanceActionList {
   instance_id: string;
   can_invoke: boolean;
   actions: InstanceAction[];
+  /**
+   * True when actions limited to some templates were left out because the
+   * server could not read the template of the instance. Omitted when false.
+   */
+  scope_incomplete?: boolean;
 }
 
 /** Response of `POST /stack-instances/:id/actions/:name`. */
