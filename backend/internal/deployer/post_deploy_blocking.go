@@ -75,20 +75,29 @@ func (m *Manager) runBlockingPostDeploy(instanceID string, deployLog *models.Dep
 	if m.hooks == nil || !m.hooks.HasBlocking(hooks.EventPostDeploy) {
 		return res
 	}
+	inst, ref, state, applies := m.blockingPhaseTarget(instanceID, deployLog.ID)
+	switch state {
+	case ownershipLost:
+		return res
+	case ownershipUnknown:
+		if m.shutdownCtx.Err() != nil {
+			return m.blockingNotStarted(instanceID, deployLog.ID, ErrDeployInterrupted)
+		}
+		return m.blockingNotStarted(instanceID, deployLog.ID, errPostDeployNotStarted)
+	}
+	if !applies {
+		// No blocking subscriber applies to the instance (applies_to): the
+		// deploy finalizes as without blocking subscribers, also during a
+		// shutdown.
+		return res
+	}
 	// The subscribers never ran: an empty result would finalize as success.
 	if m.shutdownCtx.Err() != nil {
 		slog.Warn("blocking post-deploy hooks skipped: server shutdown",
 			"instance_id", instanceID, "log_id", deployLog.ID)
 		return m.blockingNotStarted(instanceID, deployLog.ID, ErrDeployInterrupted)
 	}
-	inst, state := m.startBlockingPhase(instanceID, deployLog.ID)
-	switch state {
-	case ownershipLost:
-		return res
-	case ownershipUnknown:
-		return m.blockingNotStarted(instanceID, deployLog.ID, errPostDeployNotStarted)
-	}
-	until := *inst.PostDeployHookUntil
+	until := m.markBlockingPhase(inst, ref, deployLog.ID)
 
 	progress := newHookProgress(maxHookProgressLen)
 	logLine := func(line string) {
@@ -111,6 +120,9 @@ func (m *Manager) runBlockingPostDeploy(instanceID string, deployLog *models.Dep
 	}
 	meta["blocking"] = "true"
 	env := m.hookEnvelope(inst, deployLog.ID, deployLog.StartedAt, hookOpts{Charts: opts.Charts, Metadata: meta})
+	// The resolved ref of startBlockingPhase: FireBlocking calls the
+	// subscribers that the marker counted.
+	env.InstanceRef = ref
 
 	ignored, hookErr := m.hooks.FireBlocking(hookCtx, hooks.EventPostDeploy, env, hooks.BlockingCallbacks{
 		OnStart: func(hook string) {
@@ -168,12 +180,18 @@ func (m *Manager) blockingNotStarted(instanceID, logID string, err error) blocki
 	return blockingPostDeployResult{err: err, output: line + "\n"}
 }
 
-// startBlockingPhase marks the instance stabilizing with PostDeployHookUntil.
-// ownershipLost: another operation took the instance during the Helm phase
-// or the readiness wait; finalizeDeploy keeps its status and only closes the
-// log. ownershipUnknown: the read failed; the caller fails the deploy. A
-// shutdown must not fail the read, see finalWriteCtx.
-func (m *Manager) startBlockingPhase(instanceID, logID string) (*models.StackInstance, ownership) {
+// blockingPhaseTarget reads the instance at the start of the blocking phase
+// and decides which blocking subscribers apply to it. ownershipLost: another
+// operation took the instance during the Helm phase or the readiness wait;
+// finalizeDeploy keeps its status and only closes the log. ownershipUnknown:
+// the read failed; the caller fails the deploy. A shutdown must not fail the
+// read, see finalWriteCtx.
+//
+// With ownershipOwned, applies is false when no blocking subscriber applies
+// to the instance (applies_to, #720). Else ref is the instance of the
+// envelope, with the template looked up once, so the marker time and
+// FireBlocking count the same subscribers.
+func (m *Manager) blockingPhaseTarget(instanceID, logID string) (inst *models.StackInstance, ref *hooks.InstanceRef, state ownership, applies bool) {
 	ctx, cancel := m.finalWriteCtx()
 	defer cancel()
 	state, inst, err := m.instanceOwnership(ctx, instanceID, logID, models.StackStatusDeploying, models.StackStatusStabilizing)
@@ -181,18 +199,33 @@ func (m *Manager) startBlockingPhase(instanceID, logID string) (*models.StackIns
 		slog.Error("blocking post-deploy: find instance failed", "instance_id", instanceID, "error", err)
 	}
 	if state != ownershipOwned {
-		return nil, state
+		return nil, nil, state, false
 	}
-	until := time.Now().UTC().Add(m.hooks.BlockingTimeout(hooks.EventPostDeploy) + blockingPhaseMargin)
+	ref = HookInstanceRef(inst)
+	ref.Status = models.StackStatusStabilizing
+	ref = m.hooks.ResolveInstance(ctx, ref)
+	if !m.hooks.HasBlockingFor(hooks.EventPostDeploy, ref) {
+		return inst, nil, ownershipOwned, false
+	}
+	return inst, ref, ownershipOwned, true
+}
+
+// markBlockingPhase marks the instance stabilizing with PostDeployHookUntil
+// (the timeouts of the subscribers that apply to ref plus a margin) and
+// returns that time.
+func (m *Manager) markBlockingPhase(inst *models.StackInstance, ref *hooks.InstanceRef, logID string) time.Time {
+	ctx, cancel := m.finalWriteCtx()
+	defer cancel()
+	until := time.Now().UTC().Add(m.hooks.BlockingTimeoutFor(hooks.EventPostDeploy, ref) + blockingPhaseMargin)
 	inst.Status = models.StackStatusStabilizing
 	inst.PostDeployHookUntil = &until
 	if err := m.instanceRepo.Update(ctx, inst); err != nil {
 		// The watcher of the phase also accepts deploying, so the wait goes on.
-		slog.Warn("failed to mark the blocking post-deploy phase", "instance_id", instanceID, "error", err)
+		slog.Warn("failed to mark the blocking post-deploy phase", "instance_id", inst.ID, "error", err)
 	} else {
-		m.broadcastStatus(instanceID, models.StackStatusStabilizing, logID)
+		m.broadcastStatus(inst.ID, models.StackStatusStabilizing, logID)
 	}
-	return inst, ownershipOwned
+	return until
 }
 
 // blockingPhaseOwned reports whether the deploy of logID still owns the

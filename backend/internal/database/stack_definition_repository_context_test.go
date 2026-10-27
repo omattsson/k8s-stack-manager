@@ -59,6 +59,10 @@ var definitionRepoCalls = []struct {
 		_, err := r.NamesByIDs(ctx, []string{"d1", "d2"})
 		return err
 	}},
+	{name: "TemplateRefsByIDs", call: func(ctx context.Context, r *GORMStackDefinitionRepository) error {
+		_, err := r.TemplateRefsByIDs(ctx, []string{"d1", "d2"})
+		return err
+	}},
 	{name: "ListByOwner", call: func(ctx context.Context, r *GORMStackDefinitionRepository) error {
 		_, err := r.ListByOwner(ctx, "o1")
 		return err

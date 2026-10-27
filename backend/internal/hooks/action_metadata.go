@@ -1,6 +1,7 @@
 package hooks
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"sort"
@@ -261,4 +262,28 @@ func (r *ActionRegistry) List() []ActionSubscription {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+// ListFor returns the actions whose applies_to matches the instance ref,
+// sorted by name. When a scope needs the template and the lookup did not
+// answer, the action is left out and incomplete is true. The template is
+// looked up only when a scope needs it.
+func (r *ActionRegistry) ListFor(ctx context.Context, ref *InstanceRef) (actions []ActionSubscription, incomplete bool) {
+	all := r.List()
+	for _, a := range all {
+		if a.AppliesTo.needsTemplate() {
+			ref = r.templates.resolve(ctx, ref)
+			break
+		}
+	}
+	actions = make([]ActionSubscription, 0, len(all))
+	for _, a := range all {
+		switch a.AppliesTo.decide(ref) {
+		case scopeMatch:
+			actions = append(actions, a)
+		case scopeUnknown:
+			incomplete = true
+		}
+	}
+	return actions, incomplete
 }

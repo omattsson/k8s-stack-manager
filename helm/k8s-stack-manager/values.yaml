@@ -627,6 +627,12 @@ hooks:
   #   timeout_seconds: 1800
   #   failure_policy: fail
   #   secret_env: CI_TRIGGER_WEBHOOK_SECRET
+  #   # Optional: only for some instances (see EXTENDING.md "Per-team hooks
+  #   # and actions"). Fields combine with AND, values with OR. Not allowed
+  #   # with cleanup-policy-executed. The key is applies_to (snake case):
+  #   # the backend refuses appliesTo.
+  #   applies_to:
+  #     template_ids: ["<template id>"]
   actions: []
   # - name: redis-sync
   #   url: "http://redis-sync.extensions.svc.cluster.local:8080/action"
@@ -641,6 +647,12 @@ hooks:
   #       type: bool
   #   # Optional job log of an asynchronous action (path on the host of url):
   #   log_path: "/jobs/{job_id}/log"
+  #   # Optional: show and run the action only for some instances: the
+  #   # template of the stack's definition, the template category (trimmed,
+  #   # case-insensitive), the definition or the cluster.
+  #   applies_to:
+  #     template_categories: ["team-a"]
+  #     # template_ids: [], definition_ids: [], cluster_ids: []
 
 # ---------------------------------------------------------------------------
 # Ingress

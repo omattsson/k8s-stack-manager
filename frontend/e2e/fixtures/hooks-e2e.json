@@ -30,6 +30,56 @@
       "description": "The e2e stub answers 302.",
       "url": "http://127.0.0.1:18090/actions/redirect",
       "timeout_seconds": 10
+    },
+    {
+      "name": "e2e-team-a",
+      "label": "E2E team A",
+      "description": "Only for stacks of templates in the category e2e-team-a.",
+      "url": "http://127.0.0.1:18090/actions/echo",
+      "timeout_seconds": 10,
+      "applies_to": { "template_categories": ["e2e-team-a"] }
+    },
+    {
+      "name": "e2e-team-b",
+      "label": "E2E team B",
+      "description": "Only for stacks of templates in the category e2e-team-b.",
+      "url": "http://127.0.0.1:18090/actions/echo",
+      "timeout_seconds": 10,
+      "applies_to": { "template_categories": ["e2e-team-b"] }
+    },
+    {
+      "name": "refresh-db-postgres",
+      "label": "Refresh database",
+      "description": "Postgres extension, only for stacks of the category e2e-postgres-team.",
+      "url": "http://127.0.0.1:18090/ext/postgres/actions/refresh-db",
+      "timeout_seconds": 10,
+      "applies_to": { "template_categories": ["e2e-postgres-team"] }
+    },
+    {
+      "name": "refresh-db-mysql",
+      "label": "Refresh database",
+      "description": "MySQL extension, only for stacks of the category e2e-mysql-team.",
+      "url": "http://127.0.0.1:18090/ext/mysql/actions/refresh-db",
+      "timeout_seconds": 10,
+      "applies_to": { "template_categories": ["e2e-mysql-team"] }
+    }
+  ],
+  "subscriptions": [
+    {
+      "name": "e2e-postgres-created",
+      "events": ["post-instance-create"],
+      "url": "http://127.0.0.1:18090/ext/postgres/hooks/event",
+      "timeout_seconds": 5,
+      "failure_policy": "ignore",
+      "applies_to": { "template_categories": ["e2e-postgres-team"] }
+    },
+    {
+      "name": "e2e-mysql-created",
+      "events": ["post-instance-create"],
+      "url": "http://127.0.0.1:18090/ext/mysql/hooks/event",
+      "timeout_seconds": 5,
+      "failure_policy": "ignore",
+      "applies_to": { "template_categories": ["e2e-mysql-team"] }
     }
   ]
 }

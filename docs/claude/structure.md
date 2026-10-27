@@ -96,7 +96,7 @@ backend/
     deployer/                    # Helm CLI wrapper for deploy, undeploy, rollback, status (multi-cluster through the registry), cleanup executor, expiry stopper, interrupted operation recovery
     gitprovider/                 # Azure DevOps, GitHub and GitLab branch listing, URL detection, 5-minute cache
     helm/                        # Values deep-merge, template variable substitution
-    hooks/                       # Outbound lifecycle webhooks: dispatcher, HMAC-signed client, actions, config file (see docs/hooks.md and EXTENDING.md)
+    hooks/                       # Outbound lifecycle webhooks: dispatcher, HMAC-signed client, actions, config file, applies_to scopes (scope.go) and the cached cluster name and template lookups (cluster_names.go, templates.go, lookup.go) (see docs/hooks.md and EXTENDING.md)
     k8s/                         # Kubernetes cluster client, status watcher, resource quotas, pod exec, scaling, AccessBinding
     leader/                      # Leader election (coordination.k8s.io Lease through client-go) and leader worker group (Run(ctx) for each term)
     replica/                     # Process identity (POD_NAME or host name plus random suffix) and heartbeat writer (replica_heartbeats, every replica)
@@ -188,4 +188,4 @@ frontend/src/
   utils/                       # roles, timeAgo, expiry, instanceName, instanceState, jwt, quantity, apiError, download, deployHistory, actionRuns, templateVersion, notificationEventTypes, notificationHelpers, recentTemplates, setupWizard, stopTime
 ```
 
-**Stack:** React 19, MUI v9, react-router-dom v7, Vite 8, TypeScript 6, Vitest 5, Playwright (42 specs in `frontend/e2e/`; the project `isolated` runs `session-lifecycle.spec.ts`, then its teardown project `isolated-last-admin` runs `last-admin.spec.ts` (it disables `admin` for a moment, so it runs last; `global-setup.ts` re-enables a left-over disabled `admin` in the database), only with `E2E_ISOLATED=1`, serially, against a restarted short-limit backend; the project `mobile` runs `mobile.spec.ts` with the iPhone 13 viewport, the project `chromium` runs the rest).
+**Stack:** React 19, MUI v9, react-router-dom v7, Vite 8, TypeScript 6, Vitest 5, Playwright (44 specs in `frontend/e2e/`; the project `isolated` runs `session-lifecycle.spec.ts`, then its teardown project `isolated-last-admin` runs `last-admin.spec.ts` (it disables `admin` for a moment, so it runs last; `global-setup.ts` re-enables a left-over disabled `admin` in the database), only with `E2E_ISOLATED=1`, serially, against a restarted short-limit backend; the project `mobile` runs `mobile.spec.ts` with the iPhone 13 viewport, the project `chromium` runs the rest).

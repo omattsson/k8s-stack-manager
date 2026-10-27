@@ -368,24 +368,31 @@ func (m *Manager) fireDeployHook(ctx context.Context, event string, instance *mo
 	return m.hooks.Fire(ctx, event, env)
 }
 
+// HookInstanceRef is the instance of a hook envelope or an action request:
+// a snapshot of instance. The deploy manager and the instance handlers both
+// use it, so their envelopes carry the same fields.
+func HookInstanceRef(instance *models.StackInstance) *hooks.InstanceRef {
+	return &hooks.InstanceRef{
+		ID:                instance.ID,
+		Name:              instance.Name,
+		Namespace:         instance.Namespace,
+		OwnerID:           instance.OwnerID,
+		StackDefinitionID: instance.StackDefinitionID,
+		Branch:            instance.Branch,
+		ClusterID:         instance.ClusterID,
+		Status:            instance.Status,
+	}
+}
+
 // hookEnvelope builds the envelope of a deploy manager event from a snapshot
 // of instance. The trigger is opts.Trigger, else the trigger of the
 // operation of deploymentID.
 func (m *Manager) hookEnvelope(instance *models.StackInstance, deploymentID string, deployStartedAt time.Time, opts hookOpts) hooks.EventEnvelope {
 	env := hooks.EventEnvelope{
-		InstanceRef: &hooks.InstanceRef{
-			ID:                instance.ID,
-			Name:              instance.Name,
-			Namespace:         instance.Namespace,
-			OwnerID:           instance.OwnerID,
-			StackDefinitionID: instance.StackDefinitionID,
-			Branch:            instance.Branch,
-			ClusterID:         instance.ClusterID,
-			Status:            instance.Status,
-		},
-		Charts:   opts.Charts,
-		Metadata: opts.Metadata,
-		Trigger:  opts.Trigger,
+		InstanceRef: HookInstanceRef(instance),
+		Charts:      opts.Charts,
+		Metadata:    opts.Metadata,
+		Trigger:     opts.Trigger,
 	}
 	if env.Trigger == nil {
 		env.Trigger = m.triggerFor(deploymentID)
@@ -1010,6 +1017,8 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 	// Blocking post-deploy subscribers (for example a database restore) run
 	// after the releases are ready. The instance stays stabilizing; it gets
 	// running (and the owner "Deployment succeeded") only after they return.
+	// HasBlocking is for any instance; runBlockingPostDeploy checks the
+	// applies_to of each subscriber for this one.
 	var postDeployIgnored []hooks.IgnoredFailure
 	if (deployErr == nil || partialDeploy) && m.hooks.HasBlocking(hooks.EventPostDeploy) {
 		releaseSlot()

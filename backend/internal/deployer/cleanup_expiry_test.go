@@ -181,6 +181,13 @@ func (m *mockDefinitionRepo) NamesByIDs(ctx context.Context, _ []string) (map[st
 	return map[string]string{}, nil
 }
 
+func (m *mockDefinitionRepo) TemplateRefsByIDs(ctx context.Context, _ []string) (map[string]models.DefinitionTemplateRef, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return map[string]models.DefinitionTemplateRef{}, nil
+}
+
 func (m *mockDefinitionRepo) ListIDsByTemplateIDs(ctx context.Context, _ []string) (map[string][]string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

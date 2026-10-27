@@ -279,16 +279,17 @@ func instanceRefFor(instance *models.StackInstance) *hooks.InstanceRef {
 	if instance == nil {
 		return nil
 	}
-	return &hooks.InstanceRef{
-		ID:                instance.ID,
-		Name:              instance.Name,
-		Namespace:         instance.Namespace,
-		OwnerID:           instance.OwnerID,
-		StackDefinitionID: instance.StackDefinitionID,
-		Branch:            instance.Branch,
-		ClusterID:         instance.ClusterID,
-		Status:            instance.Status,
+	return deployer.HookInstanceRef(instance)
+}
+
+// preHookRefusal is the answer to a failed pre-instance-create or
+// pre-instance-delete hook: 503 when a hook could not check its applies_to
+// (the template lookup failed; a retry can pass), else 403.
+func preHookRefusal(event string, err error) (int, string) {
+	if errors.Is(err, hooks.ErrScopeUnknown) {
+		return http.StatusServiceUnavailable, fmt.Sprintf("Could not check where the %s hook applies. Try again.", event)
 	}
+	return http.StatusForbidden, event + " hook rejected the request"
 }
 
 // fireInstanceHook dispatches event with an envelope built from instance.
@@ -545,6 +546,7 @@ type createInstanceRequest struct {
 // @Failure     404      {object} map[string]string "Stack definition not found"
 // @Failure     409      {object} NamespaceConflictResponse "Namespace already exists, the name is taken on the cluster (UNIQUE_INSTANCE_NAMES), or the per-user instance limit of the cluster is reached ({error})"
 // @Failure     500      {object} map[string]string
+// @Failure     503      {object} map[string]string "A pre-instance-create hook could not check where it applies (applies_to); try again"
 // @Router      /api/v1/stack-instances [post]
 func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 	var req createInstanceRequest
@@ -644,7 +646,8 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 	// otherwise eligible to succeed.
 	if err := h.fireInstanceHook(hookTriggerCtx(c), hooks.EventPreInstanceCreate, &inst); err != nil {
 		slog.Error("pre-instance-create hook failed", "instance_name", inst.Name, "error", err)
-		c.JSON(http.StatusForbidden, gin.H{"error": "pre-instance-create hook rejected the request"})
+		status, message := preHookRefusal(hooks.EventPreInstanceCreate, err)
+		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
@@ -840,7 +843,7 @@ func (h *InstanceHandler) UpdateInstance(c *gin.Context) {
 // @Failure     403 {object} map[string]string "Caller is not the owner, an admin or a devops user, or a pre-instance-delete hook rejected the request"
 // @Failure     404 {object} map[string]string
 // @Failure     409 {object} map[string]string "Instance is in a transient state (deploying/stopping/cleaning), or a concurrent delete started first"
-// @Failure     503 {object} map[string]string "Deploy manager not configured"
+// @Failure     503 {object} map[string]string "Deploy manager not configured, or a pre-instance-delete hook could not check where it applies (applies_to)"
 // @Router      /api/v1/stack-instances/{id} [delete]
 func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 	id := c.Param("id")
@@ -919,7 +922,8 @@ func (h *InstanceHandler) deleteInstance(c *gin.Context, inst *models.StackInsta
 	// the delete (e.g. enforce dependency checks).
 	if err := h.fireInstanceHook(ctx, hooks.EventPreInstanceDelete, inst); err != nil {
 		slog.Error("pre-instance-delete hook failed", logKeyInstanceID, inst.ID, "error", err)
-		return "", &instanceDeleteError{status: http.StatusForbidden, message: "pre-instance-delete hook rejected the request"}
+		status, message := preHookRefusal(hooks.EventPreInstanceDelete, err)
+		return "", &instanceDeleteError{status: status, message: message}
 	}
 
 	// A client that leaves must not stop the delete or its side effects (#656);
@@ -1060,10 +1064,10 @@ type invokeActionRequest struct {
 // @Failure     400 {object} map[string]string
 // @Failure     401 {object} map[string]string
 // @Failure     403 {object} map[string]string "Caller is not the owner, an admin or a devops user"
-// @Failure     404 {object} map[string]string "Instance not found or action not registered"
+// @Failure     404 {object} map[string]string "Instance not found, or action not registered or not for this instance (applies_to)"
 // @Failure     500 {object} map[string]string
 // @Failure     502 {object} map[string]string "Subscriber unreachable"
-// @Failure     503 {object} map[string]string "Action registry not configured"
+// @Failure     503 {object} map[string]string "Action registry not configured, or the template of the instance could not be read to check where the action applies"
 // @Router      /api/v1/stack-instances/{id}/actions/{name} [post]
 func (h *InstanceHandler) InvokeAction(c *gin.Context) {
 	id := c.Param("id")
@@ -1103,26 +1107,44 @@ func (h *InstanceHandler) InvokeAction(c *gin.Context) {
 		}
 	}
 
-	// Check the declared parameter schema (when the action has one) before
-	// the subscriber is called. An unknown action falls through to Invoke,
-	// which answers 404.
-	sub, known := h.actions.Lookup(name)
-	if known {
-		if paramErr := sub.ValidateParameters(req.Parameters); paramErr != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": paramErr.Error()})
-			return
+	// An unknown action, or one whose applies_to does not match the
+	// instance, answers 404; a scope that cannot be checked answers 503.
+	// Neither calls the subscriber or stores a run. Then the declared
+	// parameter schema (when the action has one) is checked.
+	sub, ref, lookupErr := h.actions.LookupFor(c.Request.Context(), name, instanceRefFor(inst))
+	if lookupErr != nil {
+		var unk hooks.ErrUnknownAction
+		switch {
+		case errors.As(lookupErr, &unk):
+			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("unknown action %q", unk.Name)})
+		case errors.Is(lookupErr, hooks.ErrScopeUnknown):
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": msgActionScopeUnknown})
+		default:
+			slog.Error("action lookup failed", logKeyInstanceID, id, "action", name, "error", lookupErr)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		}
+		return
+	}
+	if paramErr := sub.ValidateParameters(req.Parameters); paramErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": paramErr.Error()})
+		return
 	}
 
 	startedAt := time.Now().UTC()
-	res, invokeErr := h.actions.Invoke(c.Request.Context(), name, instanceRefFor(inst), req.Parameters)
+	res, invokeErr := h.actions.Invoke(c.Request.Context(), name, ref, req.Parameters)
 	answeredAt := time.Now().UTC()
 	run := newActionRun(c, inst.ID, name, sub, req.Parameters, startedAt)
 	run.RequestID = res.RequestID
 	if invokeErr != nil {
+		// LookupFor checked the scope with the same ref, so Invoke does not
+		// refuse here today; these answers keep the two paths the same.
 		var unk hooks.ErrUnknownAction
 		if errors.As(invokeErr, &unk) {
 			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("unknown action %q", unk.Name)})
+			return
+		}
+		if errors.Is(invokeErr, hooks.ErrScopeUnknown) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": msgActionScopeUnknown})
 			return
 		}
 		// Log the detailed error server-side (includes internal URLs, DNS,

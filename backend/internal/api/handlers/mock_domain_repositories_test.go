@@ -935,6 +935,26 @@ func (m *MockStackDefinitionRepository) NamesByIDs(ctx context.Context, ids []st
 	return out, nil
 }
 
+// TemplateRefsByIDs returns the template ID of each stored definition with a
+// SourceTemplateID (no name or category: the mock holds no templates).
+func (m *MockStackDefinitionRepository) TemplateRefsByIDs(ctx context.Context, ids []string) (map[string]models.DefinitionTemplateRef, error) {
+	if err := ctxDone(ctx, "template_refs_by_ids"); err != nil {
+		return nil, err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	out := make(map[string]models.DefinitionTemplateRef, len(ids))
+	for _, id := range ids {
+		if d, ok := m.items[id]; ok && d.SourceTemplateID != "" {
+			out[id] = models.DefinitionTemplateRef{TemplateID: d.SourceTemplateID}
+		}
+	}
+	return out, nil
+}
+
 func (m *MockStackDefinitionRepository) ListIDsByTemplateIDs(ctx context.Context, templateIDs []string) (map[string][]string, error) {
 	if err := ctxDone(ctx, "list_ids_by_template_ids"); err != nil {
 		return nil, err

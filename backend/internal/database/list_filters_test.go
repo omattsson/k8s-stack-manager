@@ -165,3 +165,45 @@ func TestGORMClusterRepository_NamesByIDs(t *testing.T) {
 		assert.Empty(t, got)
 	})
 }
+
+func TestGORMStackDefinitionRepository_TemplateRefsByIDs(t *testing.T) {
+	t.Parallel()
+
+	db := setupTestDBWithAllTables(t)
+	defs := NewGORMStackDefinitionRepository(db)
+	templates := NewGORMStackTemplateRepository(db)
+	ctx := context.Background()
+
+	tpl := &models.StackTemplate{Name: "Team A stack", Category: "team-a", OwnerID: "o1"}
+	require.NoError(t, templates.Create(ctx, tpl))
+	linked := &models.StackDefinition{Name: "linked", OwnerID: "o1", SourceTemplateID: tpl.ID}
+	unlinked := &models.StackDefinition{Name: "unlinked", OwnerID: "o1"}
+	orphan := &models.StackDefinition{Name: "orphan", OwnerID: "o1", SourceTemplateID: "deleted-template"}
+	for _, d := range []*models.StackDefinition{linked, unlinked, orphan} {
+		require.NoError(t, defs.Create(ctx, d))
+	}
+
+	tests := []struct {
+		name string
+		ids  []string
+		want map[string]models.DefinitionTemplateRef
+	}{
+		{
+			name: "only definitions with an existing template",
+			ids:  []string{linked.ID, unlinked.ID, orphan.ID, "missing"},
+			want: map[string]models.DefinitionTemplateRef{
+				linked.ID: {TemplateID: tpl.ID, TemplateName: "Team A stack", TemplateCategory: "team-a"},
+			},
+		},
+		{name: "no IDs", ids: nil, want: map[string]models.DefinitionTemplateRef{}},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := defs.TemplateRefsByIDs(ctx, tt.ids)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}

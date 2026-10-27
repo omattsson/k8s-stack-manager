@@ -22,6 +22,10 @@ type Dispatcher struct {
 	// clusterNames sets cluster_name in envelopes (WithClusterNames); nil
 	// leaves it empty.
 	clusterNames *ClusterNameResolver
+	// templates sets the template fields of the instance and decides the
+	// applies_to scopes that need them (WithTemplates); nil leaves them
+	// empty and such scopes unknown.
+	templates *TemplateResolver
 }
 
 // NewDispatcher validates cfg and returns a Dispatcher.
@@ -85,6 +89,13 @@ func (d *Dispatcher) fireInternal(ctx context.Context, event string, envelope Ev
 			// FireBlocking calls this subscription.
 			continue
 		}
+		run, scopeErr := checkScope(sub, event, envelope)
+		if scopeErr != nil {
+			return scopeErr
+		}
+		if !run {
+			continue
+		}
 		if err := d.invoke(ctx, sub, envelope, onProgress); err != nil {
 			if sub.FailurePolicy == FailurePolicyFail {
 				return &FailedError{Hook: sub.Name, Err: err}
@@ -108,7 +119,33 @@ func (d *Dispatcher) prepare(ctx context.Context, event string, envelope EventEn
 	if envelope.RequestID == "" {
 		envelope.RequestID = newRequestID()
 	}
-	return d.clusterNames.setClusterNames(ctx, envelope)
+	// The two lookups run at the same time: one wait limit, not two.
+	template := d.templates.startResolve(ctx, envelope.InstanceRef)
+	envelope = d.clusterNames.setClusterNames(ctx, envelope)
+	envelope.InstanceRef = withTemplateOf(envelope.InstanceRef, template())
+	return envelope
+}
+
+// checkScope reports whether sub runs for the instance of envelope (its
+// applies_to). When the scope needs the template and the lookup did not
+// answer, a subscriber with failure_policy=fail gives a *FailedError with
+// ErrScopeUnknown (a gate that cannot decide is never skipped silently); a
+// subscriber with failure_policy=ignore is skipped with a warning.
+func checkScope(sub Subscription, event string, envelope EventEnvelope) (bool, error) {
+	switch sub.AppliesTo.decide(envelope.InstanceRef) {
+	case scopeMatch:
+		return true, nil
+	case scopeNoMatch:
+		return false, nil
+	}
+	if sub.FailurePolicy == FailurePolicyFail {
+		return false, &FailedError{Hook: sub.Name, Err: ErrScopeUnknown}
+	}
+	slog.Warn("hook skipped: could not check applies_to (failure_policy=ignore)",
+		"subscription", sub.Name,
+		"event", event,
+		"request_id", envelope.RequestID)
+	return false, nil
 }
 
 // isBlocking reports whether sub is a blocking subscriber of event. Only
@@ -132,16 +169,51 @@ func (d *Dispatcher) blockingIndices(event string) []int {
 	return out
 }
 
-// HasBlocking reports whether event has at least one blocking subscriber.
+// blockingIndicesFor returns the blocking subscriptions of event that
+// FireBlocking handles for the instance ref: all but the ones whose
+// applies_to does not match. A subscriber whose scope is unknown counts:
+// FireBlocking fails on it (failure_policy=fail) or skips it with a warning
+// (ignore), as Fire does. Pass a ref from ResolveInstance, so the answer
+// agrees with the dispatch.
+func (d *Dispatcher) blockingIndicesFor(event string, ref *InstanceRef) []int {
+	var out []int
+	for _, idx := range d.blockingIndices(event) {
+		if d.subs[idx].AppliesTo.decide(ref) != scopeNoMatch {
+			out = append(out, idx)
+		}
+	}
+	return out
+}
+
+// HasBlocking reports whether event has at least one blocking subscriber,
+// for any instance. Use HasBlockingFor for one instance.
 func (d *Dispatcher) HasBlocking(event string) bool {
 	return len(d.blockingIndices(event)) > 0
 }
 
+// HasBlockingFor reports whether FireBlocking has a blocking subscriber of
+// event to handle for the instance ref (see blockingIndicesFor).
+func (d *Dispatcher) HasBlockingFor(event string, ref *InstanceRef) bool {
+	return len(d.blockingIndicesFor(event, ref)) > 0
+}
+
 // BlockingTimeout returns the sum of the timeouts of the blocking
-// subscribers of event: the longest time FireBlocking can take.
+// subscribers of event, for any instance: an upper bound of the time
+// FireBlocking can take. Use BlockingTimeoutFor for one instance.
 func (d *Dispatcher) BlockingTimeout(event string) time.Duration {
+	return d.sumTimeouts(d.blockingIndices(event))
+}
+
+// BlockingTimeoutFor returns the sum of the timeouts of the blocking
+// subscribers of event for the instance ref: the longest time FireBlocking
+// can take for it.
+func (d *Dispatcher) BlockingTimeoutFor(event string, ref *InstanceRef) time.Duration {
+	return d.sumTimeouts(d.blockingIndicesFor(event, ref))
+}
+
+func (d *Dispatcher) sumTimeouts(indices []int) time.Duration {
 	var total time.Duration
-	for _, idx := range d.blockingIndices(event) {
+	for _, idx := range indices {
 		total += time.Duration(d.subs[idx].TimeoutSeconds) * time.Second
 	}
 	return total
@@ -149,7 +221,7 @@ func (d *Dispatcher) BlockingTimeout(event string) time.Duration {
 
 // TotalTimeout returns the sum of the timeouts of all subscribers of event:
 // the longest time Fire can take for event (subscribers run one after the
-// other).
+// other). It ignores applies_to, so it is an upper bound for any instance.
 func (d *Dispatcher) TotalTimeout(event string) time.Duration {
 	if d == nil {
 		return 0
@@ -191,7 +263,9 @@ type BlockingCallbacks struct {
 // failure_policy=fail stops the dispatch and returns a *FailedError. A
 // failure of a subscriber with failure_policy=ignore is returned in the
 // IgnoredFailure list and the next subscriber is called. Non-blocking
-// subscribers of event are not called; use Fire for them.
+// subscribers of event are not called; use Fire for them. A subscriber whose
+// applies_to does not match the instance is not called; one whose scope is
+// unknown is handled as in Fire (see checkScope).
 func (d *Dispatcher) FireBlocking(ctx context.Context, event string, envelope EventEnvelope, cb BlockingCallbacks) ([]IgnoredFailure, error) {
 	indices := d.blockingIndices(event)
 	if len(indices) == 0 {
@@ -206,6 +280,13 @@ func (d *Dispatcher) FireBlocking(ctx context.Context, event string, envelope Ev
 	var ignored []IgnoredFailure
 	for _, idx := range indices {
 		sub := d.subs[idx]
+		run, scopeErr := checkScope(sub, event, envelope)
+		if scopeErr != nil {
+			return ignored, scopeErr
+		}
+		if !run {
+			continue
+		}
 		if cb.OnStart != nil {
 			cb.OnStart(sub.Name)
 		}

@@ -585,6 +585,13 @@ func (s *stubStackDefinitionRepo) NamesByIDs(ctx context.Context, _ []string) (m
 	return map[string]string{}, nil
 }
 
+func (s *stubStackDefinitionRepo) TemplateRefsByIDs(ctx context.Context, _ []string) (map[string]models.DefinitionTemplateRef, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return map[string]models.DefinitionTemplateRef{}, nil
+}
+
 // ---- stubChartConfigRepo ----
 
 type stubChartConfigRepo struct{}

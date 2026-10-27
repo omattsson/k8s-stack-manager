@@ -124,3 +124,26 @@ func TestDatabaseMySQL_DefinitionTxContextCommitsNothing(t *testing.T) {
 		})
 	}
 }
+
+// TestDatabaseMySQL_DefinitionTemplateRefsByIDs checks the join of
+// TemplateRefsByIDs on MySQL (#720): only definitions whose
+// source_template_id names an existing template are returned, with the
+// template name and category.
+func TestDatabaseMySQL_DefinitionTemplateRefsByIDs(t *testing.T) {
+	db, repo, _ := setupDefinitionContextMySQL(t, 2)
+	ctx := context.Background()
+	tpl := &models.StackTemplate{Name: "Team A stack", Category: "team-a", OwnerID: "u1"}
+	require.NoError(t, NewGORMStackTemplateRepository(db).Create(ctx, tpl))
+	linked := &models.StackDefinition{Name: "linked", OwnerID: "u1", DefaultBranch: "main", SourceTemplateID: tpl.ID}
+	orphan := &models.StackDefinition{Name: "orphan", OwnerID: "u1", DefaultBranch: "main", SourceTemplateID: "gone"}
+	plain := &models.StackDefinition{Name: "plain", OwnerID: "u1", DefaultBranch: "main"}
+	for _, d := range []*models.StackDefinition{linked, orphan, plain} {
+		require.NoError(t, repo.Create(ctx, d))
+	}
+
+	got, err := repo.TemplateRefsByIDs(ctx, []string{linked.ID, orphan.ID, plain.ID, "missing"})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]models.DefinitionTemplateRef{
+		linked.ID: {TemplateID: tpl.ID, TemplateName: "Team A stack", TemplateCategory: "team-a"},
+	}, got)
+}

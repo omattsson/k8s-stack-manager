@@ -46,6 +46,8 @@ func (m *Manager) runBudget(action string, helmTimeout time.Duration, charts int
 	switch action {
 	case models.DeployActionDeploy:
 		budget := deployBudget(helmTimeout, charts) + m.stabilizeTimeout
+		// All blocking subscribers, whatever their applies_to: an upper
+		// bound, known before the instance's template is looked up.
 		if m.hooks.HasBlocking(hooks.EventPostDeploy) {
 			budget += m.hooks.BlockingTimeout(hooks.EventPostDeploy) + blockingPhaseMargin
 		}

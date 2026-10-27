@@ -32,6 +32,10 @@ const (
 	actionRunMsgClientClosed = "The client closed the request before the answer"
 )
 
+// msgActionScopeUnknown is the 503 message of an invoke whose applies_to
+// needs the template of the instance when the template could not be read.
+const msgActionScopeUnknown = "Could not check where the action applies. Try again."
+
 const (
 	// actionRunWriteTimeout bounds one action run write, so a slow
 	// database delays the action response by at most this time.
@@ -75,6 +79,10 @@ type actionListResponse struct {
 	InstanceID string       `json:"instance_id"`
 	Actions    []actionInfo `json:"actions"`
 	CanInvoke  bool         `json:"can_invoke"`
+	// ScopeIncomplete is true when an action limited to some templates
+	// (applies_to) was left out because the template of the instance could
+	// not be read. Omitted when false.
+	ScopeIncomplete bool `json:"scope_incomplete,omitempty"`
 }
 
 // actionJobLogResponse is the response of GetActionJobLog.
@@ -154,7 +162,7 @@ func asyncJobID(sub hooks.ActionSubscription, statusCode int, result json.RawMes
 
 // ListActions godoc
 // @Summary     List the actions that can run on a stack instance
-// @Description Returns the registered actions with their UI metadata (label, description, confirmation text, parameter schema) and a can_invoke flag. Any authenticated user who can view the instance gets the list; can_invoke is true for the owner, an admin and a devops user. The response never contains the subscriber URL, secret or headers. Without an action registry the list is empty.
+// @Description Returns the registered actions that apply to the instance (the applies_to of each action: templates, template categories, definitions, clusters) with their UI metadata (label, description, confirmation text, parameter schema) and a can_invoke flag. Any authenticated user who can view the instance gets the list; can_invoke is true for the owner, an admin and a devops user. When the template of the instance cannot be read, the actions limited to templates are left out and scope_incomplete is true. The response never contains the subscriber URL, secret, headers or applies_to. Without an action registry the list is empty.
 // @Tags        stack-instances
 // @Accept      json
 // @Produce     json
@@ -183,9 +191,11 @@ func (h *InstanceHandler) ListActions(c *gin.Context) {
 	canInvoke := canModifyInstance(c, inst)
 	resp := actionListResponse{InstanceID: id, CanInvoke: canInvoke, Actions: []actionInfo{}}
 	if h.actions != nil {
-		for _, a := range h.actions.List() {
+		actions, incomplete := h.actions.ListFor(c.Request.Context(), instanceRefFor(inst))
+		for _, a := range actions {
 			resp.Actions = append(resp.Actions, toActionInfo(a, canInvoke))
 		}
+		resp.ScopeIncomplete = incomplete
 	}
 	c.JSON(http.StatusOK, resp)
 }

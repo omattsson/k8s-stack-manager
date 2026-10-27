@@ -5100,6 +5100,15 @@
                                 "type": "string"
                             }
                         }
+                    },
+                    "503": {
+                        "description": "A pre-instance-create hook could not check where it applies (applies_to); try again",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
                     }
                 }
             }
@@ -5670,7 +5679,7 @@
                         }
                     },
                     "503": {
-                        "description": "Deploy manager not configured",
+                        "description": "Deploy manager not configured, or a pre-instance-delete hook could not check where it applies (applies_to)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -5763,7 +5772,7 @@
         },
         "/api/v1/stack-instances/{id}/actions": {
             "get": {
-                "description": "Returns the registered actions with their UI metadata (label, description, confirmation text, parameter schema) and a can_invoke flag. Any authenticated user who can view the instance gets the list; can_invoke is true for the owner, an admin and a devops user. The response never contains the subscriber URL, secret or headers. Without an action registry the list is empty.",
+                "description": "Returns the registered actions that apply to the instance (the applies_to of each action: templates, template categories, definitions, clusters) with their UI metadata (label, description, confirmation text, parameter schema) and a can_invoke flag. Any authenticated user who can view the instance gets the list; can_invoke is true for the owner, an admin and a devops user. When the template of the instance cannot be read, the actions limited to templates are left out and scope_incomplete is true. The response never contains the subscriber URL, secret, headers or applies_to. Without an action registry the list is empty.",
                 "consumes": [
                     "application/json"
                 ],
@@ -5911,7 +5920,7 @@
                         }
                     },
                     "404": {
-                        "description": "Instance not found or action not registered",
+                        "description": "Instance not found, or action not registered or not for this instance (applies_to)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -5938,7 +5947,7 @@
                         }
                     },
                     "503": {
-                        "description": "Action registry not configured",
+                        "description": "Action registry not configured, or the template of the instance could not be read to check where the action applies",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -12023,6 +12032,10 @@
                 },
                 "instance_id": {
                     "type": "string"
+                },
+                "scope_incomplete": {
+                    "description": "ScopeIncomplete is true when an action limited to some templates\n(applies_to) was left out because the template of the instance could\nnot be read. Omitted when false.",
+                    "type": "boolean"
                 }
             }
         },

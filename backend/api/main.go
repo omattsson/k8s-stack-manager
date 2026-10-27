@@ -202,6 +202,7 @@ func main() {
 		cleanupScheduler: svc.CleanupScheduler,
 		deployManager:    svc.DeployManager,
 		clusterNames:     svc.ClusterNames,
+		templateRefs:     svc.TemplateRefs,
 		heartbeat:        svc.Heartbeat,
 		hub:              hub,
 		wsFanout:         wsFanout,
@@ -220,6 +221,7 @@ type shutdownDeps struct {
 	cleanupScheduler *scheduler.Scheduler
 	deployManager    *deployer.Manager
 	clusterNames     *hooks.ClusterNameResolver // nil: no hooks, actions or notification channels
+	templateRefs     *hooks.TemplateResolver    // nil: no hooks or actions
 	heartbeat        *replica.Heartbeat         // nil: no heartbeat repository
 	hub              *websocket.Hub
 	wsFanout         *websocket.Fanout // nil: fan-out disabled
@@ -265,6 +267,7 @@ func gracefulShutdown(srvs *servers, timeout time.Duration, deps shutdownDeps) {
 	deps.deployManager.Shutdown()
 	deps.heartbeat.Stop(timeout)
 	deps.clusterNames.Stop()
+	deps.templateRefs.Stop()
 
 	// 4. Stop remaining services. The fan-out writes its queued rows
 	//    before the hub and the database close.

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // SubscriptionsFile is the on-disk schema for HOOKS_CONFIG_FILE. Keeping event
@@ -29,6 +30,8 @@ type SubscriptionSpec struct {
 	// SecretEnv names an environment variable that holds the HMAC secret.
 	// Leave empty to disable signature generation for this subscription.
 	SecretEnv string `json:"secret_env,omitempty"`
+	// AppliesTo limits the subscription to some instances (#720).
+	AppliesTo Scope `json:"applies_to,omitempty"`
 }
 
 // ActionSubscriptionSpec mirrors ActionSubscription with the same secret_env
@@ -44,6 +47,8 @@ type ActionSubscriptionSpec struct {
 	Parameters     []ActionParameter `json:"parameters,omitempty"`
 	TimeoutSeconds int               `json:"timeout_seconds,omitempty"`
 	SecretEnv      string            `json:"secret_env,omitempty"`
+	// AppliesTo limits the action to some instances (#720).
+	AppliesTo Scope `json:"applies_to,omitempty"`
 }
 
 // LoadConfigFile reads path and materialises a Config + []ActionSubscription.
@@ -63,6 +68,9 @@ func LoadConfigFile(path string) (Config, []ActionSubscription, error) {
 	if err := json.Unmarshal(raw, &spec); err != nil {
 		return Config{}, nil, fmt.Errorf("parse %s: %w", path, err)
 	}
+	if err := checkAppliesToKeys(raw); err != nil {
+		return Config{}, nil, fmt.Errorf("parse %s: %w", path, err)
+	}
 
 	cfg := Config{Subscriptions: make([]Subscription, 0, len(spec.Subscriptions))}
 	for _, s := range spec.Subscriptions {
@@ -73,6 +81,7 @@ func LoadConfigFile(path string) (Config, []ActionSubscription, error) {
 			TimeoutSeconds: s.TimeoutSeconds,
 			FailurePolicy:  s.FailurePolicy,
 			Blocking:       s.Blocking,
+			AppliesTo:      s.AppliesTo,
 		}
 		if s.SecretEnv != "" {
 			sub.Secret = os.Getenv(s.SecretEnv)
@@ -97,6 +106,7 @@ func LoadConfigFile(path string) (Config, []ActionSubscription, error) {
 			LogPath:        a.LogPath,
 			Parameters:     a.Parameters,
 			TimeoutSeconds: a.TimeoutSeconds,
+			AppliesTo:      a.AppliesTo,
 		}
 		if a.SecretEnv != "" {
 			act.Secret = os.Getenv(a.SecretEnv)
@@ -108,4 +118,45 @@ func LoadConfigFile(path string) (Config, []ActionSubscription, error) {
 	}
 
 	return cfg, actions, nil
+}
+
+// checkAppliesToKeys refuses a key that is a misspelling of applies_to (for
+// example appliesTo or applies-to, from a Helm values file). The decoder
+// drops unknown keys, so such a key would leave the scope empty and the
+// subscription or action would apply to every instance. Other unknown keys
+// stay allowed, as before. The decoder matches keys case-insensitively, so
+// "Applies_To" is the field itself.
+func checkAppliesToKeys(raw []byte) error {
+	var items struct {
+		Subscriptions []map[string]json.RawMessage `json:"subscriptions"`
+		Actions       []map[string]json.RawMessage `json:"actions"`
+	}
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return err
+	}
+	check := func(kind string, list []map[string]json.RawMessage) error {
+		for i, item := range list {
+			for key := range item {
+				if !strings.EqualFold(key, "applies_to") && looseKey(key) == "appliesto" {
+					return fmt.Errorf("%s[%d]: unknown field %q, did you mean \"applies_to\"?", kind, i, key)
+				}
+			}
+		}
+		return nil
+	}
+	if err := check("subscription", items.Subscriptions); err != nil {
+		return err
+	}
+	return check("action", items.Actions)
+}
+
+// looseKey returns key in lower case without '_', '-' and spaces.
+func looseKey(key string) string {
+	return strings.Map(func(r rune) rune {
+		switch r {
+		case '_', '-', ' ':
+			return -1
+		}
+		return r
+	}, strings.ToLower(key))
 }
