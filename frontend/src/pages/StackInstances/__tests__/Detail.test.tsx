@@ -170,8 +170,8 @@ vi.mock('../../../components/InstanceQuota', () => ({
 }));
 
 vi.mock('../../../components/PodStatusDisplay', () => ({
-  default: ({ loading }: { loading: boolean }) => (
-    <div data-testid="pod-status-display">
+  default: ({ loading, status }: { loading: boolean; status?: unknown }) => (
+    <div data-testid="pod-status-display" data-has-status={String(!!status)}>
       {loading ? 'Loading status...' : 'Pod status'}
     </div>
   ),
@@ -1045,21 +1045,47 @@ describe('StackInstances Detail', () => {
     expect(branchOverrideService.list).toHaveBeenCalledWith('123');
   });
 
+  const statusWithIngress = {
+    namespace: 'stack-test',
+    status: 'healthy',
+    charts: [],
+    ingresses: [{ name: 'web', host: 'app.example.com', path: '/', tls: true, url: 'https://app.example.com' }],
+    last_checked: '2025-01-01T00:00:00Z',
+  };
+
   it('shows Access URLs section for running instance with k8s status', async () => {
-    const mockStatus = {
-      namespace: 'stack-test',
-      status: 'healthy',
-      charts: [],
-      ingresses: [{ name: 'web', host: 'app.example.com', path: '/', tls: true, url: 'https://app.example.com' }],
-      last_checked: '2025-01-01T00:00:00Z',
-    };
-    setupMocks({ status: 'running' }, { k8sStatus: mockStatus });
+    setupMocks({ status: 'running' }, { k8sStatus: statusWithIngress });
     renderDetail();
 
     await waitFor(() => {
       expect(screen.getByTestId('access-urls')).toBeInTheDocument();
     });
     expect(screen.getByText('https://app.example.com')).toBeInTheDocument();
+  });
+
+  it.each(['running', 'partial'])('renders Access URLs before Cluster Resources for %s instance (#718)', async (status) => {
+    setupMocks({ status }, { k8sStatus: statusWithIngress });
+    renderDetail();
+
+    const accessUrls = await screen.findByTestId('access-urls');
+    const heading = screen.getByText('Cluster Resources');
+    const lifecycle = screen.getByText('Status Lifecycle');
+    const pods = screen.getByTestId('pod-status-display');
+    expect(lifecycle.compareDocumentPosition(accessUrls) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(accessUrls.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(accessUrls.compareDocumentPosition(pods) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it.each(['deploying', 'stabilizing', 'error', 'stopping', 'cleaning'])('shows Cluster Resources but not Access URLs for %s instance', async (status) => {
+    setupMocks({ status }, { k8sStatus: statusWithIngress });
+    renderDetail();
+
+    expect(await screen.findByText('Cluster Resources')).toBeInTheDocument();
+    // Proves the mocked status was applied, so the negative check below is meaningful.
+    await waitFor(() => {
+      expect(screen.getByTestId('pod-status-display')).toHaveAttribute('data-has-status', 'true');
+    });
+    expect(screen.queryByTestId('access-urls')).not.toBeInTheDocument();
   });
 
   it('does not show Access URLs section for draft instance', async () => {

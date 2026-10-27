@@ -1016,15 +1016,16 @@ const Detail = () => {
 
         {renderLifecycle(instance.status, instance.error_message)}
 
+        {/* Access URLs first: users mostly open this page to reach the stack, and one pod card per chart pushes it down (#718). */}
+        {k8sStatus && (instance.status === 'running' || instance.status === 'partial') && (
+          <AccessUrls status={k8sStatus} showPortForward={hasAtLeastRole(user?.role, 'devops')} />
+        )}
+
         {(instance.status === 'running' || instance.status === 'partial' || instance.status === 'deploying' || instance.status === 'stabilizing' || instance.status === 'error' || instance.status === 'stopping' || instance.status === 'cleaning') && (
           <Box sx={{ mb: 2 }}>
             <Typography variant="subtitle2" gutterBottom>Cluster Resources</Typography>
             <PodStatusDisplay status={k8sStatus} loading={statusLoading} />
           </Box>
-        )}
-
-        {k8sStatus && (instance.status === 'running' || instance.status === 'partial') && (
-          <AccessUrls status={k8sStatus} showPortForward={hasAtLeastRole(user?.role, 'devops')} />
         )}
 
         {/* The fields have their own labels ("Branch", "TTL (Time to Live)"). */}
