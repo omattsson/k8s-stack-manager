@@ -288,6 +288,48 @@ backend:
     - 192.168.0.0/16
     - fc00::/7
 
+  # Port-forward to a stack service through the backend over a WebSocket
+  # (GET /api/v1/stack-instances/:id/port-forward, used by `stackctl stack
+  # port-forward`). Off by default.
+  # SECURITY: a tunnel goes past NetworkPolicies and past ingress
+  # authentication (basic auth, SSO proxies in front of tools): the kubelet
+  # connects inside the network namespace of the pod. The owner of an instance
+  # and every devops and admin user can reach every port of the services of
+  # their stacks. Every tunnel is audited (port_forward, port_forward_end).
+  # Two switches must both be on: this one, and the per-cluster switch
+  # allow_port_forward (Admin > Clusters, off by default).
+  # RBAC: with rbac.scope=namespace the stack-access ClusterRole already grants
+  # */*/* in each stack namespace, so no extra rule is rendered. With
+  # rbac.scope=cluster the chart adds pods/portforward (get, create) to the
+  # backend ClusterRole only when this is enabled. A registered cluster with
+  # its own kubeconfig needs the same verbs in that identity.
+  # The backend refuses a namespace without the label
+  # managed-by=k8s-stack-manager and its own namespace (POD_NAMESPACE, set by
+  # the chart through the downward API).
+  # The limits are per backend replica: the real limit is the number of
+  # replicas times maxPerUser. A process cap of 500 tunnels per replica applies.
+  # Ingress: a tunnel is a long WebSocket under /api. Traefik passes the
+  # upgrade; set no short timeouts on it. nginx-ingress (ingress.type=ingress)
+  # needs the annotations nginx.ingress.kubernetes.io/proxy-read-timeout and
+  # nginx.ingress.kubernetes.io/proxy-send-timeout (seconds) of at least
+  # maxDuration plus a margin, for example "3700" for the default 1h. The
+  # frontend image proxy has 3700s; raise it too when you raise maxDuration.
+  portForward:
+    enabled: false
+    # Maximum lifetime of a tunnel (above 0, at most 24h); the backend closes
+    # it with code 4001.
+    maxDuration: 1h
+    # Close a tunnel without data for this long (at most maxDuration); code 4002.
+    idleTimeout: 15m
+    # Open tunnels per user and replica (1 to 100).
+    maxPerUser: 5
+
+  # Settings shared by port-forward and exec streams.
+  streams:
+    # Let API keys open stream tunnels. API keys have no scopes: a leaked CI
+    # key would open tunnels with the rights of its user. Off by default.
+    allowApiKeys: false
+
   # Extra environment variables, volumes and volume mounts for the backend
   # container (plain Kubernetes syntax). Example: give Helm a registry login
   # file (docker config.json format) for OCI chart repositories that need
@@ -397,6 +439,10 @@ backend:
     # label, and may change or delete only namespaces whose name starts with
     # "stack-" or that have the label. Without it, the cluster-wide RoleBinding
     # write right could give the backend access to any namespace.
+    # For scope cluster the policy instead limits CONNECT on pods/exec and
+    # pods/portforward by the backend service account to namespaces with that
+    # label (port-forward and exec cannot reach system namespaces or the
+    # namespace of the backend).
     admissionPolicy:
       enabled: true
 

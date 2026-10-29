@@ -380,6 +380,16 @@ func NewWebSocketRevocationChecker(store sessionstore.SessionStore, userRepo mod
 	if store == nil && userRepo == nil && apiKeyRepo == nil {
 		return nil
 	}
+	// A failed lookup logs at most once per minute (an outage would give one
+	// line per run); the other runs log at debug level.
+	logLimit := websocket.NewLogLimiter(time.Minute)
+	logFailure := func(msg string, args ...any) {
+		if logLimit.Allow() {
+			slog.Error(msg, args...)
+			return
+		}
+		slog.Debug(msg, args...)
+	}
 	return func(ctx context.Context, identities []websocket.ClientIdentity) []bool {
 		revoked := make([]bool, len(identities))
 		keys, err := loadSocketAPIKeys(ctx, apiKeyRepo, identities)
@@ -389,7 +399,7 @@ func NewWebSocketRevocationChecker(store sessionstore.SessionStore, userRepo mod
 			return revoked
 		}
 		if err != nil {
-			slog.Error("WebSocket revalidation stopped: API key lookup failed; the next run retries",
+			logFailure("WebSocket revalidation stopped: API key lookup failed; the next run retries",
 				"identities", len(identities), "error", err)
 			return revoked
 		}
@@ -416,7 +426,7 @@ func NewWebSocketRevocationChecker(store sessionstore.SessionStore, userRepo mod
 					slog.Debug("WebSocket revalidation cancelled", "checked", i, "identities", len(identities))
 					return revoked
 				}
-				slog.Error("WebSocket revalidation stopped: session store check failed; the next run retries",
+				logFailure("WebSocket revalidation stopped: session store check failed; the next run retries",
 					"checked", i, "identities", len(identities), "error", lookupErr)
 				return revoked
 			}
@@ -432,7 +442,7 @@ func NewWebSocketRevocationChecker(store sessionstore.SessionStore, userRepo mod
 						slog.Debug("WebSocket revalidation cancelled", "checked", i, "identities", len(identities))
 						return revoked
 					}
-					slog.Error("WebSocket revalidation stopped: user lookup failed; the next run retries",
+					logFailure("WebSocket revalidation stopped: user lookup failed; the next run retries",
 						"user_id", id.UserID, "checked", i, "identities", len(identities), "error", err)
 					return revoked
 				}

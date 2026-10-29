@@ -361,6 +361,8 @@ type Config struct {
 	WSFanout WSFanoutConfig
 	// Retention is the age limit of the log tables (leader worker log-retention).
 	Retention RetentionConfig
+	// Stream holds the settings of the port-forward tunnels.
+	Stream StreamConfig
 
 	// Branding holds the display values of the web UI (title, logo, favicon).
 	Branding BrandingConfig
@@ -547,6 +549,10 @@ func (c *Config) Validate() error {
 
 	if err := c.Retention.Validate(); err != nil {
 		return fmt.Errorf("log retention config: %w", err)
+	}
+
+	if err := c.Stream.Validate(); err != nil {
+		return fmt.Errorf("stream config: %w", err)
 	}
 
 	if err := c.GitProvider.Validate(); err != nil {
@@ -801,6 +807,7 @@ func LoadConfig() (*Config, error) {
 	cfg.LeaderElection = loadLeaderElectionConfig()
 	cfg.WSFanout = loadWSFanoutConfig()
 	cfg.Retention = loadRetentionConfig()
+	cfg.Stream = loadStreamConfig()
 	cfg.Branding = loadBrandingConfig()
 
 	nsLabels, err := ParseNamespaceLabels(getEnv("NAMESPACE_LABELS", ""))

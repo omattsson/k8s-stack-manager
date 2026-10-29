@@ -1131,6 +1131,10 @@ func (d *Database) AutoMigrate() error {
 	// URL (#692).
 	migrator.AddMigration(notificationChannelURLMigration())
 
+	// Migration 66: clusters.allow_port_forward, the per-cluster switch of the
+	// port-forward tunnels (#722).
+	migrator.AddMigration(clusterAllowPortForwardMigration())
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err
@@ -2064,6 +2068,32 @@ func dropNotificationIsReadIndexMigration() schema.Migration {
 				return nil
 			}
 			return tx.Exec("CREATE INDEX " + notificationIsReadIndexName + " ON notifications (is_read)").Error // #nosec G202 -- index name is a constant
+		},
+	}
+}
+
+// clusterAllowPortForwardMigration is migration 66. It adds
+// clusters.allow_port_forward (boolean, NOT NULL, default false): the
+// per-cluster switch of the port-forward tunnels (#722). Existing clusters
+// get false. Up and Down are idempotent.
+func clusterAllowPortForwardMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261029000066",
+		Name:        "add_cluster_allow_port_forward",
+		Description: "Add allow_port_forward to clusters (per-cluster switch of port-forward tunnels)",
+		Up: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if !m.HasTable(&models.Cluster{}) || m.HasColumn(&models.Cluster{}, "AllowPortForward") {
+				return nil
+			}
+			return m.AddColumn(&models.Cluster{}, "AllowPortForward")
+		},
+		Down: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if m.HasTable(&models.Cluster{}) && m.HasColumn(&models.Cluster{}, "AllowPortForward") {
+				return m.DropColumn(&models.Cluster{}, "AllowPortForward")
+			}
+			return nil
 		},
 	}
 }

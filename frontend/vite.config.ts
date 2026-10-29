@@ -45,7 +45,9 @@ export default defineConfig({
     proxy: {
       '/api': {
         target: backendTarget,
-        changeOrigin: true
+        changeOrigin: true,
+        // WebSocket upgrade for the stream routes (port-forward, exec).
+        ws: true
       },
       '/ws': {
         target: backendTarget,

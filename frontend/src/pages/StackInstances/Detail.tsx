@@ -653,7 +653,7 @@ const Detail = () => {
     setStopDraft(savedStopTime);
   }, [savedStopTime]);
 
-  const { maxTtlDays } = useBranding();
+  const { maxTtlDays, portForwardEnabled } = useBranding();
   const stopDraftChanged = stopDraft !== undefined && stopDraft !== savedStopTime;
   const stopDraftError = stopDraftChanged ? stopTimeError(stopDraft, stopTimeBounds(maxTtlDays)) : null;
 
@@ -1019,7 +1019,12 @@ const Detail = () => {
 
         {/* Access URLs first: users mostly open this page to reach the stack, and one pod card per chart pushes it down (#718). */}
         {k8sStatus && (instance.status === 'running' || instance.status === 'partial') && (
-          <AccessUrls status={k8sStatus} showPortForward={hasAtLeastRole(user?.role, 'devops')} />
+          <AccessUrls
+            status={k8sStatus}
+            showPortForward={hasAtLeastRole(user?.role, 'devops')}
+            portForwardEnabled={portForwardEnabled && canModify}
+            instanceName={instance.name}
+          />
         )}
 
         {(instance.status === 'running' || instance.status === 'partial' || instance.status === 'deploying' || instance.status === 'stabilizing' || instance.status === 'error' || instance.status === 'stopping' || instance.status === 'cleaning') && (

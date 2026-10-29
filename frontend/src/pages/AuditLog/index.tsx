@@ -47,6 +47,7 @@ const ACTIONS = [
   'test', 'test_connection', 'set_default', 'run',
   'disable', 'enable', 'reset_password', 'change_role', 'follow', 'unfollow',
   'expired', 'cleanup_policy_executed', 'interrupted',
+  'port_forward', 'port_forward_end',
 ];
 
 const AuditLog = () => {

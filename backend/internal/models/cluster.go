@@ -39,6 +39,9 @@ type Cluster struct {
 	MaxInstancesPerUser        int    `json:"max_instances_per_user" gorm:"default:0"` // 0 = unlimited
 	IsDefault                  bool   `json:"is_default"`
 	UseInCluster               bool   `json:"use_in_cluster"`
+	// AllowPortForward lets users open port-forward tunnels to the stacks of
+	// this cluster. Off by default; only an admin sets it.
+	AllowPortForward bool `json:"allow_port_forward" gorm:"default:false"`
 }
 
 // RegistryConfig returns the registry configuration for this cluster, or nil

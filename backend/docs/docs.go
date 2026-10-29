@@ -11065,6 +11065,9 @@ const docTemplate = `{
                 "name"
             ],
             "properties": {
+                "allow_port_forward": {
+                    "type": "boolean"
+                },
                 "api_server_url": {
                     "type": "string"
                 },
@@ -11812,6 +11815,9 @@ const docTemplate = `{
         "handlers.UpdateClusterRequest": {
             "type": "object",
             "properties": {
+                "allow_port_forward": {
+                    "type": "boolean"
+                },
                 "api_server_url": {
                     "type": "string"
                 },
@@ -13672,6 +13678,10 @@ const docTemplate = `{
         "models.Cluster": {
             "type": "object",
             "properties": {
+                "allow_port_forward": {
+                    "description": "AllowPortForward lets users open port-forward tunnels to the stacks of\nthis cluster. Off by default; only an admin sets it.",
+                    "type": "boolean"
+                },
                 "api_server_url": {
                     "type": "string"
                 },

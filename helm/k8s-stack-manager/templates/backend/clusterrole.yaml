@@ -38,6 +38,13 @@ rules:
   - apiGroups: [""]
     resources: ["pods/exec"]
     verbs: ["create"]
+{{- if .Values.backend.portForward.enabled }}
+  # Port-forward through the backend (backend.portForward). The websocket
+  # transport of client-go uses get, the SPDY transport uses create.
+  - apiGroups: [""]
+    resources: ["pods/portforward"]
+    verbs: ["get", "create"]
+{{- end }}
   - apiGroups: ["apps"]
     resources:
       - deployments
@@ -206,5 +213,58 @@ spec:
   policyName: {{ $fullname }}-backend-scope
   validationActions: [Deny]
 {{- end }}
+{{- else if .Values.backend.rbac.admissionPolicy.enabled }}
+---
+# Scope cluster: the backend ClusterRole allows pods/exec (and, with
+# backend.portForward.enabled, pods/portforward) in every namespace. This
+# policy limits CONNECT on both subresources by the backend service account to
+# namespaces with the label managed-by=k8s-stack-manager, so a wrong database
+# row or a bug cannot reach a pod in kube-system or in the namespace of the
+# backend. Needs Kubernetes 1.30 or later.
+#
+# Design: the check reads the label from namespaceObject in the validation, as
+# the namespace-scope policy does. The API server fills namespaceObject for
+# every request in a namespace, CONNECT included, and the policy fails closed:
+# a missing namespaceObject or label denies. A binding namespaceSelector would
+# also see the labels, but it only decides whether the binding applies; to
+# deny the unlabelled namespaces it would need the inverted selector
+# (DoesNotExist) and a validation that is always false, which is harder to
+# read and, if the selector is dropped, fails open.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $fullname }}-backend-stream-scope
+  labels:
+    {{- include "k8s-stack-manager.backend.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CONNECT"]
+        resources: ["pods/exec", "pods/portforward"]
+  matchConditions:
+    - name: backend-service-account
+      expression: 'request.userInfo.username == "system:serviceaccount:{{ .Release.Namespace }}:{{ $fullname }}-backend"'
+  variables:
+    - name: managedLabel
+      expression: '"managed-by"'
+  validations:
+    - expression: >-
+        namespaceObject != null && has(namespaceObject.metadata.labels) &&
+        variables.managedLabel in namespaceObject.metadata.labels &&
+        namespaceObject.metadata.labels[variables.managedLabel] == "k8s-stack-manager"
+      message: "k8s-stack-manager may exec into pods and port-forward only in stack namespaces (label managed-by=k8s-stack-manager)"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $fullname }}-backend-stream-scope
+  labels:
+    {{- include "k8s-stack-manager.backend.labels" . | nindent 4 }}
+spec:
+  policyName: {{ $fullname }}-backend-stream-scope
+  validationActions: [Deny]
 {{- end }}
 {{- end }}

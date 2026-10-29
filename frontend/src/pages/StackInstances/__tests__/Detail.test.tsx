@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { StrictMode } from 'react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import Detail from '../Detail';
+import { BRANDING_DEFAULTS, StaticBrandingProvider } from '../../../context/BrandingContext';
 import { NotificationProvider } from '../../../context/NotificationContext';
 
 const mockNavigate = vi.fn();
@@ -178,8 +179,8 @@ vi.mock('../../../components/PodStatusDisplay', () => ({
 }));
 
 vi.mock('../../../components/AccessUrls', () => ({
-  default: ({ status }: { status: { ingresses?: { url: string }[] } }) => (
-    <div data-testid="access-urls">
+  default: ({ status, portForwardEnabled, instanceName }: { status: { ingresses?: { url: string }[] }; portForwardEnabled?: boolean; instanceName?: string }) => (
+    <div data-testid="access-urls" data-port-forward={String(!!portForwardEnabled)} data-instance-name={instanceName ?? ''}>
       {(status.ingresses || []).map((ing: { url: string }, i: number) => (
         <span key={i}>{ing.url}</span>
       ))}
@@ -1074,6 +1075,53 @@ describe('StackInstances Detail', () => {
     expect(lifecycle.compareDocumentPosition(accessUrls) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(accessUrls.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(accessUrls.compareDocumentPosition(pods) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  describe('stackctl port-forward hint (#722)', () => {
+    const renderWithBranding = (portForwardEnabled: boolean) =>
+      render(
+        <StaticBrandingProvider value={{ ...BRANDING_DEFAULTS, portForwardEnabled }}>
+          <MemoryRouter initialEntries={['/stack-instances/123']}>
+            <NotificationProvider>
+              <Routes>
+                <Route path="/stack-instances/:id" element={<Detail />} />
+              </Routes>
+            </NotificationProvider>
+          </MemoryRouter>
+        </StaticBrandingProvider>,
+      );
+
+    it('enables the hint for the owner when the server has the feature on', async () => {
+      setupMocks({ status: 'running' }, { k8sStatus: statusWithIngress });
+      renderWithBranding(true);
+
+      const el = await screen.findByTestId('access-urls');
+      expect(el).toHaveAttribute('data-port-forward', 'true');
+      expect(el).toHaveAttribute('data-instance-name', 'Test Instance');
+    });
+
+    it('disables the hint when the server has the feature off', async () => {
+      setupMocks({ status: 'running' }, { k8sStatus: statusWithIngress });
+      renderWithBranding(false);
+
+      expect(await screen.findByTestId('access-urls')).toHaveAttribute('data-port-forward', 'false');
+    });
+
+    it('disables the hint for a user who cannot modify the instance', async () => {
+      authState.user = { id: 'other', username: 'bob', role: 'user', display_name: 'Bob' };
+      setupMocks({ status: 'running' }, { k8sStatus: statusWithIngress });
+      renderWithBranding(true);
+
+      expect(await screen.findByTestId('access-urls')).toHaveAttribute('data-port-forward', 'false');
+    });
+
+    it('enables the hint for devops who do not own the instance', async () => {
+      authState.user = { id: 'other', username: 'dev', role: 'devops', display_name: 'Dev' };
+      setupMocks({ status: 'running' }, { k8sStatus: statusWithIngress });
+      renderWithBranding(true);
+
+      expect(await screen.findByTestId('access-urls')).toHaveAttribute('data-port-forward', 'true');
+    });
   });
 
   it.each(['deploying', 'stabilizing', 'error', 'stopping', 'cleaning'])('shows Cluster Resources but not Access URLs for %s instance', async (status) => {

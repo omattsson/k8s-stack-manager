@@ -330,6 +330,8 @@ definitions:
     type: object
   handlers.CreateClusterRequest:
     properties:
+      allow_port_forward:
+        type: boolean
       api_server_url:
         type: string
       description:
@@ -882,6 +884,8 @@ definitions:
     type: object
   handlers.UpdateClusterRequest:
     properties:
+      allow_port_forward:
+        type: boolean
       api_server_url:
         type: string
       description:
@@ -2252,6 +2256,11 @@ definitions:
     type: object
   models.Cluster:
     properties:
+      allow_port_forward:
+        description: |-
+          AllowPortForward lets users open port-forward tunnels to the stacks of
+          this cluster. Off by default; only an admin sets it.
+        type: boolean
       api_server_url:
         type: string
       created_at:

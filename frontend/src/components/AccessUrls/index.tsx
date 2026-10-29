@@ -23,6 +23,15 @@ interface AccessUrlsProps {
    * useful to users with kubectl access to the cluster (devops, admin).
    */
   showPortForward?: boolean;
+  /**
+   * Show a `stackctl stack port-forward` command for each port of each
+   * ClusterIP service. The caller sets it when the server has the feature on
+   * (ui-config `port_forward_enabled`) and the user can modify the instance.
+   * Needs `instanceName`.
+   */
+  portForwardEnabled?: boolean;
+  /** Name of the instance, as stackctl takes it on the command line. */
+  instanceName?: string;
 }
 
 interface AccessEntry {
@@ -32,9 +41,15 @@ interface AccessEntry {
   url?: string;
   copyText: string;
   label: string;
+  /** Accessible name of the copy button. */
+  copyLabel: string;
 }
 
-const buildEntries = (status: NamespaceStatus, showPortForward: boolean): AccessEntry[] => {
+const buildEntries = (
+  status: NamespaceStatus,
+  showPortForward: boolean,
+  stackctlInstance: string | undefined,
+): AccessEntry[] => {
   const entries: AccessEntry[] = [];
 
   // Ingress entries
@@ -46,6 +61,7 @@ const buildEntries = (status: NamespaceStatus, showPortForward: boolean): Access
       url: ing.url,
       copyText: ing.url,
       label: ing.url,
+      copyLabel: `Copy ${ing.name}`,
     });
   });
 
@@ -67,6 +83,7 @@ const buildEntries = (status: NamespaceStatus, showPortForward: boolean): Access
           url,
           copyText: url,
           label: url,
+          copyLabel: `Copy ${svc.name}`,
         });
       } else if (svc.type === 'NodePort' && (svc.node_ports || []).length > 0) {
         const portsStr = (svc.node_ports || []).join(', ');
@@ -76,17 +93,37 @@ const buildEntries = (status: NamespaceStatus, showPortForward: boolean): Access
           serviceType: 'NodePort',
           copyText: `NodePort: ${portsStr}`,
           label: `NodePort: ${portsStr}`,
+          copyLabel: `Copy ${svc.name}`,
         });
-      } else if (svc.type === 'ClusterIP' && showPortForward) {
-        const port = (svc.ports || [])[0]?.replace(/\/.*/, '') || '80';
-        const cmd = `kubectl port-forward svc/${svc.name} ${port}:${port} -n ${status.namespace}`;
-        entries.push({
-          chartName: chart.chart_name || chart.release_name,
-          serviceName: svc.name,
-          serviceType: 'ClusterIP',
-          copyText: cmd,
-          label: cmd,
-        });
+      } else if (svc.type === 'ClusterIP') {
+        const chartName = chart.chart_name || chart.release_name;
+        if (showPortForward) {
+          const port = (svc.ports || [])[0]?.replace(/\/.*/, '') || '80';
+          const cmd = `kubectl port-forward svc/${svc.name} ${port}:${port} -n ${status.namespace}`;
+          entries.push({
+            chartName,
+            serviceName: svc.name,
+            serviceType: 'ClusterIP',
+            copyText: cmd,
+            label: cmd,
+            copyLabel: `Copy ${svc.name}`,
+          });
+        }
+        if (stackctlInstance) {
+          (svc.ports || []).forEach((p) => {
+            const port = p.replace(/\/.*/, '');
+            if (!port) return;
+            const cmd = `stackctl stack port-forward ${stackctlInstance} ${svc.name} ${port}`;
+            entries.push({
+              chartName,
+              serviceName: svc.name,
+              serviceType: 'ClusterIP',
+              copyText: cmd,
+              label: cmd,
+              copyLabel: `Copy stackctl port-forward ${svc.name} ${port}`,
+            });
+          });
+        }
       }
     });
   });
@@ -103,10 +140,10 @@ const typeColor = (type: string): 'primary' | 'success' | 'warning' | 'default' 
   }
 };
 
-const AccessUrls = ({ status, showPortForward = false }: AccessUrlsProps) => {
+const AccessUrls = ({ status, showPortForward = false, portForwardEnabled = false, instanceName }: AccessUrlsProps) => {
   const { showSuccess, showError } = useNotification();
 
-  const entries = buildEntries(status, showPortForward);
+  const entries = buildEntries(status, showPortForward, portForwardEnabled ? instanceName : undefined);
 
   if (entries.length === 0) return null;
 
@@ -134,7 +171,7 @@ const AccessUrls = ({ status, showPortForward = false }: AccessUrlsProps) => {
               secondaryAction={
                 <Box sx={{ display: 'flex', gap: 0.5 }}>
                   <Tooltip title="Copy">
-                    <IconButton size="small" onClick={() => handleCopy(entry.copyText)} aria-label={`Copy ${entry.serviceName}`}>
+                    <IconButton size="small" onClick={() => handleCopy(entry.copyText)} aria-label={entry.copyLabel}>
                       <ContentCopyIcon fontSize="small" />
                     </IconButton>
                   </Tooltip>

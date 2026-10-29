@@ -62,6 +62,7 @@ type CreateClusterRequest struct {
 	MaxInstancesPerUser int    `json:"max_instances_per_user"`
 	IsDefault           bool   `json:"is_default"`
 	UseInCluster        bool   `json:"use_in_cluster"`
+	AllowPortForward    bool   `json:"allow_port_forward"`
 	RegistryURL         string `json:"registry_url"`
 	RegistryUsername    string `json:"registry_username"`
 	RegistryPassword    string `json:"registry_password"`
@@ -80,6 +81,7 @@ type UpdateClusterRequest struct {
 	MaxInstancesPerUser *int    `json:"max_instances_per_user,omitempty"`
 	IsDefault           *bool   `json:"is_default,omitempty"`
 	UseInCluster        *bool   `json:"use_in_cluster,omitempty"`
+	AllowPortForward    *bool   `json:"allow_port_forward,omitempty"`
 	RegistryURL         *string `json:"registry_url,omitempty"`
 	RegistryUsername    *string `json:"registry_username,omitempty"`
 	RegistryPassword    *string `json:"registry_password,omitempty"`
@@ -279,6 +281,7 @@ func (h *ClusterHandler) CreateCluster(c *gin.Context) {
 		IsDefault:           false,
 		HealthStatus:        models.ClusterUnreachable,
 		UseInCluster:        req.UseInCluster,
+		AllowPortForward:    req.AllowPortForward,
 		RegistryURL:         req.RegistryURL,
 		RegistryUsername:    req.RegistryUsername,
 		RegistryPassword:    req.RegistryPassword,
@@ -438,6 +441,9 @@ func (h *ClusterHandler) UpdateCluster(c *gin.Context) {
 			existing.KubeconfigPath = ""
 			kubeconfigChanged = true
 		}
+	}
+	if req.AllowPortForward != nil {
+		existing.AllowPortForward = *req.AllowPortForward
 	}
 	if req.RegistryURL != nil {
 		existing.RegistryURL = *req.RegistryURL

@@ -204,3 +204,44 @@ func TestWSTokenFromContext_HandlesWrongType(t *testing.T) {
 		assert.Empty(t, WSTokenFromContext(c))
 	})
 }
+
+func TestRedactWSToken_StreamRoutes(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name      string
+		target    string
+		wantQuery string
+		wantStrip bool
+	}{
+		{"port-forward", "/api/v1/stack-instances/abc/port-forward?token=secret&service=db&port=3306", "port=3306&service=db", true},
+		{"exec", "/api/v1/stack-instances/abc/exec?token=secret&chart=web", "chart=web", true},
+		{"empty token", "/api/v1/stack-instances/abc/exec?token=", "", true},
+		{"other instance route keeps query", "/api/v1/stack-instances/abc/deploy?token=secret", "token=secret", false},
+		{"nested path not matched", "/api/v1/stack-instances/abc/x/exec?token=secret", "token=secret", false},
+		{"missing id not matched", "/api/v1/stack-instances//exec?token=secret", "token=secret", false},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var rawQuery, stashed string
+			router := gin.New()
+			router.Use(RedactWSToken())
+			router.NoRoute(func(c *gin.Context) {
+				rawQuery = c.Request.URL.RawQuery
+				stashed = WSTokenFromContext(c)
+				c.Status(http.StatusOK)
+			})
+			req := httptest.NewRequest(http.MethodGet, tt.target, nil)
+			req.RequestURI = req.URL.RequestURI()
+			router.ServeHTTP(httptest.NewRecorder(), req)
+			assert.Equal(t, tt.wantQuery, rawQuery)
+			assert.Empty(t, stashed, "a stream route never keeps the token")
+			if tt.wantStrip {
+				assert.NotContains(t, rawQuery, "token")
+			}
+		})
+	}
+}

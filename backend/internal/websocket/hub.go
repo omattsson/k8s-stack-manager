@@ -97,6 +97,12 @@ type Hub struct {
 	// shutdownOnce ensures Shutdown is idempotent and safe to call concurrently.
 	shutdownOnce sync.Once
 
+	// revocables holds the registered revocable connections (port-forward and
+	// exec sessions). They are not clients: no broadcast, no ClientCount.
+	revocables map[Revocable]struct{}
+	// accessChecker is the optional access re-check of the revocables.
+	accessChecker atomic.Pointer[RevocableAccessChecker]
+
 	// revalidateOnce makes StartRevalidation start at most one loop.
 	revalidateOnce sync.Once
 	// revalidateDone is closed when the revalidation loop exits (tests).
@@ -112,6 +118,7 @@ func NewHub() *Hub {
 	return &Hub{
 		clients:      make(map[*Client]bool),
 		instanceSubs: make(map[string]map[*Client]bool),
+		revocables:   make(map[Revocable]struct{}),
 		broadcast:    make(chan []byte, broadcastBufferSize),
 		unregister:   make(chan *Client),
 		done:         make(chan struct{}),
@@ -378,7 +385,7 @@ func (h *Hub) DisconnectAPIKey(keyID string) int {
 // disconnectUserLocal closes the local connections of the user without a
 // fan-out row.
 func (h *Hub) disconnectUserLocal(userID string) int {
-	return h.disconnectMatching(func(c *Client) bool { return c.identity.UserID == userID })
+	return h.disconnectIdentities(func(id ClientIdentity) bool { return id.UserID == userID })
 }
 
 // disconnectUserIssuedBefore closes the local connections of the user whose
@@ -391,24 +398,24 @@ func (h *Hub) disconnectUserLocal(userID string) int {
 // the row time: a session that the user opened after the revocation stays
 // open.
 func (h *Hub) disconnectUserIssuedBefore(userID string, t time.Time) int {
-	return h.disconnectMatching(func(c *Client) bool {
-		if c.identity.UserID != userID {
+	return h.disconnectIdentities(func(id ClientIdentity) bool {
+		if id.UserID != userID {
 			return false
 		}
-		return c.identity.IssuedAt.IsZero() || t.IsZero() || c.identity.IssuedAt.UnixMilli() <= t.UnixMilli()
+		return id.IssuedAt.IsZero() || t.IsZero() || id.IssuedAt.UnixMilli() <= t.UnixMilli()
 	})
 }
 
 // disconnectTokenLocal closes the local connections of the token. See
 // disconnectUserLocal.
 func (h *Hub) disconnectTokenLocal(tokenID string) int {
-	return h.disconnectMatching(func(c *Client) bool { return c.identity.TokenID == tokenID })
+	return h.disconnectIdentities(func(id ClientIdentity) bool { return id.TokenID == tokenID })
 }
 
 // disconnectAPIKeyLocal closes the local connections of the API key. See
 // disconnectUserLocal.
 func (h *Hub) disconnectAPIKeyLocal(keyID string) int {
-	return h.disconnectMatching(func(c *Client) bool { return c.identity.APIKeyID == keyID })
+	return h.disconnectIdentities(func(id ClientIdentity) bool { return id.APIKeyID == keyID })
 }
 
 // disconnectMatching removes the matching clients under h.mu and closes their
@@ -428,6 +435,24 @@ func (h *Hub) disconnectMatching(match func(*Client) bool) int {
 		}
 	}
 	return closed
+}
+
+// disconnectIdentities closes the clients (send channel, "session revoked")
+// and the revocables (Revoke 1008, outside the lock) whose identity matches.
+// It returns the number of closed connections.
+func (h *Hub) disconnectIdentities(match func(ClientIdentity) bool) int {
+	h.mu.Lock()
+	closed := 0
+	for client := range h.clients {
+		if match(client.identity) {
+			h.removeClientLocked(client, closeReasonRevoked)
+			closed++
+		}
+	}
+	taken := h.takeRevocablesLocked(func(r Revocable) bool { return match(r.Identity()) })
+	h.mu.Unlock()
+	revokeAll(taken, CloseCodePolicyViolation, closeReasonRevoked)
+	return closed + len(taken)
 }
 
 // removeClientLocked removes a registered client from all maps and closes its
@@ -459,6 +484,8 @@ func (h *Hub) removeClientSubs(c *Client) {
 // closeAllClients removes all clients and closes their send channels.
 func (h *Hub) closeAllClients() {
 	h.mu.Lock()
+	revocables := h.takeRevocablesLocked(func(Revocable) bool { return true })
+	defer revokeAll(revocables, CloseCodeGoingAway, CloseReasonShutdown) // runs after the unlock
 	defer h.mu.Unlock()
 	count := int64(len(h.clients))
 	for client := range h.clients {
