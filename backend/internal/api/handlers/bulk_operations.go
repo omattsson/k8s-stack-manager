@@ -321,6 +321,7 @@ func (h *InstanceHandler) BulkStop(c *gin.Context) {
 			return "", fmt.Errorf("failed to start stop operation")
 		}
 
+		h.revokeStreams(inst.ID)
 		return logID, nil
 	})
 }
@@ -371,6 +372,7 @@ func (h *InstanceHandler) BulkClean(c *gin.Context) {
 			return "", fmt.Errorf("failed to start clean operation")
 		}
 
+		h.revokeStreams(inst.ID)
 		return logID, nil
 	})
 }

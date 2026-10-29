@@ -167,6 +167,8 @@ const (
 	AuditActionExpired               = "expired"                 // ttl reaper
 	AuditActionCleanupPolicyExecuted = "cleanup_policy_executed" // cleanup scheduler
 	AuditActionInterrupted           = "interrupted"             // deployer.InterruptRecovery
+	AuditActionPortForward           = "port_forward"            // handlers.StreamHandler (start of a tunnel)
+	AuditActionPortForwardEnd        = "port_forward_end"        // handlers.StreamHandler (end of a tunnel)
 )
 
 // KnownAuditActions lists every action that new audit entries can have. The
@@ -181,7 +183,7 @@ var KnownAuditActions = []string{
 	AuditActionDisable, AuditActionEnable, AuditActionResetPassword,
 	AuditActionChangeRole, AuditActionFollow, AuditActionUnfollow,
 	AuditActionQuickDeploy, AuditActionExpired, AuditActionCleanupPolicyExecuted,
-	AuditActionInterrupted,
+	AuditActionInterrupted, AuditActionPortForward, AuditActionPortForwardEnd,
 }
 
 // KnownAuditEntityTypes lists every entity type that new audit entries can
@@ -211,6 +213,11 @@ var auditRoutes = map[string]AuditRoute{
 	"POST /templates/bulk/delete":      {Action: AuditActionDelete, EntityType: "stack_template", BulkIDField: "template_id"},
 	"POST /templates/bulk/publish":     {Action: AuditActionPublish, EntityType: "stack_template", BulkIDField: "template_id"},
 	"POST /templates/bulk/unpublish":   {Action: AuditActionUnpublish, EntityType: "stack_template", BulkIDField: "template_id"},
+
+	// Port-forward: GET is not audited by the middleware. StreamHandler
+	// (handlers/instance_stream.go) writes port_forward at the start and
+	// port_forward_end at the end of a tunnel:
+	// GET /stack-instances/:id/port-forward.
 
 	// Stack definitions.
 	"POST /stack-definitions/import":      {Action: AuditActionImport, EntityType: "stack_definition"},

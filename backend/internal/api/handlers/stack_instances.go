@@ -180,10 +180,36 @@ type InstanceHandler struct {
 	clusterQuotaRepo   models.ResourceQuotaRepository
 	followerRepo       models.InstanceFollowerRepository
 	actionRuns         models.ActionRunRepository
+	// streamRevoker closes the open port-forward sessions of an instance when
+	// it is deleted, stopped or cleaned (nil: no sessions).
+	streamRevoker InstanceSessionRevoker
 	// statusFlight lets concurrent status reads of one namespace share one
 	// set of Kubernetes calls (namespaceStatus).
 	statusFlight singleflight.Group
 	uniqueNames  bool
+}
+
+// InstanceSessionRevoker closes the local long-lived sessions of a stack
+// instance (port-forward, exec). *websocket.Hub implements it.
+type InstanceSessionRevoker interface {
+	DisconnectInstance(instanceID string) int
+}
+
+// WithStreamRevoker makes delete, stop and clean close the open stream
+// sessions of the instance at once (code 1008). Other replicas close theirs at
+// the next hub revalidation. Returns h for chaining.
+func (h *InstanceHandler) WithStreamRevoker(r InstanceSessionRevoker) *InstanceHandler {
+	h.streamRevoker = r
+	return h
+}
+
+// revokeStreams closes the local stream sessions of the instance. It is
+// nil-safe and does not block.
+func (h *InstanceHandler) revokeStreams(instanceID string) {
+	if h == nil || h.streamRevoker == nil {
+		return
+	}
+	h.streamRevoker.DisconnectInstance(instanceID)
 }
 
 // WithUniqueInstanceNames turns on UNIQUE_INSTANCE_NAMES: create, rename and
@@ -955,6 +981,7 @@ func (h *InstanceHandler) deleteInstance(c *gin.Context, inst *models.StackInsta
 				logKeyInstanceID, inst.ID, "error", err)
 			return "", &instanceDeleteError{status: http.StatusInternalServerError, message: msgInternalServerError}
 		}
+		h.revokeStreams(inst.ID)
 		return logID, nil
 	}
 
@@ -975,6 +1002,7 @@ func (h *InstanceHandler) deleteInstance(c *gin.Context, inst *models.StackInsta
 		return "", &instanceDeleteError{status: status, message: message}
 	}
 
+	h.revokeStreams(inst.ID)
 	h.afterInstanceDeleted(wctx, inst, followerIDs)
 	return "", nil
 }
@@ -2021,6 +2049,7 @@ func (h *InstanceHandler) StopInstance(c *gin.Context) {
 		return
 	}
 
+	h.revokeStreams(inst.ID)
 	c.JSON(http.StatusAccepted, gin.H{"log_id": logID, "message": "Stop initiated"})
 }
 
@@ -2102,6 +2131,7 @@ func (h *InstanceHandler) CleanInstance(c *gin.Context) {
 		return
 	}
 
+	h.revokeStreams(inst.ID)
 	c.JSON(http.StatusAccepted, gin.H{"log_id": logID, "message": "Namespace cleanup initiated"})
 }
 

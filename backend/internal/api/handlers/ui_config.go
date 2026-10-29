@@ -28,6 +28,9 @@ type UIConfigResponse struct {
 	// stop time from now (MAX_INSTANCE_TTL_DAYS). The forms limit the
 	// TTL field and the stop-time picker with it.
 	MaxInstanceTTLDays int `json:"max_instance_ttl_days" example:"30"`
+	// PortForwardEnabled is true when the port-forward tunnels are on
+	// (STACK_PORT_FORWARD_ENABLED). The UI shows the stackctl hint then.
+	PortForwardEnabled bool `json:"port_forward_enabled" example:"false"`
 }
 
 // NewUIConfigHandler returns the handler of GET /api/v1/ui-config. The
@@ -37,13 +40,14 @@ type UIConfigResponse struct {
 // value below 1 gives the default of 30 days). A default TTL below 1 or above
 // the limit is sent as 0: the create endpoints ignore a value below 1 and
 // reject a TTL above the limit, so the forms must not start with it.
-func NewUIConfigHandler(b config.BrandingConfig, defaultTTLMinutes, maxTTLDays int) gin.HandlerFunc {
+func NewUIConfigHandler(b config.BrandingConfig, defaultTTLMinutes, maxTTLDays int, portForwardEnabled bool) gin.HandlerFunc {
 	maxTTL := maxTTLMinutesFromDays(maxTTLDays)
 	resp := UIConfigResponse{
 		Title:              b.Title,
 		LogoURL:            b.LogoURL,
 		FaviconURL:         b.FaviconURL,
 		MaxInstanceTTLDays: maxTTL / (24 * 60),
+		PortForwardEnabled: portForwardEnabled,
 	}
 	if defaultTTLMinutes > 0 && defaultTTLMinutes <= maxTTL {
 		resp.DefaultInstanceTTLMinutes = defaultTTLMinutes
@@ -61,7 +65,7 @@ func NewUIConfigHandler(b config.BrandingConfig, defaultTTLMinutes, maxTTLDays i
 
 // getUIConfig godoc
 // @Summary      Web UI display config
-// @Description  Returns the display values of the web UI: product title, logo URL and favicon URL (APP_TITLE, APP_LOGO_URL, APP_FAVICON_URL), the start value of the TTL field in the create forms (default_instance_ttl_minutes, DEFAULT_INSTANCE_TTL_MINUTES; 0 means no expiry), and the maximum TTL and stop-time distance in days (max_instance_ttl_days, MAX_INSTANCE_TTL_DAYS). Public: no authentication, so the login page can use it. An empty logo_url means the built-in logo. A URL is a same-origin path or an https URL. Cached for 5 minutes.
+// @Description  Returns the display values of the web UI: product title, logo URL and favicon URL (APP_TITLE, APP_LOGO_URL, APP_FAVICON_URL), the start value of the TTL field in the create forms (default_instance_ttl_minutes, DEFAULT_INSTANCE_TTL_MINUTES; 0 means no expiry), the maximum TTL and stop-time distance in days (max_instance_ttl_days, MAX_INSTANCE_TTL_DAYS), and whether port-forward is on (port_forward_enabled, STACK_PORT_FORWARD_ENABLED). Public: no authentication, so the login page can use it. An empty logo_url means the built-in logo. A URL is a same-origin path or an https URL. Cached for 5 minutes.
 // @Tags         ui
 // @Produce      json
 // @Success      200  {object}  UIConfigResponse

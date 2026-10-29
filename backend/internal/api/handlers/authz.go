@@ -29,13 +29,19 @@ const msgInstanceModifyForbidden = "You are not allowed to modify this stack ins
 // other authenticated user may only read the instance, its status, pods,
 // deploy log and access URLs.
 func canModifyInstance(c *gin.Context, inst *models.StackInstance) bool {
+	return canModifyInstanceAs(middleware.GetUserIDFromContext(c), middleware.GetRoleFromContext(c), inst)
+}
+
+// canModifyInstanceAs is the rule of canModifyInstance for a user ID and role
+// that do not come from a request (the revalidation of open stream sessions
+// uses the current role of the user).
+func canModifyInstanceAs(userID, role string, inst *models.StackInstance) bool {
 	if inst == nil {
 		return false
 	}
-	if isPrivilegedRole(c) {
+	if role == roleAdmin || role == roleDevOps {
 		return true
 	}
-	userID := middleware.GetUserIDFromContext(c)
 	return userID != "" && inst.OwnerID == userID
 }
 

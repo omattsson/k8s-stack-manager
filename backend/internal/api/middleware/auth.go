@@ -31,7 +31,7 @@ const (
 	// contextKeyAuthMethod holds AuthMethodJWT or AuthMethodAPIKey.
 	contextKeyAuthMethod = "authMethod"
 	contextKeyAPIKeyID   = "apiKeyID"
-	contextKeyAPIKeyExp  = "apiKeyExpiry"
+	contextKeyAPIKeyExp  = "apiKeyExpiry" // #nosec G101 -- a context key, not a credential
 )
 
 // Values of GetAuthMethodFromContext.

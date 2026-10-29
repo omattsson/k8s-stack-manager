@@ -72,6 +72,10 @@ type Deps struct {
 	Registry            *cluster.Registry
 	InstanceRepo        models.StackInstanceRepository
 
+	// Stream handler (port-forward). The route answers 404 feature_disabled
+	// when STACK_PORT_FORWARD_ENABLED is false.
+	StreamHandler *handlers.StreamHandler
+
 	// Dashboard handler.
 	DashboardHandler *handlers.DashboardHandler
 
@@ -204,7 +208,7 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 
 		// Web UI display config (title, logo, favicon, TTL default) — public,
 		// so the login page can use it before sign-in.
-		v1.GET("/ui-config", handlers.NewUIConfigHandler(cfg.Branding, cfg.App.DefaultInstanceTTLMinutes, cfg.App.MaxInstanceTTLDays))
+		v1.GET("/ui-config", handlers.NewUIConfigHandler(cfg.Branding, cfg.App.DefaultInstanceTTLMinutes, cfg.App.MaxInstanceTTLDays, cfg.Stream.PortForward.Enabled))
 
 		// No /items routes: handlers.Handler (items.go) is the reference
 		// implementation of the CRUD pattern only. Unauthenticated item routes
@@ -394,6 +398,12 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 				instances.POST("/:id/rollback", deps.InstanceHandler.RollbackInstance)
 				instances.GET("/:id/status", deps.InstanceHandler.GetInstanceStatus)
 				instances.GET("/:id/pods", deps.InstanceHandler.GetInstancePods)
+
+				// Port-forward tunnel (WebSocket upgrade). The handler writes its
+				// own audit entries (the audit middleware ignores GET).
+				if deps.StreamHandler != nil {
+					instances.GET("/:id/port-forward", deps.StreamHandler.PortForward)
+				}
 
 				// Bulk operations (DevOps/Admin only)
 				bulk := instances.Group("/bulk")

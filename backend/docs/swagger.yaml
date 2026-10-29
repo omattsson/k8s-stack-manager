@@ -877,6 +877,12 @@ definitions:
           TTL field and the stop-time picker with it.
         example: 30
         type: integer
+      port_forward_enabled:
+        description: |-
+          PortForwardEnabled is true when the port-forward tunnels are on
+          (STACK_PORT_FORWARD_ENABLED). The UI shows the stackctl hint then.
+        example: false
+        type: boolean
       title:
         description: Title is the product name (APP_TITLE).
         example: K8s Stack Manager
@@ -8053,6 +8059,105 @@ paths:
       summary: Get instance pod status
       tags:
       - stack-instances
+  /api/v1/stack-instances/{id}/port-forward:
+    get:
+      description: 'Upgrades the connection to a WebSocket that carries raw TCP bytes
+        between the client and a service port of the instance. Binary frames carry
+        the bytes in both directions; a text frame closes the tunnel with 1003. There
+        is no half-close. The server pings every 30 s; pings do not count as activity.
+        Authentication: the Authorization header (JWT) or, when STACK_STREAM_ALLOW_API_KEYS
+        is true, the X-API-Key header. The route never accepts a token in the query
+        string. The caller must be the owner of the instance, a devops user or an
+        admin, and the cluster must allow port-forward (allow_port_forward). All checks
+        run before the upgrade and give an HTTP status with a stable code in the body
+        ({"error","code"}). Close codes after the upgrade: 1000 normal, 1001 server
+        shutdown, 1003 text frame, 1008 access revoked, 4001 maximum duration, 4002
+        idle timeout, 4502 pod stream error (the reason holds the error). An expired
+        access token does not close an open tunnel. Delete, stop and clean of the
+        instance close the tunnels of that replica at once and the tunnels of other
+        replicas at the next revalidation (up to one minute).'
+      parameters:
+      - description: Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Service name (DNS-1035 label)
+        in: query
+        name: service
+        required: true
+        type: string
+      - description: Service port number (1-65535)
+        in: query
+        name: port
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "101":
+          description: Switching Protocols
+        "400":
+          description: invalid_service, invalid_port, upgrade_required
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: api_key_not_allowed, forbidden, cluster_port_forward_disabled,
+            namespace_not_allowed, origin_not_allowed
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: feature_disabled, instance_not_found, service_not_found, port_not_found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: instance_not_deployed, service_external_name, service_no_selector
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "429":
+          description: tunnel_limit
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "502":
+          description: dial_failed
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: no_ready_pod, shutting_down
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Open a port-forward tunnel to a service of a stack instance
+      tags:
+      - stack-instances
   /api/v1/stack-instances/{id}/quota:
     get:
       description: 'Returns the quota that applies to the namespace of the instance:
@@ -9740,11 +9845,11 @@ paths:
       description: 'Returns the display values of the web UI: product title, logo
         URL and favicon URL (APP_TITLE, APP_LOGO_URL, APP_FAVICON_URL), the start
         value of the TTL field in the create forms (default_instance_ttl_minutes,
-        DEFAULT_INSTANCE_TTL_MINUTES; 0 means no expiry), and the maximum TTL and
-        stop-time distance in days (max_instance_ttl_days, MAX_INSTANCE_TTL_DAYS).
-        Public: no authentication, so the login page can use it. An empty logo_url
-        means the built-in logo. A URL is a same-origin path or an https URL. Cached
-        for 5 minutes.'
+        DEFAULT_INSTANCE_TTL_MINUTES; 0 means no expiry), the maximum TTL and stop-time
+        distance in days (max_instance_ttl_days, MAX_INSTANCE_TTL_DAYS), and whether
+        port-forward is on (port_forward_enabled, STACK_PORT_FORWARD_ENABLED). Public:
+        no authentication, so the login page can use it. An empty logo_url means the
+        built-in logo. A URL is a same-origin path or an https URL. Cached for 5 minutes.'
       produces:
       - application/json
       responses:

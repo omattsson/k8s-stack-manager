@@ -18,6 +18,7 @@ import (
 	"backend/internal/models"
 	"backend/internal/notifier"
 	"backend/internal/notifier/channel"
+	"backend/internal/podstream"
 	"backend/internal/replica"
 	"backend/internal/retention"
 	"backend/internal/scheduler"
@@ -97,6 +98,10 @@ type handlerSet struct {
 	Dashboard             *handlers.DashboardHandler
 	CleanupPolicy         *handlers.CleanupPolicyHandler
 	NotificationChannel   *handlers.NotificationChannelHandler
+	Stream                *handlers.StreamHandler
+	// Streams is the session manager of the stream handler; main shuts it
+	// down right after the HTTP server.
+	Streams *podstream.Manager
 }
 
 // routerDeps holds non-handler dependencies required to wire the router.
@@ -453,6 +458,24 @@ func startupDefaultClusterID(reg *cluster.Registry) string {
 	return ""
 }
 
+// portForwarderProvider adapts the cluster registry to the provider of the
+// stream handler. An empty cluster ID is the default cluster.
+func portForwarderProvider(reg *cluster.Registry) handlers.PortForwarderProvider {
+	return func(clusterID string) (k8s.PortForwarder, error) {
+		if reg == nil {
+			return nil, errors.New("cluster registry not configured")
+		}
+		c, err := reg.GetK8sClient(clusterID)
+		if err != nil {
+			return nil, err
+		}
+		if c == nil {
+			return nil, errors.New("cluster client not available")
+		}
+		return c, nil
+	}
+}
+
 // buildHandlers creates all HTTP handlers.
 func buildHandlers(
 	cfg *config.Config,
@@ -539,6 +562,30 @@ func buildHandlers(
 		WithTemplateVersions(repos.TemplateVersion).WithClusterQuotas(repos.ResourceQuota).
 		WithFollowers(repos.InstanceFollower).WithUniqueInstanceNames(cfg.App.UniqueInstanceNames).
 		WithMaxTTLDays(cfg.App.MaxInstanceTTLDays).WithActionRuns(repos.ActionRun)
+	if hub != nil {
+		// Delete, stop and clean close the open tunnels of the instance.
+		instanceHandler.WithStreamRevoker(hub)
+	}
+
+	// Stream handler (port-forward) and its session manager.
+	streams := podstream.NewManager(podstream.Config{
+		MaxPerUser:  cfg.Stream.PortForward.MaxPerUser,
+		MaxDuration: cfg.Stream.PortForward.MaxDuration,
+		IdleTimeout: cfg.Stream.PortForward.IdleTimeout,
+	})
+	streamDeps := handlers.StreamDeps{
+		InstanceRepo:   repos.StackInstance,
+		ClusterRepo:    repos.Cluster,
+		Provider:       portForwarderProvider(svc.ClusterRegistry),
+		Manager:        streams,
+		Audit:          repos.AuditLog,
+		AllowedOrigins: cfg.CORS.AllowedOrigins,
+		Config:         cfg.Stream,
+	}
+	if hub != nil {
+		streamDeps.Hub = hub
+	}
+	streamHandler := handlers.NewStreamHandler(streamDeps)
 
 	// Git handler.
 	gitHandler := handlers.NewGitHandler(svc.GitRegistry)
@@ -654,6 +701,8 @@ func buildHandlers(
 		Dashboard:             dashboardHandler,
 		CleanupPolicy:         cleanupPolicyHandler,
 		NotificationChannel:   notificationChannelHandler,
+		Stream:                streamHandler,
+		Streams:               streams,
 	}, nil
 }
 
@@ -697,6 +746,7 @@ func buildRouter(cfg *config.Config, hs *handlerSet, deps routerDeps) (*gin.Engi
 		DashboardHandler:             hs.Dashboard,
 		CleanupPolicyHandler:         hs.CleanupPolicy,
 		NotificationChannelHandler:   hs.NotificationChannel,
+		StreamHandler:                hs.Stream,
 		CleanupScheduler:             deps.Svc.CleanupScheduler,
 		ClusterHandler:               hs.Cluster,
 		SharedValuesHandler:          hs.SharedValues,

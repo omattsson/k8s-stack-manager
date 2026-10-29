@@ -10,6 +10,7 @@ import (
 	"backend/internal/leader"
 	"backend/internal/models"
 	"backend/internal/notifier"
+	"backend/internal/podstream"
 	"backend/internal/replica"
 	"backend/internal/scheduler"
 	"backend/internal/sessionstore"
@@ -153,6 +154,10 @@ func main() {
 	// Close revoked WebSocket connections that this replica did not revoke
 	// itself (revoke on another replica, token blocklist). Stops on hub
 	// shutdown.
+	// The open port-forward sessions also get the access re-check (instance,
+	// current role, cluster switch).
+	hub.SetRevocableAccessChecker(handlers.NewStreamAccessChecker(
+		repos.StackInstance, repos.User, repos.Cluster, cfg.Stream))
 	hub.StartRevalidation(websocket.DefaultRevalidateInterval,
 		handlers.NewWebSocketRevocationChecker(sessStore, repos.User, repos.APIKey))
 
@@ -205,6 +210,7 @@ func main() {
 		templateRefs:     svc.TemplateRefs,
 		heartbeat:        svc.Heartbeat,
 		hub:              hub,
+		streams:          hs.Streams,
 		wsFanout:         wsFanout,
 		clusterRegistry:  svc.ClusterRegistry,
 		sessionStore:     sessStore,
@@ -224,7 +230,8 @@ type shutdownDeps struct {
 	templateRefs     *hooks.TemplateResolver    // nil: no hooks or actions
 	heartbeat        *replica.Heartbeat         // nil: no heartbeat repository
 	hub              *websocket.Hub
-	wsFanout         *websocket.Fanout // nil: fan-out disabled
+	streams          *podstream.Manager // nil: no stream sessions
+	wsFanout         *websocket.Fanout  // nil: fan-out disabled
 	clusterRegistry  *cluster.Registry
 	sessionStore     sessionstore.SessionStore
 	dashboardHandler *handlers.DashboardHandler
@@ -240,6 +247,13 @@ func gracefulShutdown(srvs *servers, timeout time.Duration, deps shutdownDeps) {
 	// 1. Stop HTTP servers — no new requests.
 	if err := srvs.Main.Shutdown(ctx); err != nil {
 		slog.Error("Server forced to shutdown", "error", err)
+	}
+	// http.Server.Shutdown does not close hijacked connections: close the
+	// port-forward tunnels (1001) and wait for their goroutines.
+	if deps.streams != nil {
+		if err := deps.streams.Shutdown(ctx); err != nil {
+			slog.Error("Stream sessions did not stop in time", "error", err)
+		}
 	}
 	if srvs.Pprof != nil {
 		if err := srvs.Pprof.Shutdown(ctx); err != nil {
