@@ -1,0 +1,5 @@
+# The spec sets a marker per instance and expects it through the tunnel.
+marker: e2e-tunnel
+image:
+  repository: nginxinc/nginx-unprivileged
+  tag: "1.27.4-alpine"

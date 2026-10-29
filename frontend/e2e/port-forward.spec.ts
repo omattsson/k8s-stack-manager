@@ -19,8 +19,8 @@ import {
  * upgrade answers a plain JSON error, so a normal HTTP request is enough:
  * 401, 400 (invalid_service, invalid_port), 403 (forbidden,
  * cluster_port_forward_disabled, api_key_not_allowed), 409
- * (instance_not_deployed). The tunnel itself needs a cluster and is not
- * tested here (see the end of this file).
+ * (instance_not_deployed). The tunnel itself needs a cluster:
+ * port-forward-tunnel.spec.ts (E2E_KUBECONFIG).
  *
  * The specs toggle allow_port_forward on the default e2e cluster, so they run
  * serially and restore the setting afterwards. No other spec reads it.
@@ -223,6 +223,4 @@ test.describe('Port-forward (no cluster)', () => {
   });
 });
 
-// Open (needs a cluster, E2E_KUBECONFIG): deploy a fixture chart with a named
-// port (busybox httpd), open the WebSocket with the Authorization header, send
-// an HTTP GET through the tunnel and expect the page. See the plan in #722.
+// The tunnel itself (needs a cluster, E2E_KUBECONFIG): port-forward-tunnel.spec.ts.
