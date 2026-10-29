@@ -52,6 +52,30 @@ Developers use this application to configure, store and deploy multi-service Hel
   - `GET /stack-instances/:id` adds `following` and `follower_count`.
   - Table `instance_followers` (primary key `user_id, instance_id`, index on `instance_id`).
   - Every instance delete path removes the followers and the action runs (`DeleteInstanceRecord`). A user delete removes the follows of the user.
+- **Port-forward:**
+  - `GET /stack-instances/:id/port-forward?service=<name>&port=<service port>` upgrades to a WebSocket that tunnels raw TCP bytes to a service port of the instance (`stackctl stack port-forward <instance> <service> <port>`). Handler: `StreamHandler` (`handlers/instance_port_forward.go`, shared checks in `instance_stream.go`), sessions: `internal/podstream`.
+  - Two switches must be on: `STACK_PORT_FORWARD_ENABLED` (default `false`, else 404) and the cluster field `allow_port_forward` (default `false`, set by an admin through the cluster create and update endpoints). `GET /ui-config` returns `port_forward_enabled`.
+  - Checks before the upgrade, in this order. The body is `{"error","code"}`:
+    1. Feature off: 404 `feature_disabled`.
+    2. API key and `STACK_STREAM_ALLOW_API_KEYS=false`: 403 `api_key_not_allowed`.
+    3. `service` is not a DNS-1035 label: 400 `invalid_service`. `port` is not 1 to 65535: 400 `invalid_port`.
+    4. Instance not found: 404 `instance_not_found`.
+    5. Not owner, `devops` or `admin` (`canModifyInstance`): 403 `forbidden`.
+    6. Cluster without `allow_port_forward` (also a missing cluster): 403 `cluster_port_forward_disabled`.
+    7. No live namespace (status draft, stopped, stopping or cleaning, or empty namespace; the namespace is missing on the cluster): 409 `instance_not_deployed`.
+    8. Namespace guard: the namespace lacks the label `managed-by=k8s-stack-manager`, or is the namespace of the backend (`POD_NAMESPACE`): 403 `namespace_not_allowed`.
+    9. Not a WebSocket request: 400 `upgrade_required`. Foreign `Origin` (the `/ws` origin rules): 403 `origin_not_allowed`. A request without `Origin` passes.
+    10. Per-user limit (`STACK_PORT_FORWARD_MAX_PER_USER`, default 5) or process cap (500) reached: 429 `tunnel_limit`. The manager is shutting down: 503 `shutting_down`.
+    11. Service not found: 404 `service_not_found`. No such service port: 404 `port_not_found`. ExternalName: 409 `service_external_name`. No selector: 409 `service_no_selector`. No Running and Ready pod without a deletion time: 503 `no_ready_pod`.
+    12. The dial to the pod fails (or times out): 502 `dial_failed`.
+    - Any other error: 500 `internal` with `Internal server error`.
+  - The tunnel goes to the first ready pod by name. A named `targetPort` resolves through the container ports of that pod.
+  - Protocol: binary frames carry the bytes. A text frame closes with 1003. There is no half-close. Server ping every 30 s (a ping is not activity), read limit 64 KiB, read deadline 70 s (moves on frame and pong), write deadline 10 s.
+  - Close codes: 1000 normal, 1001 server shutdown, 1003 text frame, 1008 access revoked, 4001 maximum duration (`STACK_PORT_FORWARD_MAX_DURATION`, default 1h, at most 24h), 4002 idle timeout (`STACK_PORT_FORWARD_IDLE_TIMEOUT`, default 15m, at most the maximum duration), 4502 pod stream error (the reason holds the error, truncated to fit a close frame).
+  - The limits count per replica: the real limit is replicas times `MAX_PER_USER`.
+  - Audit: the handler writes its own entries (the audit middleware ignores GET), entity type `stack_instance`, entity ID = instance ID. `port_forward` (start): `service`, `port`, `pod`, `target_port`, `auth` (`jwt` or `api_key`). `port_forward_end`: `service`, `port`, `pod`, `bytes_in`, `bytes_out`, `duration_ms`, `close_code`, `close_reason`. Never payload bytes.
+  - Instance delete, stop and clean (also in bulk) close the local tunnels of the instance at once (1008, `InstanceHandler.WithStreamRevoker`, `Hub.DisconnectInstance`). Other replicas close theirs at the next revalidation (up to one minute). See `docs/claude/auth-sessions.md`.
+  - Metrics: `stack_stream.sessions_active`, `bytes_total`, `sessions_closed_total`, `rejected_total` (`internal/podstream/metrics.go`).
   - Followers get in-app notifications only.
 - **Quick deploy:** one-click flow from a template to a new instance and a deploy. It generates the instance name and the namespace.
   - The definition that it creates has `OwnerInstanceID` set.
@@ -234,7 +258,7 @@ Developers use this application to configure, store and deploy multi-service Hel
 | Quick Deploy | `/api/v1/templates/:id/quick-deploy` | One-click template deployment |
 | Bulk Template Ops | `/api/v1/templates/bulk` | Bulk delete, publish, unpublish templates (up to 50, devops) |
 | Stack Definitions | `/api/v1/stack-definitions` | CRUD, nested chart management, import and export, template link, upgrade check and upgrade |
-| Stack Instances | `/api/v1/stack-instances` | CRUD, clone, values export, deploy, deploy-preview, stop, clean, rollback, status, pods, deploy-log (list, one entry, values), recent, compare, extend TTL, follow and unfollow, custom actions (list, invoke, job log, action runs) |
+| Stack Instances | `/api/v1/stack-instances` | CRUD, clone, values export, deploy, deploy-preview, stop, clean, rollback, status, pods, deploy-log (list, one entry, values), recent, compare, extend TTL, follow and unfollow, custom actions (list, invoke, job log, action runs), port-forward (`GET /:id/port-forward`, WebSocket) |
 | Bulk Operations | `/api/v1/stack-instances/bulk` | Bulk deploy, stop, clean, delete (up to 50 instances, devops) |
 | Value Overrides | `/api/v1/stack-instances/:id/overrides` | Per-chart value overrides |
 | Branch Overrides | `/api/v1/stack-instances/:id/branches` | Per-chart branch overrides (list, get, set, delete for each chart) |
@@ -251,6 +275,6 @@ Developers use this application to configure, store and deploy multi-service Hel
 | Favorites | `/api/v1/favorites` | User bookmarks |
 | Notifications | `/api/v1/notifications` | List, read and unread, count, preferences |
 | Analytics | `/api/v1/analytics` | Usage overview, template stats, user stats |
-| UI Config | `/api/v1/ui-config` | Public branding values (title, logo, favicon), the TTL default of the create forms and the TTL limit (`max_instance_ttl_days`) |
+| UI Config | `/api/v1/ui-config` | Public branding values (title, logo, favicon), the TTL default of the create forms, the TTL limit (`max_instance_ttl_days`) and `port_forward_enabled` |
 | Health | `/health/*` | Liveness and readiness |
-| WebSocket | `/ws` | Real-time status and log events. Replicas share them through `ws_events` when `WS_FANOUT_ENABLED=true`. `RedactWSToken` removes the token from logs. |
+| WebSocket | `/ws` | Real-time status and log events. Replicas share them through `ws_events` when `WS_FANOUT_ENABLED=true`. `RedactWSToken` removes the token from logs. The stream route `/api/v1/stack-instances/:id/port-forward` is a WebSocket too (see Port-forward). |

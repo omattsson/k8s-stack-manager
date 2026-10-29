@@ -23,7 +23,7 @@ The Helm chart is in `helm/k8s-stack-manager/`. `Chart.yaml` holds the chart ver
 helm/k8s-stack-manager/
   Chart.yaml                              # Chart metadata (version, appVersion; source of truth)
   values.yaml                             # All configurable values
-  tests/                                  # Values files for `make helm-test`: backend-extra, branding, external-secrets, namespace-labels
+  tests/                                  # Values files for `make helm-test`: backend-extra, branding, external-secrets, namespace-label, port-forwards
   templates/_helpers.tpl                  # Reusable named templates
   templates/NOTES.txt                     # Post-install instructions
   templates/analysis-template.yaml        # Argo AnalysisTemplate for canary steps
@@ -89,6 +89,8 @@ Key values in `values.yaml`:
 - `backend.helmHistoryMax`: Helm revisions kept for each release (`HELM_HISTORY_MAX`, `--history-max`). Default `null`: not rendered, so Helm's own default applies (`HELM_MAX_HISTORY`, else 10). A value below 2 or not a whole number fails the render; a whole float (values file, `--set-json`) is converted to an integer first. An explicit `backend.env.HELM_HISTORY_MAX` wins.
 - `backend.trustedProxies`: proxies that may set the client IP (`TRUSTED_PROXIES`, default the private IPv4 ranges and `fc00::/7`)
 - `backend.portForward.*` (`enabled` false, `maxDuration` 1h, `idleTimeout` 15m, `maxPerUser` 5) and `backend.streams.allowApiKeys` (false): `STACK_PORT_FORWARD_*` and `STACK_STREAM_ALLOW_API_KEYS`. The per-cluster switch `allow_port_forward` must also be on. Limits are per replica. nginx-ingress needs `proxy-read-timeout` and `proxy-send-timeout` annotations of at least `maxDuration` (the frontend image proxy uses 3700s for the 1h default). Traefik passes the WebSocket upgrade.
+  - The backend ConfigMap renders the five variables. An explicit `backend.env` key of the same name wins. `POD_NAMESPACE` (downward API) is the namespace that the namespace guard refuses.
+  - `make helm-test` renders `tests/port-forward.yaml` (cluster scope, feature on) and checks the five variables, `pods/portforward` in the ClusterRole, the stream admission policy, and that no `pods/portforward` rule renders when the feature is off.
 - `backend.rbac.scope` (`namespace` or `cluster`), `backend.rbac.admissionPolicy.enabled`: backend RBAC (see Key Design Decisions)
 - `backend.priorityClassName`, `frontend.priorityClassName`, `mysql.priorityClassName`, `otel.priorityClassName`: PriorityClass of each pod; empty = cluster default.
 - `backend.namespaceRoleBindings`: RoleBindings that the deployer applies to every stack namespace (`NAMESPACE_ROLE_BINDINGS_JSON`)

@@ -11,9 +11,10 @@ Domain packages in `internal/`:
 - `gitprovider`: Azure DevOps, GitHub and GitLab.
 - `helm`: values deep-merge and template variables.
 - `hooks`: outbound lifecycle webhooks with HMAC signing and custom actions. See `docs/hooks.md` and `EXTENDING.md` in the repository root.
-- `k8s`: cluster client, watcher, quotas, pod exec, scaling, `AccessBinding`.
+- `k8s`: cluster client, watcher, quotas, pod exec, scaling, `AccessBinding`, port-forward (`port_forward.go`, `pod_select.go`).
 - `leader`: Kubernetes Lease leader election and the leader worker group. Only the leader replica runs the background workers.
 - `notifier`: notification dispatch and outbound channels.
+- `podstream`: long-lived WebSocket tunnels to a pod (port-forward; exec later): `Manager` (per-user limit, process cap 500, `Shutdown`), session pumps, close codes, `stack_stream.*` metrics. `handlers.StreamHandler` runs the checks and the upgrade. The hub holds the sessions as `websocket.Revocable`.
 - `replica`: process identity and heartbeat.
 - `scheduler`: cron cleanup policies.
 - `sessionstore`: token blocklist and OIDC state. `SESSION_STORE=mysql` is the default. Use `memory` for tests.
@@ -84,6 +85,7 @@ All configuration uses environment variables with a `.env` fallback (godotenv). 
 - `GIN_MODE`: wins when set. Otherwise the mode is debug when `APP_DEBUG` is true, and release when it is false. The code default of `APP_DEBUG` is `true`. The Helm chart sets `false`.
 - `ENABLE_SWAGGER` (default false), `PPROF_ENABLED`, `PPROF_ADDR`, `PPROF_MUTEX_FRACTION` (default 0 = off), `PPROF_BLOCK_RATE` (nanoseconds, default 0 = off; both read only when pprof is on).
 - `HOOKS_CONFIG_FILE`.
+- `STACK_PORT_FORWARD_ENABLED` (default false), `STACK_PORT_FORWARD_MAX_DURATION` (1h, up to 24h), `STACK_PORT_FORWARD_IDLE_TIMEOUT` (15m, up to the maximum duration), `STACK_PORT_FORWARD_MAX_PER_USER` (5, 1 to 100, per replica), `STACK_STREAM_ALLOW_API_KEYS` (default false): `config.StreamConfig` (`config/stream.go`). An invalid value stops the start. The namespace guard also reads `POD_NAMESPACE`. The per-cluster switch is `Cluster.AllowPortForward` (`allow_port_forward`).
 - `APP_PUBLIC_URL`: public base URL of the web UI (an https URL with a host; http, a same-origin path, user info, a query or a fragment stop the start; `config.ParsePublicURL`, trailing slash removed). `notifier.WithPublicURL` (wired in `api/bootstrap.go`) sets `instance_url` = `<APP_PUBLIC_URL>/stack-instances/<id>` in the notification channel payload (not for `instance.deleted`). Empty (default): no `instance_url` and no "Stack Manager" button on Teams cards.
 - `OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, `OTEL_TRACE_SAMPLE_RATE`, `METRICS_ENABLED`, `METRICS_ADDR`.
 - `LEADER_ELECTION_*` (`ENABLED` default false means this process is always the leader; `LEASE_NAME`, `NAMESPACE`, `LEASE_DURATION`, `RENEW_DEADLINE`, `RETRY_PERIOD`) with `POD_NAME` and `POD_NAMESPACE`.
@@ -132,9 +134,13 @@ All configuration uses environment variables with a `.env` fallback (godotenv). 
 - `telemetry.Init(cfg.Otel)` in `api/main.go` sets up OTLP tracing, metrics and logs. `setupOTelLogging` (`api/bootstrap.go`) then makes the default `slog` logger write to stderr (slog text format) and to the OTel log pipeline (`telemetry.LogHandler`, the `otelslog` bridge), both at `LOG_LEVEL`. Do not wrap the package default slog handler: it writes through the `log` package, which writes back through the new default and deadlocks.
 - `telemetry.StartDBMetrics`, `telemetry.StartBusinessMetrics` and `telemetry.StartLeaderMetric` (`stackmanager_leader`) register gauges.
 - `internal/websocket/tracing.go` holds the hub and fan-out metrics: `websocket.fanout.events_written_total`, `events_dropped_total`, `events_delivered_total`, `events_skipped_total`, `poll_errors_total`, `delivery_lag`.
+- `internal/podstream/metrics.go` holds the stream metrics: `stack_stream.sessions_active{kind}`, `stack_stream.bytes_total{kind,direction}`, `stack_stream.sessions_closed_total{kind,reason}`, `stack_stream.rejected_total{kind,reason}` (`kind` = `port_forward`). `internal/k8s/tracing.go` has the spans of the port-forward calls.
 - `internal/notifier/channel/metrics.go` holds the counter `notification.channel.dropped` (#649).
 - `middleware/metrics.go` records HTTP metrics. `middleware/auth_metrics.go` records auth outcomes. `middleware/otel.go` adds the user to spans.
-- `middleware/ws_redact.go` removes `?token=` from `/ws` URLs before logging and tracing.
+- `middleware/ws_redact.go` removes `?token=` from `/ws` URLs and from the stream routes before logging and tracing.
+
+## Stream Shutdown
+- `http.Server.Shutdown` does not close hijacked connections. `gracefulShutdown` (`api/main.go`) calls `podstream.Manager.Shutdown` right after the main server stops: it closes the tunnels with 1001 and waits for their goroutines. After a hijack, clear the connection deadline (`conn.NetConn().SetDeadline(time.Time{})`) and use the session deadlines only.
 
 ## Sessions and Tokens
 - Login issues a JWT (with `jti`) and a refresh token (`models/refresh_token.go`, hashed at rest). Routes: `POST /api/v1/auth/refresh`, `/logout`, `/logout-all`.

@@ -59,6 +59,9 @@ backend/
       instance_ttl.go            # TTL and stop-time rules: MAX_INSTANCE_TTL_DAYS limit, expires_at, stop time passed (409 on deploy)
       value_overrides.go         # Per-chart value overrides
       websocket.go               # WebSocket upgrade handler
+      instance_stream.go         # StreamHandler: shared checks of the stream routes (feature, API key, instance access, cluster switch), error codes, upgrader, session identity, audit writes
+      instance_port_forward.go   # PortForward: GET /stack-instances/:id/port-forward (checks, upgrade, hand-over to podstream)
+      instance_stream_access.go  # NewStreamAccessChecker: access re-check of open tunnels at hub revalidation
       content_disposition.go     # Safe Content-Disposition header for downloads
       mock_repository.go         # In-memory mock for Item tests (same package)
       mock_broadcast_sender.go   # Test double for websocket.BroadcastSender
@@ -74,9 +77,9 @@ backend/
       metrics.go                 # HTTPMetrics: OpenTelemetry HTTP request metrics
       auth_metrics.go            # Auth outcome counters (login, refresh, OIDC, API key)
       otel.go                    # SpanEnrichUser: adds user attributes to the active span
-      ws_redact.go               # RedactWSToken: strips ?token= from /ws URLs before logging and tracing
+      ws_redact.go               # RedactWSToken: strips ?token= from /ws URLs and from the stream routes (port-forward, exec) before logging and tracing
       git_repo_redact.go         # RedactGitRepoQuery: redacts the ?repo= value of /git URLs before logging and tracing
-    config/                      # config.go (env vars with godotenv .env fallback, typed config structs); branding.go, chart_repos.go, namespace_labels.go, stack_access.go (parsers for the matching env vars)
+    config/                      # config.go (env vars with godotenv .env fallback, typed config structs); branding.go, chart_repos.go, namespace_labels.go, stack_access.go (parsers for the matching env vars); stream.go (StreamConfig: STACK_PORT_FORWARD_*, STACK_STREAM_ALLOW_API_KEYS, backend namespace)
     database/database.go         # Database struct that wraps gorm.DB, NewDatabase(), Transaction, Ping
     database/config.go           # Database connection Config struct, loaded from env vars
     database/schema.go           # SchemaManager interface for table creation, dropping and inspection
@@ -97,13 +100,14 @@ backend/
     gitprovider/                 # Azure DevOps, GitHub and GitLab branch listing, URL detection, 5-minute cache
     helm/                        # Values deep-merge, template variable substitution
     hooks/                       # Outbound lifecycle webhooks: dispatcher, HMAC-signed client, actions, config file, applies_to scopes (scope.go) and the cached cluster name and template lookups (cluster_names.go, templates.go, lookup.go) (see docs/hooks.md and EXTENDING.md)
-    k8s/                         # Kubernetes cluster client, status watcher, resource quotas, pod exec, scaling, AccessBinding
+    k8s/                         # Kubernetes cluster client, status watcher, resource quotas, pod exec, scaling, AccessBinding; port_forward.go (namespace guard, service to pod resolution, SPDY dial of a pod port), pod_select.go (ready pod choice, shared with exec)
+    podstream/                   # Long-lived pod tunnels over WebSocket (port-forward now, exec later): Manager (per-user limit, process cap, shutdown), session pumps and deadlines, close codes, wsconn, stack_stream.* metrics
     leader/                      # Leader election (coordination.k8s.io Lease through client-go) and leader worker group (Run(ctx) for each term)
     replica/                     # Process identity (POD_NAME or host name plus random suffix) and heartbeat writer (replica_heartbeats, every replica)
     notifier/                    # Notification dispatch (in-app notifications and outbound notification channels)
     sessionstore/                # Token blocklist and OIDC state persistence (mysql default, memory)
     telemetry/                   # OpenTelemetry bootstrap, DB pool metrics, business metrics, leader gauge
-    websocket/                   # WebSocket hub, client, message types, fan-out between replicas (ws_events writer and poller, cleanup worker)
+    websocket/                   # WebSocket hub, client, message types, fan-out between replicas (ws_events writer and poller, cleanup worker); revocable.go (Revocable: tunnels that the hub revokes and re-checks, DisconnectInstance)
     scheduler/                   # Cron-based cleanup policy execution
     ttl/                         # TTL reaper and expiry warner for stack instances
     retention/                   # Leader worker log-retention: deletes old deploy logs, audit logs, notifications and delivery logs (*_RETENTION_DAYS)

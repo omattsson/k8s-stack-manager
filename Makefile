@@ -214,7 +214,7 @@ define e2e_start_backend
 		ADMIN_USERNAME=admin ADMIN_PASSWORD=admin SELF_REGISTRATION=true \
 		HELM_BINARY=$${HELM_BINARY:-helm} \
 		CORS_ALLOWED_ORIGINS=http://localhost:3000 \
-		RATE_LIMIT=10000 LOGIN_RATE_LIMIT=10000 PORT=8081 UNIQUE_INSTANCE_NAMES=true $(E2E_STUB_BACKEND_ENV) $(1) \
+		RATE_LIMIT=10000 LOGIN_RATE_LIMIT=10000 PORT=8081 UNIQUE_INSTANCE_NAMES=true STACK_PORT_FORWARD_ENABLED=true $(E2E_STUB_BACKEND_ENV) $(1) \
 		./tmp/main > ../frontend/test-logs/$(2) 2>&1 & echo $$! > $(E2E_PID)
 	@echo "Waiting for backend to be healthy..."
 	@n=0; until curl -sf http://localhost:8081/health/live >/dev/null 2>&1; do \

@@ -37,3 +37,11 @@ Reference for Claude Code and other agents. The root `CLAUDE.md` links here. Rea
   - The frontend reconnects. It refreshes the token first after a 1008 close or near expiry. A refresh is not idle activity: the rotated refresh token keeps `LastActivity`.
   - With fan-out, a revocation reaches the other replicas through `ws_events` within about one poll interval.
   - `Hub.StartRevalidation` re-checks all open sockets every minute (fail open). It closes sockets that a direct database change or a blocklist entry made invalid.
+- Stream routes (`GET /stack-instances/:id/port-forward`, later exec):
+  - Auth is header-only: `Authorization` (JWT) or `X-API-Key`. `?token=` and the subprotocol are never accepted. `RedactWSToken` drops a `?token=` value on these paths before logging and tracing.
+  - An API key is refused (403 `api_key_not_allowed`) unless `STACK_STREAM_ALLOW_API_KEYS=true` (default `false`). API keys have no scopes.
+  - Each tunnel registers with the hub as a `websocket.Revocable` (`websocket/revocable.go`: identity, instance ID, `Revoke(code, reason)`). A revocable is not a client: no broadcast, not in `ClientCount`.
+  - `DisconnectUser`, `DisconnectToken` and `DisconnectAPIKey` close the tunnels with 1008, also when the call came through the fan-out from another replica. Hub shutdown closes them with 1001.
+  - `Hub.StartRevalidation` runs the identity check on the tunnels too, then the access check (`handlers.NewStreamAccessChecker`, `Hub.SetRevocableAccessChecker`). A tunnel closes with 1008 when the feature is off, the user is deleted or disabled, the user is no longer owner, `devops` or `admin` (the CURRENT role), the instance is gone or has no live namespace, or the cluster no longer has `allow_port_forward`. A failed lookup fails open and the log line is rate-limited (`LogLimiter`, once a minute).
+  - Instance delete, stop and clean close the local tunnels of the instance at once (`Hub.DisconnectInstance`). Other replicas close theirs at the next revalidation, up to one minute.
+  - An expired access token does NOT close an open tunnel (the tunnel ends by max duration, idle timeout or a revocation). The expiry is checked at the start only.

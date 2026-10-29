@@ -122,6 +122,7 @@ Security controls of the application:
 - **Definition access.** Only `devops` and `admin` users can create or import a definition, and add or remove charts. A user without these roles cannot change the chart name, repository, path, or version. The owner, `devops`, and `admin` can change or delete a definition.
 - **Chart source allowlist.** Helm installs charts with the identity of the backend. Set `ALLOWED_CHART_REPOS` (Helm value `backend.allowedChartRepos`) to a list of chart repository URL prefixes. The backend then rejects all other chart sources when a chart config is saved and again at deploy time. An empty list allows every chart source. Set the list on every cluster that untrusted users can deploy to. See [Chart sources](WIKI.md#chart-sources).
 - **Namespace-scoped RBAC.** With `backend.rbac.scope: namespace` (default), the Helm chart gives the backend namespaced rights only inside stack namespaces. A stack chart cannot read or change objects in other namespaces, and cannot create cluster-scoped objects. A ValidatingAdmissionPolicy (Kubernetes 1.30 or later) keeps the backend inside stack namespaces. See [Backend rights on the cluster](WIKI.md#backend-rights-on-the-cluster).
+- **Port-forward.** Off by default. A tunnel needs `STACK_PORT_FORWARD_ENABLED` (Helm `backend.portForward.enabled`) and the cluster switch `allow_port_forward` (admin, off by default). The backend refuses namespaces without the label `managed-by=k8s-stack-manager` and its own namespace. A tunnel goes past NetworkPolicies and past the authentication of an ingress or SSO proxy in front of a tool. Keep the switch off on clusters with real data. See [Port-forward](WIKI.md#port-forward).
 - **Sessions and tokens.** Access tokens are short-lived. Refresh tokens rotate. You can revoke users and sessions. See [Sessions](WIKI.md#sessions).
 - **Secrets at rest.** Kubeconfig data, registry passwords, notification channel secrets, and (when the key is set) notification channel webhook URLs are encrypted with a key that the application derives from `KUBECONFIG_ENCRYPTION_KEY`. Without the key, the backend refuses kubeconfig data, registry passwords, and channel secrets. It stores webhook URLs in plaintext.
 - **HTTP hardening.** The application sets security headers and rate limits, and has panic recovery. The Gin framework runs in release mode unless you set `APP_DEBUG=true` or `GIN_MODE`.
@@ -358,6 +359,7 @@ Swagger documents all routes. All routes need authentication, except `/health/*`
 | Quick Deploy | `/api/v1/templates/:id/quick-deploy` | One-click template deployment |
 | Definitions | `/api/v1/stack-definitions` | Definition CRUD, chart configs, import, export, upgrade |
 | Instances | `/api/v1/stack-instances` | Instance CRUD, clone, deploy, deploy preview, stop, clean, rollback, status, logs, compare, extend TTL, follow, custom actions, bulk operations |
+| Port-forward | `/api/v1/stack-instances/:id/port-forward` | WebSocket tunnel to a service port of the instance (`service`, `port`); owner, `devops`, `admin`; off by default |
 | Overrides | `/api/v1/stack-instances/:id/overrides` | Per-chart value overrides |
 | Branch Overrides | `/api/v1/stack-instances/:id/branches` | Per-chart branch overrides |
 | Quota Overrides | `/api/v1/stack-instances/:id/quota-overrides` | Per-instance resource quota override |
@@ -419,6 +421,10 @@ The table shows the key environment variables. The full list is in `backend/inte
 | `LEADER_ELECTION_NAMESPACE` | No | Namespace of the Lease (default: `POD_NAMESPACE`, else the namespace of the service account) |
 | `LEADER_ELECTION_LEASE_DURATION`, `LEADER_ELECTION_RENEW_DEADLINE`, `LEADER_ELECTION_RETRY_PERIOD` | No | Election timings (defaults: `15s`, `10s`, `2s`) |
 | `WS_FANOUT_ENABLED` | No | Share WebSocket messages between replicas through the `ws_events` table (default: `false`). The Helm chart sets `true`. |
+| `STACK_PORT_FORWARD_ENABLED` | No | Allow port-forward to stack services through the backend (default: `false`). The cluster also needs `allow_port_forward`. |
+| `STACK_PORT_FORWARD_MAX_DURATION`, `STACK_PORT_FORWARD_IDLE_TIMEOUT` | No | Longest life and idle time of a tunnel (defaults: `1h`, `15m`; both above 0 and at most `24h`; the idle time at most the maximum duration) |
+| `STACK_PORT_FORWARD_MAX_PER_USER` | No | Open tunnels per user and backend replica (default: `5`, 1 to 100) |
+| `STACK_STREAM_ALLOW_API_KEYS` | No | Let API keys open stream tunnels (default: `false`; API keys have no scopes) |
 | `WS_FANOUT_POLL_INTERVAL`, `WS_FANOUT_RETENTION` | No | Poll interval and row retention of the fan-out (defaults: `500ms`, `5m`) |
 | `DEPLOY_LOG_RETENTION_DAYS`, `AUDIT_LOG_RETENTION_DAYS`, `NOTIFICATION_RETENTION_DAYS`, `DELIVERY_LOG_RETENTION_DAYS`, `ACTION_RUN_RETENTION_DAYS` | No | Days that the log tables keep their rows (defaults: `180`, `365`, `90`, `30`, `180`). `ACTION_RUN_RETENTION_DAYS` applies to `action_runs`, the run history of custom actions. `0` keeps the rows forever. The leader deletes older rows every `LOG_RETENTION_INTERVAL` (default `1h`). The deploy counts of the Analytics page cover only the kept deploy logs. |
 | `APP_TITLE` | No | Product name in the browser tab, sidebar, app bar, login page, and setup wizard (default: `K8s Stack Manager`, maximum 100 characters) |
@@ -510,6 +516,8 @@ Upgrade note: Earlier chart versions set `CORS_ALLOWED_ORIGINS` to `"*"` and `SE
 | `backend.allowedChartRepos` | `[]` | Chart repository URL prefixes that definitions and templates may use. Empty allows every chart source. |
 | `backend.rbac.scope` | `namespace` | `namespace`: the backend has namespaced rights only in stack namespaces (RoleBinding `k8s-stack-manager-access`). `cluster`: the namespaced rights apply in all namespaces (the rules of chart 0.6 and earlier). Use `cluster` only when stack charts need cluster-scoped objects. |
 | `backend.rbac.admissionPolicy.enabled` | `true` | Create a ValidatingAdmissionPolicy that limits the backend to stack namespaces (Kubernetes 1.30 or later). |
+| `backend.portForward.enabled` | `false` | Port-forward to stack services through the backend. With `rbac.scope: cluster` the chart adds `pods/portforward` to the ClusterRole and a ValidatingAdmissionPolicy that limits it to stack namespaces. Also `maxDuration` (`1h`), `idleTimeout` (`15m`), `maxPerUser` (`5`, per replica). |
+| `backend.streams.allowApiKeys` | `false` | Let API keys open stream tunnels. |
 | `backend.namespaceLabels` | `{}` | Extra labels on stack namespaces, for example Pod Security Admission levels. |
 | `ingress.traefik.priority` | `10000` | Traefik router priority of all IngressRoute routes. A high value stops another Ingress on the same host from taking a path of the stack manager. The frontend route gets this value minus 1. `0` uses the Traefik default. |
 

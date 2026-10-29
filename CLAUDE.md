@@ -27,7 +27,7 @@ startHTTPServer              # main server, optional pprof and metrics servers
 ```
 
 **Graceful shutdown** (`SIGINT` or `SIGTERM`), in this order:
-1. Stop the HTTP servers.
+1. Stop the HTTP servers. Then close the port-forward tunnels (1001) and wait for them: `http.Server.Shutdown` does not close hijacked connections (`podstream.Manager.Shutdown`).
 2. Stop the leader workers, release the lease, stop the cleanup scheduler.
 3. Wait for in-flight deploys. Stop the heartbeat and delete its row.
 4. Flush the fan-out queue. Stop the hub, the cluster registry, the notifier, the session store and the dashboard handler.
@@ -135,6 +135,7 @@ Directory rules: `backend/CLAUDE.md`, `frontend/CLAUDE.md`, `backend/internal/ap
 **WebSocket messages.**
 - Client to server: `subscribe` and `unsubscribe` with `{"instance_id": "..."}`.
 - Server to client: `deployment.status`, `deployment.log` (only to the subscribers of the instance, if the sender supports it), `instance.created`, `instance.deleted`, `notification.new` (only to the sockets of the notified user). The Items reference handler (`handlers/items.go`) also sends `item.*`, but no route registers it (#534).
+- Stream route: `GET /api/v1/stack-instances/:id/port-forward` is a WebSocket upgrade that tunnels raw bytes to a stack service (`internal/podstream`, `STACK_PORT_FORWARD_*`). It uses header auth only (no `?token=`) and the hub can revoke it. Rules: `docs/claude/domain.md`, `docs/claude/auth-sessions.md`.
 
 ## Frontend
 
@@ -192,9 +193,10 @@ Developers use this application to configure, store and deploy multi-service Hel
 - The `SecurityHeaders` middleware sets baseline headers on every response. Never remove it.
 - The Recovery middleware catches panics globally. Never remove it.
 - `sessionstore` holds the revoked access-token `jti` values, the revoked sessions (`sid`) and the blocked users. `RefreshTokenRepository` holds the revoked refresh tokens. JWT auth and the `/ws` upgrade check the blocklist. Every auth path (login, refresh, OIDC, API key) rejects `User.Disabled`.
-- `RedactWSToken` removes `?token=` from `/ws` URLs before logging, metrics and tracing. Keep it first after RequestID.
+- `RedactWSToken` removes `?token=` from `/ws` URLs and from the stream routes before logging, metrics and tracing. Keep it first after RequestID.
 - Outbound hooks carry an HMAC signature (`X-StackManager-Signature`) when a subscription has a secret. A subscription without a secret is sent unsigned. Never log hook secrets or provider tokens.
 - Kubeconfig data, registry passwords, notification channel secrets and notification channel webhook URLs are encrypted at rest with AES-GCM (`KUBECONFIG_ENCRYPTION_KEY`). Without the key, the backend refuses `kubeconfig_data`, `registry_password` and a non-empty channel `secret` (400). It stores a channel `webhook_url` in plaintext, because the URL is required and the Helm default key is empty.
+- Port-forward (off by default; needs `STACK_PORT_FORWARD_ENABLED` and the per-cluster `allow_port_forward`) bypasses NetworkPolicies and the ingress auth of tools: the kubelet connects inside the pod network. Keep `allow_port_forward` off on clusters with real data. Stream routes take header auth only, refuse API keys unless `STACK_STREAM_ALLOW_API_KEYS=true`, and refuse a namespace without the label `managed-by=k8s-stack-manager` and the backend namespace. Audit entries hold service, port and pod, never payload bytes.
 - Helm runs with the backend identity. On shared clusters: keep `ALLOWED_CHART_REPOS` set, keep `backend.rbac.scope: namespace` and its admission policy, and never give a role `user` path a way to change a chart source.
 
 ## Scalability Rules
