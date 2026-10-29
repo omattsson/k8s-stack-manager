@@ -444,7 +444,10 @@ backend:
     # account to namespaces with that label, so these cannot reach system
     # namespaces. It is rendered only while port-forward is on (the exec feature
     # will widen this), and the install fails when the cluster lacks the
-    # ValidatingAdmissionPolicy API; set enabled=false only knowingly. The
+    # ValidatingAdmissionPolicy API; set enabled=false only knowingly. A
+    # render without cluster access (helm template, GitOps renderers) needs
+    # --api-versions admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy.
+    # The
     # namespace of the backend is protected by the backend itself and by its
     # lack of the label.
     admissionPolicy:

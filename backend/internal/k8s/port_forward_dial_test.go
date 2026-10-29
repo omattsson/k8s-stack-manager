@@ -2,10 +2,13 @@ package k8s
 
 import (
 	"context"
+	"encoding/pem"
 	"errors"
 	"io"
+	"log"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"sync"
@@ -232,6 +235,58 @@ func TestPodDialers_StalledServer(t *testing.T) {
 			}
 			assert.Eventually(t, func() bool { return closed.Load() >= 1 }, 3*time.Second, 20*time.Millisecond,
 				"the connection to the stalled server is closed")
+		})
+	}
+}
+
+// The bounded SPDY path must verify the API server certificate like client-go
+// does: a kubeconfig without a CA checks the system roots, so an untrusted
+// server never sees the credentials; the CA of the kubeconfig still applies.
+func TestSPDYPodDialer_TLS(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		withCA     bool
+		wantReach  bool
+		wantErrStr string
+	}{
+		{name: "no CA checks the system roots", withCA: false, wantReach: false, wantErrStr: "x509"},
+		{name: "kubeconfig CA is used", withCA: true, wantReach: true},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var gotAuth atomic.Value
+			srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotAuth.Store(r.Header.Get("Authorization"))
+				w.WriteHeader(http.StatusBadRequest)
+			}))
+			srv.Config.ErrorLog = log.New(io.Discard, "", 0)
+			srv.StartTLS()
+			t.Cleanup(srv.Close)
+
+			cfg := &rest.Config{Host: srv.URL, BearerToken: "secret-token"}
+			if tt.withCA {
+				cfg.TLSClientConfig.CAData = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})
+			}
+			u, err := url.Parse(srv.URL + "/api/v1/namespaces/ns/pods/p/portforward")
+			require.NoError(t, err)
+			dial, err := spdyPodDialer(cfg, u)
+			require.NoError(t, err)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			_, _, err = dial(ctx, cgportforward.PortForwardProtocolV1Name)
+			require.Error(t, err, "the test server never upgrades")
+			if tt.wantErrStr != "" {
+				assert.Contains(t, err.Error(), tt.wantErrStr)
+			}
+			if tt.wantReach {
+				assert.Equal(t, "Bearer secret-token", gotAuth.Load(), "the request reaches the server with its credentials")
+			} else {
+				assert.Nil(t, gotAuth.Load(), "an unverified server never sees the request")
+			}
 		})
 	}
 }

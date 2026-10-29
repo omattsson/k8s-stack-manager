@@ -2,6 +2,7 @@ package k8s
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
@@ -134,11 +135,28 @@ func wsTunnelDialer(cfg *rest.Config, u *url.URL) podConnDialer {
 	}
 }
 
-// spdyPodDialer dials a SPDY upgrade with the context of the caller.
-func spdyPodDialer(cfg *rest.Config, u *url.URL) (podConnDialer, error) {
+// spdyTLSConfig is the TLS config of the bounded SPDY transport.
+// TLSConfigFor returns nil for a config with no TLS settings (an https server
+// with a public certificate). The SPDY round tripper replaces a nil config of
+// an UpgradeTransport with InsecureSkipVerify, so the credentials would go to
+// an unverified server. An empty config checks the system roots; the round
+// tripper sets ServerName from the URL.
+func spdyTLSConfig(cfg *rest.Config, u *url.URL) (*tls.Config, error) {
 	tlsConfig, err := rest.TLSConfigFor(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("build SPDY TLS config: %w", err)
+	}
+	if tlsConfig == nil && u.Scheme == "https" {
+		tlsConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	}
+	return tlsConfig, nil
+}
+
+// spdyPodDialer dials a SPDY upgrade with the context of the caller.
+func spdyPodDialer(cfg *rest.Config, u *url.URL) (podConnDialer, error) {
+	tlsConfig, err := spdyTLSConfig(cfg, u)
+	if err != nil {
+		return nil, err
 	}
 	bounded := cfg.Proxy == nil && !envProxyFor(u)
 	return func(ctx context.Context, protocols ...string) (httpstream.Connection, string, error) {
