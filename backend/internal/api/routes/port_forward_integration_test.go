@@ -62,6 +62,11 @@ func (r *itInstanceRepo) FindByID(_ context.Context, _ string) (*models.StackIns
 	return &cp, nil
 }
 
+// NamespaceShared: one instance, so its namespace is never shared.
+func (r *itInstanceRepo) NamespaceShared(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+
 func (r *itInstanceRepo) FindByIDs(_ context.Context, ids []string) (map[string]*models.StackInstance, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

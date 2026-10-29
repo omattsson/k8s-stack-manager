@@ -751,7 +751,7 @@ func (h *InstanceHandler) GetInstance(c *gin.Context) {
 
 // UpdateInstance godoc
 // @Summary     Update a stack instance
-// @Description Update a stack instance (branch, name, etc.). A changed name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters); an unchanged name is not checked, so older instances with other names stay editable. A rename does not change the namespace.
+// @Description Update a stack instance (branch, name, etc.). A changed name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters); an unchanged name is not checked, so older instances with other names stay editable. A rename does not change the namespace. The namespace is set at create and cannot be changed: a namespace that differs from the stored one gives 400 (an unchanged value is accepted).
 // @Description ttl_minutes sets a new TTL from now (0 clears the expiry). expires_at (RFC 3339 with a time zone) sets a fixed stop time and ttl_minutes 0. Do not send both (400). The limits are the same as for create (MAX_INSTANCE_TTL_DAYS).
 // @Tags        stack-instances
 // @Accept      json
@@ -813,8 +813,13 @@ func (h *InstanceHandler) UpdateInstance(c *gin.Context) {
 	if update.Branch != nil {
 		existing.Branch = *update.Branch
 	}
-	if update.Namespace != nil {
-		existing.Namespace = *update.Namespace
+	// The namespace is set once at create. Every Kubernetes operation and the
+	// port-forward namespace guard trust it, so a changed value would point
+	// this instance at the namespace of another stack. An echoed value is no
+	// change.
+	if update.Namespace != nil && *update.Namespace != existing.Namespace {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "namespace cannot be changed"})
+		return
 	}
 	existing.UpdatedAt = time.Now().UTC()
 

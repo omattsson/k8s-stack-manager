@@ -190,6 +190,10 @@ type StackInstanceRepository interface {
 	// Namespace and ClusterID are set (enough for access checks).
 	FindByIDs(ctx context.Context, ids []string) (map[string]*StackInstance, error)
 	FindByNamespace(ctx context.Context, namespace string) (*StackInstance, error)
+	// NamespaceShared reports whether an instance other than id has this
+	// namespace. Rows from before the namespace became immutable can share
+	// one; the port-forward route refuses such a namespace.
+	NamespaceShared(ctx context.Context, namespace, id string) (bool, error)
 	Update(ctx context.Context, instance *StackInstance) error
 	Delete(ctx context.Context, id string) error
 	List(ctx context.Context) ([]StackInstance, error)

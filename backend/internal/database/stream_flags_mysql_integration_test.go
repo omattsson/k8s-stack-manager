@@ -53,3 +53,30 @@ func TestDatabaseMySQL_ClusterStreamFlagsAndInstanceFindByIDs(t *testing.T) {
 	assert.Equal(t, "ns-b", found[b.ID].Namespace)
 	assert.Empty(t, found[a.ID].Branch, "columns outside the projection stay empty")
 }
+
+// TestDatabaseMySQL_InstanceNamespaceShared checks on MySQL that
+// NamespaceShared finds another row with the same namespace and ignores the
+// row of the caller (the port-forward namespace owner check).
+func TestDatabaseMySQL_InstanceNamespaceShared(t *testing.T) {
+	ctx := context.Background()
+	_, clusters := setupClusterContextMySQL(t, 5)
+	instances := NewGORMStackInstanceRepository(clusters.db)
+
+	victim := &models.StackInstance{Name: "ns-victim", StackDefinitionID: "d1", Namespace: "stack-shop-bob", OwnerID: "bob", Branch: "main", Status: models.StackStatusRunning}
+	alone := &models.StackInstance{Name: "ns-alone", StackDefinitionID: "d1", Namespace: "stack-alone-alice", OwnerID: "alice", Branch: "main", Status: models.StackStatusRunning}
+	require.NoError(t, instances.Create(ctx, victim))
+	require.NoError(t, instances.Create(ctx, alone))
+
+	shared, err := instances.NamespaceShared(ctx, alone.Namespace, alone.ID)
+	require.NoError(t, err)
+	assert.False(t, shared, "the own row does not count")
+
+	// A row from before the namespace became immutable.
+	swapped := &models.StackInstance{Name: "ns-swapped", StackDefinitionID: "d1", Namespace: victim.Namespace, OwnerID: "mallory", Branch: "main", Status: models.StackStatusRunning}
+	require.NoError(t, instances.Create(ctx, swapped))
+	for _, id := range []string{swapped.ID, victim.ID} {
+		shared, err = instances.NamespaceShared(ctx, victim.Namespace, id)
+		require.NoError(t, err)
+		assert.True(t, shared, "both rows of a shared namespace are refused")
+	}
+}

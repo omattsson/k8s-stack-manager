@@ -121,6 +121,10 @@ func (r *mockInstanceRepo) FindByNamespace(ctx context.Context, ns string) (*mod
 	}
 	return nil, errors.New("not found")
 }
+
+func (r *mockInstanceRepo) NamespaceShared(context.Context, string, string) (bool, error) {
+	return false, nil
+}
 func (r *mockInstanceRepo) Update(ctx context.Context, inst *models.StackInstance) error {
 	return ctx.Err()
 }

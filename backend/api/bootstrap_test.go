@@ -482,6 +482,10 @@ func (s *stubStackInstanceRepo) FindByID(ctx context.Context, _ string) (*models
 func (s *stubStackInstanceRepo) FindByNamespace(ctx context.Context, _ string) (*models.StackInstance, error) {
 	return nil, ctx.Err()
 }
+
+func (s *stubStackInstanceRepo) NamespaceShared(context.Context, string, string) (bool, error) {
+	return false, nil
+}
 func (s *stubStackInstanceRepo) Update(ctx context.Context, _ *models.StackInstance) error {
 	return ctx.Err()
 }

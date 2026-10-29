@@ -51,6 +51,10 @@ func (m *mockInstanceRepo) FindByNamespace(ctx context.Context, _ string) (*mode
 	return nil, ctx.Err()
 }
 
+func (m *mockInstanceRepo) NamespaceShared(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+
 func (m *mockInstanceRepo) Update(ctx context.Context, i *models.StackInstance) error {
 	if err := ctx.Err(); err != nil {
 		return err

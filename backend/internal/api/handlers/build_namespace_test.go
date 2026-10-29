@@ -360,6 +360,54 @@ func TestCloneInstance_LongOwnerGeneratedNames(t *testing.T) {
 	}
 }
 
+// The namespace is immutable: a changed value would point the instance at the
+// namespace of another stack (deploy, clean, delete and port-forward trust it).
+func TestUpdateInstance_NamespaceImmutable(t *testing.T) {
+	t.Parallel()
+
+	const ns = "stack-my-app-alice"
+	tests := []struct {
+		name       string
+		role       string
+		userID     string
+		body       string
+		wantStatus int
+	}{
+		{name: "owner changes the namespace", role: "user", userID: "uid-1", body: `{"namespace":"stack-shop-bob"}`, wantStatus: http.StatusBadRequest},
+		{name: "admin changes the namespace", role: "admin", userID: "uid-admin", body: `{"namespace":"kube-system"}`, wantStatus: http.StatusBadRequest},
+		{name: "owner clears the namespace", role: "user", userID: "uid-1", body: `{"namespace":""}`, wantStatus: http.StatusBadRequest},
+		{name: "echoed namespace with a branch change", role: "user", userID: "uid-1", body: `{"namespace":"` + ns + `","branch":"dev"}`, wantStatus: http.StatusOK},
+		{name: "no namespace field", role: "user", userID: "uid-1", body: `{"branch":"dev"}`, wantStatus: http.StatusOK},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			instRepo := NewMockStackInstanceRepository()
+			require.NoError(t, instRepo.Create(context.Background(), &models.StackInstance{
+				ID: "i1", StackDefinitionID: "d1", Name: "my-app",
+				Namespace: ns, OwnerID: "uid-1",
+				Branch: "master", Status: models.StackStatusRunning,
+			}))
+			router := setupInstanceRouter(instRepo, NewMockValueOverrideRepository(), NewMockStackDefinitionRepository(), NewMockChartConfigRepository(), NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(), tt.userID, "alice", tt.role)
+
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(http.MethodPut, "/api/v1/stack-instances/i1", bytes.NewBufferString(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(w, req)
+
+			require.Equal(t, tt.wantStatus, w.Code, w.Body.String())
+			stored, err := instRepo.FindByID(context.Background(), "i1")
+			require.NoError(t, err)
+			assert.Equal(t, ns, stored.Namespace, "the stored namespace never changes")
+			if tt.wantStatus == http.StatusBadRequest {
+				assert.Contains(t, w.Body.String(), "namespace cannot be changed")
+				assert.Equal(t, "master", stored.Branch, "a refused update writes nothing")
+			}
+		})
+	}
+}
+
 func TestUpdateInstance_RenameKeepsNamespace(t *testing.T) {
 	t.Parallel()
 

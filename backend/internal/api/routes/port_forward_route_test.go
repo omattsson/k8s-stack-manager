@@ -36,6 +36,11 @@ func (r *pfInstanceRepo) FindByID(_ context.Context, id string) (*models.StackIn
 	return &cp, nil
 }
 
+// NamespaceShared: one instance, so its namespace is never shared.
+func (r *pfInstanceRepo) NamespaceShared(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+
 func (r *pfInstanceRepo) FindByIDs(_ context.Context, ids []string) (map[string]*models.StackInstance, error) {
 	out := make(map[string]*models.StackInstance, len(ids))
 	for _, id := range ids {

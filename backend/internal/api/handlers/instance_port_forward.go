@@ -81,7 +81,10 @@ func (h *StreamHandler) PortForward(c *gin.Context) {
 		return
 	}
 
-	// 8: the namespace is a stack namespace.
+	// 8: the namespace is a stack namespace of this instance only.
+	if !h.checkNamespaceOwner(c, inst) {
+		return
+	}
 	if h.provider == nil {
 		streamError(c, http.StatusInternalServerError, codeInternal, "")
 		return
@@ -171,6 +174,29 @@ func (h *StreamHandler) PortForward(c *gin.Context) {
 			})
 		},
 	})
+}
+
+// checkNamespaceOwner refuses a namespace that another instance also names.
+// Rows from before the namespace became immutable can name the namespace of
+// another stack, and the label check of CheckStreamNamespace cannot tell them
+// apart. It writes the response and returns false when the check fails.
+func (h *StreamHandler) checkNamespaceOwner(c *gin.Context, inst *models.StackInstance) bool {
+	shared, err := h.instanceRepo.NamespaceShared(c.Request.Context(), inst.Namespace, inst.ID)
+	if err != nil {
+		if respondCancelled(c, err) {
+			return false
+		}
+		slog.Error("Port-forward: namespace owner lookup failed", "instance_id", inst.ID, "error", err)
+		streamError(c, http.StatusInternalServerError, codeInternal, "")
+		return false
+	}
+	if shared {
+		slog.Warn("Port-forward denied: the namespace is shared with another instance",
+			"instance_id", inst.ID, "namespace", inst.Namespace, "user_id", middleware.GetUserIDFromContext(c))
+		streamError(c, http.StatusForbidden, codeNamespaceNotAllowed, "The namespace of the instance is not allowed")
+		return false
+	}
+	return true
 }
 
 // respondK8sError maps an error of the stream layer to the response of the

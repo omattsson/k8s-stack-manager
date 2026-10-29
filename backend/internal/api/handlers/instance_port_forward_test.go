@@ -301,6 +301,18 @@ func TestPortForward_PreUpgradeChecks(t *testing.T) {
 		{name: "no namespace", opts: fixtureOpts{instance: &models.StackInstance{ID: "inst-1", OwnerID: "owner-1", ClusterID: "cl-1", Status: models.StackStatusRunning}}, path: pfPath, wantStatus: 409, wantCode: "instance_not_deployed"},
 		{name: "namespace missing in the cluster", opts: fixtureOpts{}, path: pfPath, setup: func(f *streamFixture) { f.fwd.nsErr = k8s.ErrNamespaceNotFound }, wantStatus: 409, wantCode: "instance_not_deployed"},
 		{name: "namespace not allowed", opts: fixtureOpts{}, path: pfPath, setup: func(f *streamFixture) { f.fwd.nsErr = k8s.ErrNamespaceNotAllowed }, wantStatus: 403, wantCode: "namespace_not_allowed"},
+		// A row from before the namespace became immutable names the namespace
+		// of another stack: refused before the cluster is asked.
+		{name: "namespace shared with another instance", opts: fixtureOpts{}, path: pfPath, upgrade: true, setup: func(f *streamFixture) {
+			require.NoError(t, f.instRepo.Create(context.Background(), &models.StackInstance{
+				ID: "victim-1", OwnerID: "victim", Namespace: "stack-ns", ClusterID: "cl-1", Status: models.StackStatusRunning,
+			}))
+		}, wantStatus: 403, wantCode: "namespace_not_allowed"},
+		{name: "namespace owner lookup error", opts: fixtureOpts{}, path: pfPath, setup: func(f *streamFixture) {
+			f.instRepo.mu.Lock()
+			defer f.instRepo.mu.Unlock()
+			f.instRepo.namespaceSharedErr = errors.New("db down")
+		}, wantStatus: 500, wantCode: "internal"},
 		{name: "not an upgrade request", opts: fixtureOpts{}, path: pfPath, wantStatus: 400, wantCode: "upgrade_required"},
 		{name: "origin not allowed", opts: fixtureOpts{origins: "same-origin"}, path: pfPath, upgrade: true, hdr: map[string]string{"Origin": "https://evil.example"}, wantStatus: 403, wantCode: "origin_not_allowed"},
 		{name: "service not found", opts: fixtureOpts{}, path: pfPath, upgrade: true, setup: func(f *streamFixture) { f.fwd.resolveErr = k8s.ErrServiceNotFound }, wantStatus: 404, wantCode: "service_not_found"},

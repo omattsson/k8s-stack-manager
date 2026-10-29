@@ -5533,7 +5533,7 @@ const docTemplate = `{
                 }
             },
             "put": {
-                "description": "Update a stack instance (branch, name, etc.). A changed name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters); an unchanged name is not checked, so older instances with other names stay editable. A rename does not change the namespace.\nttl_minutes sets a new TTL from now (0 clears the expiry). expires_at (RFC 3339 with a time zone) sets a fixed stop time and ttl_minutes 0. Do not send both (400). The limits are the same as for create (MAX_INSTANCE_TTL_DAYS).",
+                "description": "Update a stack instance (branch, name, etc.). A changed name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters); an unchanged name is not checked, so older instances with other names stay editable. A rename does not change the namespace. The namespace is set at create and cannot be changed: a namespace that differs from the stored one gives 400 (an unchanged value is accepted).\nttl_minutes sets a new TTL from now (0 clears the expiry). expires_at (RFC 3339 with a time zone) sets a fixed stop time and ttl_minutes 0. Do not send both (400). The limits are the same as for create (MAX_INSTANCE_TTL_DAYS).",
                 "consumes": [
                     "application/json"
                 ],

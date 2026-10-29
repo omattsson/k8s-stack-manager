@@ -89,6 +89,17 @@ func (r *GORMStackInstanceRepository) FindByNamespace(ctx context.Context, names
 	return &instance, nil
 }
 
+// NamespaceShared reports whether an instance other than id has this namespace.
+func (r *GORMStackInstanceRepository) NamespaceShared(ctx context.Context, namespace, id string) (bool, error) {
+	var ids []string
+	if err := r.db.WithContext(ctx).Model(&models.StackInstance{}).
+		Where("namespace = ? AND id <> ?", namespace, id).
+		Limit(1).Pluck("id", &ids).Error; err != nil {
+		return false, dberrors.NewDatabaseError("namespace_shared", err)
+	}
+	return len(ids) > 0, nil
+}
+
 // columnExpiryWarnedAt is written only by MarkExpiryWarned and by the clear
 // step in Update.
 const columnExpiryWarnedAt = "expiry_warned_at"

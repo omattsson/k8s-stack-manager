@@ -1128,6 +1128,8 @@ type MockStackInstanceRepository struct {
 	createErr error
 	// nameLookupErr fails only FindByNameOnCluster (UNIQUE_INSTANCE_NAMES).
 	nameLookupErr error
+	// namespaceSharedErr fails only NamespaceShared (port-forward).
+	namespaceSharedErr error
 	// findByIDsCalls counts FindByIDs calls (batch lookup checks).
 	findByIDsCalls atomic.Int32
 }
@@ -1205,6 +1207,26 @@ func (m *MockStackInstanceRepository) FindByNamespace(ctx context.Context, names
 		}
 	}
 	return nil, dberrors.NewDatabaseError("FindByNamespace", dberrors.ErrNotFound)
+}
+
+func (m *MockStackInstanceRepository) NamespaceShared(ctx context.Context, namespace, id string) (bool, error) {
+	if err := ctxDone(ctx, "namespace_shared"); err != nil {
+		return false, err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.fetchErr != nil {
+		return false, m.fetchErr
+	}
+	if m.namespaceSharedErr != nil {
+		return false, m.namespaceSharedErr
+	}
+	for _, i := range m.items {
+		if i.Namespace == namespace && i.ID != id {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (m *MockStackInstanceRepository) Update(ctx context.Context, i *models.StackInstance) error {
