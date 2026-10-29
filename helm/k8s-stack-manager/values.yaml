@@ -439,10 +439,14 @@ backend:
     # label, and may change or delete only namespaces whose name starts with
     # "stack-" or that have the label. Without it, the cluster-wide RoleBinding
     # write right could give the backend access to any namespace.
-    # For scope cluster the policy instead limits CONNECT on pods/exec and
-    # pods/portforward by the backend service account to namespaces with that
-    # label (port-forward and exec cannot reach system namespaces or the
-    # namespace of the backend).
+    # For scope cluster, with backend.portForward.enabled, a second policy
+    # limits CONNECT on pods/exec and pods/portforward by the backend service
+    # account to namespaces with that label, so these cannot reach system
+    # namespaces. It is rendered only while port-forward is on (the exec feature
+    # will widen this), and the install fails when the cluster lacks the
+    # ValidatingAdmissionPolicy API; set enabled=false only knowingly. The
+    # namespace of the backend is protected by the backend itself and by its
+    # lack of the label.
     admissionPolicy:
       enabled: true
 

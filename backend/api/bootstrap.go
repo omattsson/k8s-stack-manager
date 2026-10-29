@@ -580,6 +580,9 @@ func buildHandlers(
 		Manager:        streams,
 		Audit:          repos.AuditLog,
 		AllowedOrigins: cfg.CORS.AllowedOrigins,
+		SessionStore:   sessStore,
+		UserRepo:       repos.User,
+		APIKeyRepo:     repos.APIKey,
 		Config:         cfg.Stream,
 	}
 	if hub != nil {

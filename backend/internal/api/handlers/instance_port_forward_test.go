@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -17,12 +18,16 @@ import (
 	"backend/internal/k8s"
 	"backend/internal/models"
 	"backend/internal/podstream"
+	"backend/internal/sessionstore"
 	"backend/internal/websocket"
 
 	"github.com/gin-gonic/gin"
 	gorilla "github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
 
 // fakeForwarder is a k8s.PortForwarder. The dial connects to a local TCP
@@ -33,8 +38,10 @@ type fakeForwarder struct {
 	dialErr    error
 	target     *k8s.ServiceTarget
 	dialTarget func() (io.ReadWriteCloser, error)
-	mu         sync.Mutex
-	calls      []string
+	// onDial runs inside DialPodPort (a revoke during the tunnel setup).
+	onDial func()
+	mu     sync.Mutex
+	calls  []string
 }
 
 func (f *fakeForwarder) note(s string) {
@@ -61,6 +68,9 @@ func (f *fakeForwarder) ResolveServiceTarget(_ context.Context, ns, svc string, 
 
 func (f *fakeForwarder) DialPodPort(_ context.Context, ns, pod string, port int32) (k8s.PodPortStream, error) {
 	f.note("dial")
+	if f.onDial != nil {
+		f.onDial()
+	}
 	if f.dialErr != nil {
 		return nil, f.dialErr
 	}
@@ -122,6 +132,9 @@ type streamFixture struct {
 	fwd      *fakeForwarder
 	audit    *recordingAudit
 	hub      *websocket.Hub
+	store    *sessionstore.MemoryStore
+	users    *MockUserRepository
+	keys     *MockAPIKeyRepository
 }
 
 type fixtureOpts struct {
@@ -133,6 +146,10 @@ type fixtureOpts struct {
 	instance  *models.StackInstance
 	cluster   *models.Cluster
 	managerCf podstream.Config
+	// withRecheck wires the session store, the user and the API key
+	// repositories (the re-check after the registration).
+	withRecheck bool
+	apiKeyID    string
 }
 
 func defaultStreamCfg() config.StreamConfig {
@@ -177,12 +194,21 @@ func newStreamFixture(t *testing.T, o fixtureOpts) *streamFixture {
 	}
 	f.manager = podstream.NewManager(o.managerCf)
 	t.Cleanup(func() { _ = f.manager.Shutdown(context.Background()) })
-	f.handler = NewStreamHandler(StreamDeps{
+	deps := StreamDeps{
 		InstanceRepo: f.instRepo, ClusterRepo: f.clusters,
 		Provider: func(string) (k8s.PortForwarder, error) { return f.fwd, nil },
 		Manager:  f.manager, Hub: f.hub, Audit: f.audit,
 		AllowedOrigins: o.origins, Config: o.cfg,
-	})
+	}
+	if o.withRecheck {
+		f.store = sessionstore.NewMemoryStore()
+		t.Cleanup(f.store.Stop)
+		f.users, f.keys = NewMockUserRepository(), NewMockAPIKeyRepository()
+		require.NoError(t, f.users.Create(context.Background(), &models.User{ID: o.userID, Username: o.userID, Role: o.role}))
+		require.NoError(t, f.keys.Create(context.Background(), &models.APIKey{ID: "key-1", UserID: o.userID}))
+		deps.SessionStore, deps.UserRepo, deps.APIKeyRepo = f.store, f.users, f.keys
+	}
+	f.handler = NewStreamHandler(deps)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
 		c.Set("userID", o.userID)
@@ -194,6 +220,10 @@ func newStreamFixture(t *testing.T, o fixtureOpts) *streamFixture {
 			c.Set("authMethod", "jwt")
 		}
 		c.Set("jti", "jti-1")
+		c.Set("sessionID", "sid-1")
+		if o.apiKeyID != "" {
+			c.Set("apiKeyID", o.apiKeyID)
+		}
 		c.Next()
 	})
 	r.GET("/api/v1/stack-instances/:id/port-forward", f.handler.PortForward)
@@ -445,4 +475,184 @@ func TestPortForward_UpgradeKeepsCrossOriginOutAndAllowsNoOrigin(t *testing.T) {
 	require.Error(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+}
+
+// A revoke that runs while the tunnel is being set up (after the checks, during
+// the dial) is not seen by the hub: the session is not registered yet. The
+// re-check right after the registration closes it with 1008 at once, without
+// waiting for the revalidation (which does not run in this test).
+func TestPortForward_RevokedDuringSetup(t *testing.T) {
+	t.Parallel()
+	cfg := defaultStreamCfg()
+	cfg.AllowAPIKeys = true
+	until := time.Now().Add(time.Hour)
+	ctx := context.Background()
+	tests := []struct {
+		name       string
+		opts       fixtureOpts
+		revoke     func(*streamFixture)
+		wantClosed bool
+	}{
+		{name: "token logged out", opts: fixtureOpts{withRecheck: true}, wantClosed: true,
+			revoke: func(f *streamFixture) { require.NoError(t, f.store.BlockToken(ctx, "jti-1", until)) }},
+		{name: "session revoked", opts: fixtureOpts{withRecheck: true}, wantClosed: true,
+			revoke: func(f *streamFixture) { require.NoError(t, f.store.BlockSession(ctx, "sid-1", until)) }},
+		{name: "api key: user blocked after the authentication", opts: fixtureOpts{withRecheck: true, cfg: cfg, authMeth: "api_key", apiKeyID: "key-1"}, wantClosed: true,
+			revoke: func(f *streamFixture) { require.NoError(t, f.store.BlockUser(ctx, "owner-1", until)) }},
+		{name: "api key: key deleted", opts: fixtureOpts{withRecheck: true, cfg: cfg, authMeth: "api_key", apiKeyID: "key-1"}, wantClosed: true,
+			revoke: func(f *streamFixture) { require.NoError(t, f.keys.Delete(ctx, "owner-1", "key-1")) }},
+		{name: "api key: user disabled", opts: fixtureOpts{withRecheck: true, cfg: cfg, authMeth: "api_key", apiKeyID: "key-1"}, wantClosed: true,
+			revoke: func(f *streamFixture) {
+				u, err := f.users.FindByID(ctx, "owner-1")
+				require.NoError(t, err)
+				u.Disabled = true
+				require.NoError(t, f.users.Update(u))
+			}},
+		{name: "role lost during the setup", opts: fixtureOpts{withRecheck: true, userID: "dev-1", role: "devops"}, wantClosed: true,
+			revoke: func(f *streamFixture) {
+				u, err := f.users.FindByID(ctx, "dev-1")
+				require.NoError(t, err)
+				u.Role = "user"
+				require.NoError(t, f.users.Update(u))
+			}},
+		{name: "instance stopped during the setup", opts: fixtureOpts{withRecheck: true}, wantClosed: true,
+			revoke: func(f *streamFixture) {
+				i, err := f.instRepo.FindByID(ctx, "inst-1")
+				require.NoError(t, err)
+				i.Status = models.StackStatusStopped
+				require.NoError(t, f.instRepo.Update(ctx, i))
+			}},
+		{name: "cluster switch turned off during the setup", opts: fixtureOpts{withRecheck: true}, wantClosed: true,
+			revoke: func(f *streamFixture) {
+				require.NoError(t, f.clusters.Update(ctx, &models.Cluster{ID: "cl-1"}))
+			}},
+		{name: "no revoke keeps the tunnel", opts: fixtureOpts{withRecheck: true}, revoke: func(*streamFixture) {}},
+		{name: "store lookup failure fails open", opts: fixtureOpts{withRecheck: true}, revoke: func(f *streamFixture) {
+			f.users.findErr = errors.New("db down")
+		}},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f := newStreamFixture(t, tt.opts)
+			f.fwd.onDial = func() { tt.revoke(f) }
+			_, base := f.server(t)
+			c, _, err := gorilla.DefaultDialer.Dial(base+"/api/v1/stack-instances/inst-1/port-forward?service=web&port=80", nil)
+			require.NoError(t, err)
+			defer c.Close()
+			if !tt.wantClosed {
+				require.NoError(t, c.WriteMessage(gorilla.BinaryMessage, []byte("still open")))
+				_ = c.SetReadDeadline(time.Now().Add(3 * time.Second))
+				_, data, err := c.ReadMessage()
+				require.NoError(t, err)
+				assert.Equal(t, "still open", string(data))
+				return
+			}
+			_ = c.SetReadDeadline(time.Now().Add(3 * time.Second))
+			_, _, err = c.ReadMessage()
+			var ce *gorilla.CloseError
+			require.ErrorAs(t, err, &ce)
+			assert.Equal(t, 1008, ce.Code)
+			assert.Equal(t, "session revoked", ce.Text)
+			require.Eventually(t, func() bool { return len(f.audit.snapshot()) == 2 }, 3*time.Second, 10*time.Millisecond)
+			var ed map[string]any
+			require.NoError(t, json.Unmarshal([]byte(f.audit.snapshot()[1].Details), &ed))
+			assert.EqualValues(t, 1008, ed["close_code"])
+			assert.EqualValues(t, 0, ed["bytes_in"])
+		})
+	}
+}
+
+// The refusals are counted once each, with the code as the reason; the
+// tunnel limit is counted by the manager (user_limit), not a second time. A
+// 500 is a fault, not a refusal. This test replaces the metric instruments, so
+// it does not run in parallel with the others (podstream.UseMeterProvider
+// replaces the instruments).
+func TestPortForward_RejectedMetricCountsEveryRefusal(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	podstream.UseMeterProvider(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)))
+	t.Cleanup(func() { podstream.UseMeterProvider(otel.GetMeterProvider()) })
+
+	collect := func() map[string]int64 {
+		var rm metricdata.ResourceMetrics
+		require.NoError(t, reader.Collect(context.Background(), &rm))
+		out := map[string]int64{}
+		for _, sm := range rm.ScopeMetrics {
+			for _, m := range sm.Metrics {
+				if m.Name != "stack_stream.rejected_total" {
+					continue
+				}
+				sum, ok := m.Data.(metricdata.Sum[int64])
+				require.True(t, ok)
+				for _, dp := range sum.DataPoints {
+					reason, _ := dp.Attributes.Value("reason")
+					out[reason.AsString()] += dp.Value
+				}
+			}
+		}
+		return out
+	}
+
+	off := defaultStreamCfg()
+	off.PortForward.Enabled = false
+	run := func(o fixtureOpts, path string, upgrade bool, setup func(*streamFixture)) {
+		f := newStreamFixture(t, o)
+		if setup != nil {
+			setup(f)
+		}
+		f.do(t, path, upgrade, nil)
+	}
+	run(fixtureOpts{cfg: off}, pfPath, false, nil)
+	run(fixtureOpts{}, "/api/v1/stack-instances/inst-1/port-forward?port=80", false, nil)
+	run(fixtureOpts{}, "/api/v1/stack-instances/inst-1/port-forward?service=web", false, nil)
+	run(fixtureOpts{}, "/api/v1/stack-instances/nope/port-forward?service=web&port=80", false, nil)
+	run(fixtureOpts{userID: "other"}, pfPath, false, nil)
+	run(fixtureOpts{cluster: &models.Cluster{ID: "cl-1"}}, pfPath, false, nil)
+	run(fixtureOpts{}, pfPath, true, func(f *streamFixture) { f.fwd.resolveErr = k8s.ErrServiceNotFound })
+	run(fixtureOpts{}, pfPath, true, func(f *streamFixture) { f.fwd.dialErr = k8s.ErrDialFailed })
+	run(fixtureOpts{}, pfPath, true, func(f *streamFixture) { f.fwd.resolveErr = context.DeadlineExceeded })
+	run(fixtureOpts{}, pfPath, true, func(f *streamFixture) { f.fwd.resolveErr = errors.New("boom") }) // 500: not counted
+	// Tunnel limit.
+	f := newStreamFixture(t, fixtureOpts{managerCf: podstream.Config{MaxPerUser: 1}})
+	held, err := f.manager.Acquire("owner-1")
+	require.NoError(t, err)
+	f.do(t, pfPath, true, nil)
+	held.Release()
+
+	got := collect()
+	for reason, want := range map[string]int64{
+		"feature_disabled": 1, "invalid_service": 1, "invalid_port": 1, "instance_not_found": 1,
+		"forbidden": 1, "cluster_port_forward_disabled": 1, "service_not_found": 1,
+		"dial_failed": 1, "kube_timeout": 1, "user_limit": 1,
+	} {
+		assert.Equal(t, want, got[reason], reason)
+	}
+	assert.Zero(t, got["tunnel_limit"], "the manager counts the limit")
+	assert.Zero(t, got["internal"], "a 500 is not a refusal")
+}
+
+func TestMapStreamError_Timeouts(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		err        error
+		dial       bool
+		wantStatus int
+		wantCode   string
+	}{
+		{"lookup timeout", fmt.Errorf("get namespace: %w", context.DeadlineExceeded), false, 503, "kube_timeout"},
+		{"dial timeout", context.DeadlineExceeded, true, 502, "dial_failed"},
+		{"dial failure", fmt.Errorf("%w: refused", k8s.ErrDialFailed), true, 502, "dial_failed"},
+		{"cancelled", context.Canceled, false, 500, "internal"},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			status, code, _ := mapStreamError(tt.err, tt.dial)
+			assert.Equal(t, tt.wantStatus, status)
+			assert.Equal(t, tt.wantCode, code)
+		})
+	}
 }

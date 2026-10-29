@@ -82,6 +82,10 @@ func (m *warnerMockInstanceRepo) setExpiringSoon(items []*models.StackInstance) 
 	m.expiringSoonItems = items
 }
 
+func (*warnerMockInstanceRepo) FindByIDs(ctx context.Context, _ []string) (map[string]*models.StackInstance, error) {
+	return nil, ctx.Err()
+}
+
 func (m *warnerMockInstanceRepo) ListExpiringSoon(ctx context.Context, _ time.Duration) ([]*models.StackInstance, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

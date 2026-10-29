@@ -35,6 +35,9 @@ type Revocable interface {
 	// InstanceID is the stack instance of the connection (access re-check and
 	// DisconnectInstance).
 	InstanceID() string
+	// Kind names the feature of the connection (for example "port_forward").
+	// The access re-check uses it to apply the switch of that feature only.
+	Kind() string
 	// Revoke closes the connection with a WebSocket close code and reason. It
 	// must not block (start the close in a goroutine or signal a channel) and
 	// may be called from any goroutine. The hub calls it at most once, outside

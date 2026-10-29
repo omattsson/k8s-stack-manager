@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
-	"strconv"
 	"sync"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -16,8 +14,6 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/httpstream"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	"k8s.io/client-go/tools/portforward"
-	"k8s.io/client-go/transport/spdy"
 )
 
 // Errors of the stream layer. The handler maps each one to a response code
@@ -164,12 +160,13 @@ func resolveTargetPort(sp *corev1.ServicePort, pod *corev1.Pod) (int32, error) {
 		return sp.TargetPort.IntVal, nil
 	case sp.TargetPort.Type == intstr.String && sp.TargetPort.StrVal != "":
 		name := sp.TargetPort.StrVal
-		for _, group := range [][]corev1.Container{pod.Spec.Containers, pod.Spec.InitContainers} {
-			for _, ctr := range group {
-				for _, cp := range ctr.Ports {
-					if cp.Name == name && (cp.Protocol == "" || cp.Protocol == corev1.ProtocolTCP) {
-						return cp.ContainerPort, nil
-					}
+		// Like kubectl: the regular containers, and an init container only
+		// when it is a native sidecar (restartPolicy Always, it keeps
+		// running). A classic init container has ended by then.
+		for _, ctr := range targetPortContainers(pod) {
+			for _, cp := range ctr.Ports {
+				if cp.Name == name && (cp.Protocol == "" || cp.Protocol == corev1.ProtocolTCP) {
+					return cp.ContainerPort, nil
 				}
 			}
 		}
@@ -177,6 +174,18 @@ func resolveTargetPort(sp *corev1.ServicePort, pod *corev1.Pod) (int32, error) {
 	default:
 		return sp.Port, nil
 	}
+}
+
+// targetPortContainers returns the containers whose ports a named targetPort
+// can name: the regular containers and the native sidecars.
+func targetPortContainers(pod *corev1.Pod) []corev1.Container {
+	out := append([]corev1.Container(nil), pod.Spec.Containers...)
+	for _, ctr := range pod.Spec.InitContainers {
+		if ctr.RestartPolicy != nil && *ctr.RestartPolicy == corev1.ContainerRestartPolicyAlways {
+			out = append(out, ctr)
+		}
+	}
+	return out
 }
 
 // podPortStream is the PodPortStream over a SPDY (or tunneled) connection.
@@ -198,90 +207,4 @@ func (s *podPortStream) Close() error {
 		s.err = s.conn.Close()
 	})
 	return s.err
-}
-
-// DialPodPort opens the error and data stream of a port-forward to a port of
-// a pod, without the local listener of portforward.New. It tries the
-// WebSocket tunnel first and falls back to SPDY, as kubectl does. ErrDialFailed
-// wraps a failed dial; ErrRESTConfigUnavailable means the client has no REST
-// config (fake clientset).
-func (c *Client) DialPodPort(ctx context.Context, namespace, pod string, port int32) (ps PodPortStream, err error) {
-	ctx, span := startSpan(ctx, "k8s.DialPodPort",
-		attribute.String("k8s.namespace", namespace), attribute.String("k8s.pod", pod), attribute.Int("k8s.port", int(port)))
-	defer func() { endSpan(span, err) }()
-
-	if c.restConfig == nil {
-		return nil, ErrRESTConfigUnavailable
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-
-	u := c.clientset.CoreV1().RESTClient().Post().
-		Resource("pods").Namespace(namespace).Name(pod).SubResource("portforward").URL()
-
-	rt, upgrader, err := spdy.RoundTripperFor(c.restConfig)
-	if err != nil {
-		return nil, fmt.Errorf("build SPDY round tripper: %w", err)
-	}
-	spdyDialer := spdy.NewDialer(upgrader, &http.Client{Transport: rt}, http.MethodPost, u)
-	wsDialer, err := portforward.NewSPDYOverWebsocketDialer(u, c.restConfig)
-	if err != nil {
-		return nil, fmt.Errorf("build websocket dialer: %w", err)
-	}
-	dialer := portforward.NewFallbackDialer(wsDialer, spdyDialer, func(err error) bool {
-		return httpstream.IsUpgradeFailure(err) || httpstream.IsHTTPSProxyError(err)
-	})
-
-	// The dial has no context: run it in a goroutine so a cancelled context
-	// does not wait for a stalled API server. The late connection is closed.
-	type dialResult struct {
-		conn     httpstream.Connection
-		protocol string
-		err      error
-	}
-	resCh := make(chan dialResult, 1)
-	go func() {
-		conn, protocol, err := dialer.Dial(portforward.PortForwardProtocolV1Name)
-		resCh <- dialResult{conn, protocol, err}
-	}()
-	var res dialResult
-	select {
-	case res = <-resCh:
-	case <-ctx.Done():
-		go func() {
-			if r := <-resCh; r.conn != nil {
-				_ = r.conn.Close()
-			}
-		}()
-		return nil, ctx.Err()
-	}
-	if res.err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrDialFailed, res.err)
-	}
-	if res.protocol != portforward.PortForwardProtocolV1Name {
-		_ = res.conn.Close()
-		return nil, fmt.Errorf("%w: unable to negotiate protocol, server returned %q", ErrDialFailed, res.protocol)
-	}
-
-	headers := http.Header{}
-	headers.Set(corev1.StreamType, corev1.StreamTypeError)
-	headers.Set(corev1.PortHeader, strconv.Itoa(int(port)))
-	headers.Set(corev1.PortForwardRequestIDHeader, "0")
-	errStream, err := res.conn.CreateStream(headers)
-	if err != nil {
-		_ = res.conn.Close()
-		return nil, fmt.Errorf("%w: create error stream: %v", ErrDialFailed, err)
-	}
-	// The client writes nothing to the error stream.
-	_ = errStream.Close()
-
-	headers.Set(corev1.StreamType, corev1.StreamTypeData)
-	dataStream, err := res.conn.CreateStream(headers)
-	if err != nil {
-		_ = errStream.Reset()
-		_ = res.conn.Close()
-		return nil, fmt.Errorf("%w: create data stream: %v", ErrDialFailed, err)
-	}
-	return &podPortStream{conn: res.conn, data: dataStream, errs: errStream}, nil
 }

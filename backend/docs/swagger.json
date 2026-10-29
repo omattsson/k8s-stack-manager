@@ -7652,7 +7652,10 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Upgrades the connection to a WebSocket that carries raw TCP bytes between the client and a service port of the instance. Binary frames carry the bytes in both directions; a text frame closes the tunnel with 1003. There is no half-close. The server pings every 30 s; pings do not count as activity. Authentication: the Authorization header (JWT) or, when STACK_STREAM_ALLOW_API_KEYS is true, the X-API-Key header. The route never accepts a token in the query string. The caller must be the owner of the instance, a devops user or an admin, and the cluster must allow port-forward (allow_port_forward). All checks run before the upgrade and give an HTTP status with a stable code in the body ({\"error\",\"code\"}). Close codes after the upgrade: 1000 normal, 1001 server shutdown, 1003 text frame, 1008 access revoked, 4001 maximum duration, 4002 idle timeout, 4502 pod stream error (the reason holds the error). An expired access token does not close an open tunnel. Delete, stop and clean of the instance close the tunnels of that replica at once and the tunnels of other replicas at the next revalidation (up to one minute).",
+                "description": "Upgrades the connection to a WebSocket that carries raw TCP bytes between the client and a service port of the instance. Binary frames carry the bytes in both directions; a text frame closes the tunnel with 1003. There is no half-close. The server pings every 30 s; pings do not count as activity. Authentication: the Authorization header (JWT) or, when STACK_STREAM_ALLOW_API_KEYS is true, the X-API-Key header. The route never accepts a token in the query string. The caller must be the owner of the instance, a devops user or an admin, and the cluster must allow port-forward (allow_port_forward). All checks run before the upgrade and give an HTTP status with a stable code in the body ({\"error\",\"code\"}). Close codes after the upgrade: 1000 normal, 1001 server shutdown, 1003 text frame, 1008 access revoked, 1009 frame larger than 64 KiB, 1011 internal error, 4001 maximum duration, 4002 idle timeout, 4502 pod stream error (the reason holds the error). An expired access token does not close an open tunnel. Delete, stop and clean of the instance close the tunnels of that replica at once and the tunnels of other replicas at the next revalidation (up to one minute).",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "application/json"
                 ],
@@ -7760,7 +7763,7 @@
                         }
                     },
                     "503": {
-                        "description": "no_ready_pod, shutting_down",
+                        "description": "no_ready_pod, kube_timeout, shutting_down",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {

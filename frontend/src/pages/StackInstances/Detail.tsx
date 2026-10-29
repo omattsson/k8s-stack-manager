@@ -41,7 +41,7 @@ import FavoriteButton from '../../components/FavoriteButton';
 import FollowButton from '../../components/FollowButton';
 import InstanceQuotaSection from '../../components/InstanceQuota';
 import ActionRunHistory from '../../components/ActionRunHistory';
-import { instanceService, definitionService, branchOverrideService } from '../../api/client';
+import { instanceService, definitionService, branchOverrideService, clusterService } from '../../api/client';
 import type { RollbackResponse, StackInstance, ChartConfig, ValueOverride, ChartBranchOverride, DeploymentLog, NamespaceStatus } from '../../types';
 import YamlEditor from '../../components/YamlEditor';
 import TtlSelector from '../../components/TtlSelector';
@@ -705,6 +705,31 @@ const Detail = () => {
 
   const canModify = canModifyInstance(user, instance);
 
+  // The stackctl hint needs a cluster that allows port-forward (GET /clusters is open to every
+  // authenticated user). An empty cluster_id means the default cluster. Errors hide the hint.
+  const [clusterAllowsPortForward, setClusterAllowsPortForward] = useState(false);
+  const instanceClusterId = instance?.cluster_id ?? '';
+  const needClusterFlag = portForwardEnabled && canModify;
+  useEffect(() => {
+    if (!needClusterFlag) {
+      setClusterAllowsPortForward(false);
+      return;
+    }
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const cluster = instanceClusterId
+          ? await clusterService.get(instanceClusterId)
+          : (await clusterService.list()).find((c) => c.is_default);
+        if (!cancelled) setClusterAllowsPortForward(cluster?.allow_port_forward === true);
+      } catch {
+        if (!cancelled) setClusterAllowsPortForward(false);
+      }
+    };
+    void load();
+    return () => { cancelled = true; };
+  }, [needClusterFlag, instanceClusterId]);
+
   const canDeploy = instance?.status === 'draft' || instance?.status === 'stopped';
   const canRedeploy = DEPLOYED_STATUSES.has(instance?.status ?? '');
   const deploys = rollbackTargets.deploys;
@@ -1022,7 +1047,7 @@ const Detail = () => {
           <AccessUrls
             status={k8sStatus}
             showPortForward={hasAtLeastRole(user?.role, 'devops')}
-            portForwardEnabled={portForwardEnabled && canModify}
+            portForwardEnabled={needClusterFlag && clusterAllowsPortForward}
             instanceName={instance.name}
           />
         )}

@@ -12,11 +12,13 @@ import (
 	"testing"
 	"time"
 
+	"backend/internal/k8s"
 	"backend/internal/websocket"
 
 	gorilla "github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/util/httpstream"
 )
 
 // fakeStream is a PodPortStream. The test plays the pod through podData and
@@ -62,6 +64,10 @@ type harness struct {
 type harnessOpts struct {
 	cfg       Config
 	configure func(*httptest.Server)
+	// postRegister is PortForwardOptions.PostRegister.
+	postRegister func(context.Context) bool
+	// stream replaces the default fake stream.
+	stream k8s.PodPortStream
 }
 
 func startHarness(t *testing.T, o harnessOpts) *harness {
@@ -84,8 +90,12 @@ func startHarness(t *testing.T, o harnessOpts) *harness {
 			_ = conn.Close()
 			return
 		}
+		var stream k8s.PodPortStream = h.stream
+		if o.stream != nil {
+			stream = o.stream
+		}
 		h.sess = h.m.StartPortForward(PortForwardOptions{
-			Conn: conn, Stream: h.stream, Slot: slot, Hub: hub,
+			Conn: conn, Stream: stream, Slot: slot, Hub: hub, PostRegister: o.postRegister,
 			Identity: websocket.ClientIdentity{UserID: "u1"}, InstanceID: "inst1",
 			OnEnd: func(s Summary) { h.ended <- s },
 		})
@@ -106,7 +116,10 @@ func startHarness(t *testing.T, o harnessOpts) *harness {
 	case <-time.After(2 * time.Second):
 		t.Fatal("session did not start")
 	}
-	require.Eventually(t, func() bool { return hub.RevocableCount() == 1 }, 2*time.Second, 5*time.Millisecond)
+	if o.postRegister == nil && o.stream == nil {
+		// With a PostRegister check the session may already be gone.
+		require.Eventually(t, func() bool { return hub.RevocableCount() == 1 }, 2*time.Second, 5*time.Millisecond)
+	}
 	return h
 }
 
@@ -297,9 +310,12 @@ func TestSession_PingsAreNotActivity(t *testing.T) {
 
 func TestSession_DataKeepsTunnelAlive(t *testing.T) {
 	t.Parallel()
-	h := startHarness(t, harnessOpts{cfg: Config{Timings: fast, IdleTimeout: 300 * time.Millisecond, MaxDuration: time.Minute}})
+	// The idle timeout is far above the write interval (1 s against 100 ms),
+	// so a slow -race run cannot make a gap look idle; the writes last longer
+	// than the idle timeout, so only the data keeps the tunnel open.
+	h := startHarness(t, harnessOpts{cfg: Config{Timings: fast, IdleTimeout: time.Second, MaxDuration: time.Minute}})
 	go func() { _, _ = io.Copy(io.Discard, h.stream.podData) }()
-	for i := 0; i < 8; i++ {
+	for i := 0; i < 15; i++ {
 		require.NoError(t, h.client.WriteMessage(gorilla.BinaryMessage, []byte("x")))
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -403,4 +419,119 @@ func TestTruncateReason(t *testing.T) {
 			assert.True(t, strings.ToValidUTF8(got, "") == got)
 		})
 	}
+}
+
+func TestSession_PostRegister(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		postRegister func(context.Context) bool
+		wantCode     int
+		wantText     string
+		wantRevoked  bool
+	}{
+		{
+			name:         "revoked after the registration",
+			postRegister: func(context.Context) bool { return true },
+			wantCode:     ClosePolicy, wantText: "session revoked", wantRevoked: true,
+		},
+		{
+			name:         "panic in the check closes with 1011 and tears down",
+			postRegister: func(context.Context) bool { panic("boom") },
+			wantCode:     CloseInternalError, wantText: "internal error",
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			h := startHarness(t, harnessOpts{cfg: Config{Timings: fast}, postRegister: tt.postRegister})
+			code, text := expectClose(t, h.client)
+			assert.Equal(t, tt.wantCode, code)
+			assert.Equal(t, tt.wantText, text)
+			sum := h.waitEnd(t)
+			assert.Equal(t, tt.wantCode, sum.CloseCode)
+			assert.Eventually(t, func() bool { return h.m.Active() == 0 }, 2*time.Second, 10*time.Millisecond, "slot released")
+			select {
+			case <-h.stream.closed:
+			case <-time.After(2 * time.Second):
+				t.Fatal("pod stream not closed")
+			}
+			assert.Eventually(t, func() bool { return h.hub.RevocableCount() == 0 }, 2*time.Second, 10*time.Millisecond, "unregistered")
+		})
+	}
+
+	t.Run("not revoked passes data", func(t *testing.T) {
+		t.Parallel()
+		var calls int
+		h := startHarness(t, harnessOpts{cfg: Config{Timings: fast}, postRegister: func(context.Context) bool { calls++; return false }})
+		require.NoError(t, h.client.WriteMessage(gorilla.BinaryMessage, []byte("ok")))
+		buf := make([]byte, 2)
+		_ = h.stream.podData.SetReadDeadline(time.Now().Add(2 * time.Second))
+		_, err := io.ReadFull(h.stream.podData, buf)
+		require.NoError(t, err)
+		assert.Equal(t, 1, calls)
+	})
+}
+
+func TestSession_Kind(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, KindPortForward, (&Session{}).Kind())
+}
+
+func TestSession_MessageTooBig(t *testing.T) {
+	t.Parallel()
+	h := startHarness(t, harnessOpts{cfg: Config{Timings: Timings{PingInterval: 50 * time.Millisecond, ReadTimeout: 5 * time.Second, WriteTimeout: time.Second, ReadLimit: 1024}}})
+	require.NoError(t, h.client.WriteMessage(gorilla.BinaryMessage, make([]byte, 4096)))
+	code, _ := expectClose(t, h.client)
+	assert.Equal(t, CloseMessageTooBig, code)
+	sum := h.waitEnd(t)
+	assert.Equal(t, CloseMessageTooBig, sum.CloseCode)
+	assert.Equal(t, "message_too_big", closeReasonLabel(sum.CloseCode))
+}
+
+// fakeConn is an httpstream.Connection whose error stream yields errText and
+// whose data stream blocks until the connection is closed.
+type fakeConn struct {
+	errText string
+	data    *io.PipeReader
+	dataW   *io.PipeWriter
+}
+
+type connStream struct {
+	r io.Reader
+}
+
+func (s *connStream) Read(p []byte) (int, error)  { return s.r.Read(p) }
+func (s *connStream) Write(p []byte) (int, error) { return len(p), nil }
+func (s *connStream) Close() error                { return nil }
+func (s *connStream) Reset() error                { return nil }
+func (s *connStream) Headers() http.Header        { return http.Header{} }
+func (s *connStream) Identifier() uint32          { return 0 }
+
+func (c *fakeConn) CreateStream(h http.Header) (httpstream.Stream, error) {
+	if h.Get("streamType") == "error" {
+		return &connStream{r: strings.NewReader(c.errText)}, nil
+	}
+	return &connStream{r: c.data}, nil
+}
+func (c *fakeConn) Close() error                       { _ = c.dataW.Close(); return nil }
+func (c *fakeConn) CloseChan() <-chan bool             { return make(chan bool) }
+func (c *fakeConn) SetIdleTimeout(time.Duration)       {}
+func (c *fakeConn) RemoveStreams(...httpstream.Stream) {}
+
+// The error text of the kubelet, read from the stream that k8s.OpenPodPortStream
+// creates, ends the session with 4502 and the text as the reason.
+func TestSession_RealStreamErrorText(t *testing.T) {
+	t.Parallel()
+	r, w := io.Pipe()
+	conn := &fakeConn{errText: "an error occurred forwarding 8080 -> 80: connection refused", data: r, dataW: w}
+	ps, err := k8s.OpenPodPortStream(conn, 80)
+	require.NoError(t, err)
+	h := startHarness(t, harnessOpts{cfg: Config{Timings: fast}, stream: ps})
+	code, text := expectClose(t, h.client)
+	assert.Equal(t, ClosePodError, code)
+	assert.Contains(t, text, "connection refused")
+	sum := h.waitEnd(t)
+	assert.Equal(t, ClosePodError, sum.CloseCode)
 }

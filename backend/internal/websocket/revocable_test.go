@@ -24,6 +24,7 @@ type revokeCall struct {
 
 func (f *fakeRevocable) Identity() ClientIdentity { return f.id }
 func (f *fakeRevocable) InstanceID() string       { return f.instance }
+func (f *fakeRevocable) Kind() string             { return "test" }
 func (f *fakeRevocable) Revoke(code int, reason string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -317,6 +318,7 @@ type reentrantRevocable struct {
 
 func (r *reentrantRevocable) Identity() ClientIdentity { return ClientIdentity{} }
 func (r *reentrantRevocable) InstanceID() string       { return "i1" }
+func (r *reentrantRevocable) Kind() string             { return "test" }
 func (r *reentrantRevocable) Revoke(int, string) {
 	r.n++
 	_ = r.hub.ClientCount()
@@ -339,6 +341,7 @@ type panicRevocable struct{}
 
 func (*panicRevocable) Identity() ClientIdentity { return ClientIdentity{} }
 func (*panicRevocable) InstanceID() string       { return "i1" }
+func (*panicRevocable) Kind() string             { return "test" }
 func (*panicRevocable) Revoke(int, string)       { panic("boom") }
 
 func TestExportedLogLimiter(t *testing.T) {

@@ -7,19 +7,27 @@ import (
 
 	"backend/internal/config"
 	"backend/internal/models"
+	"backend/internal/podstream"
 	"backend/internal/websocket"
 )
 
 // NewStreamAccessChecker returns the access re-check that the hub runs on the
 // open stream sessions at each revalidation (Hub.SetRevocableAccessChecker).
-// A session loses its access when the feature is off, the user is deleted,
-// disabled or no longer the owner and not devops/admin (the CURRENT role, same
-// rule as canModifyInstance), the instance is gone or has no live namespace
-// (stopped, cleaned, deleting), or its cluster no longer allows port-forward.
+// A session loses its access when the feature switch of its kind is off, the
+// user is deleted, disabled or no longer the owner and not devops/admin (the
+// CURRENT role, same rule as canModifyInstance), the instance is gone or has
+// no live namespace (stopped, cleaned, deleting), or its cluster no longer
+// allows the feature.
 //
-// It reads each distinct instance once, all users with one FindByIDs call and
-// the clusters with one List call. A failed lookup fails open: the affected
-// sessions stay and the next run retries; the log line is rate-limited.
+// It reads the instances of the open sessions with one FindByIDs call (columns
+// id, owner_id, status, namespace, cluster_id), all users with one FindByIDs
+// call and the cluster switches with one StreamFlagsByIDs call that selects
+// only the id, is_default and allow_port_forward columns of the clusters in
+// use (no decryption: a damaged kubeconfig of another cluster cannot disable
+// the check). A failed lookup fails open: the affected sessions stay and the
+// next run retries; the log line is rate-limited. A run whose context ends
+// before every session was checked logs that (rate-limited) and keeps the
+// unchecked sessions.
 func NewStreamAccessChecker(instanceRepo models.StackInstanceRepository, userRepo models.UserRepository, clusterRepo models.ClusterRepository, cfg config.StreamConfig) websocket.RevocableAccessChecker {
 	limit := websocket.NewLogLimiter(time.Minute)
 	logFail := func(msg string, args ...any) {
@@ -29,23 +37,49 @@ func NewStreamAccessChecker(instanceRepo models.StackInstanceRepository, userRep
 		}
 		slog.Debug(msg, args...)
 	}
-	return func(ctx context.Context, rs []websocket.Revocable) []bool {
-		lost := make([]bool, len(rs))
-		if !cfg.PortForward.Enabled {
-			for i := range lost {
+	return func(ctx context.Context, all []websocket.Revocable) []bool {
+		lost := make([]bool, len(all))
+		// The switch of the feature of each session.
+		var rs []websocket.Revocable
+		var idx []int
+		for i, r := range all {
+			if !streamKindEnabled(cfg, r.Kind()) {
 				lost[i] = true
+				continue
 			}
+			rs = append(rs, r)
+			idx = append(idx, i)
+		}
+		if len(rs) == 0 {
 			return lost
+		}
+		ranOut := func(stage string, checked int) bool {
+			if ctx.Err() == nil {
+				return false
+			}
+			logFail("Stream revalidation: the run ran out of time; the unchecked sessions stay until the next run",
+				"stage", stage, "checked", checked, "sessions", len(rs), "error", ctx.Err())
+			return true
 		}
 
 		instances := loadStreamInstances(ctx, instanceRepo, rs, logFail)
+		if ranOut("instances", 0) {
+			return lost
+		}
 		users := loadStreamUsers(ctx, userRepo, rs, logFail)
-		clusters, defaultCluster := loadStreamClusters(ctx, clusterRepo, logFail)
+		if ranOut("users", 0) {
+			return lost
+		}
+		flags := loadStreamClusterFlags(ctx, clusterRepo, instances, logFail)
+		if ranOut("clusters", 0) {
+			return lost
+		}
 
-		for i, r := range rs {
-			if ctx.Err() != nil {
+		for n, r := range rs {
+			if ranOut("sessions", n) {
 				return lost
 			}
+			i := idx[n]
 			id := r.Identity()
 
 			if users.ok {
@@ -69,17 +103,26 @@ func NewStreamAccessChecker(instanceRepo models.StackInstanceRepository, userRep
 				lost[i] = true
 				continue
 			}
-			if clusters != nil {
-				cl := clusters[inst.ClusterID]
-				if inst.ClusterID == "" {
-					cl = defaultCluster
-				}
-				if cl == nil || !cl.AllowPortForward {
+			if flags != nil && r.Kind() == podstream.KindPortForward {
+				allowed, found := flags[inst.ClusterID]
+				if !found || !allowed {
 					lost[i] = true
 				}
 			}
 		}
 		return lost
+	}
+}
+
+// streamKindEnabled reports whether the feature switch of the session kind is
+// on. A kind that this checker does not know stays (the switch of another
+// feature must not close it).
+func streamKindEnabled(cfg config.StreamConfig, kind string) bool {
+	switch kind {
+	case podstream.KindPortForward:
+		return cfg.PortForward.Enabled
+	default:
+		return true
 	}
 }
 
@@ -98,25 +141,27 @@ type streamInstances struct {
 	byID map[string]*models.StackInstance
 }
 
+// loadStreamInstances reads the distinct instances of the sessions with one
+// batch call.
 func loadStreamInstances(ctx context.Context, repo models.StackInstanceRepository, rs []websocket.Revocable, logFail func(string, ...any)) streamInstances {
 	out := streamInstances{byID: map[string]*models.StackInstance{}}
+	seen := map[string]bool{}
+	var ids []string
 	for _, r := range rs {
-		id := r.InstanceID()
-		if _, done := out.byID[id]; done || ctx.Err() != nil {
-			continue
+		if id := r.InstanceID(); !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
 		}
-		inst, err := repo.FindByID(ctx, id)
-		switch {
-		case err == nil:
-			out.byID[id] = inst
-		case isNotFoundError(err):
-			out.byID[id] = nil
-		default:
-			if ctx.Err() == nil {
-				logFail("Stream revalidation: instance lookup failed; the sessions stay until the next run",
-					"instance_id", id, "error", err)
-			}
+	}
+	found, err := repo.FindByIDs(ctx, ids)
+	if err != nil {
+		if ctx.Err() == nil {
+			logFail("Stream revalidation: instance lookup failed; the sessions stay until the next run", "error", err)
 		}
+		return out
+	}
+	for _, id := range ids {
+		out.byID[id] = found[id] // nil: the instance is gone
 	}
 	return out
 }
@@ -151,27 +196,38 @@ func loadStreamUsers(ctx context.Context, repo models.UserRepository, rs []webso
 	return streamUsers{byID: m, ok: true}
 }
 
-// loadStreamClusters returns the clusters by ID and the default cluster. It
-// returns a nil map when the lookup failed or there is no repository.
-func loadStreamClusters(ctx context.Context, repo models.ClusterRepository, logFail func(string, ...any)) (map[string]*models.Cluster, *models.Cluster) {
+// loadStreamClusterFlags returns allow_port_forward of the clusters that the
+// known instances use (the default cluster under models.DefaultClusterKey for
+// an instance without a cluster ID), read with one projected call. It returns
+// nil when the lookup failed, there is no repository or no cluster is needed.
+func loadStreamClusterFlags(ctx context.Context, repo models.ClusterRepository, instances streamInstances, logFail func(string, ...any)) map[string]bool {
 	if repo == nil {
-		return nil, nil
+		return nil
 	}
-	list, err := repo.List(ctx)
+	seen := map[string]bool{}
+	var ids []string
+	needDefault := false
+	for _, inst := range instances.byID {
+		if inst == nil || !streamInstanceLive(inst) {
+			continue
+		}
+		switch {
+		case inst.ClusterID == models.DefaultClusterKey:
+			needDefault = true
+		case !seen[inst.ClusterID]:
+			seen[inst.ClusterID] = true
+			ids = append(ids, inst.ClusterID)
+		}
+	}
+	if len(ids) == 0 && !needDefault {
+		return nil
+	}
+	flags, err := repo.StreamFlagsByIDs(ctx, ids, needDefault)
 	if err != nil {
 		if ctx.Err() == nil {
 			logFail("Stream revalidation: cluster lookup failed; the sessions stay until the next run", "error", err)
 		}
-		return nil, nil
+		return nil
 	}
-	byID := make(map[string]*models.Cluster, len(list))
-	var def *models.Cluster
-	for i := range list {
-		cl := &list[i]
-		byID[cl.ID] = cl
-		if cl.IsDefault {
-			def = cl
-		}
-	}
-	return byID, def
+	return flags
 }

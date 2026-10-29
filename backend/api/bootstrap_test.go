@@ -526,6 +526,10 @@ func (s *stubStackInstanceRepo) ExistsByDefinitionAndStatus(ctx context.Context,
 func (s *stubStackInstanceRepo) ListExpired(ctx context.Context) ([]*models.StackInstance, error) {
 	return nil, ctx.Err()
 }
+func (*stubStackInstanceRepo) FindByIDs(ctx context.Context, _ []string) (map[string]*models.StackInstance, error) {
+	return nil, ctx.Err()
+}
+
 func (s *stubStackInstanceRepo) ListExpiringSoon(ctx context.Context, _ time.Duration) ([]*models.StackInstance, error) {
 	return nil, ctx.Err()
 }
@@ -1477,6 +1481,10 @@ func (*stubClusterRepo) CountByHealthStatus(ctx context.Context, status string) 
 	}
 	return 0, nil
 }
+func (*stubClusterRepo) StreamFlagsByIDs(ctx context.Context, _ []string, _ bool) (map[string]bool, error) {
+	return nil, ctx.Err()
+}
+
 func (*stubClusterRepo) NamesByIDs(ctx context.Context, _ []string) (map[string]string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

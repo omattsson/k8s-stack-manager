@@ -547,6 +547,10 @@ func (m *mockInstanceRepo) ListExpired(ctx context.Context) ([]*models.StackInst
 	return nil, ctx.Err()
 }
 
+func (*mockInstanceRepo) FindByIDs(ctx context.Context, _ []string) (map[string]*models.StackInstance, error) {
+	return nil, ctx.Err()
+}
+
 func (m *mockInstanceRepo) ListExpiringSoon(ctx context.Context, _ time.Duration) ([]*models.StackInstance, error) {
 	return nil, ctx.Err()
 }
@@ -1129,6 +1133,10 @@ func (*mockClusterRepo) CountByHealthStatus(ctx context.Context, status string) 
 	}
 	return 0, nil
 }
+func (*mockClusterRepo) StreamFlagsByIDs(ctx context.Context, _ []string, _ bool) (map[string]bool, error) {
+	return nil, ctx.Err()
+}
+
 func (*mockClusterRepo) NamesByIDs(ctx context.Context, _ []string) (map[string]string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -1149,6 +1157,10 @@ func (*failOnCreateClusterRepo) CountByHealthStatus(ctx context.Context, status 
 	}
 	return 0, nil
 }
+func (*failOnCreateClusterRepo) StreamFlagsByIDs(ctx context.Context, _ []string, _ bool) (map[string]bool, error) {
+	return nil, ctx.Err()
+}
+
 func (*failOnCreateClusterRepo) NamesByIDs(ctx context.Context, _ []string) (map[string]string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

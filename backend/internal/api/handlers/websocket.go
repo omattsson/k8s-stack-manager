@@ -253,22 +253,34 @@ func (h *WebSocketHandler) handleAPIKeyUpgrade(c *gin.Context, header string) {
 }
 
 // apiKeySocketRevoked is the check after the registration of an API-key
-// socket: the key is deleted or expired, the user is deleted or disabled, or
-// the user was blocked at or after the connection time (password reset,
-// disable, role change during the upgrade). Lookup errors are logged and
-// pass (fail open): the revalidation checks again.
+// socket (see apiKeyIdentityRevoked).
 func (h *WebSocketHandler) apiKeySocketRevoked(ctx context.Context, id websocket.ClientIdentity) bool {
-	if revoked, err := apiKeyRevoked(ctx, h.apiKeyRepo, id.UserID, id.APIKeyID, time.Now()); err != nil {
-		logRecheckError(ctx, "WebSocket API key re-check failed", id.UserID, err)
-	} else if revoked {
-		return true
+	return apiKeyIdentityRevoked(ctx, h.sessionStore, h.userRepo, h.apiKeyRepo, id)
+}
+
+// apiKeyIdentityRevoked is the check after the registration of a connection
+// that was opened with an API key (a /ws socket or a stream session): the key
+// is deleted or expired, the user is deleted or disabled, or the user was
+// blocked at or after the connection time (password reset, disable, role
+// change during the upgrade). Lookup errors are logged and pass (fail open):
+// the revalidation checks again. A nil repository or store skips its check.
+func apiKeyIdentityRevoked(ctx context.Context, store sessionstore.SessionStore, userRepo models.UserRepository, apiKeyRepo models.APIKeyRepository, id websocket.ClientIdentity) bool {
+	if apiKeyRepo != nil {
+		if revoked, err := apiKeyRevoked(ctx, apiKeyRepo, id.UserID, id.APIKeyID, time.Now()); err != nil {
+			logRecheckError(ctx, "WebSocket API key re-check failed", id.UserID, err)
+		} else if revoked {
+			return true
+		}
 	}
-	if revokedErr, lookupErr := tokenRevocationStatus(ctx, h.sessionStore, id); revokedErr != nil {
+	if revokedErr, lookupErr := tokenRevocationStatus(ctx, store, id); revokedErr != nil {
 		return true
 	} else if lookupErr != nil {
 		logRecheckError(ctx, "WebSocket API key user block re-check failed", id.UserID, lookupErr)
 	}
-	inactive, err := userInactive(ctx, h.userRepo, id.UserID)
+	if userRepo == nil {
+		return false
+	}
+	inactive, err := userInactive(ctx, userRepo, id.UserID)
 	if err != nil {
 		logRecheckError(ctx, "WebSocket API key user re-check failed", id.UserID, err)
 		return false

@@ -18,13 +18,13 @@ import (
 	"backend/internal/api/handlers"
 	"backend/internal/api/middleware"
 	"backend/internal/config"
-	"backend/pkg/dberrors"
 	"backend/internal/health"
 	"backend/internal/k8s"
 	"backend/internal/models"
 	"backend/internal/podstream"
 	"backend/internal/sessionstore"
 	"backend/internal/websocket"
+	"backend/pkg/dberrors"
 
 	"github.com/gin-gonic/gin"
 	gorilla "github.com/gorilla/websocket"
@@ -60,6 +60,19 @@ func (r *itInstanceRepo) FindByID(_ context.Context, _ string) (*models.StackIns
 	}
 	cp := *r.inst
 	return &cp, nil
+}
+
+func (r *itInstanceRepo) FindByIDs(_ context.Context, ids []string) (map[string]*models.StackInstance, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make(map[string]*models.StackInstance, len(ids))
+	for _, id := range ids {
+		if r.inst != nil {
+			cp := *r.inst
+			out[id] = &cp
+		}
+	}
+	return out, nil
 }
 
 func (r *itInstanceRepo) mutate(fn func(*models.StackInstance)) {
@@ -129,6 +142,19 @@ func (r *itClusterRepo) List(_ context.Context) ([]models.Cluster, error) {
 	return []models.Cluster{r.cluster}, nil
 }
 
+func (r *itClusterRepo) StreamFlagsByIDs(_ context.Context, ids []string, includeDefault bool) (map[string]bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := map[string]bool{}
+	for _, id := range ids {
+		out[id] = r.cluster.AllowPortForward
+	}
+	if includeDefault {
+		out[models.DefaultClusterKey] = r.cluster.AllowPortForward
+	}
+	return out, nil
+}
+
 func (r *itClusterRepo) setAllow(v bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -145,6 +171,13 @@ func (r *itAPIKeyRepo) FindByPrefix(_ context.Context, prefix string) ([]*models
 		return []*models.APIKey{r.key}, nil
 	}
 	return nil, nil
+}
+
+func (r *itAPIKeyRepo) FindByID(_ context.Context, userID, keyID string) (*models.APIKey, error) {
+	if r.key != nil && r.key.ID == keyID && r.key.UserID == userID {
+		return r.key, nil
+	}
+	return nil, dberrors.NewDatabaseError("find_by_id", dberrors.ErrNotFound)
 }
 
 func (r *itAPIKeyRepo) FindByIDs(_ context.Context, ids []string) ([]*models.APIKey, error) {
@@ -311,6 +344,7 @@ func newITHarness(t *testing.T, o itOpts) *itHarness {
 		InstanceRepo: h.instances, ClusterRepo: h.clusters,
 		Provider: func(string) (k8s.PortForwarder, error) { return h.fwd, nil },
 		Manager:  h.mgr, Hub: h.hub, Audit: h.audit, AllowedOrigins: "*", Config: cfg.Stream,
+		SessionStore: h.store, UserRepo: h.users, APIKeyRepo: keys,
 	})
 
 	authHandler := handlers.NewAuthHandler(h.users, &cfg.Auth, &cfg.OIDC)
@@ -669,12 +703,13 @@ func TestPortForwardIntegration_APIKeyDeletedClosesTunnel(t *testing.T) {
 func TestPortForwardIntegration_ExpiredAccessTokenKeepsTunnelOpen(t *testing.T) {
 	t.Parallel()
 	h := newITHarness(t, itOpts{})
-	c := h.dial(t, h.token(t, "owner", "user", "sid-short", 1500*time.Millisecond))
+	c := h.dial(t, h.token(t, "owner", "user", "sid-short", 3*time.Second))
 	echo(t, c, "before expiry")
 
 	// Wait until the token is past its expiry and several revalidation runs
-	// have happened.
-	time.Sleep(1800 * time.Millisecond)
+	// have happened. The 3 s lifetime leaves the dial and the first echo far
+	// from the expiry, also on a slow -race run.
+	time.Sleep(3300 * time.Millisecond)
 
 	// The tunnel still works, and a new request with the token is refused.
 	echo(t, c, "after expiry")

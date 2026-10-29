@@ -129,6 +129,10 @@ func (m *mockInstanceRepo) ListExpired(ctx context.Context) ([]*models.StackInst
 	return out, nil
 }
 
+func (*mockInstanceRepo) FindByIDs(ctx context.Context, _ []string) (map[string]*models.StackInstance, error) {
+	return nil, ctx.Err()
+}
+
 func (m *mockInstanceRepo) ListExpiringSoon(ctx context.Context, _ time.Duration) ([]*models.StackInstance, error) {
 	return nil, ctx.Err()
 }

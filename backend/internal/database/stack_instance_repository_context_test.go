@@ -104,6 +104,10 @@ var instanceRepoCalls = []struct {
 		_, err := r.ListExpired(ctx)
 		return err
 	}},
+	{name: "FindByIDs", call: func(ctx context.Context, r *GORMStackInstanceRepository) error {
+		_, err := r.FindByIDs(ctx, []string{"inst-1", "inst-2"})
+		return err
+	}},
 	{name: "ListExpiringSoon", call: func(ctx context.Context, r *GORMStackInstanceRepository) error {
 		_, err := r.ListExpiringSoon(ctx, time.Hour)
 		return err

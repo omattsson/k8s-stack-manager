@@ -111,7 +111,7 @@ The Helm chart gives the backend service account its rights. These rights apply 
 
 Without the policy, the cluster-wide RoleBinding right could give the backend access to any namespace.
 
-**Port-forward rights.** With scope `namespace`, the ClusterRole `<fullname>-stack-access` already allows `*/*/*` in stack namespaces, so the chart adds no rule for `pods/portforward`. With scope `cluster` and `backend.portForward.enabled`, the backend ClusterRole gets `pods/portforward` (`get`, `create`). A second ValidatingAdmissionPolicy (`<fullname>-backend-stream-scope`) then limits CONNECT on `pods/portforward` and `pods/exec` by the backend service account to namespaces with the label `managed-by=k8s-stack-manager`. A cluster that you register with a kubeconfig needs the same verbs in that identity.
+**Port-forward rights.** With scope `namespace`, the ClusterRole `<fullname>-stack-access` already allows `*/*/*` in stack namespaces, so the chart adds no rule for `pods/portforward`. With scope `cluster` and `backend.portForward.enabled`, the backend ClusterRole gets `pods/portforward` (`get`, `create`). A second ValidatingAdmissionPolicy (`<fullname>-backend-stream-scope`, rendered only while the feature is on; the install fails on a cluster without that API unless you set `backend.rbac.admissionPolicy.enabled=false`) then limits CONNECT on `pods/portforward` and `pods/exec` by the backend service account to namespaces with the label `managed-by=k8s-stack-manager`. A cluster that you register with a kubeconfig needs the same verbs in that identity.
 
 `backend.rbac.scope: cluster` keeps the rules of chart 0.6 and earlier. The backend has rights on namespaced objects in all namespaces. Use it only when stack charts need cluster-scoped objects.
 

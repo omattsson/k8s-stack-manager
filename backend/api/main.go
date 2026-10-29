@@ -4,6 +4,7 @@ package main
 
 import (
 	"backend/internal/config"
+	"backend/internal/ctxutil"
 	"backend/internal/deployer"
 	"backend/internal/health"
 	"backend/internal/hooks"
@@ -32,6 +33,9 @@ import (
 
 const (
 	defaultShutdownTimeout = 5 * time.Second
+	// streamShutdownBudget is the time that the stream sessions get to close
+	// and write their end audit entries, apart from the shutdown timeout.
+	streamShutdownBudget = 10 * time.Second
 )
 
 // must logs a fatal error and exits if err is non-nil.
@@ -251,9 +255,14 @@ func gracefulShutdown(srvs *servers, timeout time.Duration, deps shutdownDeps) {
 	// http.Server.Shutdown does not close hijacked connections: close the
 	// port-forward tunnels (1001) and wait for their goroutines.
 	if deps.streams != nil {
-		if err := deps.streams.Shutdown(ctx); err != nil {
+		// Its own budget: the sessions write their end audit entries while
+		// they stop, and the database closes at the end of this function. The
+		// shared timeout may already be used up by the HTTP server shutdown.
+		streamCtx, streamCancel := ctxutil.Detach(context.Background(), streamShutdownBudget)
+		if err := deps.streams.Shutdown(streamCtx); err != nil {
 			slog.Error("Stream sessions did not stop in time", "error", err)
 		}
+		streamCancel()
 	}
 	if srvs.Pprof != nil {
 		if err := srvs.Pprof.Shutdown(ctx); err != nil {

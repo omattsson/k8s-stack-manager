@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 
 	"backend/internal/api/middleware"
 	"backend/internal/k8s"
@@ -19,8 +20,9 @@ import (
 
 // PortForward godoc
 // @Summary     Open a port-forward tunnel to a service of a stack instance
-// @Description Upgrades the connection to a WebSocket that carries raw TCP bytes between the client and a service port of the instance. Binary frames carry the bytes in both directions; a text frame closes the tunnel with 1003. There is no half-close. The server pings every 30 s; pings do not count as activity. Authentication: the Authorization header (JWT) or, when STACK_STREAM_ALLOW_API_KEYS is true, the X-API-Key header. The route never accepts a token in the query string. The caller must be the owner of the instance, a devops user or an admin, and the cluster must allow port-forward (allow_port_forward). All checks run before the upgrade and give an HTTP status with a stable code in the body ({"error","code"}). Close codes after the upgrade: 1000 normal, 1001 server shutdown, 1003 text frame, 1008 access revoked, 4001 maximum duration, 4002 idle timeout, 4502 pod stream error (the reason holds the error). An expired access token does not close an open tunnel. Delete, stop and clean of the instance close the tunnels of that replica at once and the tunnels of other replicas at the next revalidation (up to one minute).
+// @Description Upgrades the connection to a WebSocket that carries raw TCP bytes between the client and a service port of the instance. Binary frames carry the bytes in both directions; a text frame closes the tunnel with 1003. There is no half-close. The server pings every 30 s; pings do not count as activity. Authentication: the Authorization header (JWT) or, when STACK_STREAM_ALLOW_API_KEYS is true, the X-API-Key header. The route never accepts a token in the query string. The caller must be the owner of the instance, a devops user or an admin, and the cluster must allow port-forward (allow_port_forward). All checks run before the upgrade and give an HTTP status with a stable code in the body ({"error","code"}). Close codes after the upgrade: 1000 normal, 1001 server shutdown, 1003 text frame, 1008 access revoked, 1009 frame larger than 64 KiB, 1011 internal error, 4001 maximum duration, 4002 idle timeout, 4502 pod stream error (the reason holds the error). An expired access token does not close an open tunnel. Delete, stop and clean of the instance close the tunnels of that replica at once and the tunnels of other replicas at the next revalidation (up to one minute).
 // @Tags        stack-instances
+// @Accept      json
 // @Produce     json
 // @Security    BearerAuth
 // @Security    ApiKeyAuth
@@ -36,9 +38,13 @@ import (
 // @Failure     429 {object} map[string]string "tunnel_limit"
 // @Failure     500 {object} map[string]string
 // @Failure     502 {object} map[string]string "dial_failed"
-// @Failure     503 {object} map[string]string "no_ready_pod, shutting_down"
+// @Failure     503 {object} map[string]string "no_ready_pod, kube_timeout, shutting_down"
 // @Router      /api/v1/stack-instances/{id}/port-forward [get]
 func (h *StreamHandler) PortForward(c *gin.Context) {
+	// The authentication time: before any check, so that a revoke which runs
+	// during the setup is later than the issue time of an API-key identity.
+	authTime := time.Now()
+
 	// 1, 2: feature switch, API keys.
 	if !h.checkFeature(c, h.cfg.PortForward.Enabled) {
 		return
@@ -47,13 +53,11 @@ func (h *StreamHandler) PortForward(c *gin.Context) {
 	// 3: query parameters.
 	service := c.Query("service")
 	if service == "" || len(validation.IsDNS1035Label(service)) > 0 {
-		podstream.RecordRejected(podstream.KindPortForward, codeInvalidService)
 		streamError(c, http.StatusBadRequest, codeInvalidService, "service must be a DNS-1035 label")
 		return
 	}
 	port64, err := strconv.ParseInt(c.Query("port"), 10, 32)
 	if err != nil || port64 < 1 || port64 > 65535 {
-		podstream.RecordRejected(podstream.KindPortForward, codeInvalidPort)
 		streamError(c, http.StatusBadRequest, codeInvalidPort, "port must be a number from 1 to 65535")
 		return
 	}
@@ -91,7 +95,7 @@ func (h *StreamHandler) PortForward(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), streamResolveTimeout)
 	defer cancel()
 	if err := pf.CheckStreamNamespace(ctx, inst.Namespace, h.cfg.BackendNamespace); err != nil {
-		h.respondK8sError(c, err, "check namespace")
+		h.respondK8sError(c, err, "check namespace", false)
 		return
 	}
 
@@ -127,14 +131,14 @@ func (h *StreamHandler) PortForward(c *gin.Context) {
 	// 10: service, port and pod.
 	target, err := pf.ResolveServiceTarget(ctx, inst.Namespace, service, port)
 	if err != nil {
-		h.respondK8sError(c, err, "resolve service")
+		h.respondK8sError(c, err, "resolve service", false)
 		return
 	}
 
 	// 11: dial.
 	stream, err := pf.DialPodPort(ctx, inst.Namespace, target.Pod, target.TargetPort)
 	if err != nil {
-		h.respondK8sError(c, err, "dial pod")
+		h.respondK8sError(c, err, "dial pod", true)
 		return
 	}
 
@@ -154,9 +158,11 @@ func (h *StreamHandler) PortForward(c *gin.Context) {
 	})
 
 	handedOver = true
+	identity := streamIdentity(c, authTime)
 	h.manager.StartPortForward(podstream.PortForwardOptions{
 		Conn: conn, Stream: stream, Slot: slot, Hub: h.hub,
-		Identity: streamIdentity(c), InstanceID: inst.ID,
+		Identity: identity, InstanceID: inst.ID,
+		PostRegister: h.postRegisterCheck(identity, inst.ID),
 		OnEnd: func(s podstream.Summary) {
 			h.writeAudit(userID, username, auditActionPortForwardEnd, inst.ID, map[string]any{
 				"service": service, "port": port, "pod": target.Pod,
@@ -168,9 +174,11 @@ func (h *StreamHandler) PortForward(c *gin.Context) {
 }
 
 // respondK8sError maps an error of the stream layer to the response of the
-// contract. Anything unknown is a 500 with the generic message.
-func (h *StreamHandler) respondK8sError(c *gin.Context, err error, op string) {
-	status, code, msg := mapStreamError(err)
+// contract. dial is true for the dial to the pod: there a timeout is
+// dial_failed (502); in the namespace, service and pod lookups it is
+// kube_timeout (503). Anything unknown is a 500 with the generic message.
+func (h *StreamHandler) respondK8sError(c *gin.Context, err error, op string, dial bool) {
+	status, code, msg := mapStreamError(err, dial)
 	if code == codeInternal {
 		if errors.Is(err, context.Canceled) {
 			// The client left; nothing to answer.
@@ -178,15 +186,14 @@ func (h *StreamHandler) respondK8sError(c *gin.Context, err error, op string) {
 			return
 		}
 		slog.Error("Port-forward failed", "op", op, "instance_id", c.Param("id"), "error", err)
-	} else {
-		podstream.RecordRejected(podstream.KindPortForward, code)
 	}
 	streamError(c, status, code, msg)
 }
 
 // mapStreamError maps the sentinel errors of internal/k8s to status, code and
-// message.
-func mapStreamError(err error) (int, string, string) {
+// message. A deadline maps to kube_timeout, or to dial_failed when dial is
+// true (the timeout was in the dial to the pod).
+func mapStreamError(err error, dial bool) (int, string, string) {
 	switch {
 	case errors.Is(err, k8s.ErrNamespaceNotFound):
 		return http.StatusConflict, codeInstanceNotDeployed, "The instance is not deployed"
@@ -202,8 +209,13 @@ func mapStreamError(err error) (int, string, string) {
 		return http.StatusConflict, codeServiceNoSelector, "The service has no selector"
 	case errors.Is(err, k8s.ErrNoReadyPod):
 		return http.StatusServiceUnavailable, codeNoReadyPod, "No ready pod for the service"
-	case errors.Is(err, k8s.ErrDialFailed), errors.Is(err, context.DeadlineExceeded):
+	case errors.Is(err, k8s.ErrDialFailed):
 		return http.StatusBadGateway, codeDialFailed, "The connection to the pod failed"
+	case errors.Is(err, context.DeadlineExceeded):
+		if dial {
+			return http.StatusBadGateway, codeDialFailed, "The connection to the pod failed"
+		}
+		return http.StatusServiceUnavailable, codeKubeTimeout, "The cluster did not answer in time"
 	default:
 		return http.StatusInternalServerError, codeInternal, msgInternalServerError
 	}

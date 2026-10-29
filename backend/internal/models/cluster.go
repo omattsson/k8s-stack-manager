@@ -70,6 +70,11 @@ type RegistryConfig struct {
 	SecretName string
 }
 
+// DefaultClusterKey is the key of the default cluster in the map that
+// ClusterRepository.StreamFlagsByIDs returns. It is also the cluster ID of an
+// instance without an assigned cluster.
+const DefaultClusterKey = ""
+
 // ClusterRepository defines data access operations for clusters.
 // Every method runs its queries with ctx (#656).
 type ClusterRepository interface {
@@ -87,6 +92,12 @@ type ClusterRepository interface {
 	// NamesByIDs returns the name of each cluster in ids that exists, keyed
 	// by ID, in one query.
 	NamesByIDs(ctx context.Context, ids []string) (map[string]string, error)
+	// StreamFlagsByIDs returns allow_port_forward of each cluster in ids that
+	// exists, keyed by ID, in one query that selects only id, is_default and
+	// allow_port_forward (no decryption of kubeconfig or registry password).
+	// With includeDefault the flag of the default cluster is added under the
+	// key DefaultClusterKey (absent when no default cluster exists).
+	StreamFlagsByIDs(ctx context.Context, ids []string, includeDefault bool) (map[string]bool, error)
 	CountAll(ctx context.Context) (int, error)
 	CountByHealthStatus(ctx context.Context, status string) (int, error)
 	FindDefault(ctx context.Context) (*Cluster, error)

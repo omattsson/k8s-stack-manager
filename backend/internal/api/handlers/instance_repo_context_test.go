@@ -88,6 +88,10 @@ func (r *hookInstanceRepo) FindByCluster(ctx context.Context, clusterID string) 
 	return r.MockStackInstanceRepository.FindByCluster(ctx, clusterID)
 }
 
+func (*hookInstanceRepo) FindByIDs(ctx context.Context, _ []string) (map[string]*models.StackInstance, error) {
+	return nil, ctx.Err()
+}
+
 func (r *hookInstanceRepo) ListExpiringSoon(ctx context.Context, threshold time.Duration) ([]*models.StackInstance, error) {
 	r.run("before:ListExpiringSoon", ctx)
 	defer r.run("after:ListExpiringSoon", ctx)

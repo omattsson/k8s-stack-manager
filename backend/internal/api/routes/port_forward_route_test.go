@@ -36,7 +36,28 @@ func (r *pfInstanceRepo) FindByID(_ context.Context, id string) (*models.StackIn
 	return &cp, nil
 }
 
+func (r *pfInstanceRepo) FindByIDs(_ context.Context, ids []string) (map[string]*models.StackInstance, error) {
+	out := make(map[string]*models.StackInstance, len(ids))
+	for _, id := range ids {
+		cp := *r.inst
+		cp.ID = id
+		out[id] = &cp
+	}
+	return out, nil
+}
+
 type pfClusterRepo struct{ models.ClusterRepository }
+
+func (pfClusterRepo) StreamFlagsByIDs(_ context.Context, ids []string, includeDefault bool) (map[string]bool, error) {
+	out := map[string]bool{}
+	for _, id := range ids {
+		out[id] = true
+	}
+	if includeDefault {
+		out[models.DefaultClusterKey] = true
+	}
+	return out, nil
+}
 
 func (pfClusterRepo) FindByID(_ context.Context, id string) (*models.Cluster, error) {
 	return &models.Cluster{ID: id, AllowPortForward: true}, nil

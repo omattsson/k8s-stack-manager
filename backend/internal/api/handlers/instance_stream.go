@@ -13,6 +13,7 @@ import (
 	"backend/internal/k8s"
 	"backend/internal/models"
 	"backend/internal/podstream"
+	"backend/internal/sessionstore"
 	"backend/internal/websocket"
 
 	"github.com/gin-gonic/gin"
@@ -45,6 +46,7 @@ const (
 	codeServiceNoSelector     = "service_no_selector"
 	codeNoReadyPod            = "no_ready_pod"
 	codeDialFailed            = "dial_failed"
+	codeKubeTimeout           = "kube_timeout"
 	codeInternal              = "internal"
 	codeUpgradeRequired       = "upgrade_required"
 	codeOriginNotAllowed      = "origin_not_allowed"
@@ -71,7 +73,13 @@ type StreamDeps struct {
 	Audit middleware.AuditLogger
 	// AllowedOrigins is CORS_ALLOWED_ORIGINS (the /ws origin rules).
 	AllowedOrigins string
-	Config         config.StreamConfig
+	// SessionStore, UserRepo and APIKeyRepo feed the revocation re-check that
+	// runs right after the session is registered with the hub (the same
+	// checks as /ws). Each may be nil: its check is skipped.
+	SessionStore sessionstore.SessionStore
+	UserRepo     models.UserRepository
+	APIKeyRepo   models.APIKeyRepository
+	Config       config.StreamConfig
 }
 
 // StreamHandler serves the stream routes of a stack instance: port-forward
@@ -86,7 +94,13 @@ type StreamHandler struct {
 	hub          podstream.Registrar
 	audit        middleware.AuditLogger
 	originPolicy middleware.OriginPolicy
-	cfg          config.StreamConfig
+	sessionStore sessionstore.SessionStore
+	userRepo     models.UserRepository
+	apiKeyRepo   models.APIKeyRepository
+	// accessCheck is the access re-check of the hub (instance, current role,
+	// cluster switch), also run once after the registration.
+	accessCheck websocket.RevocableAccessChecker
+	cfg         config.StreamConfig
 }
 
 // NewStreamHandler creates a StreamHandler.
@@ -95,13 +109,21 @@ func NewStreamHandler(d StreamDeps) *StreamHandler {
 		instanceRepo: d.InstanceRepo, clusterRepo: d.ClusterRepo, provider: d.Provider,
 		manager: d.Manager, hub: d.Hub, audit: d.Audit,
 		originPolicy: middleware.NewOriginPolicy(d.AllowedOrigins), cfg: d.Config,
+		sessionStore: d.SessionStore, userRepo: d.UserRepo, apiKeyRepo: d.APIKeyRepo,
+		accessCheck: NewStreamAccessChecker(d.InstanceRepo, d.UserRepo, d.ClusterRepo, d.Config),
 	}
 }
 
-// streamError writes the error body of the stream routes.
+// streamError writes the error body of the stream routes. It counts every
+// refusal before the upgrade (status 400 to 499 and 501 to 599 except 500,
+// which is a fault, not a refusal) in stack_stream.rejected_total with the
+// code as the reason. The tunnel limit is the exception: the manager counts it
+// with the finer reasons user_limit and process_cap.
 func streamError(c *gin.Context, status int, code, message string) {
 	if status == http.StatusInternalServerError {
 		message = msgInternalServerError
+	} else if status >= http.StatusBadRequest && code != codeTunnelLimit {
+		podstream.RecordRejected(podstream.KindPortForward, code)
 	}
 	c.JSON(status, gin.H{"error": message, "code": code})
 }
@@ -185,14 +207,16 @@ func (h *StreamHandler) upgrader() gorilla.Upgrader {
 	}
 }
 
-// identity builds the credential identity of the request for the hub. The
-// access token of the caller may expire while the tunnel is open: the hub
-// does not close a session for that.
-func streamIdentity(c *gin.Context) websocket.ClientIdentity {
+// streamIdentity builds the credential identity of the request for the hub.
+// The access token of the caller may expire while the tunnel is open: the hub
+// does not close a session for that. authTime is the time at the start of the
+// handler, before any check: an API-key identity uses it as the issue time
+// (like /ws), so a user revoke that happens during the tunnel setup counts.
+func streamIdentity(c *gin.Context, authTime time.Time) websocket.ClientIdentity {
 	id := websocket.ClientIdentity{UserID: middleware.GetUserIDFromContext(c)}
 	if middleware.GetAuthMethodFromContext(c) == middleware.AuthMethodAPIKey {
 		id.APIKeyID = middleware.GetAPIKeyIDFromContext(c)
-		id.IssuedAt = time.Now()
+		id.IssuedAt = authTime
 		if exp, ok := middleware.GetAPIKeyExpiryFromContext(c); ok {
 			id.ExpiresAt = exp
 		}
@@ -229,5 +253,52 @@ func (h *StreamHandler) writeAudit(userID, username, action, instanceID string, 
 	}
 	if err := h.audit.Create(ctx, entry); err != nil {
 		slog.Error("Stream: failed to write audit entry", "action", action, "instance_id", instanceID, "error", err)
+	}
+}
+
+// streamProbe is the Revocable view of a session that is not registered yet:
+// the access checker only reads its identity, instance and kind.
+type streamProbe struct {
+	identity websocket.ClientIdentity
+	instance string
+}
+
+func (p *streamProbe) Identity() websocket.ClientIdentity { return p.identity }
+func (p *streamProbe) InstanceID() string                 { return p.instance }
+func (p *streamProbe) Kind() string                       { return podstream.KindPortForward }
+func (p *streamProbe) Revoke(int, string)                 {}
+
+// streamRecheckTimeout bounds the re-check after the registration.
+const streamRecheckTimeout = 5 * time.Second
+
+// postRegisterCheck returns the check that runs once right after the session
+// is registered with the hub (podstream.PortForwardOptions.PostRegister). A
+// logout, a user revoke, a role change or a delete of the instance can run
+// between the authentication and the registration; its disconnect then
+// missed the session. The check applies what /ws applies after its
+// registration (the token, session and user blocklists, or for an API key the
+// key and user checks) and the access check of the hub revalidation. It
+// returns true when the session must close. Lookup errors fail open (logged by
+// the helpers); the revalidation checks again.
+func (h *StreamHandler) postRegisterCheck(id websocket.ClientIdentity, instanceID string) func(context.Context) bool {
+	return func(ctx context.Context) bool {
+		ctx, cancel := context.WithTimeout(ctx, streamRecheckTimeout)
+		defer cancel()
+		if id.APIKeyID != "" {
+			if apiKeyIdentityRevoked(ctx, h.sessionStore, h.userRepo, h.apiKeyRepo, id) {
+				return true
+			}
+		} else {
+			if revoked, lookupErr := tokenRevocationStatus(ctx, h.sessionStore, id); revoked != nil {
+				return true
+			} else if lookupErr != nil {
+				logRecheckError(ctx, "Stream token re-check failed", id.UserID, lookupErr)
+			}
+		}
+		if h.accessCheck == nil {
+			return false
+		}
+		lost := h.accessCheck(ctx, []websocket.Revocable{&streamProbe{identity: id, instance: instanceID}})
+		return len(lost) == 1 && lost[0]
 	}
 }

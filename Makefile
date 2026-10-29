@@ -1129,12 +1129,13 @@ helm-test: ## Verify Deployment, Argo Rollout, and External Secrets Helm renders
 		&& grep -q 'STACK_STREAM_ALLOW_API_KEYS: "false"' "$$template_file" \
 		|| { echo "backend ConfigMap must render the port-forward defaults (off)" >&2; exit 1; }; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/port-forward.yaml \
-		--show-only templates/backend/configmap.yaml > "$$template_file"; \
+		--api-versions admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy --show-only templates/backend/configmap.yaml > "$$template_file"; \
 	grep -q 'STACK_PORT_FORWARD_ENABLED: "true"' "$$template_file" && grep -q 'STACK_PORT_FORWARD_MAX_DURATION: "2h"' "$$template_file" \
 		&& grep -q 'STACK_PORT_FORWARD_IDLE_TIMEOUT: "30m"' "$$template_file" && grep -q 'STACK_PORT_FORWARD_MAX_PER_USER: "8"' "$$template_file" \
 		&& grep -q 'STACK_STREAM_ALLOW_API_KEYS: "true"' "$$template_file" \
 		|| { echo "tests/port-forward.yaml must render the five stream variables" >&2; exit 1; }; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/port-forward.yaml \
+		--api-versions admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy \
 		--show-only templates/backend/clusterrole.yaml > "$$template_file"; \
 	grep -q 'resources: \["pods/portforward"\]' "$$template_file" \
 		|| { echo "cluster scope with backend.portForward.enabled must grant pods/portforward" >&2; exit 1; }; \
@@ -1144,6 +1145,10 @@ helm-test: ## Verify Deployment, Argo Rollout, and External Secrets Helm renders
 	helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/port-forward.yaml \
 		--set backend.portForward.enabled=false --show-only templates/backend/clusterrole.yaml > "$$template_file"; \
 	if grep -q 'resources: \["pods/portforward"\]' "$$template_file"; then echo "backend.portForward.enabled=false must not grant pods/portforward" >&2; exit 1; fi; \
+	if grep -q 'backend-stream-scope' "$$template_file"; then echo "portForward off must render no stream policy" >&2; exit 1; fi; \
+	if helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/port-forward.yaml \
+		--show-only templates/backend/clusterrole.yaml > "$$template_file" 2>&1; then echo "portForward on without the ValidatingAdmissionPolicy API must fail" >&2; exit 1; fi; \
+	grep -q 'set backend.rbac.admissionPolicy.enabled=false knowingly' "$$template_file" || { echo "missing stream policy API error" >&2; exit 1; }; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/port-forward.yaml \
 		--set backend.rbac.admissionPolicy.enabled=false --show-only templates/backend/clusterrole.yaml > "$$template_file"; \
 	if grep -q 'ValidatingAdmissionPolicy' "$$template_file"; then echo "admissionPolicy.enabled=false must render no policy" >&2; exit 1; fi; \

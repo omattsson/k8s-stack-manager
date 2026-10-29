@@ -111,8 +111,9 @@ const buildEntries = (
         }
         if (stackctlInstance) {
           (svc.ports || []).forEach((p) => {
-            const port = p.replace(/\/.*/, '');
-            if (!port) return;
+            // The backend resolves TCP service ports only; no protocol means TCP.
+            const [port, proto] = p.split('/');
+            if (!port || (proto && proto.toUpperCase() !== 'TCP')) return;
             const cmd = `stackctl stack port-forward ${stackctlInstance} ${svc.name} ${port}`;
             entries.push({
               chartName,

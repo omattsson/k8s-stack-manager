@@ -461,6 +461,10 @@ func (*mockClusterRepoForSV) CountAll(ctx context.Context) (int, error) {
 	return 0, ctxDone(ctx, "count_all")
 }
 
+func (*mockClusterRepoForSV) StreamFlagsByIDs(ctx context.Context, _ []string, _ bool) (map[string]bool, error) {
+	return nil, ctx.Err()
+}
+
 func (*mockClusterRepoForSV) NamesByIDs(ctx context.Context, _ []string) (map[string]string, error) {
 	if err := ctxDone(ctx, "names_by_ids"); err != nil {
 		return nil, err

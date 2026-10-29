@@ -134,13 +134,13 @@ All configuration uses environment variables with a `.env` fallback (godotenv). 
 - `telemetry.Init(cfg.Otel)` in `api/main.go` sets up OTLP tracing, metrics and logs. `setupOTelLogging` (`api/bootstrap.go`) then makes the default `slog` logger write to stderr (slog text format) and to the OTel log pipeline (`telemetry.LogHandler`, the `otelslog` bridge), both at `LOG_LEVEL`. Do not wrap the package default slog handler: it writes through the `log` package, which writes back through the new default and deadlocks.
 - `telemetry.StartDBMetrics`, `telemetry.StartBusinessMetrics` and `telemetry.StartLeaderMetric` (`stackmanager_leader`) register gauges.
 - `internal/websocket/tracing.go` holds the hub and fan-out metrics: `websocket.fanout.events_written_total`, `events_dropped_total`, `events_delivered_total`, `events_skipped_total`, `poll_errors_total`, `delivery_lag`.
-- `internal/podstream/metrics.go` holds the stream metrics: `stack_stream.sessions_active{kind}`, `stack_stream.bytes_total{kind,direction}`, `stack_stream.sessions_closed_total{kind,reason}`, `stack_stream.rejected_total{kind,reason}` (`kind` = `port_forward`). `internal/k8s/tracing.go` has the spans of the port-forward calls.
+- `internal/podstream/metrics.go` holds the stream metrics: `stack_stream.sessions_active{kind}`, `stack_stream.bytes_total{kind,direction}`, `stack_stream.sessions_closed_total{kind,reason}`, `stack_stream.rejected_total{kind,reason}` (`kind` = `port_forward`). `rejected_total` is counted in one place, `streamError`, with the error code as the reason (the tunnel limit is counted by the manager). `internal/k8s/tracing.go` has the spans of the port-forward calls.
 - `internal/notifier/channel/metrics.go` holds the counter `notification.channel.dropped` (#649).
 - `middleware/metrics.go` records HTTP metrics. `middleware/auth_metrics.go` records auth outcomes. `middleware/otel.go` adds the user to spans.
 - `middleware/ws_redact.go` removes `?token=` from `/ws` URLs and from the stream routes before logging and tracing.
 
 ## Stream Shutdown
-- `http.Server.Shutdown` does not close hijacked connections. `gracefulShutdown` (`api/main.go`) calls `podstream.Manager.Shutdown` right after the main server stops: it closes the tunnels with 1001 and waits for their goroutines. After a hijack, clear the connection deadline (`conn.NetConn().SetDeadline(time.Time{})`) and use the session deadlines only.
+- `http.Server.Shutdown` does not close hijacked connections. `gracefulShutdown` (`api/main.go`) calls `podstream.Manager.Shutdown` right after the main server stops: it closes the tunnels with 1001 and waits for their goroutines, with a budget of its own (10 s, `streamShutdownBudget`) so the end audit entries are written before the database closes. After a hijack, clear the connection deadline (`conn.NetConn().SetDeadline(time.Time{})`) and use the session deadlines only.
 
 ## Sessions and Tokens
 - Login issues a JWT (with `jti`) and a refresh token (`models/refresh_token.go`, hashed at rest). Routes: `POST /api/v1/auth/refresh`, `/logout`, `/logout-all`.

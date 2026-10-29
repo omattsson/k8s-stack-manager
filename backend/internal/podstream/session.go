@@ -42,7 +42,22 @@ type PortForwardOptions struct {
 	Identity websocket.ClientIdentity
 	// InstanceID is the stack instance of the tunnel.
 	InstanceID string
+	// PostRegister runs once, right after the hub registered the session and
+	// before any byte is copied. It re-checks what could have changed between
+	// the authentication and the registration (a logout, a user revoke or a
+	// role change in that window missed this session). It returns true when
+	// the session is revoked: the session then ends with 1008 "session
+	// revoked". The context ends with the session and after postRegisterTimeout.
+	// The implementation must fail open on a lookup error (return false).
+	PostRegister func(ctx context.Context) bool
 }
+
+// postRegisterTimeout bounds PostRegister.
+const postRegisterTimeout = 5 * time.Second
+
+// reasonSessionRevoked is the close reason of a session that PostRegister
+// found revoked.
+const reasonSessionRevoked = "session revoked"
 
 // Session is one running tunnel. It implements websocket.Revocable.
 type Session struct {
@@ -76,6 +91,9 @@ func (s *Session) Identity() websocket.ClientIdentity { return s.identity }
 
 // InstanceID implements websocket.Revocable.
 func (s *Session) InstanceID() string { return s.instance }
+
+// Kind implements websocket.Revocable.
+func (s *Session) Kind() string { return KindPortForward }
 
 // Revoke implements websocket.Revocable. It records the close and returns; the
 // session goroutine does the close.
@@ -125,15 +143,28 @@ func (m *Manager) StartPortForward(o PortForwardOptions) *Session {
 		return s
 	}
 	recordActive(KindPortForward, 1)
-	go s.run(o.Hub)
+	go s.run(o.Hub, o.PostRegister)
 	return s
 }
 
-func (s *Session) run(hub Registrar) {
+func (s *Session) run(hub Registrar, postRegister func(context.Context) bool) {
 	defer s.m.wg.Done()
 	defer recoverPanic("session run")
 
-	var unregister func()
+	var (
+		unregister func()
+		pumps      sync.WaitGroup
+		tornDown   bool
+	)
+	// The teardown always runs, also after a panic below: it closes the
+	// connection and the pod stream, releases the slot and the hub entry and
+	// reports the end. A panic leaves no recorded result: 1011.
+	defer func() {
+		if !tornDown {
+			s.teardown(unregister, &pumps, true)
+		}
+	}()
+
 	if hub != nil {
 		u, err := hub.RegisterRevocable(s)
 		if err != nil {
@@ -142,15 +173,25 @@ func (s *Session) run(hub Registrar) {
 			unregister = u
 		}
 	}
+	if postRegister != nil && s.ctx.Err() == nil && s.postRegisterRevoked(postRegister) {
+		s.finish(ClosePolicy, reasonSessionRevoked)
+	}
 
-	var pumps sync.WaitGroup
 	pumps.Add(3)
 	go s.pump(&pumps, "client_to_pod", s.clientToPod)
 	go s.pump(&pumps, "pod_to_client", s.podToClient)
 	go s.pump(&pumps, "pod_errors", s.podErrors)
 
 	s.supervise()
+	tornDown = true
 	s.teardown(unregister, &pumps, true)
+}
+
+// postRegisterRevoked runs the check of the options with a bound.
+func (s *Session) postRegisterRevoked(check func(context.Context) bool) bool {
+	ctx, cancel := context.WithTimeout(s.ctx, postRegisterTimeout)
+	defer cancel()
+	return check(ctx)
 }
 
 // supervise runs the pings, the idle timer and the maximum duration until the
@@ -214,7 +255,9 @@ func (s *Session) clientToPod() {
 		mt, data, err := s.ws.read()
 		if err != nil {
 			var ce *gorilla.CloseError
-			if errors.As(err, &ce) {
+			if errors.Is(err, gorilla.ErrReadLimit) {
+				s.finish(CloseMessageTooBig, "message too big")
+			} else if errors.As(err, &ce) {
 				s.finish(CloseNormal, "")
 			} else {
 				s.finish(closeAbnormalOnly, "client connection lost")
@@ -294,6 +337,10 @@ func (s *Session) teardown(unregister func(), pumps *sync.WaitGroup, counted boo
 	defer recoverPanic("session teardown")
 	defer s.slot.Release()
 	code, reason := s.result()
+	if _, set := s.recorded(); !set {
+		// Nothing recorded a result (a panic before the end): never code 0.
+		code, reason = CloseInternalError, "internal error"
+	}
 	if unregister != nil {
 		unregister()
 	}

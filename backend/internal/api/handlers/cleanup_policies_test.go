@@ -817,6 +817,10 @@ func (r *cleanupMockInstanceRepo) ListIDsByOwnerIDs(ctx context.Context, _ []str
 func (r *cleanupMockInstanceRepo) ListExpired(ctx context.Context) ([]*models.StackInstance, error) {
 	return nil, ctxDone(ctx, "list_expired")
 }
+func (*cleanupMockInstanceRepo) FindByIDs(ctx context.Context, _ []string) (map[string]*models.StackInstance, error) {
+	return nil, ctx.Err()
+}
+
 func (r *cleanupMockInstanceRepo) ListExpiringSoon(ctx context.Context, _ time.Duration) ([]*models.StackInstance, error) {
 	return nil, ctxDone(ctx, "list_expiring_soon")
 }

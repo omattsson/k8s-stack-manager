@@ -60,6 +60,10 @@ func (r *ctxRecorder) Update(ctx context.Context, inst *models.StackInstance) er
 	return r.StackInstanceRepository.Update(ctx, inst)
 }
 
+func (*ctxRecorder) FindByIDs(ctx context.Context, _ []string) (map[string]*models.StackInstance, error) {
+	return nil, ctx.Err()
+}
+
 func (r *ctxRecorder) ListExpiringSoon(ctx context.Context, threshold time.Duration) ([]*models.StackInstance, error) {
 	r.record(ctx, "ListExpiringSoon")
 	return r.StackInstanceRepository.ListExpiringSoon(ctx, threshold)

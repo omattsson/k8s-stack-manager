@@ -16,14 +16,16 @@ const DefaultProcessCap = 500
 
 // Close codes of the stream protocol (the standard ones are used as numbers).
 const (
-	CloseNormal       = 1000
-	CloseGoingAway    = 1001
-	CloseUnsupported  = 1003
-	ClosePolicy       = 1008
-	CloseMaxDuration  = 4001
-	CloseIdleTimeout  = 4002
-	ClosePodError     = 4502
-	closeAbnormalOnly = 1006 // never sent; the connection is gone
+	CloseNormal        = 1000
+	CloseGoingAway     = 1001
+	CloseUnsupported   = 1003
+	ClosePolicy        = 1008
+	CloseMessageTooBig = 1009
+	CloseInternalError = 1011
+	CloseMaxDuration   = 4001
+	CloseIdleTimeout   = 4002
+	ClosePodError      = 4502
+	closeAbnormalOnly  = 1006 // never sent; the connection is gone
 )
 
 // Errors of the slot API.

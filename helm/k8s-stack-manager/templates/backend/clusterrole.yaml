@@ -213,14 +213,21 @@ spec:
   policyName: {{ $fullname }}-backend-scope
   validationActions: [Deny]
 {{- end }}
-{{- else if .Values.backend.rbac.admissionPolicy.enabled }}
+{{- else if and .Values.backend.rbac.admissionPolicy.enabled .Values.backend.portForward.enabled }}
+{{- /* A security control: do not install without it on a cluster that cannot enforce it. */}}
+{{- if not (.Capabilities.APIVersions.Has "admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy") }}
+{{- fail "backend.portForward.enabled with backend.rbac.scope=cluster needs the ValidatingAdmissionPolicy API (admissionregistration.k8s.io/v1, Kubernetes 1.30 or later), which this cluster does not serve. Upgrade Kubernetes, or set backend.rbac.admissionPolicy.enabled=false knowingly: then the backend can open port-forwards into any namespace, including kube-system." }}
+{{- end }}
 ---
-# Scope cluster: the backend ClusterRole allows pods/exec (and, with
-# backend.portForward.enabled, pods/portforward) in every namespace. This
-# policy limits CONNECT on both subresources by the backend service account to
-# namespaces with the label managed-by=k8s-stack-manager, so a wrong database
-# row or a bug cannot reach a pod in kube-system or in the namespace of the
-# backend. Needs Kubernetes 1.30 or later.
+# Scope cluster with backend.portForward.enabled: the backend ClusterRole
+# allows pods/exec and pods/portforward in every namespace. This policy limits
+# CONNECT on both subresources by the backend service account to namespaces
+# with the label managed-by=k8s-stack-manager, so a wrong database row or a
+# bug cannot reach a pod in kube-system. It is not rendered while port-forward
+# is off (the policy needs Kubernetes 1.30 or later); the exec feature (#723)
+# will widen the condition. The namespace of the backend is protected by the
+# Go guard (POD_NAMESPACE check) and because that namespace has no
+# managed-by label; this policy only tests the label.
 #
 # Design: the check reads the label from namespaceObject in the validation, as
 # the namespace-scope policy does. The API server fills namespaceObject for

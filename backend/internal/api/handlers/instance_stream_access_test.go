@@ -15,6 +15,15 @@ import (
 
 type fakeRevocable struct {
 	user, instance string
+	// kind defaults to port_forward.
+	kind string
+}
+
+func (f *fakeRevocable) Kind() string {
+	if f.kind == "" {
+		return "port_forward"
+	}
+	return f.kind
 }
 
 func (f *fakeRevocable) Identity() websocket.ClientIdentity {
@@ -109,6 +118,63 @@ func TestStreamAccessChecker_BatchesLookups(t *testing.T) {
 		assert.False(t, l)
 	}
 	assert.EqualValues(t, 1, userRepo.findByIDsCalls.Load(), "one user lookup for all sessions")
+	assert.EqualValues(t, 1, instRepo.findByIDsCalls.Load(), "one instance lookup for all sessions")
+	assert.EqualValues(t, 1, clRepo.streamFlagCalls.Load(), "one cluster lookup for all sessions")
+}
+
+// Only the clusters of the open sessions are read, by ID, with the projected
+// call (no List, so no decryption of the other clusters).
+func TestStreamAccessChecker_ReadsOnlyClustersInUse(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	instRepo, userRepo, clRepo := NewMockStackInstanceRepository(), NewMockUserRepository(), NewMockClusterRepository()
+	require.NoError(t, instRepo.Create(ctx, &models.StackInstance{ID: "i1", OwnerID: "u1", Namespace: "ns", ClusterID: "c1", Status: models.StackStatusRunning}))
+	require.NoError(t, instRepo.Create(ctx, &models.StackInstance{ID: "i2", OwnerID: "u1", Namespace: "ns", ClusterID: "c2", Status: models.StackStatusRunning}))
+	require.NoError(t, userRepo.Create(ctx, &models.User{ID: "u1", Username: "u1", Role: "user"}))
+	for _, id := range []string{"c1", "c2", "c3", "c4"} {
+		require.NoError(t, clRepo.Create(ctx, &models.Cluster{ID: id, AllowPortForward: id != "c2"}))
+	}
+	check := NewStreamAccessChecker(instRepo, userRepo, clRepo, defaultStreamCfg())
+	got := check(ctx, []websocket.Revocable{
+		&fakeRevocable{user: "u1", instance: "i1"}, &fakeRevocable{user: "u1", instance: "i2"}, &fakeRevocable{user: "u1", instance: "i1"},
+	})
+	assert.Equal(t, []bool{false, true, false}, got)
+	clRepo.mu.RLock()
+	defer clRepo.mu.RUnlock()
+	assert.ElementsMatch(t, []string{"c1", "c2"}, clRepo.streamFlagIDs)
+}
+
+// The feature switch applies to the sessions of its kind only.
+func TestStreamAccessChecker_SwitchPerKind(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	instRepo, userRepo, clRepo := NewMockStackInstanceRepository(), NewMockUserRepository(), NewMockClusterRepository()
+	require.NoError(t, instRepo.Create(ctx, &models.StackInstance{ID: "i1", OwnerID: "u1", Namespace: "ns", ClusterID: "c1", Status: models.StackStatusRunning}))
+	require.NoError(t, userRepo.Create(ctx, &models.User{ID: "u1", Username: "u1", Role: "user"}))
+	require.NoError(t, clRepo.Create(ctx, &models.Cluster{ID: "c1"})) // port-forward off on the cluster
+	rs := []websocket.Revocable{
+		&fakeRevocable{user: "u1", instance: "i1", kind: "port_forward"},
+		&fakeRevocable{user: "u1", instance: "i1", kind: "other_kind"},
+	}
+	tests := []struct {
+		name    string
+		enabled bool
+		want    []bool
+	}{
+		{"port-forward switch off closes its sessions only", false, []bool{true, false}},
+		// The cluster flag is the port-forward flag: it does not apply to another kind.
+		{"switch on: the cluster flag closes the port-forward session only", true, []bool{true, false}},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := defaultStreamCfg()
+			cfg.PortForward.Enabled = tt.enabled
+			got := NewStreamAccessChecker(instRepo, userRepo, clRepo, cfg)(ctx, rs)
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }
 
 func TestStreamAccessChecker_CancelledContext(t *testing.T) {

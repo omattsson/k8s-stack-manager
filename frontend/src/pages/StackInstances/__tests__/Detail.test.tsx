@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { StrictMode } from 'react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import Detail from '../Detail';
+import { clusterService } from '../../../api/client';
 import { BRANDING_DEFAULTS, StaticBrandingProvider } from '../../../context/BrandingContext';
 import { NotificationProvider } from '../../../context/NotificationContext';
 
@@ -95,6 +96,10 @@ vi.mock('../../../api/client', () => ({
   },
   definitionService: {
     get: vi.fn(),
+  },
+  clusterService: {
+    get: vi.fn(),
+    list: vi.fn(),
   },
   gitService: {
     branches: vi.fn(),
@@ -242,7 +247,7 @@ type MockFn = ReturnType<typeof vi.fn>;
 const historyCalls = () => (instanceService.getDeployLogPage as MockFn).mock.calls
   .filter(([, options]) => !(options as { action?: string } | undefined)?.action);
 
-const setupMocks = (instanceOverrides: Partial<typeof mockInstance> = {}, opts: { logs?: unknown[]; highlights?: unknown; k8sStatus?: unknown; podsStatus?: unknown; deployLogReject?: boolean; k8sReject?: boolean; branchOverrides?: unknown[] } = {}) => {
+const setupMocks = (instanceOverrides: Partial<typeof mockInstance> & { cluster_id?: string } = {}, opts: { logs?: unknown[]; highlights?: unknown; k8sStatus?: unknown; podsStatus?: unknown; deployLogReject?: boolean; k8sReject?: boolean; branchOverrides?: unknown[] } = {}) => {
   const inst = { ...mockInstance, ...instanceOverrides };
   (instanceService.get as MockFn).mockResolvedValue(inst);
   (definitionService.get as MockFn).mockResolvedValue(mockDefinition);
@@ -1091,13 +1096,46 @@ describe('StackInstances Detail', () => {
         </StaticBrandingProvider>,
       );
 
-    it('enables the hint for the owner when the server has the feature on', async () => {
-      setupMocks({ status: 'running' }, { k8sStatus: statusWithIngress });
+    const cluster = (over: Record<string, unknown>) => ({ id: 'c1', name: 'c', is_default: false, allow_port_forward: true, ...over });
+
+    it('enables the hint for the owner when the cluster allows port-forward', async () => {
+      vi.mocked(clusterService.get).mockResolvedValue(cluster({}) as never);
+      setupMocks({ status: 'running', cluster_id: 'c1' }, { k8sStatus: statusWithIngress });
       renderWithBranding(true);
 
-      const el = await screen.findByTestId('access-urls');
-      expect(el).toHaveAttribute('data-port-forward', 'true');
-      expect(el).toHaveAttribute('data-instance-name', 'Test Instance');
+      await waitFor(() => expect(screen.getByTestId('access-urls')).toHaveAttribute('data-port-forward', 'true'));
+      expect(screen.getByTestId('access-urls')).toHaveAttribute('data-instance-name', 'Test Instance');
+      expect(clusterService.get).toHaveBeenCalledWith('c1');
+    });
+
+    it('hides the hint when the cluster flag is false', async () => {
+      vi.mocked(clusterService.get).mockResolvedValue(cluster({ allow_port_forward: false }) as never);
+      setupMocks({ status: 'running', cluster_id: 'c1' }, { k8sStatus: statusWithIngress });
+      renderWithBranding(true);
+
+      await waitFor(() => expect(clusterService.get).toHaveBeenCalled());
+      expect(await screen.findByTestId('access-urls')).toHaveAttribute('data-port-forward', 'false');
+    });
+
+    it('resolves the default cluster for an empty cluster_id', async () => {
+      vi.mocked(clusterService.list).mockResolvedValue([
+        cluster({ id: 'x', allow_port_forward: false }),
+        cluster({ id: 'd', is_default: true }),
+      ] as never);
+      setupMocks({ status: 'running', cluster_id: '' }, { k8sStatus: statusWithIngress });
+      renderWithBranding(true);
+
+      await waitFor(() => expect(screen.getByTestId('access-urls')).toHaveAttribute('data-port-forward', 'true'));
+      expect(clusterService.get).not.toHaveBeenCalled();
+    });
+
+    it('hides the hint when the cluster fetch fails', async () => {
+      vi.mocked(clusterService.get).mockRejectedValue(new Error('boom'));
+      setupMocks({ status: 'running', cluster_id: 'c1' }, { k8sStatus: statusWithIngress });
+      renderWithBranding(true);
+
+      await waitFor(() => expect(clusterService.get).toHaveBeenCalled());
+      expect(await screen.findByTestId('access-urls')).toHaveAttribute('data-port-forward', 'false');
     });
 
     it('disables the hint when the server has the feature off', async () => {
@@ -1117,10 +1155,11 @@ describe('StackInstances Detail', () => {
 
     it('enables the hint for devops who do not own the instance', async () => {
       authState.user = { id: 'other', username: 'dev', role: 'devops', display_name: 'Dev' };
-      setupMocks({ status: 'running' }, { k8sStatus: statusWithIngress });
+      vi.mocked(clusterService.get).mockResolvedValue(cluster({}) as never);
+      setupMocks({ status: 'running', cluster_id: 'c1' }, { k8sStatus: statusWithIngress });
       renderWithBranding(true);
 
-      expect(await screen.findByTestId('access-urls')).toHaveAttribute('data-port-forward', 'true');
+      await waitFor(() => expect(screen.getByTestId('access-urls')).toHaveAttribute('data-port-forward', 'true'));
     });
   });
 
