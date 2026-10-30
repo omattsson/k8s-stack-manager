@@ -61,6 +61,7 @@ backend/
       websocket.go               # WebSocket upgrade handler
       instance_stream.go         # StreamHandler: shared checks of the stream routes (feature, API key, instance access, cluster switch), error codes, upgrader, session identity, audit writes
       instance_port_forward.go   # PortForward: GET /stack-instances/:id/port-forward (checks, upgrade, hand-over to podstream)
+      instance_exec.go           # Exec: GET /stack-instances/:id/exec (checks, chart lookup, pod resolution, upgrade, audit start/end, hand-over to podstream)
       instance_stream_access.go  # NewStreamAccessChecker: access re-check of open tunnels at hub revalidation
       content_disposition.go     # Safe Content-Disposition header for downloads
       mock_repository.go         # In-memory mock for Item tests (same package)
@@ -100,8 +101,8 @@ backend/
     gitprovider/                 # Azure DevOps, GitHub and GitLab branch listing, URL detection, 5-minute cache
     helm/                        # Values deep-merge, template variable substitution
     hooks/                       # Outbound lifecycle webhooks: dispatcher, HMAC-signed client, actions, config file, applies_to scopes (scope.go) and the cached cluster name and template lookups (cluster_names.go, templates.go, lookup.go) (see docs/hooks.md and EXTENDING.md)
-    k8s/                         # Kubernetes cluster client, status watcher, resource quotas, pod exec, scaling, AccessBinding; port_forward.go (namespace guard, service to pod resolution, SPDY dial of a pod port), pod_select.go (ready pod choice, shared with exec)
-    podstream/                   # Long-lived pod tunnels over WebSocket (port-forward now, exec later): Manager (per-user limit, process cap, shutdown), session pumps and deadlines, close codes, wsconn, stack_stream.* metrics
+    k8s/                         # Kubernetes cluster client, status watcher, resource quotas, pod exec, scaling, AccessBinding; port_forward.go (namespace guard, service to pod resolution, SPDY dial of a pod port), pod_exec_stream.go (exec target resolution, service-account-token rule, WebSocket executor with SPDY fallback built only from the cluster rest.Config), pod_select.go (ready pod choice, shared by port-forward and exec)
+    podstream/                   # Long-lived pod tunnels over WebSocket (port-forward and exec): Manager (one per kind: per-user limit, process cap, shutdown), port-forward session pumps (session.go), the exec session (exec.go: start message, command checks, stdout/stderr frame writer, exit and error frames), deadlines, close codes, wsconn, stack_stream.* metrics
     leader/                      # Leader election (coordination.k8s.io Lease through client-go) and leader worker group (Run(ctx) for each term)
     replica/                     # Process identity (POD_NAME or host name plus random suffix) and heartbeat writer (replica_heartbeats, every replica)
     notifier/                    # Notification dispatch (in-app notifications and outbound notification channels)
