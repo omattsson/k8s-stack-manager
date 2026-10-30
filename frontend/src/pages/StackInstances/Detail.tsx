@@ -653,7 +653,7 @@ const Detail = () => {
     setStopDraft(savedStopTime);
   }, [savedStopTime]);
 
-  const { maxTtlDays, portForwardEnabled } = useBranding();
+  const { maxTtlDays, portForwardEnabled, execEnabled } = useBranding();
   const stopDraftChanged = stopDraft !== undefined && stopDraft !== savedStopTime;
   const stopDraftError = stopDraftChanged ? stopTimeError(stopDraft, stopTimeBounds(maxTtlDays)) : null;
 
@@ -705,14 +705,18 @@ const Detail = () => {
 
   const canModify = canModifyInstance(user, instance);
 
-  // The stackctl hint needs a cluster that allows port-forward (GET /clusters is open to every
-  // authenticated user). An empty cluster_id means the default cluster. Errors hide the hint.
+  // The stackctl hints need a cluster that allows port-forward or exec (GET /clusters is open to every
+  // authenticated user). An empty cluster_id means the default cluster. Errors hide the hints.
   const [clusterAllowsPortForward, setClusterAllowsPortForward] = useState(false);
+  const [clusterAllowsExec, setClusterAllowsExec] = useState(false);
   const instanceClusterId = instance?.cluster_id ?? '';
-  const needClusterFlag = portForwardEnabled && canModify;
+  const needPortForwardFlag = portForwardEnabled && canModify;
+  const needExecFlag = execEnabled && canModify;
+  const needClusterFlag = needPortForwardFlag || needExecFlag;
   useEffect(() => {
     if (!needClusterFlag) {
       setClusterAllowsPortForward(false);
+      setClusterAllowsExec(false);
       return;
     }
     let cancelled = false;
@@ -721,9 +725,15 @@ const Detail = () => {
         const cluster = instanceClusterId
           ? await clusterService.get(instanceClusterId)
           : (await clusterService.list()).find((c) => c.is_default);
-        if (!cancelled) setClusterAllowsPortForward(cluster?.allow_port_forward === true);
+        if (!cancelled) {
+          setClusterAllowsPortForward(cluster?.allow_port_forward === true);
+          setClusterAllowsExec(cluster?.allow_exec === true);
+        }
       } catch {
-        if (!cancelled) setClusterAllowsPortForward(false);
+        if (!cancelled) {
+          setClusterAllowsPortForward(false);
+          setClusterAllowsExec(false);
+        }
       }
     };
     void load();
@@ -1047,7 +1057,8 @@ const Detail = () => {
           <AccessUrls
             status={k8sStatus}
             showPortForward={hasAtLeastRole(user?.role, 'devops')}
-            portForwardEnabled={needClusterFlag && clusterAllowsPortForward}
+            portForwardEnabled={needPortForwardFlag && clusterAllowsPortForward}
+            execEnabled={needExecFlag && clusterAllowsExec}
             instanceName={instance.name}
           />
         )}

@@ -456,6 +456,8 @@ export interface Cluster {
   use_in_cluster?: boolean;
   /** An admin allows port-forward tunnels to instances on this cluster. Off by default. */
   allow_port_forward?: boolean;
+  /** An admin allows exec in containers of instances on this cluster. Off by default. */
+  allow_exec?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -472,6 +474,7 @@ export interface CreateClusterRequest {
   is_default: boolean;
   use_in_cluster?: boolean;
   allow_port_forward?: boolean;
+  allow_exec?: boolean;
 }
 
 export interface UpdateClusterRequest {
@@ -486,6 +489,7 @@ export interface UpdateClusterRequest {
   is_default?: boolean;
   use_in_cluster?: boolean;
   allow_port_forward?: boolean;
+  allow_exec?: boolean;
 }
 
 export interface ClusterTestResult {
@@ -1255,4 +1259,6 @@ export interface UIConfig {
   max_instance_ttl_days?: number;
   /** Port-forward tunnels are on (STACK_PORT_FORWARD_ENABLED). */
   port_forward_enabled?: boolean;
+  /** Exec in stack containers is on (STACK_EXEC_ENABLED). */
+  exec_enabled?: boolean;
 }

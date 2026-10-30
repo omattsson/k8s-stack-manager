@@ -198,9 +198,9 @@ describe('BrandingContext', () => {
 
   describe('brandingFromConfig', () => {
     it.each([
-      ['empty logo uses the built-in logo', { title: 'A', logo_url: '', favicon_url: '/f.svg' }, { title: 'A', logoUrl: '/logo.svg', faviconUrl: '/f.svg', defaultTtlMinutes: 0, maxTtlDays: 30, portForwardEnabled: false }],
-      ['blank title uses the default', { title: '  ', logo_url: '/l.svg', favicon_url: '/f.svg' }, { title: BRANDING_DEFAULTS.title, logoUrl: '/l.svg', faviconUrl: '/f.svg', defaultTtlMinutes: 0, maxTtlDays: 30, portForwardEnabled: false }],
-      ['javascript URL is ignored', { title: 'A', logo_url: 'javascript:alert(1)', favicon_url: 'data:image/svg+xml,<svg/>' }, { title: 'A', logoUrl: '/logo.svg', faviconUrl: '/favicon.svg', defaultTtlMinutes: 0, maxTtlDays: 30, portForwardEnabled: false }],
+      ['empty logo uses the built-in logo', { title: 'A', logo_url: '', favicon_url: '/f.svg' }, { title: 'A', logoUrl: '/logo.svg', faviconUrl: '/f.svg', defaultTtlMinutes: 0, maxTtlDays: 30, portForwardEnabled: false, execEnabled: false }],
+      ['blank title uses the default', { title: '  ', logo_url: '/l.svg', favicon_url: '/f.svg' }, { title: BRANDING_DEFAULTS.title, logoUrl: '/l.svg', faviconUrl: '/f.svg', defaultTtlMinutes: 0, maxTtlDays: 30, portForwardEnabled: false, execEnabled: false }],
+      ['javascript URL is ignored', { title: 'A', logo_url: 'javascript:alert(1)', favicon_url: 'data:image/svg+xml,<svg/>' }, { title: 'A', logoUrl: '/logo.svg', faviconUrl: '/favicon.svg', defaultTtlMinutes: 0, maxTtlDays: 30, portForwardEnabled: false, execEnabled: false }],
       ['non-object body gives the defaults', 'not json', BRANDING_DEFAULTS],
     ])('%s', (_name, input, expected) => {
       expect(brandingFromConfig(input)).toEqual(expected);
@@ -226,6 +226,15 @@ describe('BrandingContext', () => {
       ['a missing value', undefined, false],
     ])('port-forward flag: %s gives %s', (_name, value, expected) => {
       expect(brandingFromConfig({ title: 'A', port_forward_enabled: value }).portForwardEnabled).toBe(expected);
+    });
+
+    it.each([
+      ['true', true, true],
+      ['false', false, false],
+      ['a string', 'true', false],
+      ['a missing value', undefined, false],
+    ])('exec flag: %s gives %s', (_name, value, expected) => {
+      expect(brandingFromConfig({ title: 'A', exec_enabled: value }).execEnabled).toBe(expected);
     });
 
     it.each([

@@ -184,8 +184,8 @@ vi.mock('../../../components/PodStatusDisplay', () => ({
 }));
 
 vi.mock('../../../components/AccessUrls', () => ({
-  default: ({ status, portForwardEnabled, instanceName }: { status: { ingresses?: { url: string }[] }; portForwardEnabled?: boolean; instanceName?: string }) => (
-    <div data-testid="access-urls" data-port-forward={String(!!portForwardEnabled)} data-instance-name={instanceName ?? ''}>
+  default: ({ status, portForwardEnabled, execEnabled, instanceName }: { status: { ingresses?: { url: string }[] }; portForwardEnabled?: boolean; execEnabled?: boolean; instanceName?: string }) => (
+    <div data-testid="access-urls" data-port-forward={String(!!portForwardEnabled)} data-exec={String(!!execEnabled)} data-instance-name={instanceName ?? ''}>
       {(status.ingresses || []).map((ing: { url: string }, i: number) => (
         <span key={i}>{ing.url}</span>
       ))}
@@ -1160,6 +1160,59 @@ describe('StackInstances Detail', () => {
       renderWithBranding(true);
 
       await waitFor(() => expect(screen.getByTestId('access-urls')).toHaveAttribute('data-port-forward', 'true'));
+    });
+  });
+
+  describe('stackctl exec hint (#723)', () => {
+    const renderWithBranding = (execEnabled: boolean) =>
+      render(
+        <StaticBrandingProvider value={{ ...BRANDING_DEFAULTS, execEnabled }}>
+          <MemoryRouter initialEntries={['/stack-instances/123']}>
+            <NotificationProvider>
+              <Routes>
+                <Route path="/stack-instances/:id" element={<Detail />} />
+              </Routes>
+            </NotificationProvider>
+          </MemoryRouter>
+        </StaticBrandingProvider>,
+      );
+
+    const cluster = (over: Record<string, unknown>) => ({ id: 'c1', name: 'c', is_default: false, allow_exec: true, ...over });
+
+    it('enables the hint when the feature is on, the cluster allows exec and the user is the owner', async () => {
+      vi.mocked(clusterService.get).mockResolvedValue(cluster({}) as never);
+      setupMocks({ status: 'running', cluster_id: 'c1' }, { k8sStatus: statusWithIngress });
+      renderWithBranding(true);
+
+      await waitFor(() => expect(screen.getByTestId('access-urls')).toHaveAttribute('data-exec', 'true'));
+      expect(screen.getByTestId('access-urls')).toHaveAttribute('data-port-forward', 'false');
+      expect(screen.getByTestId('access-urls')).toHaveAttribute('data-instance-name', 'Test Instance');
+    });
+
+    it('hides the hint when the cluster does not allow exec', async () => {
+      vi.mocked(clusterService.get).mockResolvedValue(cluster({ allow_exec: false }) as never);
+      setupMocks({ status: 'running', cluster_id: 'c1' }, { k8sStatus: statusWithIngress });
+      renderWithBranding(true);
+
+      await waitFor(() => expect(clusterService.get).toHaveBeenCalled());
+      expect(await screen.findByTestId('access-urls')).toHaveAttribute('data-exec', 'false');
+    });
+
+    it('hides the hint when the server has the feature off', async () => {
+      vi.mocked(clusterService.get).mockResolvedValue(cluster({}) as never);
+      setupMocks({ status: 'running', cluster_id: 'c1' }, { k8sStatus: statusWithIngress });
+      renderWithBranding(false);
+
+      expect(await screen.findByTestId('access-urls')).toHaveAttribute('data-exec', 'false');
+    });
+
+    it('hides the hint for a user who cannot modify the instance', async () => {
+      authState.user = { id: 'other', username: 'bob', role: 'user', display_name: 'Bob' };
+      vi.mocked(clusterService.get).mockResolvedValue(cluster({}) as never);
+      setupMocks({ status: 'running', cluster_id: 'c1' }, { k8sStatus: statusWithIngress });
+      renderWithBranding(true);
+
+      expect(await screen.findByTestId('access-urls')).toHaveAttribute('data-exec', 'false');
     });
   });
 
