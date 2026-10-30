@@ -239,6 +239,10 @@ func TestStreamAccessChecker_KindSwitches(t *testing.T) {
 			inst: func(i *models.StackInstance) { i.Status = models.StackStatusStopped }, wantPF: true, wantExec: true},
 		{name: "role downgraded", pfEnabled: true, execOn: true, cluster: &models.Cluster{ID: "c1", AllowPortForward: true, AllowExec: true},
 			role: "user", sessUser: "dev", wantPF: true, wantExec: true},
+		{name: "owner changed away from the session user", pfEnabled: true, execOn: true, cluster: &models.Cluster{ID: "c1", AllowPortForward: true, AllowExec: true},
+			inst: func(i *models.StackInstance) { i.OwnerID = "new-owner" }, role: "user", sessUser: "dev", wantPF: true, wantExec: true},
+		{name: "owner changed, devops session keeps access", pfEnabled: true, execOn: true, cluster: &models.Cluster{ID: "c1", AllowPortForward: true, AllowExec: true},
+			inst: func(i *models.StackInstance) { i.OwnerID = "new-owner" }, role: "devops", sessUser: "dev"},
 		{name: "devops keeps access", pfEnabled: true, execOn: true, cluster: &models.Cluster{ID: "c1", AllowPortForward: true, AllowExec: true},
 			role: "devops", sessUser: "dev"},
 	}
