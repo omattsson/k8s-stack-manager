@@ -70,6 +70,10 @@ func (f *fakeClusterRepo) CountAll(ctx context.Context) (int, error) {
 	return f.total, nil
 }
 
+func (*fakeClusterRepo) StreamFlagsByIDs(ctx context.Context, _ []string, _ bool) (map[string]bool, error) {
+	return nil, ctx.Err()
+}
+
 func (f *fakeClusterRepo) NamesByIDs(_ context.Context, _ []string) (map[string]string, error) {
 	return map[string]string{}, nil
 }

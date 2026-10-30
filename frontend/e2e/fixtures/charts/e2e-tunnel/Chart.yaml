@@ -1,0 +1,6 @@
+apiVersion: v2
+name: e2e-tunnel
+description: Test chart of port-forward-tunnel.spec.ts (only with E2E_KUBECONFIG). One nginx pod that serves the marker value, behind a Service whose port 80 targets the named container port http.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

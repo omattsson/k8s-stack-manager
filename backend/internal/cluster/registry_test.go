@@ -1018,6 +1018,10 @@ func TestHealthCheck_MixedFirstFailsSecondReachable(t *testing.T) {
 
 func (*mockClusterRepo) CountAll(ctx context.Context) (int, error) { return 0, ctx.Err() }
 
+func (*mockClusterRepo) StreamFlagsByIDs(ctx context.Context, _ []string, _ bool) (map[string]bool, error) {
+	return nil, ctx.Err()
+}
+
 func (*mockClusterRepo) NamesByIDs(ctx context.Context, _ []string) (map[string]string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

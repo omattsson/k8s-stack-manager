@@ -73,6 +73,24 @@ data:
   LOG_RETENTION_INTERVAL: {{ .interval | quote }}
   {{- end }}
   {{- end }}
+  {{- /* Port-forward and stream settings. An explicit backend.env value wins. */}}
+  {{- with .Values.backend.portForward }}
+  {{- if not (hasKey $.Values.backend.env "STACK_PORT_FORWARD_ENABLED") }}
+  STACK_PORT_FORWARD_ENABLED: {{ .enabled | toString | quote }}
+  {{- end }}
+  {{- if not (hasKey $.Values.backend.env "STACK_PORT_FORWARD_MAX_DURATION") }}
+  STACK_PORT_FORWARD_MAX_DURATION: {{ .maxDuration | toString | quote }}
+  {{- end }}
+  {{- if not (hasKey $.Values.backend.env "STACK_PORT_FORWARD_IDLE_TIMEOUT") }}
+  STACK_PORT_FORWARD_IDLE_TIMEOUT: {{ .idleTimeout | toString | quote }}
+  {{- end }}
+  {{- if not (hasKey $.Values.backend.env "STACK_PORT_FORWARD_MAX_PER_USER") }}
+  STACK_PORT_FORWARD_MAX_PER_USER: {{ .maxPerUser | toString | quote }}
+  {{- end }}
+  {{- end }}
+  {{- if not (hasKey .Values.backend.env "STACK_STREAM_ALLOW_API_KEYS") }}
+  STACK_STREAM_ALLOW_API_KEYS: {{ .Values.backend.streams.allowApiKeys | toString | quote }}
+  {{- end }}
   {{- /* Branding (web UI title, logo, favicon). An explicit backend.env value wins. */}}
   {{- with .Values.branding }}
   {{- if and .title (not (hasKey $.Values.backend.env "APP_TITLE")) }}

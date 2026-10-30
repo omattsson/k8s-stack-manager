@@ -1,0 +1,13 @@
+# Port-forward on, rbac.scope cluster. Used by `make helm-test`.
+backend:
+  secrets:
+    JWT_SECRET: dummy-jwt-secret-for-template
+  portForward:
+    enabled: true
+    maxDuration: 2h
+    idleTimeout: 30m
+    maxPerUser: 8
+  streams:
+    allowApiKeys: true
+  rbac:
+    scope: cluster

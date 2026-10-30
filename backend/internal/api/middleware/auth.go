@@ -25,6 +25,19 @@ const (
 	contextKeyJTI      = "jti"
 	contextKeyExpiry   = "tokenExpiry"
 	contextKeySID      = "sessionID"
+	// contextKeyIssuedAt holds the issue time of the access token
+	// (Claims.IssueTime, millisecond precision when the iat_ms claim is set).
+	contextKeyIssuedAt = "tokenIssuedAt"
+	// contextKeyAuthMethod holds AuthMethodJWT or AuthMethodAPIKey.
+	contextKeyAuthMethod = "authMethod"
+	contextKeyAPIKeyID   = "apiKeyID"
+	contextKeyAPIKeyExp  = "apiKeyExpiry" // #nosec G101 -- a context key, not a credential
+)
+
+// Values of GetAuthMethodFromContext.
+const (
+	AuthMethodJWT    = "jwt"
+	AuthMethodAPIKey = "api_key"
 )
 
 // Claims represents the JWT claims payload.
@@ -232,6 +245,10 @@ func AuthRequiredWithOptions(opts JWTAuthOptions) gin.HandlerFunc {
 		c.Set(contextKeyUserID, claims.UserID)
 		c.Set(contextKeyUsername, claims.Username)
 		c.Set(contextKeyRole, claims.Role)
+		c.Set(contextKeyAuthMethod, AuthMethodJWT)
+		if it := claims.IssueTime(); !it.IsZero() {
+			c.Set(contextKeyIssuedAt, it)
+		}
 		if claims.ID != "" {
 			c.Set(contextKeyJTI, claims.ID)
 		}
@@ -435,4 +452,49 @@ func GetJTIFromContext(c *gin.Context) string {
 		}
 	}
 	return ""
+}
+
+// GetTokenIssuedAtFromContext returns the issue time of the access token
+// (iat_ms precision when the claim is set). The second value is false for
+// API-key auth and for a token without an issue time.
+func GetTokenIssuedAtFromContext(c *gin.Context) (time.Time, bool) {
+	if v, exists := c.Get(contextKeyIssuedAt); exists {
+		if t, ok := v.(time.Time); ok {
+			return t, true
+		}
+	}
+	return time.Time{}, false
+}
+
+// GetAuthMethodFromContext returns AuthMethodJWT ("jwt") or AuthMethodAPIKey
+// ("api_key"), or "" when the request is not authenticated.
+func GetAuthMethodFromContext(c *gin.Context) string {
+	if v, exists := c.Get(contextKeyAuthMethod); exists {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+// GetAPIKeyIDFromContext returns the ID of the API key of an API-key request,
+// or "" for JWT auth.
+func GetAPIKeyIDFromContext(c *gin.Context) string {
+	if v, exists := c.Get(contextKeyAPIKeyID); exists {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+// GetAPIKeyExpiryFromContext returns the expiry of the API key of an API-key
+// request. The second value is false for JWT auth and for a key without expiry.
+func GetAPIKeyExpiryFromContext(c *gin.Context) (time.Time, bool) {
+	if v, exists := c.Get(contextKeyAPIKeyExp); exists {
+		if t, ok := v.(time.Time); ok {
+			return t, true
+		}
+	}
+	return time.Time{}, false
 }

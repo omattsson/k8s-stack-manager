@@ -454,6 +454,8 @@ export interface Cluster {
   is_default: boolean;
   /** True when the backend uses its own service account (in-cluster config); api_server_url is then empty. */
   use_in_cluster?: boolean;
+  /** An admin allows port-forward tunnels to instances on this cluster. Off by default. */
+  allow_port_forward?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -469,6 +471,7 @@ export interface CreateClusterRequest {
   max_instances_per_user?: number;
   is_default: boolean;
   use_in_cluster?: boolean;
+  allow_port_forward?: boolean;
 }
 
 export interface UpdateClusterRequest {
@@ -482,6 +485,7 @@ export interface UpdateClusterRequest {
   max_instances_per_user?: number;
   is_default?: boolean;
   use_in_cluster?: boolean;
+  allow_port_forward?: boolean;
 }
 
 export interface ClusterTestResult {
@@ -1249,4 +1253,6 @@ export interface UIConfig {
   default_instance_ttl_minutes?: number;
   /** Maximum TTL and stop-time distance from now, in days (MAX_INSTANCE_TTL_DAYS). */
   max_instance_ttl_days?: number;
+  /** Port-forward tunnels are on (STACK_PORT_FORWARD_ENABLED). */
+  port_forward_enabled?: boolean;
 }

@@ -253,22 +253,34 @@ func (h *WebSocketHandler) handleAPIKeyUpgrade(c *gin.Context, header string) {
 }
 
 // apiKeySocketRevoked is the check after the registration of an API-key
-// socket: the key is deleted or expired, the user is deleted or disabled, or
-// the user was blocked at or after the connection time (password reset,
-// disable, role change during the upgrade). Lookup errors are logged and
-// pass (fail open): the revalidation checks again.
+// socket (see apiKeyIdentityRevoked).
 func (h *WebSocketHandler) apiKeySocketRevoked(ctx context.Context, id websocket.ClientIdentity) bool {
-	if revoked, err := apiKeyRevoked(ctx, h.apiKeyRepo, id.UserID, id.APIKeyID, time.Now()); err != nil {
-		logRecheckError(ctx, "WebSocket API key re-check failed", id.UserID, err)
-	} else if revoked {
-		return true
+	return apiKeyIdentityRevoked(ctx, h.sessionStore, h.userRepo, h.apiKeyRepo, id)
+}
+
+// apiKeyIdentityRevoked is the check after the registration of a connection
+// that was opened with an API key (a /ws socket or a stream session): the key
+// is deleted or expired, the user is deleted or disabled, or the user was
+// blocked at or after the connection time (password reset, disable, role
+// change during the upgrade). Lookup errors are logged and pass (fail open):
+// the revalidation checks again. A nil repository or store skips its check.
+func apiKeyIdentityRevoked(ctx context.Context, store sessionstore.SessionStore, userRepo models.UserRepository, apiKeyRepo models.APIKeyRepository, id websocket.ClientIdentity) bool {
+	if apiKeyRepo != nil {
+		if revoked, err := apiKeyRevoked(ctx, apiKeyRepo, id.UserID, id.APIKeyID, time.Now()); err != nil {
+			logRecheckError(ctx, "WebSocket API key re-check failed", id.UserID, err)
+		} else if revoked {
+			return true
+		}
 	}
-	if revokedErr, lookupErr := tokenRevocationStatus(ctx, h.sessionStore, id); revokedErr != nil {
+	if revokedErr, lookupErr := tokenRevocationStatus(ctx, store, id); revokedErr != nil {
 		return true
 	} else if lookupErr != nil {
 		logRecheckError(ctx, "WebSocket API key user block re-check failed", id.UserID, lookupErr)
 	}
-	inactive, err := userInactive(ctx, h.userRepo, id.UserID)
+	if userRepo == nil {
+		return false
+	}
+	inactive, err := userInactive(ctx, userRepo, id.UserID)
 	if err != nil {
 		logRecheckError(ctx, "WebSocket API key user re-check failed", id.UserID, err)
 		return false
@@ -380,6 +392,16 @@ func NewWebSocketRevocationChecker(store sessionstore.SessionStore, userRepo mod
 	if store == nil && userRepo == nil && apiKeyRepo == nil {
 		return nil
 	}
+	// A failed lookup logs at most once per minute (an outage would give one
+	// line per run); the other runs log at debug level.
+	logLimit := websocket.NewLogLimiter(time.Minute)
+	logFailure := func(msg string, args ...any) {
+		if logLimit.Allow() {
+			slog.Error(msg, args...)
+			return
+		}
+		slog.Debug(msg, args...)
+	}
 	return func(ctx context.Context, identities []websocket.ClientIdentity) []bool {
 		revoked := make([]bool, len(identities))
 		keys, err := loadSocketAPIKeys(ctx, apiKeyRepo, identities)
@@ -389,7 +411,7 @@ func NewWebSocketRevocationChecker(store sessionstore.SessionStore, userRepo mod
 			return revoked
 		}
 		if err != nil {
-			slog.Error("WebSocket revalidation stopped: API key lookup failed; the next run retries",
+			logFailure("WebSocket revalidation stopped: API key lookup failed; the next run retries",
 				"identities", len(identities), "error", err)
 			return revoked
 		}
@@ -416,7 +438,7 @@ func NewWebSocketRevocationChecker(store sessionstore.SessionStore, userRepo mod
 					slog.Debug("WebSocket revalidation cancelled", "checked", i, "identities", len(identities))
 					return revoked
 				}
-				slog.Error("WebSocket revalidation stopped: session store check failed; the next run retries",
+				logFailure("WebSocket revalidation stopped: session store check failed; the next run retries",
 					"checked", i, "identities", len(identities), "error", lookupErr)
 				return revoked
 			}
@@ -432,7 +454,7 @@ func NewWebSocketRevocationChecker(store sessionstore.SessionStore, userRepo mod
 						slog.Debug("WebSocket revalidation cancelled", "checked", i, "identities", len(identities))
 						return revoked
 					}
-					slog.Error("WebSocket revalidation stopped: user lookup failed; the next run retries",
+					logFailure("WebSocket revalidation stopped: user lookup failed; the next run retries",
 						"user_id", id.UserID, "checked", i, "identities", len(identities), "error", err)
 					return revoked
 				}

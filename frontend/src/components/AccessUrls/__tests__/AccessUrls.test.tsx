@@ -112,6 +112,62 @@ describe('AccessUrls', () => {
     expect(screen.queryByText('Access URLs')).not.toBeInTheDocument();
   });
 
+  it('shows stackctl commands for TCP and protocol-less ports only, not UDP', () => {
+    const status = clusterIPStatus();
+    status.charts[0].services![0].ports = ['5432/TCP', '53/UDP', '8080'];
+    render(
+      <NotificationProvider>
+        <AccessUrls status={status} portForwardEnabled instanceName="my-app" />
+      </NotificationProvider>,
+    );
+    expect(screen.getByText('stackctl stack port-forward my-app database 5432')).toBeInTheDocument();
+    expect(screen.getByText('stackctl stack port-forward my-app database 8080')).toBeInTheDocument();
+    expect(screen.queryByText(/database 53$/)).not.toBeInTheDocument();
+  });
+
+  it('shows a stackctl port-forward command per ClusterIP port when portForwardEnabled is set', async () => {
+    const status = clusterIPStatus();
+    status.charts[0].services![0].ports = ['5432/TCP', '9187/TCP'];
+    render(
+      <NotificationProvider>
+        <AccessUrls status={status} portForwardEnabled instanceName="my-app" />
+      </NotificationProvider>,
+    );
+
+    expect(screen.getByText('stackctl stack port-forward my-app database 5432')).toBeInTheDocument();
+    expect(screen.getByText('stackctl stack port-forward my-app database 9187')).toBeInTheDocument();
+    // No kubectl hint without showPortForward.
+    expect(screen.queryByText(/kubectl port-forward/)).not.toBeInTheDocument();
+
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    await user.click(screen.getByRole('button', { name: 'Copy stackctl port-forward database 9187' }));
+    expect(writeText).toHaveBeenCalledWith('stackctl stack port-forward my-app database 9187');
+  });
+
+  it('hides the stackctl command when portForwardEnabled is off', () => {
+    render(
+      <NotificationProvider>
+        <AccessUrls status={clusterIPStatus()} instanceName="my-app" />
+      </NotificationProvider>,
+    );
+
+    expect(screen.queryByText(/stackctl/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Access URLs')).not.toBeInTheDocument();
+  });
+
+  it('shows the kubectl and the stackctl hint together', () => {
+    render(
+      <NotificationProvider>
+        <AccessUrls status={clusterIPStatus()} showPortForward portForwardEnabled instanceName="my-app" />
+      </NotificationProvider>,
+    );
+
+    expect(screen.getByText('kubectl port-forward svc/database 5432:5432 -n stack-my-app')).toBeInTheDocument();
+    expect(screen.getByText('stackctl stack port-forward my-app database 5432')).toBeInTheDocument();
+  });
+
   it('renders NodePort services', () => {
     const status: NamespaceStatus = {
       namespace: 'stack-test',

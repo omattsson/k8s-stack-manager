@@ -22,6 +22,8 @@ import {
   TextField,
   FormControlLabel,
   Checkbox,
+  Switch,
+  FormHelperText,
   Breadcrumbs,
   Link as MuiLink,
 } from '@mui/material';
@@ -51,6 +53,7 @@ const emptyCreateForm: CreateClusterRequest = {
   max_instances_per_user: 0,
   is_default: false,
   use_in_cluster: false,
+  allow_port_forward: false,
 };
 
 const healthColor = (status: string): 'success' | 'warning' | 'error' | 'default' => {
@@ -125,6 +128,7 @@ const Clusters = () => {
       max_instances_per_user: cluster.max_instances_per_user,
       is_default: cluster.is_default,
       use_in_cluster: cluster.use_in_cluster ?? false,
+      allow_port_forward: cluster.allow_port_forward ?? false,
     });
     setDialogError(null);
     setDialogOpen(true);
@@ -163,6 +167,7 @@ const Clusters = () => {
           max_instances_per_user: form.max_instances_per_user,
           is_default: form.is_default,
           use_in_cluster: inCluster,
+          allow_port_forward: form.allow_port_forward ?? false,
         };
         if (!inCluster && (form.kubeconfig_data ?? '').trim()) {
           update.kubeconfig_data = form.kubeconfig_data;
@@ -437,6 +442,21 @@ const Clusters = () => {
               }
               label="Set as default cluster"
             />
+            <Box>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={form.allow_port_forward ?? false}
+                    onChange={(e) => setForm({ ...form, allow_port_forward: e.target.checked })}
+                    slotProps={{ input: { 'aria-describedby': 'allow-port-forward-help' } }}
+                  />
+                }
+                label="Allow port-forward"
+              />
+              <FormHelperText id="allow-port-forward-help" sx={{ ml: 0 }}>
+                Lets owners, devops and admins open a tunnel to services of instances on this cluster with stackctl. The server setting STACK_PORT_FORWARD_ENABLED must also be on. Port-forward bypasses NetworkPolicies and ingress authentication.
+              </FormHelperText>
+            </Box>
           </Box>
         </DialogContent>
         <DialogActions>

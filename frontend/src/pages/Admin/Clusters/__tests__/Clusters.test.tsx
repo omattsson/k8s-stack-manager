@@ -448,6 +448,66 @@ describe('Clusters Page', () => {
     });
   });
 
+  it('shows the Allow port-forward switch off by default and sends it on create', async () => {
+    const user = userEvent.setup();
+    (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockClusters);
+    (clusterService.create as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'c3', name: 'dev-cluster' });
+
+    render(
+      <MemoryRouter>
+        <NotificationProvider>
+          <Clusters />
+        </NotificationProvider>
+      </MemoryRouter>
+    );
+    await screen.findByText('production');
+    await user.click(screen.getByRole('button', { name: /add cluster/i }));
+
+    const dialog = await screen.findByRole('dialog');
+    const toggle = within(dialog).getByRole('switch', { name: 'Allow port-forward' });
+    expect(toggle).not.toBeChecked();
+    expect(within(dialog).getByText(/STACK_PORT_FORWARD_ENABLED/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/bypasses NetworkPolicies and ingress authentication/)).toBeInTheDocument();
+
+    await user.type(within(dialog).getByRole('textbox', { name: /^name/i }), 'dev-cluster');
+    await user.type(within(dialog).getByRole('textbox', { name: /api server url/i }), 'https://dev.example.com');
+    await user.type(within(dialog).getByRole('textbox', { name: /kubeconfig data/i }), 'apiVersion: v1');
+    await user.click(toggle);
+    await user.click(within(dialog).getByRole('button', { name: /create/i }));
+
+    await waitFor(() => {
+      expect(clusterService.create).toHaveBeenCalledWith(expect.objectContaining({ allow_port_forward: true }));
+    });
+  });
+
+  it('loads allow_port_forward into the edit dialog and sends it on update', async () => {
+    const user = userEvent.setup();
+    (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { ...mockClusters[0], allow_port_forward: true },
+    ]);
+    (clusterService.update as ReturnType<typeof vi.fn>).mockResolvedValue(mockClusters[0]);
+
+    render(
+      <MemoryRouter>
+        <NotificationProvider>
+          <Clusters />
+        </NotificationProvider>
+      </MemoryRouter>
+    );
+    await screen.findByText('production');
+    await user.click(screen.getByLabelText('Edit production'));
+
+    const dialog = await screen.findByRole('dialog');
+    const toggle = within(dialog).getByRole('switch', { name: 'Allow port-forward' });
+    expect(toggle).toBeChecked();
+    await user.click(toggle);
+    await user.click(within(dialog).getByRole('button', { name: /update/i }));
+
+    await waitFor(() => {
+      expect(clusterService.update).toHaveBeenCalledWith('c1', expect.objectContaining({ allow_port_forward: false }));
+    });
+  });
+
   it('edits an in-cluster cluster without an API Server URL', async () => {
     const user = userEvent.setup();
     const inCluster = { ...mockClusters[0], id: 'c-in', name: 'local', api_server_url: '', use_in_cluster: true };

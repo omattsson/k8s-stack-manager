@@ -5531,7 +5531,7 @@
                 }
             },
             "put": {
-                "description": "Update a stack instance (branch, name, etc.). A changed name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters); an unchanged name is not checked, so older instances with other names stay editable. A rename does not change the namespace.\nttl_minutes sets a new TTL from now (0 clears the expiry). expires_at (RFC 3339 with a time zone) sets a fixed stop time and ttl_minutes 0. Do not send both (400). The limits are the same as for create (MAX_INSTANCE_TTL_DAYS).",
+                "description": "Update a stack instance (branch, name, etc.). A changed name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters); an unchanged name is not checked, so older instances with other names stay editable. A rename does not change the namespace. The namespace is set at create and cannot be changed: a namespace that differs from the stored one gives 400 (an unchanged value is accepted).\nttl_minutes sets a new TTL from now (0 clears the expiry). expires_at (RFC 3339 with a time zone) sets a fixed stop time and ttl_minutes 0. Do not send both (400). The limits are the same as for create (MAX_INSTANCE_TTL_DAYS).",
                 "consumes": [
                     "application/json"
                 ],
@@ -7642,6 +7642,138 @@
                 }
             }
         },
+        "/api/v1/stack-instances/{id}/port-forward": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Upgrades the connection to a WebSocket that carries raw TCP bytes between the client and a service port of the instance. Binary frames carry the bytes in both directions; a text frame closes the tunnel with 1003. There is no half-close. The server pings every 30 s; pings do not count as activity. Authentication: the Authorization header (JWT) or, when STACK_STREAM_ALLOW_API_KEYS is true, the X-API-Key header. The route never accepts a token in the query string. The caller must be the owner of the instance, a devops user or an admin, and the cluster must allow port-forward (allow_port_forward). All checks run before the upgrade and give an HTTP status with a stable code in the body ({\"error\",\"code\"}). Close codes after the upgrade: 1000 normal, 1001 server shutdown, 1003 text frame, 1008 access revoked, 1009 frame larger than 64 KiB, 1011 internal error, 4001 maximum duration, 4002 idle timeout, 4502 pod stream error (the reason holds the error). An expired access token does not close an open tunnel. Delete, stop and clean of the instance close the tunnels of that replica at once and the tunnels of other replicas at the next revalidation (up to one minute).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "stack-instances"
+                ],
+                "summary": "Open a port-forward tunnel to a service of a stack instance",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Instance ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Service name (DNS-1035 label)",
+                        "name": "service",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Service port number (1-65535)",
+                        "name": "port",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "101": {
+                        "description": "Switching Protocols"
+                    },
+                    "400": {
+                        "description": "invalid_service, invalid_port, upgrade_required",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "api_key_not_allowed, forbidden, cluster_port_forward_disabled, namespace_not_allowed, origin_not_allowed",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "feature_disabled, instance_not_found, service_not_found, port_not_found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "instance_not_deployed, service_external_name, service_no_selector",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "429": {
+                        "description": "tunnel_limit",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "dial_failed",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "no_ready_pod, kube_timeout, shutting_down",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/stack-instances/{id}/quota": {
             "get": {
                 "security": [
@@ -9691,7 +9823,7 @@
         },
         "/api/v1/ui-config": {
             "get": {
-                "description": "Returns the display values of the web UI: product title, logo URL and favicon URL (APP_TITLE, APP_LOGO_URL, APP_FAVICON_URL), the start value of the TTL field in the create forms (default_instance_ttl_minutes, DEFAULT_INSTANCE_TTL_MINUTES; 0 means no expiry), and the maximum TTL and stop-time distance in days (max_instance_ttl_days, MAX_INSTANCE_TTL_DAYS). Public: no authentication, so the login page can use it. An empty logo_url means the built-in logo. A URL is a same-origin path or an https URL. Cached for 5 minutes.",
+                "description": "Returns the display values of the web UI: product title, logo URL and favicon URL (APP_TITLE, APP_LOGO_URL, APP_FAVICON_URL), the start value of the TTL field in the create forms (default_instance_ttl_minutes, DEFAULT_INSTANCE_TTL_MINUTES; 0 means no expiry), the maximum TTL and stop-time distance in days (max_instance_ttl_days, MAX_INSTANCE_TTL_DAYS), and whether port-forward is on (port_forward_enabled, STACK_PORT_FORWARD_ENABLED). Public: no authentication, so the login page can use it. An empty logo_url means the built-in logo. A URL is a same-origin path or an https URL. Cached for 5 minutes.",
                 "produces": [
                     "application/json"
                 ],
@@ -11063,6 +11195,9 @@
                 "name"
             ],
             "properties": {
+                "allow_port_forward": {
+                    "type": "boolean"
+                },
                 "api_server_url": {
                     "type": "string"
                 },
@@ -11800,6 +11935,11 @@
                     "type": "integer",
                     "example": 30
                 },
+                "port_forward_enabled": {
+                    "description": "PortForwardEnabled is true when the port-forward tunnels are on\n(STACK_PORT_FORWARD_ENABLED). The UI shows the stackctl hint then.",
+                    "type": "boolean",
+                    "example": false
+                },
                 "title": {
                     "description": "Title is the product name (APP_TITLE).",
                     "type": "string",
@@ -11810,6 +11950,9 @@
         "handlers.UpdateClusterRequest": {
             "type": "object",
             "properties": {
+                "allow_port_forward": {
+                    "type": "boolean"
+                },
                 "api_server_url": {
                     "type": "string"
                 },
@@ -13670,6 +13813,10 @@
         "models.Cluster": {
             "type": "object",
             "properties": {
+                "allow_port_forward": {
+                    "description": "AllowPortForward lets users open port-forward tunnels to the stacks of\nthis cluster. Off by default; only an admin sets it.",
+                    "type": "boolean"
+                },
                 "api_server_url": {
                     "type": "string"
                 },

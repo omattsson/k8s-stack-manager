@@ -180,10 +180,36 @@ type InstanceHandler struct {
 	clusterQuotaRepo   models.ResourceQuotaRepository
 	followerRepo       models.InstanceFollowerRepository
 	actionRuns         models.ActionRunRepository
+	// streamRevoker closes the open port-forward sessions of an instance when
+	// it is deleted, stopped or cleaned (nil: no sessions).
+	streamRevoker InstanceSessionRevoker
 	// statusFlight lets concurrent status reads of one namespace share one
 	// set of Kubernetes calls (namespaceStatus).
 	statusFlight singleflight.Group
 	uniqueNames  bool
+}
+
+// InstanceSessionRevoker closes the local long-lived sessions of a stack
+// instance (port-forward, exec). *websocket.Hub implements it.
+type InstanceSessionRevoker interface {
+	DisconnectInstance(instanceID string) int
+}
+
+// WithStreamRevoker makes delete, stop and clean close the open stream
+// sessions of the instance at once (code 1008). Other replicas close theirs at
+// the next hub revalidation. Returns h for chaining.
+func (h *InstanceHandler) WithStreamRevoker(r InstanceSessionRevoker) *InstanceHandler {
+	h.streamRevoker = r
+	return h
+}
+
+// revokeStreams closes the local stream sessions of the instance. It is
+// nil-safe and does not block.
+func (h *InstanceHandler) revokeStreams(instanceID string) {
+	if h == nil || h.streamRevoker == nil {
+		return
+	}
+	h.streamRevoker.DisconnectInstance(instanceID)
 }
 
 // WithUniqueInstanceNames turns on UNIQUE_INSTANCE_NAMES: create, rename and
@@ -725,7 +751,7 @@ func (h *InstanceHandler) GetInstance(c *gin.Context) {
 
 // UpdateInstance godoc
 // @Summary     Update a stack instance
-// @Description Update a stack instance (branch, name, etc.). A changed name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters); an unchanged name is not checked, so older instances with other names stay editable. A rename does not change the namespace.
+// @Description Update a stack instance (branch, name, etc.). A changed name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters); an unchanged name is not checked, so older instances with other names stay editable. A rename does not change the namespace. The namespace is set at create and cannot be changed: a namespace that differs from the stored one gives 400 (an unchanged value is accepted).
 // @Description ttl_minutes sets a new TTL from now (0 clears the expiry). expires_at (RFC 3339 with a time zone) sets a fixed stop time and ttl_minutes 0. Do not send both (400). The limits are the same as for create (MAX_INSTANCE_TTL_DAYS).
 // @Tags        stack-instances
 // @Accept      json
@@ -787,8 +813,13 @@ func (h *InstanceHandler) UpdateInstance(c *gin.Context) {
 	if update.Branch != nil {
 		existing.Branch = *update.Branch
 	}
-	if update.Namespace != nil {
-		existing.Namespace = *update.Namespace
+	// The namespace is set once at create. Every Kubernetes operation and the
+	// port-forward namespace guard trust it, so a changed value would point
+	// this instance at the namespace of another stack. An echoed value is no
+	// change.
+	if update.Namespace != nil && *update.Namespace != existing.Namespace {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "namespace cannot be changed"})
+		return
 	}
 	existing.UpdatedAt = time.Now().UTC()
 
@@ -955,6 +986,7 @@ func (h *InstanceHandler) deleteInstance(c *gin.Context, inst *models.StackInsta
 				logKeyInstanceID, inst.ID, "error", err)
 			return "", &instanceDeleteError{status: http.StatusInternalServerError, message: msgInternalServerError}
 		}
+		h.revokeStreams(inst.ID)
 		return logID, nil
 	}
 
@@ -975,6 +1007,7 @@ func (h *InstanceHandler) deleteInstance(c *gin.Context, inst *models.StackInsta
 		return "", &instanceDeleteError{status: status, message: message}
 	}
 
+	h.revokeStreams(inst.ID)
 	h.afterInstanceDeleted(wctx, inst, followerIDs)
 	return "", nil
 }
@@ -2021,6 +2054,7 @@ func (h *InstanceHandler) StopInstance(c *gin.Context) {
 		return
 	}
 
+	h.revokeStreams(inst.ID)
 	c.JSON(http.StatusAccepted, gin.H{"log_id": logID, "message": "Stop initiated"})
 }
 
@@ -2102,6 +2136,7 @@ func (h *InstanceHandler) CleanInstance(c *gin.Context) {
 		return
 	}
 
+	h.revokeStreams(inst.ID)
 	c.JSON(http.StatusAccepted, gin.H{"log_id": logID, "message": "Namespace cleanup initiated"})
 }
 

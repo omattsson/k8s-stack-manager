@@ -82,6 +82,10 @@ func (m *warnerMockInstanceRepo) setExpiringSoon(items []*models.StackInstance) 
 	m.expiringSoonItems = items
 }
 
+func (*warnerMockInstanceRepo) FindByIDs(ctx context.Context, _ []string) (map[string]*models.StackInstance, error) {
+	return nil, ctx.Err()
+}
+
 func (m *warnerMockInstanceRepo) ListExpiringSoon(ctx context.Context, _ time.Duration) ([]*models.StackInstance, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -132,6 +136,10 @@ func (m *warnerMockInstanceRepo) FindByID(ctx context.Context, _ string) (*model
 }
 func (m *warnerMockInstanceRepo) FindByNamespace(ctx context.Context, _ string) (*models.StackInstance, error) {
 	return nil, ctx.Err()
+}
+
+func (m *warnerMockInstanceRepo) NamespaceShared(context.Context, string, string) (bool, error) {
+	return false, nil
 }
 func (m *warnerMockInstanceRepo) Update(ctx context.Context, _ *models.StackInstance) error {
 	return ctx.Err()

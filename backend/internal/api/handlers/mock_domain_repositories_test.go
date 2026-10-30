@@ -1128,6 +1128,10 @@ type MockStackInstanceRepository struct {
 	createErr error
 	// nameLookupErr fails only FindByNameOnCluster (UNIQUE_INSTANCE_NAMES).
 	nameLookupErr error
+	// namespaceSharedErr fails only NamespaceShared (port-forward).
+	namespaceSharedErr error
+	// findByIDsCalls counts FindByIDs calls (batch lookup checks).
+	findByIDsCalls atomic.Int32
 }
 
 func NewMockStackInstanceRepository() *MockStackInstanceRepository {
@@ -1167,6 +1171,26 @@ func (m *MockStackInstanceRepository) FindByID(ctx context.Context, id string) (
 	return &cp, nil
 }
 
+func (m *MockStackInstanceRepository) FindByIDs(ctx context.Context, ids []string) (map[string]*models.StackInstance, error) {
+	m.findByIDsCalls.Add(1)
+	if err := ctxDone(ctx, "find_by_ids"); err != nil {
+		return nil, err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.fetchErr != nil {
+		return nil, m.fetchErr
+	}
+	out := make(map[string]*models.StackInstance, len(ids))
+	for _, id := range ids {
+		if i, ok := m.items[id]; ok {
+			cp := models.StackInstance{ID: i.ID, OwnerID: i.OwnerID, Status: i.Status, Namespace: i.Namespace, ClusterID: i.ClusterID}
+			out[id] = &cp
+		}
+	}
+	return out, nil
+}
+
 func (m *MockStackInstanceRepository) FindByNamespace(ctx context.Context, namespace string) (*models.StackInstance, error) {
 	if err := ctxDone(ctx, "find_by_namespace"); err != nil {
 		return nil, err
@@ -1183,6 +1207,26 @@ func (m *MockStackInstanceRepository) FindByNamespace(ctx context.Context, names
 		}
 	}
 	return nil, dberrors.NewDatabaseError("FindByNamespace", dberrors.ErrNotFound)
+}
+
+func (m *MockStackInstanceRepository) NamespaceShared(ctx context.Context, namespace, id string) (bool, error) {
+	if err := ctxDone(ctx, "namespace_shared"); err != nil {
+		return false, err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.fetchErr != nil {
+		return false, m.fetchErr
+	}
+	if m.namespaceSharedErr != nil {
+		return false, m.namespaceSharedErr
+	}
+	for _, i := range m.items {
+		if i.Namespace == namespace && i.ID != id {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (m *MockStackInstanceRepository) Update(ctx context.Context, i *models.StackInstance) error {
@@ -2174,6 +2218,10 @@ type MockClusterRepository struct {
 	defaultErr error
 	// namesCalls counts NamesByIDs calls (batch lookup checks).
 	namesCalls atomic.Int32
+	// streamFlagCalls counts StreamFlagsByIDs calls; streamFlagIDs holds the
+	// IDs of the last call.
+	streamFlagCalls atomic.Int32
+	streamFlagIDs   []string
 }
 
 func NewMockClusterRepository() *MockClusterRepository {
@@ -2316,6 +2364,34 @@ func (m *MockClusterRepository) NamesByIDs(ctx context.Context, ids []string) (m
 	for _, id := range ids {
 		if cl, ok := m.clusters[id]; ok {
 			out[id] = cl.Name
+		}
+	}
+	return out, nil
+}
+
+func (m *MockClusterRepository) StreamFlagsByIDs(ctx context.Context, ids []string, includeDefault bool) (map[string]bool, error) {
+	m.streamFlagCalls.Add(1)
+	if err := ctxDone(ctx, "stream_flags_by_ids"); err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.streamFlagIDs = append([]string(nil), ids...)
+	if m.err != nil {
+		return nil, m.err
+	}
+	out := make(map[string]bool, len(ids)+1)
+	for _, id := range ids {
+		if cl, ok := m.clusters[id]; ok {
+			out[id] = cl.AllowPortForward
+		}
+	}
+	if includeDefault {
+		for id, cl := range m.clusters {
+			if cl.IsDefault || id == m.defaultID {
+				out[models.DefaultClusterKey] = cl.AllowPortForward
+				break
+			}
 		}
 	}
 	return out, nil

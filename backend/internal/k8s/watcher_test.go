@@ -113,6 +113,10 @@ func (m *mockInstanceRepo) FindByNamespace(ctx context.Context, namespace string
 	return nil, errors.New("not found")
 }
 
+func (m *mockInstanceRepo) NamespaceShared(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+
 func (m *mockInstanceRepo) ListByOwner(ctx context.Context, _ string) ([]models.StackInstance, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -181,6 +185,10 @@ func (m *mockInstanceRepo) FindByName(ctx context.Context, _ string) ([]models.S
 }
 
 func (m *mockInstanceRepo) ListExpired(ctx context.Context) ([]*models.StackInstance, error) {
+	return nil, ctx.Err()
+}
+
+func (*mockInstanceRepo) FindByIDs(ctx context.Context, _ []string) (map[string]*models.StackInstance, error) {
 	return nil, ctx.Err()
 }
 

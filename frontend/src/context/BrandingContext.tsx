@@ -29,6 +29,8 @@ export interface Branding {
   defaultTtlMinutes: number;
   /** Maximum TTL and stop-time distance from now, in days (MAX_INSTANCE_TTL_DAYS). */
   maxTtlDays: number;
+  /** The server allows port-forward tunnels (STACK_PORT_FORWARD_ENABLED). */
+  portForwardEnabled: boolean;
 }
 
 /** Values used when the UI config cannot be loaded, and outside a BrandingProvider. */
@@ -38,6 +40,7 @@ export const BRANDING_DEFAULTS: Branding = {
   faviconUrl: DEFAULT_FAVICON_URL,
   defaultTtlMinutes: 0,
   maxTtlDays: DEFAULT_MAX_TTL_DAYS,
+  portForwardEnabled: false,
 };
 
 /**
@@ -99,6 +102,7 @@ export const brandingFromConfig = (data: unknown): Branding => {
     faviconUrl: isSafeImageUrl(cfg.favicon_url) ? cfg.favicon_url : DEFAULT_FAVICON_URL,
     defaultTtlMinutes: ttlFromConfig(cfg.default_instance_ttl_minutes, maxTtlDays),
     maxTtlDays,
+    portForwardEnabled: cfg.port_forward_enabled === true,
   };
 };
 
@@ -134,6 +138,7 @@ const cacheUIConfig = (data: unknown) => {
         favicon_url: cfg.favicon_url,
         default_instance_ttl_minutes: cfg.default_instance_ttl_minutes,
         max_instance_ttl_days: cfg.max_instance_ttl_days,
+        port_forward_enabled: cfg.port_forward_enabled,
       }),
     );
   } catch {

@@ -207,3 +207,124 @@ func TestGORMStackDefinitionRepository_TemplateRefsByIDs(t *testing.T) {
 		})
 	}
 }
+
+func TestGORMClusterRepository_StreamFlagsByIDs(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	repo := setupClusterRepo(t)
+	on := &models.Cluster{Name: "on", APIServerURL: "https://on.example.com", AllowPortForward: true}
+	off := &models.Cluster{Name: "off", APIServerURL: "https://off.example.com"}
+	def := &models.Cluster{Name: "default", APIServerURL: "https://def.example.com", AllowPortForward: true}
+	for _, c := range []*models.Cluster{on, off, def} {
+		require.NoError(t, repo.Create(ctx, c))
+	}
+	require.NoError(t, repo.SetDefault(ctx, def.ID))
+	// A damaged secret column of an unrelated cluster must not matter: the
+	// query reads neither the kubeconfig nor the registry password.
+	broken := &models.Cluster{Name: "broken", APIServerURL: "https://broken.example.com", AllowPortForward: true}
+	require.NoError(t, repo.Create(ctx, broken))
+	require.NoError(t, repo.db.Model(&models.Cluster{}).Where("id = ?", broken.ID).
+		Updates(map[string]any{"kubeconfig_data": "QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQQ=="}).Error)
+	_, listErr := repo.List(ctx)
+	require.Error(t, listErr, "the full read fails on the damaged row")
+
+	tests := []struct {
+		name           string
+		ids            []string
+		includeDefault bool
+		want           map[string]bool
+	}{
+		{"by ID", []string{on.ID, off.ID}, false, map[string]bool{on.ID: true, off.ID: false}},
+		{"missing ID is absent", []string{on.ID, "missing"}, false, map[string]bool{on.ID: true}},
+		{"no IDs", nil, false, map[string]bool{}},
+		{"default under the empty key", []string{off.ID}, true, map[string]bool{off.ID: false, models.DefaultClusterKey: true}},
+		{"only the default", nil, true, map[string]bool{models.DefaultClusterKey: true}},
+		{"damaged row is readable", []string{broken.ID}, false, map[string]bool{broken.ID: true}},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := repo.StreamFlagsByIDs(ctx, tt.ids, tt.includeDefault)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+
+	t.Run("no default cluster", func(t *testing.T) {
+		t.Parallel()
+		empty := setupClusterRepo(t)
+		got, err := empty.StreamFlagsByIDs(ctx, nil, true)
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+	t.Run("more IDs than one query holds", func(t *testing.T) {
+		t.Parallel()
+		ids := make([]string, 0, clusterIDsPerQuery+10)
+		for i := 0; i < clusterIDsPerQuery+9; i++ {
+			ids = append(ids, "missing")
+		}
+		ids = append(ids, on.ID)
+		got, err := repo.StreamFlagsByIDs(ctx, ids, false)
+		require.NoError(t, err)
+		assert.Equal(t, map[string]bool{on.ID: true}, got)
+	})
+}
+
+func TestGORMStackInstanceRepository_FindByIDs(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	repo := setupStackInstanceRepo(t)
+	a := &models.StackInstance{Name: "a", StackDefinitionID: "d1", Namespace: "ns-a", OwnerID: "alice", ClusterID: "cl-1", Branch: "main", Status: models.StackStatusRunning}
+	b := &models.StackInstance{Name: "b", StackDefinitionID: "d1", Namespace: "ns-b", OwnerID: "bob", Branch: "dev", Status: models.StackStatusStopped}
+	require.NoError(t, repo.Create(ctx, a))
+	require.NoError(t, repo.Create(ctx, b))
+
+	tests := []struct {
+		name string
+		ids  []string
+		want []string
+	}{
+		{"existing", []string{a.ID, b.ID}, []string{a.ID, b.ID}},
+		{"missing is absent", []string{a.ID, "missing"}, []string{a.ID}},
+		{"none", nil, nil},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := repo.FindByIDs(ctx, tt.ids)
+			require.NoError(t, err)
+			keys := make([]string, 0, len(got))
+			for id := range got {
+				keys = append(keys, id)
+			}
+			assert.ElementsMatch(t, tt.want, keys)
+		})
+	}
+
+	t.Run("projected columns", func(t *testing.T) {
+		t.Parallel()
+		got, err := repo.FindByIDs(ctx, []string{a.ID})
+		require.NoError(t, err)
+		g := got[a.ID]
+		require.NotNil(t, g)
+		assert.Equal(t, "alice", g.OwnerID)
+		assert.Equal(t, models.StackStatusRunning, g.Status)
+		assert.Equal(t, "ns-a", g.Namespace)
+		assert.Equal(t, "cl-1", g.ClusterID)
+		assert.Empty(t, g.Name, "columns outside the projection stay empty")
+		assert.Empty(t, g.Branch)
+	})
+	t.Run("more IDs than one query holds", func(t *testing.T) {
+		t.Parallel()
+		ids := make([]string, 0, instanceIDsPerQuery+10)
+		for i := 0; i < instanceIDsPerQuery+9; i++ {
+			ids = append(ids, "missing")
+		}
+		ids = append(ids, b.ID)
+		got, err := repo.FindByIDs(ctx, ids)
+		require.NoError(t, err)
+		assert.Len(t, got, 1)
+	})
+}

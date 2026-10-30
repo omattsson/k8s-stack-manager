@@ -264,7 +264,7 @@ describe('Audit Log Page', () => {
     });
 
     await user.click(screen.getByLabelText('Action'));
-    for (const action of ['deploy', 'stop', 'clean', 'rollback', 'extend_ttl', 'invoke_action', 'publish', 'expired']) {
+    for (const action of ['deploy', 'stop', 'clean', 'rollback', 'extend_ttl', 'invoke_action', 'publish', 'expired', 'port_forward', 'port_forward_end']) {
       expect(await screen.findByRole('option', { name: action })).toBeInTheDocument();
     }
     await user.keyboard('{Escape}');

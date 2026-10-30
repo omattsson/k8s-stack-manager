@@ -36,6 +36,10 @@ func (m *mockInstanceRepo) FindByID(ctx context.Context, _ string) (*models.Stac
 func (m *mockInstanceRepo) FindByNamespace(ctx context.Context, _ string) (*models.StackInstance, error) {
 	return nil, ctx.Err()
 }
+
+func (m *mockInstanceRepo) NamespaceShared(context.Context, string, string) (bool, error) {
+	return false, nil
+}
 func (m *mockInstanceRepo) Update(ctx context.Context, _ *models.StackInstance) error {
 	return ctx.Err()
 }
@@ -95,6 +99,10 @@ func (m *mockInstanceRepo) ExistsByDefinitionAndStatus(ctx context.Context, _, _
 func (m *mockInstanceRepo) ListExpired(ctx context.Context) ([]*models.StackInstance, error) {
 	return nil, ctx.Err()
 }
+func (*mockInstanceRepo) FindByIDs(ctx context.Context, _ []string) (map[string]*models.StackInstance, error) {
+	return nil, ctx.Err()
+}
+
 func (m *mockInstanceRepo) ListExpiringSoon(ctx context.Context, _ time.Duration) ([]*models.StackInstance, error) {
 	return nil, ctx.Err()
 }

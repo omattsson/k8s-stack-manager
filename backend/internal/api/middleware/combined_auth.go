@@ -132,7 +132,7 @@ func CombinedAuth(deps APIKeyAuthDeps) gin.HandlerFunc {
 			return
 		}
 
-		_, user, failure := AuthenticateAPIKey(c.Request.Context(), deps.APIKeyRepo, deps.UserRepo, apiKeyHeader)
+		record, user, failure := AuthenticateAPIKey(c.Request.Context(), deps.APIKeyRepo, deps.UserRepo, apiKeyHeader)
 		if failure != nil {
 			c.AbortWithStatusJSON(failure.Status, gin.H{"error": failure.Message})
 			return
@@ -142,6 +142,11 @@ func CombinedAuth(deps APIKeyAuthDeps) gin.HandlerFunc {
 		c.Set(contextKeyUserID, user.ID)
 		c.Set(contextKeyUsername, user.Username)
 		c.Set(contextKeyRole, user.Role)
+		c.Set(contextKeyAuthMethod, AuthMethodAPIKey)
+		c.Set(contextKeyAPIKeyID, record.ID)
+		if record.ExpiresAt != nil {
+			c.Set(contextKeyAPIKeyExp, *record.ExpiresAt)
+		}
 	}
 }
 

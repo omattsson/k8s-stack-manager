@@ -946,6 +946,10 @@ func (s *stubStackInstanceRepo) FindByID(ctx context.Context, _ string) (*models
 func (s *stubStackInstanceRepo) FindByNamespace(ctx context.Context, _ string) (*models.StackInstance, error) {
 	return nil, ctx.Err()
 }
+
+func (s *stubStackInstanceRepo) NamespaceShared(context.Context, string, string) (bool, error) {
+	return false, nil
+}
 func (s *stubStackInstanceRepo) Update(ctx context.Context, _ *models.StackInstance) error {
 	return ctx.Err()
 }
@@ -990,6 +994,10 @@ func (s *stubStackInstanceRepo) ExistsByDefinitionAndStatus(ctx context.Context,
 func (s *stubStackInstanceRepo) ListExpired(ctx context.Context) ([]*models.StackInstance, error) {
 	return nil, ctx.Err()
 }
+func (*stubStackInstanceRepo) FindByIDs(ctx context.Context, _ []string) (map[string]*models.StackInstance, error) {
+	return nil, ctx.Err()
+}
+
 func (s *stubStackInstanceRepo) ListExpiringSoon(ctx context.Context, _ time.Duration) ([]*models.StackInstance, error) {
 	return nil, ctx.Err()
 }
@@ -1980,7 +1988,7 @@ func TestSetupRoutes_UIConfigIsPublic(t *testing.T) {
 	for k := range body {
 		keys = append(keys, k)
 	}
-	assert.ElementsMatch(t, []string{"title", "logo_url", "favicon_url", "default_instance_ttl_minutes", "max_instance_ttl_days"}, keys)
+	assert.ElementsMatch(t, []string{"title", "logo_url", "favicon_url", "default_instance_ttl_minutes", "max_instance_ttl_days", "port_forward_enabled"}, keys)
 	assert.NotEmpty(t, body["title"])
 }
 
@@ -2020,6 +2028,10 @@ func (*stubClusterRepo) CountAll(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	return 0, nil
+}
+
+func (*stubClusterRepo) StreamFlagsByIDs(ctx context.Context, _ []string, _ bool) (map[string]bool, error) {
+	return nil, ctx.Err()
 }
 
 func (*stubClusterRepo) NamesByIDs(ctx context.Context, _ []string) (map[string]string, error) {

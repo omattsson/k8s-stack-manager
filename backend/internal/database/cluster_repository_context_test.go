@@ -56,6 +56,10 @@ var clusterRepoCalls = []struct {
 		_, err := r.NamesByIDs(ctx, []string{"cl-1", "cl-2"})
 		return err
 	}},
+	{name: "StreamFlagsByIDs", call: func(ctx context.Context, r *GORMClusterRepository) error {
+		_, err := r.StreamFlagsByIDs(ctx, []string{"cl-1", "cl-2"}, true)
+		return err
+	}},
 	{name: "CountAll", call: func(ctx context.Context, r *GORMClusterRepository) error {
 		_, err := r.CountAll(ctx)
 		return err

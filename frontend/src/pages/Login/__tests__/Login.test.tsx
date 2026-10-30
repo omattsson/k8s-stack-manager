@@ -107,7 +107,7 @@ describe('Login Page — branding', () => {
 
   it('shows the configured title and logo before sign-in', () => {
     render(
-      <StaticBrandingProvider value={{ title: 'Platform Portal', logoUrl: 'https://cdn.example.com/logo.png', faviconUrl: '/favicon.svg', defaultTtlMinutes: 0, maxTtlDays: 30 }}>
+      <StaticBrandingProvider value={{ title: 'Platform Portal', logoUrl: 'https://cdn.example.com/logo.png', faviconUrl: '/favicon.svg', defaultTtlMinutes: 0, maxTtlDays: 30, portForwardEnabled: false }}>
         <MemoryRouter>
           <Login />
         </MemoryRouter>

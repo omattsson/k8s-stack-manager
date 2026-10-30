@@ -56,6 +56,27 @@ func (r *GORMStackInstanceRepository) FindByID(ctx context.Context, id string) (
 	return &instance, nil
 }
 
+// instanceIDsPerQuery bounds the IN list of one FindByIDs query.
+const instanceIDsPerQuery = 500
+
+// FindByIDs returns the instances with these IDs that exist, keyed by ID. It
+// selects only id, owner_id, status, namespace and cluster_id.
+func (r *GORMStackInstanceRepository) FindByIDs(ctx context.Context, ids []string) (map[string]*models.StackInstance, error) {
+	out := make(map[string]*models.StackInstance, len(ids))
+	for start := 0; start < len(ids); start += instanceIDsPerQuery {
+		end := min(start+instanceIDsPerQuery, len(ids))
+		var rows []models.StackInstance
+		if err := r.db.WithContext(ctx).Select("id, owner_id, status, namespace, cluster_id").
+			Where("id IN ?", ids[start:end]).Find(&rows).Error; err != nil {
+			return nil, dberrors.NewDatabaseError("find_by_ids", err)
+		}
+		for i := range rows {
+			out[rows[i].ID] = &rows[i]
+		}
+	}
+	return out, nil
+}
+
 // FindByNamespace returns the stack instance occupying the given namespace.
 func (r *GORMStackInstanceRepository) FindByNamespace(ctx context.Context, namespace string) (*models.StackInstance, error) {
 	var instance models.StackInstance
@@ -66,6 +87,17 @@ func (r *GORMStackInstanceRepository) FindByNamespace(ctx context.Context, names
 		return nil, dberrors.NewDatabaseError("find_by_namespace", err)
 	}
 	return &instance, nil
+}
+
+// NamespaceShared reports whether an instance other than id has this namespace.
+func (r *GORMStackInstanceRepository) NamespaceShared(ctx context.Context, namespace, id string) (bool, error) {
+	var ids []string
+	if err := r.db.WithContext(ctx).Model(&models.StackInstance{}).
+		Where("namespace = ? AND id <> ?", namespace, id).
+		Limit(1).Pluck("id", &ids).Error; err != nil {
+		return false, dberrors.NewDatabaseError("namespace_shared", err)
+	}
+	return len(ids) > 0, nil
 }
 
 // columnExpiryWarnedAt is written only by MarkExpiryWarned and by the clear

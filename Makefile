@@ -214,7 +214,7 @@ define e2e_start_backend
 		ADMIN_USERNAME=admin ADMIN_PASSWORD=admin SELF_REGISTRATION=true \
 		HELM_BINARY=$${HELM_BINARY:-helm} \
 		CORS_ALLOWED_ORIGINS=http://localhost:3000 \
-		RATE_LIMIT=10000 LOGIN_RATE_LIMIT=10000 PORT=8081 UNIQUE_INSTANCE_NAMES=true $(E2E_STUB_BACKEND_ENV) $(1) \
+		RATE_LIMIT=10000 LOGIN_RATE_LIMIT=10000 PORT=8081 UNIQUE_INSTANCE_NAMES=true STACK_PORT_FORWARD_ENABLED=true $(E2E_STUB_BACKEND_ENV) $(1) \
 		./tmp/main > ../frontend/test-logs/$(2) 2>&1 & echo $$! > $(E2E_PID)
 	@echo "Waiting for backend to be healthy..."
 	@n=0; until curl -sf http://localhost:8081/health/live >/dev/null 2>&1; do \
@@ -1122,6 +1122,41 @@ helm-test: ## Verify Deployment, Argo Rollout, and External Secrets Helm renders
 		--set-file "branding.files.big\.svg=$$big_file" > "$$template_file" 2>&1; then rm -f "$$big_file"; echo "branding files over 900 KiB must fail" >&2; exit 1; fi; \
 	rm -f "$$big_file"; \
 	grep -q 'the limit is 900 KiB' "$$template_file" || { echo "missing branding size error" >&2; exit 1; }; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template > "$$template_file"; \
+	grep -q 'STACK_PORT_FORWARD_ENABLED: "false"' "$$template_file" && grep -q 'STACK_PORT_FORWARD_MAX_DURATION: "1h"' "$$template_file" \
+		&& grep -q 'STACK_PORT_FORWARD_IDLE_TIMEOUT: "15m"' "$$template_file" && grep -q 'STACK_PORT_FORWARD_MAX_PER_USER: "5"' "$$template_file" \
+		&& grep -q 'STACK_STREAM_ALLOW_API_KEYS: "false"' "$$template_file" \
+		|| { echo "backend ConfigMap must render the port-forward defaults (off)" >&2; exit 1; }; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/port-forward.yaml \
+		--api-versions admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy --show-only templates/backend/configmap.yaml > "$$template_file"; \
+	grep -q 'STACK_PORT_FORWARD_ENABLED: "true"' "$$template_file" && grep -q 'STACK_PORT_FORWARD_MAX_DURATION: "2h"' "$$template_file" \
+		&& grep -q 'STACK_PORT_FORWARD_IDLE_TIMEOUT: "30m"' "$$template_file" && grep -q 'STACK_PORT_FORWARD_MAX_PER_USER: "8"' "$$template_file" \
+		&& grep -q 'STACK_STREAM_ALLOW_API_KEYS: "true"' "$$template_file" \
+		|| { echo "tests/port-forward.yaml must render the five stream variables" >&2; exit 1; }; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/port-forward.yaml \
+		--api-versions admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy \
+		--show-only templates/backend/clusterrole.yaml > "$$template_file"; \
+	grep -q 'resources: \["pods/portforward"\]' "$$template_file" \
+		|| { echo "cluster scope with backend.portForward.enabled must grant pods/portforward" >&2; exit 1; }; \
+	grep -q 'name: .*-backend-stream-scope' "$$template_file" && grep -q 'operations: \["CONNECT"\]' "$$template_file" \
+		|| { echo "cluster scope must render the stream admission policy" >&2; exit 1; }; \
+	if grep -q 'name: .*-backend-scope$$' "$$template_file"; then echo "cluster scope must not render the namespace-scope policy" >&2; exit 1; fi; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/port-forward.yaml \
+		--set backend.portForward.enabled=false --show-only templates/backend/clusterrole.yaml > "$$template_file"; \
+	if grep -q 'resources: \["pods/portforward"\]' "$$template_file"; then echo "backend.portForward.enabled=false must not grant pods/portforward" >&2; exit 1; fi; \
+	if grep -q 'backend-stream-scope' "$$template_file"; then echo "portForward off must render no stream policy" >&2; exit 1; fi; \
+	if helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/port-forward.yaml \
+		--show-only templates/backend/clusterrole.yaml > "$$template_file" 2>&1; then echo "portForward on without the ValidatingAdmissionPolicy API must fail" >&2; exit 1; fi; \
+	grep -q 'set backend.rbac.admissionPolicy.enabled=false knowingly' "$$template_file" || { echo "missing stream policy API error" >&2; exit 1; }; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/port-forward.yaml \
+		--set backend.rbac.admissionPolicy.enabled=false --show-only templates/backend/clusterrole.yaml > "$$template_file"; \
+	if grep -q 'ValidatingAdmissionPolicy' "$$template_file"; then echo "admissionPolicy.enabled=false must render no policy" >&2; exit 1; fi; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
+		--show-only templates/backend/clusterrole.yaml > "$$template_file"; \
+	if grep -q 'resources: \["pods/portforward"\]' "$$template_file"; then echo "namespace scope must not add a pods/portforward rule" >&2; exit 1; fi; \
+	grep -q 'name: .*-backend-scope$$' "$$template_file" && ! grep -q 'backend-stream-scope' "$$template_file" \
+		|| { echo "namespace scope must keep its own policy only" >&2; exit 1; }; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
 		--set metrics.enabled=true --set metrics.grafanaDashboard.enabled=true \
 		--show-only templates/grafana-dashboard.yaml > "$$template_file"; \

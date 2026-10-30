@@ -111,6 +111,8 @@ The Helm chart gives the backend service account its rights. These rights apply 
 
 Without the policy, the cluster-wide RoleBinding right could give the backend access to any namespace.
 
+**Port-forward rights.** With scope `namespace`, the ClusterRole `<fullname>-stack-access` already allows `*/*/*` in stack namespaces, so the chart adds no rule for `pods/portforward`. With scope `cluster` and `backend.portForward.enabled`, the backend ClusterRole gets `pods/portforward` (`get`, `create`). A second ValidatingAdmissionPolicy (`<fullname>-backend-stream-scope`, rendered only while the feature is on; the install fails on a cluster without that API unless you set `backend.rbac.admissionPolicy.enabled=false`) then limits CONNECT on `pods/portforward` and `pods/exec` by the backend service account to namespaces with the label `managed-by=k8s-stack-manager`. A cluster that you register with a kubeconfig needs the same verbs in that identity.
+
 `backend.rbac.scope: cluster` keeps the rules of chart 0.6 and earlier. The backend has rights on namespaced objects in all namespaces. Use it only when stack charts need cluster-scoped objects.
 
 ### Stack Instance
@@ -375,6 +377,26 @@ An operator can register custom actions on the server, for example "refresh-db" 
   - The list refreshes after your own run and when the job of your run ends. To see the runs of other users, reload the page.
 - The CLI and other API clients use the same endpoints: `GET /api/v1/stack-instances/:id/actions`, `POST /api/v1/stack-instances/:id/actions/:name`, `GET /api/v1/stack-instances/:id/actions/:name/jobs/:job_id/log?offset=N`, and `GET /api/v1/stack-instances/:id/action-runs?limit=N&cursor=C`.
 
+### Port-forward
+
+Port-forward opens a TCP tunnel from your computer to a service of a stack, through the backend. Use it to reach a database or an internal tool that has no ingress. The feature is off by default.
+
+- Command: `stackctl stack port-forward <instance name> <service> <port>`. The instance page lists the command for each ClusterIP service when the feature is on and you can change the instance.
+- The API is `GET /stack-instances/:id/port-forward?service=<name>&port=<service port>` with a WebSocket upgrade. It takes the `Authorization` header (or `X-API-Key` when `STACK_STREAM_ALLOW_API_KEYS=true`), never `?token=`.
+- Who: the owner, `devops` and `admin`. Other users get 403.
+- Two switches: an operator sets `STACK_PORT_FORWARD_ENABLED=true` (Helm `backend.portForward.enabled`), and an `admin` turns on **Allow port-forward** for the cluster (`allow_port_forward`, off by default). Without the first the API returns 404 `feature_disabled`; without the second 403 `cluster_port_forward_disabled`.
+- The instance must be deployed (409 `instance_not_deployed`). The backend sends the tunnel to the first Running and Ready pod of the service (by name). Without a ready pod the answer is 503 `no_ready_pod`.
+- Limits: a tunnel closes after `STACK_PORT_FORWARD_MAX_DURATION` (default 1h) or after `STACK_PORT_FORWARD_IDLE_TIMEOUT` (default 15m) without data. A user has at most `STACK_PORT_FORWARD_MAX_PER_USER` tunnels (default 5), and a replica at most 500. The counts are per backend replica, so the real limit is replicas times `MAX_PER_USER`. More tunnels give 429 `tunnel_limit`.
+- Close reasons (WebSocket close code): 1000 normal, 1001 server shutdown, 1003 the client sent a text frame, 1008 access revoked, 4001 maximum duration, 4002 idle timeout, 4502 pod stream error.
+- Access ends the tunnel: delete, disable, password reset, role change, logout of the token or of all sessions, an API key delete, a stop, clean or delete of the instance, and the cluster switch going off. The replica that handles a stop, clean or delete closes the tunnels at once. Other replicas close them at the next revalidation (up to one minute). An expired access token does not close an open tunnel.
+
+**Security notes.**
+
+- A tunnel goes past NetworkPolicies, because the kubelet connects inside the network namespace of the pod. It also goes past the authentication of an ingress, basic auth or an SSO proxy in front of a tool.
+- `devops` and `admin` users reach every stack on a cluster that allows it. Keep `allow_port_forward` off on clusters with real data.
+- The backend refuses a namespace without the label `managed-by=k8s-stack-manager` and the namespace of the backend.
+- The audit entries hold the service, port and pod, never the data of the tunnel.
+
 ### Value Override
 
 A value override is a per-chart configuration override on a stack instance. The application deep-merges it with the chart defaults when it exports the Helm values. It substitutes the template variables (`{{.Branch}}`, `{{.Namespace}}`, `{{.InstanceName}}`, `{{.StackName}}`, `{{.Owner}}`) at export time.
@@ -395,6 +417,7 @@ The application records every mutating API call (POST, PUT, DELETE) with the use
   - Cleanup policy `run`.
   - User `disable`, `enable`, `reset_password`, and `change_role` (the old and the new role are in the details).
   - Instance `follow` and `unfollow`.
+  - Instance `port_forward` (a tunnel starts) and `port_forward_end` (a tunnel ends). The handler writes both, because the audit log ignores GET. The details hold the service, port and pod (the end entry also the bytes in and out, the duration and the close code and reason), never the data.
 - Deploy, stop, clean, and rollback store the ID of the deployment log in the details.
 - Some actions come from the application itself and not from an API call: `expired` (the TTL reaper), `cleanup_policy_executed` (the cleanup scheduler), and `interrupted` (the recovery of an interrupted operation).
 - A bulk operation writes one entry for each instance or template that succeeded, with `"bulk": true` in the details.
@@ -627,6 +650,7 @@ Template -> (instantiate) -> Definition + ChartConfigs -> (create instance) -> I
 | Deploy, deploy preview, stop, clean, delete, rollback, run actions, read action job logs | yes | yes | yes | no (403) |
 | Edit the instance, extend the TTL | yes | yes | yes | no (403) |
 | Read or change value, branch, and quota overrides | yes | yes | yes | no (403) |
+| Open a port-forward tunnel to a service ([Port-forward](#port-forward)) | yes | yes | yes | no (403) |
 | Set a quota override above the cluster quota | no (403) | yes | yes | no (403) |
 
 - Bulk operations (`/stack-instances/bulk/*`) need the `devops` or `admin` role.
@@ -738,6 +762,7 @@ WebSocket connections (`/ws`):
 - Without fan-out (`WS_FANOUT_ENABLED=false`, the default for Docker Compose and local development), a client sees only the events of its own replica. Use one replica then.
 - A message larger than 512 KiB, or a message sent while the fan-out buffer is full, reaches only the clients of the replica that sent it. After a database outage, events older than 30 seconds are not delivered. The page shows the current state after a reload.
 - An in-app notification goes only to the sockets of the notified user.
+- Port-forward limits are per replica, and each replica closes its own tunnels on shutdown (1001).
 
 ### Git Integration
 

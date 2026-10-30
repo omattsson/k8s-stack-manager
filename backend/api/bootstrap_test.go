@@ -482,6 +482,10 @@ func (s *stubStackInstanceRepo) FindByID(ctx context.Context, _ string) (*models
 func (s *stubStackInstanceRepo) FindByNamespace(ctx context.Context, _ string) (*models.StackInstance, error) {
 	return nil, ctx.Err()
 }
+
+func (s *stubStackInstanceRepo) NamespaceShared(context.Context, string, string) (bool, error) {
+	return false, nil
+}
 func (s *stubStackInstanceRepo) Update(ctx context.Context, _ *models.StackInstance) error {
 	return ctx.Err()
 }
@@ -526,6 +530,10 @@ func (s *stubStackInstanceRepo) ExistsByDefinitionAndStatus(ctx context.Context,
 func (s *stubStackInstanceRepo) ListExpired(ctx context.Context) ([]*models.StackInstance, error) {
 	return nil, ctx.Err()
 }
+func (*stubStackInstanceRepo) FindByIDs(ctx context.Context, _ []string) (map[string]*models.StackInstance, error) {
+	return nil, ctx.Err()
+}
+
 func (s *stubStackInstanceRepo) ListExpiringSoon(ctx context.Context, _ time.Duration) ([]*models.StackInstance, error) {
 	return nil, ctx.Err()
 }
@@ -1477,6 +1485,10 @@ func (*stubClusterRepo) CountByHealthStatus(ctx context.Context, status string) 
 	}
 	return 0, nil
 }
+func (*stubClusterRepo) StreamFlagsByIDs(ctx context.Context, _ []string, _ bool) (map[string]bool, error) {
+	return nil, ctx.Err()
+}
+
 func (*stubClusterRepo) NamesByIDs(ctx context.Context, _ []string) (map[string]string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

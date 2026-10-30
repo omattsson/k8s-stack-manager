@@ -37,7 +37,8 @@ func RedactWSToken() gin.HandlerFunc {
 		// be either absent or path-separated. Keeps redaction in scope
 		// even if a future route adds versioned WS endpoints.
 		path := c.Request.URL.Path
-		if path != "/ws" && !strings.HasPrefix(path, "/ws/") {
+		stream := isStreamPath(path)
+		if !stream && path != "/ws" && !strings.HasPrefix(path, "/ws/") {
 			c.Next()
 			return
 		}
@@ -52,7 +53,9 @@ func RedactWSToken() gin.HandlerFunc {
 		}
 		// Stash for the handler only when a non-empty value was sent —
 		// `?token=` (empty) is treated as "no credential" by the handler.
-		if token := q.Get("token"); token != "" {
+		// The stream routes (port-forward, exec) never accept ?token=: the
+		// value is dropped, not stashed.
+		if token := q.Get("token"); token != "" && !stream {
 			c.Set(wsContextKey, token)
 		}
 		// Scrub from the request URL so downstream middleware (otelgin
@@ -81,4 +84,16 @@ func WSTokenFromContext(c *gin.Context) string {
 		}
 	}
 	return ""
+}
+
+// isStreamPath reports whether path is a stream route:
+// /api/v1/stack-instances/:id/port-forward or /exec. These routes accept
+// only header auth, so a ?token= value is dropped before any logging.
+func isStreamPath(path string) bool {
+	const prefix = "/api/v1/stack-instances/"
+	if !strings.HasPrefix(path, prefix) {
+		return false
+	}
+	parts := strings.Split(strings.TrimPrefix(path, prefix), "/")
+	return len(parts) == 2 && parts[0] != "" && (parts[1] == "port-forward" || parts[1] == "exec")
 }

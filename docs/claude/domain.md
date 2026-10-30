@@ -13,6 +13,7 @@ Developers use this application to configure, store and deploy multi-service Hel
 - **Namespace naming:** the handler generates `stack-{instance-name}-{owner}` (`buildNamespace`).
   - When that name has more than 63 characters, the namespace is `stack-{cut instance-name}-{hash6}-{owner}`. `hash6` is the first 6 hex characters of the SHA-256 of the full sanitized instance name and owner, so names that differ after the cut give different namespaces.
   - The owner is cut only when the instance part keeps fewer than 10 characters. A name that fits does not change. A rename keeps the namespace.
+  - The namespace is set once, at create (also clone and quick deploy), and never changes: `PUT /stack-instances/:id` with a `namespace` that differs from the stored one gives 400 `namespace cannot be changed` for every role (an echoed value is accepted). Deploy, clean, delete and port-forward trust the stored namespace, so a changed value would point the instance at the namespace of another stack.
 - **Instance names:** a new or changed name must be an RFC 1123 label (lowercase `a-z`, `0-9`, `-`; start and end alphanumeric; at most 50 characters). `models.ValidateInstanceName` checks it on create, rename, clone and quick deploy. `StackInstance.Validate` does not check it, so older instances keep working.
 - **Unique names for each cluster:** with `UNIQUE_INSTANCE_NAMES=true`, a name must be unique on its cluster. Turn it on when Ingress hosts use `{{.InstanceName}}`: two stacks with the same name claim the same host.
   - Create, rename, clone and quick deploy refuse a name that another instance uses on the same cluster: 409 `instance name already exists`, message `A stack named "x" already exists on this cluster (owner: y)`, and free name suggestions.
@@ -52,6 +53,32 @@ Developers use this application to configure, store and deploy multi-service Hel
   - `GET /stack-instances/:id` adds `following` and `follower_count`.
   - Table `instance_followers` (primary key `user_id, instance_id`, index on `instance_id`).
   - Every instance delete path removes the followers and the action runs (`DeleteInstanceRecord`). A user delete removes the follows of the user.
+- **Port-forward:**
+  - `GET /stack-instances/:id/port-forward?service=<name>&port=<service port>` upgrades to a WebSocket that tunnels raw TCP bytes to a service port of the instance (`stackctl stack port-forward <instance> <service> <port>`). Handler: `StreamHandler` (`handlers/instance_port_forward.go`, shared checks in `instance_stream.go`), sessions: `internal/podstream`.
+  - Two switches must be on: `STACK_PORT_FORWARD_ENABLED` (default `false`, else 404) and the cluster field `allow_port_forward` (default `false`, set by an admin through the cluster create and update endpoints). `GET /ui-config` returns `port_forward_enabled`.
+  - Checks before the upgrade, in this order. The body is `{"error","code"}`:
+    1. Feature off: 404 `feature_disabled`.
+    2. API key and `STACK_STREAM_ALLOW_API_KEYS=false`: 403 `api_key_not_allowed`.
+    3. `service` is not a DNS-1035 label: 400 `invalid_service`. `port` is not 1 to 65535: 400 `invalid_port`.
+    4. Instance not found: 404 `instance_not_found`.
+    5. Not owner, `devops` or `admin` (`canModifyInstance`): 403 `forbidden`.
+    6. Cluster without `allow_port_forward` (also a missing cluster): 403 `cluster_port_forward_disabled`.
+    7. No live namespace (status draft, stopped, stopping or cleaning, or empty namespace; the namespace is missing on the cluster): 409 `instance_not_deployed`.
+    8. Namespace guard: another instance row has the same namespace (`NamespaceShared`; rows from before the namespace became immutable), the namespace lacks the label `managed-by=k8s-stack-manager`, or it is the namespace of the backend (`POD_NAMESPACE`): 403 `namespace_not_allowed`.
+    9. Not a WebSocket request: 400 `upgrade_required`. Foreign `Origin` (the `/ws` origin rules): 403 `origin_not_allowed` (defense in depth: the global CORS middleware answers a disallowed `Origin` with a plain 403 before the handler runs, so a browser client normally gets that 403 and never this code; the handler check stays for a CORS setup that lets the origin through). A request without `Origin` passes.
+    10. Per-user limit (`STACK_PORT_FORWARD_MAX_PER_USER`, default 5) or process cap (500) reached: 429 `tunnel_limit` (counted in `rejected_total` by the manager as `user_limit` or `process_cap`). The manager is shutting down: 503 `shutting_down`.
+    11. Service not found: 404 `service_not_found`. No such service port: 404 `port_not_found`. ExternalName: 409 `service_external_name`. No selector: 409 `service_no_selector`. No Running and Ready pod without a deletion time: 503 `no_ready_pod`.
+    12. The dial to the pod fails (or times out): 502 `dial_failed`. The dial is bound to 20 s (`podUpgradeBound` in `internal/k8s/port_forward_dial.go`): both dialers run with a request context, the SPDY connection carries a deadline until the upgrade is done, and a connection that completes late is closed, so a stalled API server leaves no goroutine or connection behind. A timeout of the namespace, service or pod lookup (checks 8 and 11) is 503 `kube_timeout`, not `dial_failed`.
+    - Any other error: 500 `internal` with `Internal server error`.
+  - The tunnel goes to the first ready pod by name. A named `targetPort` resolves through the container ports of that pod: the regular containers, and init containers only when they are native sidecars (`restartPolicy: Always`), as kubectl does.
+  - Protocol: binary frames carry the bytes. A text frame closes with 1003. There is no half-close. Server ping every 30 s (a ping is not activity), read limit 64 KiB, read deadline 70 s (moves on frame and pong), write deadline 10 s.
+  - Close codes: 1000 normal, 1001 server shutdown, 1003 text frame, 1008 access revoked (also `session revoked`, see below), 1009 frame larger than the read limit (`message too big`), 1011 internal error (a panic in the session; never code 0), 4001 maximum duration (`STACK_PORT_FORWARD_MAX_DURATION`, default 1h, at most 24h), 4002 idle timeout (`STACK_PORT_FORWARD_IDLE_TIMEOUT`, default 15m, at most the maximum duration), 4502 pod stream error (the reason holds the error, truncated to fit a close frame).
+  - The limits count per replica: the real limit is replicas times `MAX_PER_USER`.
+  - Revoke during the setup: the session registers with the hub only after the dial and the upgrade, so a logout or user revoke in between would miss it. The identity of an API-key tunnel uses the time at the start of the handler as its issue time (like `/ws`), and right after the registration `podstream.PortForwardOptions.PostRegister` re-checks the token, session and user blocklists (API key: key, user and blocklist), the user's current role, the instance and the cluster switch. A revoked tunnel closes with 1008 `session revoked` before any byte is copied. Lookup errors fail open; the check is bound to 5 s.
+  - Audit: the handler writes its own entries (the audit middleware ignores GET), entity type `stack_instance`, entity ID = instance ID. `port_forward` (start): `service`, `port`, `pod`, `target_port`, `auth` (`jwt` or `api_key`). `port_forward_end`: `service`, `port`, `pod`, `bytes_in`, `bytes_out`, `duration_ms`, `close_code`, `close_reason`. Never payload bytes.
+  - Instance delete, stop and clean (also in bulk) close the local tunnels of the instance at once (1008, `InstanceHandler.WithStreamRevoker`, `Hub.DisconnectInstance`). Other replicas close theirs at the next revalidation (up to one minute). See `docs/claude/auth-sessions.md`.
+  - Metrics: `stack_stream.sessions_active`, `bytes_total`, `sessions_closed_total`, `rejected_total` (`internal/podstream/metrics.go`). `rejected_total` counts every refusal before the upgrade (status 400 and above except 500) in `streamError`, with the error code as the reason; `sessions_closed_total` reasons include `message_too_big` and `internal_error`.
+  - Shutdown: `streams.Shutdown` has its own 10 s budget (`streamShutdownBudget` in `api/main.go`), so the end audit entries are written before the database closes.
   - Followers get in-app notifications only.
 - **Quick deploy:** one-click flow from a template to a new instance and a deploy. It generates the instance name and the namespace.
   - The definition that it creates has `OwnerInstanceID` set.
@@ -234,7 +261,7 @@ Developers use this application to configure, store and deploy multi-service Hel
 | Quick Deploy | `/api/v1/templates/:id/quick-deploy` | One-click template deployment |
 | Bulk Template Ops | `/api/v1/templates/bulk` | Bulk delete, publish, unpublish templates (up to 50, devops) |
 | Stack Definitions | `/api/v1/stack-definitions` | CRUD, nested chart management, import and export, template link, upgrade check and upgrade |
-| Stack Instances | `/api/v1/stack-instances` | CRUD, clone, values export, deploy, deploy-preview, stop, clean, rollback, status, pods, deploy-log (list, one entry, values), recent, compare, extend TTL, follow and unfollow, custom actions (list, invoke, job log, action runs) |
+| Stack Instances | `/api/v1/stack-instances` | CRUD, clone, values export, deploy, deploy-preview, stop, clean, rollback, status, pods, deploy-log (list, one entry, values), recent, compare, extend TTL, follow and unfollow, custom actions (list, invoke, job log, action runs), port-forward (`GET /:id/port-forward`, WebSocket) |
 | Bulk Operations | `/api/v1/stack-instances/bulk` | Bulk deploy, stop, clean, delete (up to 50 instances, devops) |
 | Value Overrides | `/api/v1/stack-instances/:id/overrides` | Per-chart value overrides |
 | Branch Overrides | `/api/v1/stack-instances/:id/branches` | Per-chart branch overrides (list, get, set, delete for each chart) |
@@ -251,6 +278,6 @@ Developers use this application to configure, store and deploy multi-service Hel
 | Favorites | `/api/v1/favorites` | User bookmarks |
 | Notifications | `/api/v1/notifications` | List, read and unread, count, preferences |
 | Analytics | `/api/v1/analytics` | Usage overview, template stats, user stats |
-| UI Config | `/api/v1/ui-config` | Public branding values (title, logo, favicon), the TTL default of the create forms and the TTL limit (`max_instance_ttl_days`) |
+| UI Config | `/api/v1/ui-config` | Public branding values (title, logo, favicon), the TTL default of the create forms, the TTL limit (`max_instance_ttl_days`) and `port_forward_enabled` |
 | Health | `/health/*` | Liveness and readiness |
-| WebSocket | `/ws` | Real-time status and log events. Replicas share them through `ws_events` when `WS_FANOUT_ENABLED=true`. `RedactWSToken` removes the token from logs. |
+| WebSocket | `/ws` | Real-time status and log events. Replicas share them through `ws_events` when `WS_FANOUT_ENABLED=true`. `RedactWSToken` removes the token from logs. The stream route `/api/v1/stack-instances/:id/port-forward` is a WebSocket too (see Port-forward). |
