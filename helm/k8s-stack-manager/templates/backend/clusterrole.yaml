@@ -35,15 +35,20 @@ rules:
       - resourcequotas
       - limitranges
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-{{- if .Values.backend.exec.enabled }}
-  # Exec through the backend (backend.exec). The websocket transport of
-  # client-go uses get, the SPDY transport uses create. Nothing else in the
-  # backend runs pods/exec (ExecInDeploymentPod has no production caller), so
-  # the rule is rendered only with the feature. serviceaccounts get (above)
-  # serves the service-account-token check.
+  # pods/exec create is granted always, as in chart 0.6 and earlier: Helm runs
+  # as the backend, which can write Roles and RoleBindings but holds no
+  # escalate or bind verb in this scope, so Kubernetes refuses a stack chart
+  # Role that grants pods/exec unless the backend holds it too. The stream
+  # admission policy limits CONNECT to managed namespaces while a stream
+  # feature is on. With backend.exec.enabled the websocket transport of
+  # client-go also needs get. serviceaccounts get (above) serves the
+  # service-account-token check.
   - apiGroups: [""]
     resources: ["pods/exec"]
+{{- if .Values.backend.exec.enabled }}
     verbs: ["get", "create"]
+{{- else }}
+    verbs: ["create"]
 {{- end }}
 {{- if .Values.backend.portForward.enabled }}
   # Port-forward through the backend (backend.portForward). The websocket

@@ -1184,7 +1184,9 @@ helm-test: ## Verify Deployment, Argo Rollout, and External Secrets Helm renders
 	grep -q 'backend.exec.enabled with backend.rbac.scope=cluster' "$$template_file" || { echo "missing exec stream policy API error" >&2; exit 1; }; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/exec.yaml \
 		--set backend.exec.enabled=false --show-only templates/backend/clusterrole.yaml > "$$template_file"; \
-	if grep -q 'pods/exec' "$$template_file" && grep -q 'resources: \["pods/exec"\]' "$$template_file"; then echo "both features off must not grant pods/exec" >&2; exit 1; fi; \
+	grep -A1 'resources: \["pods/exec"\]' "$$template_file" | grep -q 'verbs: \["create"\]' \
+		|| { echo "exec off must keep pods/exec create (stack charts with exec Roles)" >&2; exit 1; }; \
+	if grep -A1 'resources: \["pods/exec"\]' "$$template_file" | grep -q '"get"'; then echo "exec off must not grant pods/exec get" >&2; exit 1; fi; \
 	if grep -q 'backend-stream-scope' "$$template_file"; then echo "both features off must render no stream policy" >&2; exit 1; fi; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/exec.yaml \
 		--set backend.rbac.scope=namespace --show-only templates/backend/clusterrole.yaml > "$$template_file"; \

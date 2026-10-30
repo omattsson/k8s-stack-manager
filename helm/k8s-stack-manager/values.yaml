@@ -335,14 +335,19 @@ backend:
   # short and name only containers whose environment you accept to expose.
   # Every command is audited (exec, exec_end) with its arguments, which are
   # not redacted: do not put secrets in command arguments.
+  # The backend refuses a container that holds a service-account token
+  # (automount, a projected token, or a Secret of type
+  # kubernetes.io/service-account-token mounted or referenced in env) unless
+  # allowServiceAccountToken is true.
   # Two switches must both be on: this one, and the per-cluster switch
   # allow_exec (Admin > Clusters, off by default). API keys follow
   # backend.streams.allowApiKeys.
   # RBAC: with rbac.scope=namespace the stack-access ClusterRole already grants
   # */*/* in each stack namespace (pods/exec and serviceaccounts get
   # included), so no extra rule is rendered. With rbac.scope=cluster the chart
-  # adds pods/exec (get, create) to the backend ClusterRole only when this is
-  # enabled. A registered cluster with its own kubeconfig needs the same verbs
+  # keeps pods/exec create in the backend ClusterRole as before (stack charts
+  # whose Roles grant pods/exec need the backend to hold it: no escalate verb)
+  # and adds get when this is enabled. A registered cluster with its own kubeconfig needs the same verbs
   # in that identity, and get on serviceaccounts.
   # The limits are per backend replica. Ingress: see portForward (a session is
   # a long WebSocket; nginx-ingress needs proxy-read-timeout and
