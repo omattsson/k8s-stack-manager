@@ -28,6 +28,9 @@ var (
 	ErrContainerNotFound   = errors.New("no ready pod runs the container")
 	ErrContainerNotAllowed = errors.New("container is not allowed for exec")
 	ErrServiceAccountToken = errors.New("container holds a service-account token")
+	// ErrTokenCheckForbidden: the backend may not read the ServiceAccount or a
+	// Secret of the pod, so the service-account-token check cannot run.
+	ErrTokenCheckForbidden = errors.New("the service-account-token check may not read the pod's service account or secrets")
 )
 
 // Label keys that name the Helm release of a pod.
@@ -170,79 +173,24 @@ func (c *Client) releasePods(ctx context.Context, namespace, release string) ([]
 // a service-account token: the effective automount is not false (the pod field,
 // else the field of the ServiceAccount, else true), the container mounts a
 // volume with a projected serviceAccountToken source, or it reads a Secret of
-// the legacy type kubernetes.io/service-account-token. A failed read of the
-// ServiceAccount fails closed (the error is returned); a missing ServiceAccount
-// counts as automount true.
+// the legacy type kubernetes.io/service-account-token. With a shared process
+// namespace a command also reads the files and the environment of every other
+// running container (/proc/<pid>/root, /proc/<pid>/environ), so then every
+// running container of the pod is checked. A failed read of the ServiceAccount
+// or of a Secret fails closed (the error is returned; a Forbidden read wraps
+// ErrTokenCheckForbidden); a missing ServiceAccount counts as automount true.
 func (c *Client) holdsServiceAccountToken(ctx context.Context, namespace string, pod *corev1.Pod, ctr *corev1.Container) (bool, error) {
-	automount := true
-	switch {
-	case pod.Spec.AutomountServiceAccountToken != nil:
-		automount = *pod.Spec.AutomountServiceAccountToken
-	default:
-		name := pod.Spec.ServiceAccountName
-		if name == "" {
-			name = pod.Spec.DeprecatedServiceAccount
-		}
-		if name == "" {
-			name = "default"
-		}
-		sa, err := c.clientset.CoreV1().ServiceAccounts(namespace).Get(ctx, name, metav1.GetOptions{})
-		switch {
-		case err == nil:
-			if sa.AutomountServiceAccountToken != nil {
-				automount = *sa.AutomountServiceAccountToken
-			}
-		case k8serrors.IsNotFound(err):
-			// automount stays true
-		default:
-			return false, fmt.Errorf("get service account %s/%s: %w", namespace, name, err)
-		}
+	automount, err := c.effectiveAutomount(ctx, namespace, pod)
+	if err != nil || automount {
+		return automount, err
 	}
-	if automount {
+	readers := []tokenReader{{ctr.VolumeMounts, ctr.Env, ctr.EnvFrom}}
+	if pod.Spec.ShareProcessNamespace != nil && *pod.Spec.ShareProcessNamespace {
+		readers = runningContainerReaders(pod)
+	}
+	secretNames, projectedToken := referencedSecrets(pod, readers)
+	if projectedToken {
 		return true, nil
-	}
-	mounted := map[string]bool{}
-	for _, vm := range ctr.VolumeMounts {
-		mounted[vm.Name] = true
-	}
-	// Secrets that the container reads: mounted secret volumes (also as a
-	// projected source), env valueFrom.secretKeyRef and envFrom.secretRef.
-	var secretNames []string
-	seen := map[string]bool{}
-	addSecret := func(name string) {
-		if name != "" && !seen[name] {
-			seen[name] = true
-			secretNames = append(secretNames, name)
-		}
-	}
-	for _, v := range pod.Spec.Volumes {
-		if !mounted[v.Name] {
-			continue
-		}
-		if v.Secret != nil {
-			addSecret(v.Secret.SecretName)
-		}
-		if v.Projected == nil {
-			continue
-		}
-		for _, src := range v.Projected.Sources {
-			if src.ServiceAccountToken != nil {
-				return true, nil
-			}
-			if src.Secret != nil {
-				addSecret(src.Secret.Name)
-			}
-		}
-	}
-	for _, e := range ctr.Env {
-		if e.ValueFrom != nil && e.ValueFrom.SecretKeyRef != nil {
-			addSecret(e.ValueFrom.SecretKeyRef.Name)
-		}
-	}
-	for _, ef := range ctr.EnvFrom {
-		if ef.SecretRef != nil {
-			addSecret(ef.SecretRef.Name)
-		}
 	}
 	// A legacy service-account token is a Secret of the type
 	// kubernetes.io/service-account-token. One read for each distinct name; a
@@ -256,10 +204,129 @@ func (c *Client) holdsServiceAccountToken(ctx context.Context, namespace string,
 			}
 		case k8serrors.IsNotFound(err):
 		default:
-			return false, fmt.Errorf("get secret %s/%s: %w", namespace, name, err)
+			return false, tokenCheckError("secret", namespace, name, err)
 		}
 	}
 	return false, nil
+}
+
+// effectiveAutomount is the automountServiceAccountToken of the pod: the pod
+// field, else the field of its ServiceAccount, else true.
+func (c *Client) effectiveAutomount(ctx context.Context, namespace string, pod *corev1.Pod) (bool, error) {
+	if pod.Spec.AutomountServiceAccountToken != nil {
+		return *pod.Spec.AutomountServiceAccountToken, nil
+	}
+	name := pod.Spec.ServiceAccountName
+	if name == "" {
+		name = pod.Spec.DeprecatedServiceAccount
+	}
+	if name == "" {
+		name = "default"
+	}
+	sa, err := c.clientset.CoreV1().ServiceAccounts(namespace).Get(ctx, name, metav1.GetOptions{})
+	switch {
+	case err == nil:
+		if sa.AutomountServiceAccountToken != nil {
+			return *sa.AutomountServiceAccountToken, nil
+		}
+		return true, nil
+	case k8serrors.IsNotFound(err):
+		return true, nil
+	default:
+		return false, tokenCheckError("service account", namespace, name, err)
+	}
+}
+
+// tokenCheckError wraps a failed read of the token check. A Forbidden read
+// also wraps ErrTokenCheckForbidden: the identity of the backend lacks get on
+// serviceaccounts or secrets in the namespace.
+func tokenCheckError(kind, namespace, name string, err error) error {
+	if k8serrors.IsForbidden(err) {
+		return fmt.Errorf("get %s %s/%s: %w: %w", kind, namespace, name, ErrTokenCheckForbidden, err)
+	}
+	return fmt.Errorf("get %s %s/%s: %w", kind, namespace, name, err)
+}
+
+// tokenReader is what a container reads a token through: its volume mounts and
+// its environment.
+type tokenReader struct {
+	mounts  []corev1.VolumeMount
+	env     []corev1.EnvVar
+	envFrom []corev1.EnvFromSource
+}
+
+// runningContainerReaders lists the containers that can run next to the
+// selected one: the regular containers, the sidecars (init containers with
+// restartPolicy Always) and the ephemeral containers. Other init containers
+// have ended before the pod is ready.
+func runningContainerReaders(pod *corev1.Pod) []tokenReader {
+	var out []tokenReader
+	for i := range pod.Spec.Containers {
+		cc := &pod.Spec.Containers[i]
+		out = append(out, tokenReader{cc.VolumeMounts, cc.Env, cc.EnvFrom})
+	}
+	for i := range pod.Spec.InitContainers {
+		cc := &pod.Spec.InitContainers[i]
+		if cc.RestartPolicy != nil && *cc.RestartPolicy == corev1.ContainerRestartPolicyAlways {
+			out = append(out, tokenReader{cc.VolumeMounts, cc.Env, cc.EnvFrom})
+		}
+	}
+	for i := range pod.Spec.EphemeralContainers {
+		cc := &pod.Spec.EphemeralContainers[i].EphemeralContainerCommon
+		out = append(out, tokenReader{cc.VolumeMounts, cc.Env, cc.EnvFrom})
+	}
+	return out
+}
+
+// referencedSecrets returns the distinct Secrets that the readers read (mounted
+// secret volumes, also as a projected source, env valueFrom.secretKeyRef and
+// envFrom.secretRef), and whether one of them mounts a projected
+// serviceAccountToken source.
+func referencedSecrets(pod *corev1.Pod, readers []tokenReader) ([]string, bool) {
+	mounted := map[string]bool{}
+	var names []string
+	seen := map[string]bool{}
+	add := func(name string) {
+		if name != "" && !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	for _, r := range readers {
+		for _, vm := range r.mounts {
+			mounted[vm.Name] = true
+		}
+		for _, e := range r.env {
+			if e.ValueFrom != nil && e.ValueFrom.SecretKeyRef != nil {
+				add(e.ValueFrom.SecretKeyRef.Name)
+			}
+		}
+		for _, ef := range r.envFrom {
+			if ef.SecretRef != nil {
+				add(ef.SecretRef.Name)
+			}
+		}
+	}
+	for _, v := range pod.Spec.Volumes {
+		if !mounted[v.Name] {
+			continue
+		}
+		if v.Secret != nil {
+			add(v.Secret.SecretName)
+		}
+		if v.Projected == nil {
+			continue
+		}
+		for _, src := range v.Projected.Sources {
+			if src.ServiceAccountToken != nil {
+				return nil, true
+			}
+			if src.Secret != nil {
+				add(src.Secret.Name)
+			}
+		}
+	}
+	return names, false
 }
 
 // ExecCommand runs command in the container of the pod (no stdin, no TTY) and

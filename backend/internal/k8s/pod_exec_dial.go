@@ -45,6 +45,13 @@ type boundedRoundTripper struct {
 	// cancel runs when the context of the caller ends first (closes a raw
 	// connection). May be nil.
 	cancel func()
+	// bound replaces podUpgradeBound when it is above zero (tests).
+	bound time.Duration
+}
+
+type roundTripResult struct {
+	resp *http.Response
+	err  error
 }
 
 func (b *boundedRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -52,31 +59,54 @@ func (b *boundedRoundTripper) RoundTrip(req *http.Request) (*http.Response, erro
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	type result struct {
-		resp *http.Response
-		err  error
+	bound := podUpgradeBound
+	if b.bound > 0 {
+		bound = b.bound
 	}
-	dctx, cancel := context.WithTimeout(ctx, podUpgradeBound)
-	ch := make(chan result, 1)
+	dctx, cancel := context.WithTimeout(ctx, bound)
+	ch := make(chan roundTripResult, 1)
 	go func() {
 		defer cancel()
 		resp, err := b.inner.RoundTrip(req.WithContext(dctx))
-		ch <- result{resp, err}
+		ch <- roundTripResult{resp, err}
 	}()
 	select {
 	case r := <-ch:
 		return r.resp, r.err
 	case <-ctx.Done():
-		if b.cancel != nil {
-			b.cancel()
-		}
-		go func() {
-			if r := <-ch; r.err == nil && b.late != nil {
-				b.late(r.resp)
-			}
-		}()
+		b.abandon(ch)
 		return nil, ctx.Err()
+	case <-dctx.Done():
+		// The inner round trip ignores the deadline on some paths (the SPDY
+		// round tripper behind a proxy reads the CONNECT and upgrade responses
+		// without one), so the bound is enforced here. The goroutine cancels
+		// dctx after its send: a result that is ready wins.
+		select {
+		case r := <-ch:
+			return r.resp, r.err
+		default:
+		}
+		b.abandon(ch)
+		return nil, errUpgradeTimeout
 	}
+}
+
+// errUpgradeTimeout ends an upgrade that did not complete within
+// podUpgradeBound. It does not wrap context.DeadlineExceeded: that error means
+// the maximum duration of the session.
+var errUpgradeTimeout = fmt.Errorf("the exec upgrade did not complete within %s", podUpgradeBound)
+
+// abandon gives up on the round trip whose result comes on ch: it closes the
+// raw connection (cancel) and closes a connection that completes later.
+func (b *boundedRoundTripper) abandon(ch <-chan roundTripResult) {
+	if b.cancel != nil {
+		b.cancel()
+	}
+	go func() {
+		if r := <-ch; r.err == nil && b.late != nil {
+			b.late(r.resp)
+		}
+	}()
 }
 
 // guardedUpgrader clears the deadline of the raw connection once the upgrade

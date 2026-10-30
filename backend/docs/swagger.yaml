@@ -7644,13 +7644,14 @@ paths:
         error with {"type":"error","message":"Internal server error"} and 1011. Later
         client frames are ignored. The server pings every 30 s. Close codes: 1000
         the command ended, 1001 server shutdown, 1008 access revoked, 1009 client
-        frame larger than 64 KiB, 1011 internal error (also when the audit entry cannot
-        be written; the command does not run then), 4001 maximum duration (no exit
-        frame), 4400 invalid start message, 4408 no start message in 10 s, 4502 Kubernetes
-        stream error. The remote process can keep running after the stream closes.
-        Exec shows the container environment and its secrets: turn it on only where
-        the stack owners may see them. The start and the end of each command are audited
-        (exec, exec_end).'
+        frame larger than the read limit (64 KiB, or 6 times STACK_EXEC_MAX_COMMAND_LENGTH
+        plus 4 KiB when that is larger), 1011 internal error (also when the audit
+        entry cannot be written; the command does not run then), 4001 maximum duration
+        (no exit frame), 4400 invalid start message, 4408 no start message in 10 s,
+        4502 Kubernetes stream error. The remote process can keep running after the
+        stream closes. Exec shows the container environment and its secrets: turn
+        it on only where the stack owners may see them. The start and the end of each
+        command are audited (exec, exec_end).'
       parameters:
       - description: Instance ID
         in: path
@@ -7687,7 +7688,7 @@ paths:
             type: object
         "403":
           description: api_key_not_allowed, forbidden, cluster_exec_disabled, namespace_not_allowed,
-            container_not_allowed, service_account_token, origin_not_allowed
+            container_not_allowed, service_account_token, token_check_forbidden, origin_not_allowed
           schema:
             additionalProperties:
               type: string

@@ -41,8 +41,8 @@ rules:
   # Role that grants pods/exec unless the backend holds it too. The stream
   # admission policy limits CONNECT to managed namespaces while a stream
   # feature is on. With backend.exec.enabled the websocket transport of
-  # client-go also needs get. serviceaccounts get (above) serves the
-  # service-account-token check.
+  # client-go also needs get. serviceaccounts and secrets get (above) serve
+  # the service-account-token check.
   - apiGroups: [""]
     resources: ["pods/exec"]
 {{- if .Values.backend.exec.enabled }}

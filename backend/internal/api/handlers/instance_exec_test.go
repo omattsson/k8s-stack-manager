@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -287,6 +288,9 @@ func TestExec_PreUpgradeChecks(t *testing.T) {
 		{name: "container not found", path: execPath + "&container=web", upgrade: true, setup: func(f *execFixture) { f.exec.resolveErr = k8s.ErrContainerNotFound }, wantStatus: 404, wantCode: "container_not_found"},
 		{name: "no allowed container in the pods", path: execPath, upgrade: true, setup: func(f *execFixture) { f.exec.resolveErr = k8s.ErrContainerNotAllowed }, wantStatus: 403, wantCode: "container_not_allowed"},
 		{name: "service account token", path: execPath, upgrade: true, setup: func(f *execFixture) { f.exec.resolveErr = k8s.ErrServiceAccountToken }, wantStatus: 403, wantCode: "service_account_token"},
+		{name: "token check refused by the cluster", path: execPath, upgrade: true, setup: func(f *execFixture) {
+			f.exec.resolveErr = fmt.Errorf("get secret ns/tok: %w: %w", k8s.ErrTokenCheckForbidden, errors.New("secrets \"tok\" is forbidden"))
+		}, wantStatus: 403, wantCode: "token_check_forbidden"},
 		{name: "cluster too slow", path: execPath, upgrade: true, setup: func(f *execFixture) { f.exec.resolveErr = context.DeadlineExceeded }, wantStatus: 503, wantCode: "kube_timeout"},
 		{name: "unknown error is a generic 500", path: execPath, upgrade: true, setup: func(f *execFixture) { f.exec.resolveErr = errors.New("secret detail") }, wantStatus: 500, wantCode: "internal"},
 		{name: "instance lookup error", path: execPath, setup: func(f *execFixture) { f.instRepo.fetchErr = errors.New("db down") }, wantStatus: 500, wantCode: "internal"},

@@ -61,6 +61,7 @@ const (
 	codeContainerNotFound     = "container_not_found"
 	codeServiceAccountToken   = "service_account_token" // #nosec G101 -- an error code, not a credential
 	codeExecLimit             = "exec_limit"
+	codeTokenCheckForbidden   = "token_check_forbidden" // #nosec G101 -- an error code, not a credential
 	streamResolveTimeout      = 20 * time.Second
 	streamUpgraderBufferBytes = 4096
 )

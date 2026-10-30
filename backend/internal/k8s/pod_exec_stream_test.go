@@ -388,6 +388,101 @@ func TestResolveExecTarget_LegacyServiceAccountTokenSecrets(t *testing.T) {
 	}
 }
 
+// TestResolveExecTarget_SharedProcessNamespace: with a shared process
+// namespace a command reads the files and the environment of the other running
+// containers, so their tokens count too.
+func TestResolveExecTarget_SharedProcessNamespace(t *testing.T) {
+	t.Parallel()
+	tokenVolume := corev1.Volume{Name: "tok", VolumeSource: corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{
+		Sources: []corev1.VolumeProjection{{ServiceAccountToken: &corev1.ServiceAccountTokenProjection{Path: "token"}}},
+	}}}
+	tokenMount := []corev1.VolumeMount{{Name: "tok", MountPath: "/var/run/secrets/tokens"}}
+	tokenEnv := []corev1.EnvVar{{Name: "T", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+		LocalObjectReference: corev1.LocalObjectReference{Name: "legacy"}, Key: "token"}}}}
+	always := corev1.ContainerRestartPolicyAlways
+	tests := []struct {
+		name    string
+		shared  bool
+		mut     func(*corev1.Pod)
+		wantErr error
+	}{
+		{name: "sidecar with a projected token, shared", shared: true, mut: func(p *corev1.Pod) {
+			p.Spec.Volumes = []corev1.Volume{tokenVolume}
+			p.Spec.Containers = append(p.Spec.Containers, corev1.Container{Name: "side", VolumeMounts: tokenMount})
+		}, wantErr: ErrServiceAccountToken},
+		{name: "sidecar with a projected token, not shared", mut: func(p *corev1.Pod) {
+			p.Spec.Volumes = []corev1.Volume{tokenVolume}
+			p.Spec.Containers = append(p.Spec.Containers, corev1.Container{Name: "side", VolumeMounts: tokenMount})
+		}},
+		{name: "native sidecar with a legacy token in env, shared", shared: true, mut: func(p *corev1.Pod) {
+			p.Spec.InitContainers = []corev1.Container{{Name: "proxy", RestartPolicy: &always, Env: tokenEnv}}
+		}, wantErr: ErrServiceAccountToken},
+		{name: "ended init container with a token, shared", shared: true, mut: func(p *corev1.Pod) {
+			p.Spec.Volumes = []corev1.Volume{tokenVolume}
+			p.Spec.InitContainers = []corev1.Container{{Name: "migrate", VolumeMounts: tokenMount}}
+		}},
+		{name: "ephemeral container with a legacy token, shared", shared: true, mut: func(p *corev1.Pod) {
+			p.Spec.EphemeralContainers = []corev1.EphemeralContainer{{EphemeralContainerCommon: corev1.EphemeralContainerCommon{
+				Name: "debug", EnvFrom: []corev1.EnvFromSource{{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "legacy"}}}},
+			}}}
+		}, wantErr: ErrServiceAccountToken},
+		{name: "other container with an ordinary secret, shared", shared: true, mut: func(p *corev1.Pod) {
+			p.Spec.Containers = append(p.Spec.Containers, corev1.Container{Name: "side", Env: []corev1.EnvVar{{Name: "P", ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "plain"}, Key: "p"}}}}})
+		}},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			p := secretPod(tt.mut)
+			p.Spec.ShareProcessNamespace = boolPtr(tt.shared)
+			cs := fake.NewSimpleClientset(p,
+				secretObj("legacy", corev1.SecretTypeServiceAccountToken), secretObj("plain", corev1.SecretTypeOpaque))
+			target, err := NewClientFromInterface(cs).ResolveExecTarget(context.Background(), "ns", ExecTargetRequest{
+				Release: "web", AllowedContainer: allowList("app"),
+			})
+			if tt.wantErr != nil {
+				require.ErrorIs(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, "app", target.Container)
+		})
+	}
+}
+
+// TestResolveExecTarget_TokenCheckForbidden: a read that the cluster refuses
+// fails closed with ErrTokenCheckForbidden, so the caller gets a stable code.
+func TestResolveExecTarget_TokenCheckForbidden(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		resource string
+		mut      func(*corev1.Pod)
+	}{
+		{name: "service account", resource: "serviceaccounts", mut: func(p *corev1.Pod) { p.Spec.AutomountServiceAccountToken = nil }},
+		{name: "secret", resource: "secrets", mut: func(p *corev1.Pod) {
+			p.Spec.Containers[0].EnvFrom = []corev1.EnvFromSource{{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "s"}}}}
+		}},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cs := fake.NewSimpleClientset(secretPod(tt.mut))
+			cs.PrependReactor("get", tt.resource, func(k8stesting.Action) (bool, runtime.Object, error) {
+				return true, nil, k8serrors.NewForbidden(schema.GroupResource{Resource: tt.resource}, "x", errors.New("no rights"))
+			})
+			_, err := NewClientFromInterface(cs).ResolveExecTarget(context.Background(), "ns", ExecTargetRequest{
+				Release: "web", AllowedContainer: allowList("app"),
+			})
+			require.ErrorIs(t, err, ErrTokenCheckForbidden)
+			assert.NotErrorIs(t, err, ErrServiceAccountToken)
+		})
+	}
+}
+
 func TestSanitizeExecError(t *testing.T) {
 	t.Parallel()
 	const secretURL = `https://10.0.0.1:6443/api/v1/namespaces/ns/pods/p/exec?command=mysql&command=--password%3Dhunter2&container=web`
@@ -541,6 +636,56 @@ func TestBoundedRoundTripper_LateConnectionIsClosed(t *testing.T) {
 	case <-closed:
 	case <-time.After(2 * time.Second):
 		t.Fatal("the late connection was not closed")
+	}
+}
+
+// TestBoundedRoundTripper_BoundHoldsWhenTheInnerIgnoresIt: the SPDY round
+// tripper behind a proxy reads the upgrade response without a deadline; the
+// bound must still end the round trip, and a connection that completes later
+// must be closed.
+func TestBoundedRoundTripper_BoundHoldsWhenTheInnerIgnoresIt(t *testing.T) {
+	t.Parallel()
+	unblock := make(chan struct{})
+	closed := make(chan struct{})
+	b := &boundedRoundTripper{
+		inner: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			<-unblock // ignores the request context, as the proxied SPDY leg does
+			return &http.Response{StatusCode: 101, Body: http.NoBody}, nil
+		}),
+		late:  func(*http.Response) { close(closed) },
+		bound: 50 * time.Millisecond,
+	}
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.invalid/", nil)
+	require.NoError(t, err)
+	start := time.Now()
+	_, err = b.RoundTrip(req)
+	require.ErrorIs(t, err, errUpgradeTimeout)
+	assert.NotErrorIs(t, err, context.DeadlineExceeded, "a deadline error would read as the maximum duration")
+	assert.Less(t, time.Since(start), 2*time.Second)
+	close(unblock)
+	select {
+	case <-closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the late connection was not closed")
+	}
+}
+
+// TestBoundedRoundTripper_ResultBeforeTheBoundWins: a round trip that
+// completes is returned, not replaced by the bound.
+func TestBoundedRoundTripper_ResultBeforeTheBoundWins(t *testing.T) {
+	t.Parallel()
+	for i := 0; i < 200; i++ {
+		b := &boundedRoundTripper{
+			inner: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: 101, Body: http.NoBody}, nil
+			}),
+			bound: time.Hour,
+		}
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.invalid/", nil)
+		require.NoError(t, err)
+		resp, err := b.RoundTrip(req)
+		require.NoError(t, err)
+		assert.Equal(t, 101, resp.StatusCode)
 	}
 }
 

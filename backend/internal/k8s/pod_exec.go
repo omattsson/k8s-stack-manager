@@ -87,7 +87,8 @@ func (c *Client) ExecInDeploymentPod(
 		Stderr: &stderr,
 	}); err != nil {
 		combined := combineBuffers(stdout.String(), stderr.String())
-		return combined, fmt.Errorf("exec in %s/%s: %w", namespace, targetPod.Name, err)
+		// The raw error holds the exec URL with every argument of the command.
+		return combined, fmt.Errorf("exec in %s/%s: %w", namespace, targetPod.Name, SanitizeExecError(err))
 	}
 
 	combined := combineBuffers(stdout.String(), stderr.String())

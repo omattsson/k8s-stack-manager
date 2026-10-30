@@ -209,6 +209,11 @@ func (h *StreamHandler) respondK8sError(c *gin.Context, kind string, err error, 
 	if code == codeNoReadyPod && kind == podstream.KindExec {
 		msg = "No ready pod for the chart"
 	}
+	if code == codeTokenCheckForbidden {
+		// A missing right of the backend identity, not of the caller.
+		slog.Warn(streamLabel(kind)+": the service-account-token check was refused by the cluster (get serviceaccounts and secrets needed)",
+			"op", op, "instance_id", c.Param("id"), "error", err)
+	}
 	if code == codeInternal {
 		if errors.Is(err, context.Canceled) {
 			// The client left; nothing to answer.
@@ -243,6 +248,8 @@ func mapStreamError(err error, dial bool) (int, string, string) {
 		return http.StatusNotFound, codeContainerNotFound, "No ready pod runs the container"
 	case errors.Is(err, k8s.ErrContainerNotAllowed):
 		return http.StatusForbidden, codeContainerNotAllowed, "The container is not allowed for exec"
+	case errors.Is(err, k8s.ErrTokenCheckForbidden):
+		return http.StatusForbidden, codeTokenCheckForbidden, "The backend may not read the service account or secrets of the pod"
 	case errors.Is(err, k8s.ErrServiceAccountToken):
 		return http.StatusForbidden, codeServiceAccountToken, "The container holds a service-account token"
 	case errors.Is(err, k8s.ErrDialFailed):
