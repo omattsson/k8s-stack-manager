@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -119,6 +121,7 @@ type execFixtureOpts struct {
 	instance *models.StackInstance
 	cluster  *models.Cluster
 	audit    middleware.AuditLogger
+	noAudit  bool
 	execCfg  podstream.Config
 }
 
@@ -174,6 +177,9 @@ func newExecFixture(t *testing.T, o execFixtureOpts) *execFixture {
 	var audit middleware.AuditLogger = f.audit
 	if o.audit != nil {
 		audit = o.audit
+	}
+	if o.noAudit {
+		audit = nil
 	}
 	f.handler = NewStreamHandler(StreamDeps{
 		InstanceRepo: f.instRepo, ClusterRepo: f.clusters, Manager: f.pfMgr,
@@ -677,4 +683,73 @@ func TestExec_RejectedMetricHasKindExec(t *testing.T) {
 	assert.EqualValues(t, 1, got["exec/cluster_exec_disabled"])
 	assert.EqualValues(t, 1, got["exec/user_limit"])
 	assert.Zero(t, got["port_forward/feature_disabled"])
+}
+
+func TestExec_NoAuditLoggerFailsClosed(t *testing.T) {
+	t.Parallel()
+	f := newExecFixture(t, execFixtureOpts{noAudit: true})
+	base := f.server(t)
+	c, _, err := gorilla.DefaultDialer.Dial(base+"/api/v1/stack-instances/inst-1/exec?chart=web", nil)
+	require.NoError(t, err)
+	defer c.Close()
+	require.NoError(t, c.WriteMessage(gorilla.TextMessage, []byte(`{"type":"start","command":["ls"]}`)))
+	fr, code, _ := readExecFrames(t, c)
+	assert.Equal(t, 1011, code)
+	require.Len(t, fr.text, 1)
+	assert.Equal(t, "audit unavailable", fr.text[0]["message"])
+	assert.False(t, f.exec.called("exec"), "the command never runs without an audit logger")
+}
+
+func TestExec_RefusedByTheClusterGivesAFixedMessage(t *testing.T) {
+	t.Parallel()
+	f := newExecFixture(t, execFixtureOpts{})
+	f.exec.run = func(context.Context, []string, io.Writer, io.Writer) (int, error) {
+		return -1, &k8s.ExecStreamError{Message: "The cluster refused the exec", Detail: "pods p is forbidden", Forbidden: true}
+	}
+	base := f.server(t)
+	c, _, err := gorilla.DefaultDialer.Dial(base+"/api/v1/stack-instances/inst-1/exec?chart=web", nil)
+	require.NoError(t, err)
+	defer c.Close()
+	require.NoError(t, c.WriteMessage(gorilla.TextMessage, []byte(`{"type":"start","command":["ls"]}`)))
+	fr, code, _ := readExecFrames(t, c)
+	assert.Equal(t, 4502, code)
+	assert.Equal(t, "The cluster refused the exec", fr.text[len(fr.text)-1]["message"])
+}
+
+func TestStreamHandler_LoadInstanceRefusesAnUnknownKind(t *testing.T) {
+	t.Parallel()
+	f := newExecFixture(t, execFixtureOpts{})
+	for _, kind := range []string{"", "bogus"} {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+		c.Params = gin.Params{{Key: "id", Value: "inst-1"}}
+		c.Set("userID", "owner-1")
+		c.Set("role", "admin")
+		assert.Nil(t, f.handler.loadInstance(c, kind), kind)
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	}
+	assert.False(t, clusterAllowsStream(&models.Cluster{AllowExec: true, AllowPortForward: true}, ""))
+}
+
+// Not parallel: it replaces the default slog logger.
+func TestLogExecFailure_NeverLogsTheURL(t *testing.T) {
+	var buf strings.Builder
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(old) })
+
+	raw := &url.Error{Op: "Post", URL: "https://10.0.0.1:6443/api/v1/namespaces/ns/pods/p/exec?command=--password%3Dhunter2", Err: errors.New("EOF")}
+	logExecFailure(context.Background(), "inst-1", "web-0", raw)
+	logExecFailure(context.Background(), "inst-1", "web-0", k8s.SanitizeExecError(raw))
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	logExecFailure(cancelled, "inst-1", "web-0", errors.New("x"))
+
+	out := buf.String()
+	assert.Contains(t, out, "EOF")
+	assert.NotContains(t, out, "hunter2")
+	assert.NotContains(t, out, "10.0.0.1")
+	assert.Contains(t, out, "level=DEBUG", "an ended session is no failure")
+	assert.Equal(t, 2, strings.Count(out, "level=WARN"))
 }

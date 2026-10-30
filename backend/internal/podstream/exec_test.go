@@ -500,7 +500,7 @@ func TestExecResult(t *testing.T) {
 		{CloseNormal, &zero, ExecResultZero}, {CloseNormal, &three, ExecResultNonzero}, {CloseNormal, nil, ExecResultZero},
 		{CloseMaxDuration, nil, ExecResultTimeout}, {ClosePolicy, nil, ExecResultRevoked},
 		{CloseGoingAway, nil, ExecResultShutdown}, {closeAbnormalOnly, nil, ExecResultClientClosed},
-		{ClosePodError, nil, ExecResultError}, {CloseInternalError, nil, ExecResultError}, {CloseBadStart, nil, ExecResultError},
+		{CloseMessageTooBig, nil, ExecResultClientClosed}, {ClosePodError, nil, ExecResultError}, {CloseInternalError, nil, ExecResultError}, {CloseBadStart, nil, ExecResultError},
 	}
 	for _, tt := range tests {
 		tt := tt
@@ -531,4 +531,75 @@ func TestManager_KindAndLimits(t *testing.T) {
 	_, err = m.Acquire("u")
 	assert.ErrorIs(t, err, ErrLimitReached)
 	s.Release()
+}
+
+// The start entry exists but the session is revoked before the command starts:
+// the summary still says so (Audited), so the handler writes the end entry.
+func TestExec_RevokedBetweenAuditAndStart(t *testing.T) {
+	t.Parallel()
+	inAudit := make(chan struct{})
+	finishAudit := make(chan struct{})
+	h := startExecHarness(t, execHarnessOpts{beforeStart: func(context.Context, []string) error {
+		close(inAudit)
+		<-finishAudit
+		return nil
+	}})
+	h.sendStart(t, "ls")
+	<-inAudit
+	require.Eventually(t, func() bool { return h.hub.RevocableCount() == 1 }, 2*time.Second, 5*time.Millisecond)
+	assert.Equal(t, 1, h.hub.DisconnectInstance("inst1"))
+	close(finishAudit)
+	_, code, _ := readFrames(t, h.client)
+	assert.Equal(t, ClosePolicy, code)
+	sum := h.waitEnd(t)
+	assert.True(t, sum.Audited, "the start entry was written")
+	assert.False(t, sum.Started)
+	assert.Equal(t, ExecResultRevoked, sum.Result)
+	assert.Nil(t, sum.ExitCode)
+	assert.Zero(t, h.ran.Load(), "the command never runs after the revoke")
+}
+
+// A command within the maximum length never hits the read limit because of
+// the JSON escaping of its bytes.
+func TestExec_ReadLimitCoversEscapedCommand(t *testing.T) {
+	t.Parallel()
+	const maxLen = 20000
+	assert.GreaterOrEqual(t, execTimings(Timings{}, maxLen).ReadLimit, int64(6*maxLen))
+	assert.Equal(t, int64(DefaultReadLimit), execTimings(Timings{}, 100).ReadLimit)
+	assert.Equal(t, int64(1234), execTimings(Timings{ReadLimit: 1234}, maxLen).ReadLimit, "an explicit limit stays")
+
+	var got []string
+	h := startExecHarness(t, execHarnessOpts{
+		maxLen: maxLen,
+		cfg:    Config{Timings: Timings{PingInterval: time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: time.Second}},
+		run: func(_ context.Context, cmd []string, _, _ io.Writer) (int, error) {
+			got = cmd
+			return 0, nil
+		},
+	})
+	arg := strings.Repeat("\x01", maxLen-3) // each byte is \u0001 in JSON: 6 bytes
+	h.sendStart(t, "cat", arg)
+	frames, code, _ := readFrames(t, h.client)
+	assert.Equal(t, CloseNormal, code)
+	require.NotEmpty(t, frames)
+	require.Len(t, got, 2)
+	assert.Equal(t, arg, got[1])
+}
+
+// Shutdown waits for the flow goroutine, not only for the run loop.
+func TestExec_ShutdownWaitsForTheCommand(t *testing.T) {
+	t.Parallel()
+	var stopped atomic.Bool
+	h := startExecHarness(t, execHarnessOpts{run: func(ctx context.Context, _ []string, _, _ io.Writer) (int, error) {
+		<-ctx.Done()
+		time.Sleep(100 * time.Millisecond)
+		stopped.Store(true)
+		return -1, ctx.Err()
+	}})
+	h.sendStart(t, "sleep", "100")
+	require.Eventually(t, func() bool { return h.ran.Load() == 1 }, 2*time.Second, 5*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, h.m.Shutdown(ctx))
+	assert.True(t, stopped.Load(), "Shutdown returned before the command function ended")
 }

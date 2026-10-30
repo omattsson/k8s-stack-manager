@@ -66,7 +66,7 @@ func (h *StreamHandler) PortForward(c *gin.Context) {
 	port := int32(port64)
 
 	// 4, 5, 6: instance, role, cluster switch.
-	inst := h.loadInstance(c)
+	inst := h.loadInstance(c, podstream.KindPortForward)
 	if inst == nil {
 		return
 	}
@@ -83,7 +83,7 @@ func (h *StreamHandler) PortForward(c *gin.Context) {
 	}
 
 	// 8: the namespace is a stack namespace of this instance only.
-	if !h.checkNamespaceOwner(c, inst) {
+	if !h.checkNamespaceOwner(c, podstream.KindPortForward, inst) {
 		return
 	}
 	if h.provider == nil {
@@ -99,7 +99,7 @@ func (h *StreamHandler) PortForward(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), streamResolveTimeout)
 	defer cancel()
 	if err := pf.CheckStreamNamespace(ctx, inst.Namespace, h.cfg.BackendNamespace); err != nil {
-		h.respondK8sError(c, err, "check namespace", false)
+		h.respondK8sError(c, podstream.KindPortForward, err, "check namespace", false)
 		return
 	}
 
@@ -135,14 +135,14 @@ func (h *StreamHandler) PortForward(c *gin.Context) {
 	// 10: service, port and pod.
 	target, err := pf.ResolveServiceTarget(ctx, inst.Namespace, service, port)
 	if err != nil {
-		h.respondK8sError(c, err, "resolve service", false)
+		h.respondK8sError(c, podstream.KindPortForward, err, "resolve service", false)
 		return
 	}
 
 	// 11: dial.
 	stream, err := pf.DialPodPort(ctx, inst.Namespace, target.Pod, target.TargetPort)
 	if err != nil {
-		h.respondK8sError(c, err, "dial pod", true)
+		h.respondK8sError(c, podstream.KindPortForward, err, "dial pod", true)
 		return
 	}
 
@@ -181,18 +181,18 @@ func (h *StreamHandler) PortForward(c *gin.Context) {
 // Rows from before the namespace became immutable can name the namespace of
 // another stack, and the label check of CheckStreamNamespace cannot tell them
 // apart. It writes the response and returns false when the check fails.
-func (h *StreamHandler) checkNamespaceOwner(c *gin.Context, inst *models.StackInstance) bool {
+func (h *StreamHandler) checkNamespaceOwner(c *gin.Context, kind string, inst *models.StackInstance) bool {
 	shared, err := h.instanceRepo.NamespaceShared(c.Request.Context(), inst.Namespace, inst.ID)
 	if err != nil {
 		if respondCancelled(c, err) {
 			return false
 		}
-		slog.Error(streamLabel(c)+": namespace owner lookup failed", "instance_id", inst.ID, "error", err)
+		slog.Error(streamLabel(kind)+": namespace owner lookup failed", "instance_id", inst.ID, "error", err)
 		streamError(c, http.StatusInternalServerError, codeInternal, "")
 		return false
 	}
 	if shared {
-		slog.Warn(streamLabel(c)+" denied: the namespace is shared with another instance",
+		slog.Warn(streamLabel(kind)+" denied: the namespace is shared with another instance",
 			"instance_id", inst.ID, "namespace", inst.Namespace, "user_id", middleware.GetUserIDFromContext(c))
 		streamError(c, http.StatusForbidden, codeNamespaceNotAllowed, "The namespace of the instance is not allowed")
 		return false
@@ -204,9 +204,9 @@ func (h *StreamHandler) checkNamespaceOwner(c *gin.Context, inst *models.StackIn
 // contract. dial is true for the dial to the pod: there a timeout is
 // dial_failed (502); in the namespace, service and pod lookups it is
 // kube_timeout (503). Anything unknown is a 500 with the generic message.
-func (h *StreamHandler) respondK8sError(c *gin.Context, err error, op string, dial bool) {
+func (h *StreamHandler) respondK8sError(c *gin.Context, kind string, err error, op string, dial bool) {
 	status, code, msg := mapStreamError(err, dial)
-	if code == codeNoReadyPod && streamKind(c) == podstream.KindExec {
+	if code == codeNoReadyPod && kind == podstream.KindExec {
 		msg = "No ready pod for the chart"
 	}
 	if code == codeInternal {
@@ -215,7 +215,7 @@ func (h *StreamHandler) respondK8sError(c *gin.Context, err error, op string, di
 			c.AbortWithStatus(499)
 			return
 		}
-		slog.Error(streamLabel(c)+" failed", "op", op, "instance_id", c.Param("id"), "error", err)
+		slog.Error(streamLabel(kind)+" failed", "op", op, "instance_id", c.Param("id"), "error", err)
 	}
 	streamError(c, status, code, msg)
 }

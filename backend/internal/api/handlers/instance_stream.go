@@ -154,8 +154,8 @@ func streamError(c *gin.Context, status int, code, message string) {
 
 // streamKindKey is the gin context key that names the stream kind of the
 // request (podstream.KindPortForward or podstream.KindExec). Each stream
-// handler sets it first; the shared helpers read it for the metrics, the
-// messages and the per-feature codes.
+// handler sets it first; streamError reads it for the metrics label only. A
+// security decision never reads it: the kind is passed explicitly.
 const streamKindKey = "stream_kind"
 
 // setStreamKind records the kind of the request.
@@ -172,19 +172,24 @@ func streamKind(c *gin.Context) string {
 }
 
 // streamLabel is the name of the feature in log lines.
-func streamLabel(c *gin.Context) string {
-	if streamKind(c) == podstream.KindExec {
+func streamLabel(kind string) string {
+	if kind == podstream.KindExec {
 		return "Exec"
 	}
 	return "Port-forward"
 }
 
-// clusterAllowsStream reports whether the cluster switch of the kind is on.
+// clusterAllowsStream reports whether the cluster switch of the kind is on. An
+// unknown kind is never allowed.
 func clusterAllowsStream(cl *models.Cluster, kind string) bool {
-	if kind == podstream.KindExec {
+	switch kind {
+	case podstream.KindExec:
 		return cl.AllowExec
+	case podstream.KindPortForward:
+		return cl.AllowPortForward
+	default:
+		return false
 	}
-	return cl.AllowPortForward
 }
 
 // checkFeature runs checks 1 and 2: the feature switch and the API-key
@@ -204,8 +209,15 @@ func (h *StreamHandler) checkFeature(c *gin.Context, enabled bool) bool {
 // loadInstance runs checks 4 to 6: the instance exists, the caller may modify
 // it, and its cluster allows the feature of the request kind (allow_port_forward
 // or allow_exec). It writes the response and returns nil when a check fails.
-func (h *StreamHandler) loadInstance(c *gin.Context) *models.StackInstance {
-	kind := streamKind(c)
+//
+// kind is passed explicitly, never read from the context: the cluster switch is
+// a security check. An unknown kind refuses the request.
+func (h *StreamHandler) loadInstance(c *gin.Context, kind string) *models.StackInstance {
+	if kind != podstream.KindPortForward && kind != podstream.KindExec {
+		slog.Error("Stream: unknown kind", "kind", kind)
+		streamError(c, http.StatusInternalServerError, codeInternal, "")
+		return nil
+	}
 	ctx := c.Request.Context()
 	inst, err := h.instanceRepo.FindByID(ctx, c.Param("id"))
 	if err != nil {

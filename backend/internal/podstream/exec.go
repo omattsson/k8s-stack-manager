@@ -101,6 +101,10 @@ type ExecSummary struct {
 	// Started is true when the command ran (the start was audited and the
 	// started frame was sent). A session that ended before has no command.
 	Started bool
+	// Audited is true when BeforeStart succeeded, so the start entry exists.
+	// The end entry is due then, also when the session was revoked between
+	// the audit write and the start of the command.
+	Audited bool
 }
 
 // ExecOptions are the inputs of StartExec.
@@ -138,6 +142,7 @@ type ExecSession struct {
 	bytesStdout atomic.Int64
 	bytesStderr atomic.Int64
 	started     atomic.Bool
+	audited     atomic.Bool
 	pumps       sync.WaitGroup
 }
 
@@ -159,7 +164,7 @@ func (m *Manager) StartExec(o ExecOptions) *ExecSession {
 	ctx, cancel := context.WithTimeout(m.baseCtx, m.cfg.MaxDuration)
 	e := &ExecSession{opts: o}
 	e.Session = &Session{
-		m: m, ws: newWSConn(o.Conn, m.cfg.Timings), slot: o.Slot,
+		m: m, ws: newWSConn(o.Conn, execTimings(m.cfg.Timings, e.maxCommandLength())), slot: o.Slot,
 		errDone: make(chan struct{}), ctx: ctx, cancel: cancel, start: time.Now(),
 		identity: o.Identity, instance: o.InstanceID,
 		onEnd: e.ended,
@@ -204,8 +209,14 @@ func (e *ExecSession) run() {
 	}
 
 	if e.ctx.Err() == nil {
+		// The flow is also tracked by the manager, so Shutdown waits for it:
+		// run holds a count itself, so Add cannot race with Wait.
+		e.m.wg.Add(1)
 		e.pumps.Add(1)
-		go e.pump(&e.pumps, "exec_flow", e.flow)
+		go func() {
+			defer e.m.wg.Done()
+			e.pump(&e.pumps, "exec_flow", e.flow)
+		}()
 	}
 
 	e.supervise()
@@ -233,6 +244,7 @@ func (e *ExecSession) flow() {
 			e.finish(CloseInternalError, "audit unavailable")
 			return
 		}
+		e.audited.Store(true)
 	}
 	if e.ctx.Err() != nil {
 		return
@@ -306,6 +318,20 @@ func (e *ExecSession) readStart() ([]string, bool) {
 		return nil, false
 	}
 	return msg.Command, true
+}
+
+// execTimings raises the read limit so that a start message with a command
+// within the maximum length never hits it: JSON escapes a control character
+// as six bytes (\u00XX), so the message is at most 6 times the command plus
+// the envelope and the quotes and commas of up to 256 arguments. An explicit
+// limit in the timings (tests) is kept.
+func execTimings(t Timings, maxCommandLen int) Timings {
+	// The manager has applied the defaults already: the default limit is the
+	// one to raise.
+	if t.ReadLimit <= 0 || t.ReadLimit == DefaultReadLimit {
+		t.ReadLimit = max(int64(DefaultReadLimit), 6*int64(maxCommandLen)+4096)
+	}
+	return t
 }
 
 func (e *ExecSession) maxCommandLength() int {
@@ -397,7 +423,7 @@ func (e *ExecSession) ended(sum Summary) {
 	started := e.started.Load()
 	es := ExecSummary{
 		ExitCode: e.exitCode.Load(), Duration: sum.Duration, CloseCode: sum.CloseCode,
-		CloseReason: sum.CloseReason, Started: started,
+		CloseReason: sum.CloseReason, Started: started, Audited: e.audited.Load(),
 		BytesStdout: e.bytesStdout.Load(), BytesStderr: e.bytesStderr.Load(),
 	}
 	es.Result = execResult(sum.CloseCode, es.ExitCode)
@@ -421,6 +447,10 @@ func execResult(closeCode int, exit *int) string {
 		return ExecResultZero
 	case CloseMaxDuration:
 		return ExecResultTimeout
+	case CloseMessageTooBig:
+		// The client broke the protocol mid-run; the command did not fail. It
+		// is not counted in exec_exit_total (zero, nonzero, error, timeout).
+		return ExecResultClientClosed
 	case ClosePolicy:
 		return ExecResultRevoked
 	case CloseGoingAway:

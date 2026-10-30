@@ -51,9 +51,10 @@ func (t Timings) withDefaults() Timings {
 }
 
 // wsConn wraps a gorilla connection with the deadlines of a long-lived
-// stream. Reads come from one goroutine. Data writes come from one goroutine
-// too; control frames (ping, close) use WriteControl, which gorilla allows
-// concurrently with the data writer.
+// stream. Reads come from one goroutine at a time. Data writes are serialized
+// by writeMu (exec writes stdout, stderr and text frames from several
+// goroutines); control frames (ping, close) use WriteControl, which gorilla
+// allows concurrently with the data writer.
 type wsConn struct {
 	c *gorilla.Conn
 	t Timings

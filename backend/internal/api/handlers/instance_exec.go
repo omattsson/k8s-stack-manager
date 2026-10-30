@@ -74,7 +74,7 @@ func (h *StreamHandler) Exec(c *gin.Context) {
 	}
 
 	// 4, 5, 6: instance, role, cluster switch.
-	inst := h.loadInstance(c)
+	inst := h.loadInstance(c, podstream.KindExec)
 	if inst == nil {
 		return
 	}
@@ -86,7 +86,7 @@ func (h *StreamHandler) Exec(c *gin.Context) {
 	}
 
 	// 8: the namespace is a stack namespace of this instance only.
-	if !h.checkNamespaceOwner(c, inst) {
+	if !h.checkNamespaceOwner(c, podstream.KindExec, inst) {
 		return
 	}
 	if h.execProvider == nil || h.execManager == nil || h.chartRepo == nil {
@@ -102,7 +102,7 @@ func (h *StreamHandler) Exec(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), streamResolveTimeout)
 	defer cancel()
 	if err := ec.CheckStreamNamespace(ctx, inst.Namespace, h.cfg.BackendNamespace); err != nil {
-		h.respondK8sError(c, err, "check namespace", false)
+		h.respondK8sError(c, podstream.KindExec, err, "check namespace", false)
 		return
 	}
 
@@ -171,7 +171,7 @@ func (h *StreamHandler) Exec(c *gin.Context) {
 		AllowServiceAccountToken: h.cfg.Exec.AllowServiceAccountToken,
 	})
 	if err != nil {
-		h.respondK8sError(c, err, "resolve exec target", false)
+		h.respondK8sError(c, podstream.KindExec, err, "resolve exec target", false)
 		return
 	}
 
@@ -196,6 +196,11 @@ func (h *StreamHandler) Exec(c *gin.Context) {
 		PostRegister:     h.postRegisterCheck(identity, inst.ID, podstream.KindExec),
 		// The start entry is written before the command and fails closed.
 		BeforeStart: func(_ context.Context, command []string) error {
+			if h.audit == nil {
+				// Fail closed: no audit logger, no command.
+				slog.Error("Exec: no audit logger configured; the command is refused", "instance_id", inst.ID)
+				return podstream.ErrExecAuditUnavailable
+			}
 			err := h.writeAuditErr(userID, username, auditActionExec, inst.ID, map[string]any{
 				"chart": chart, "container": target.Container, "pod": target.Pod,
 				"command": auditCommand(command), "auth": auth,
@@ -211,14 +216,14 @@ func (h *StreamHandler) Exec(c *gin.Context) {
 				err = fmt.Errorf("%w: %v", podstream.ErrExecInternal, err)
 			}
 			if err != nil {
-				slog.Warn("Exec: stream failed", "instance_id", inst.ID, "pod", target.Pod, "error", err)
+				logExecFailure(ctx, inst.ID, target.Pod, err)
 			}
 			return code, err
 		},
 		OnEnd: func(s podstream.ExecSummary) {
-			if !s.Started {
-				// No command ran (bad start message, timeout, revoked before
-				// the start): log only.
+			if !s.Audited {
+				// No start entry was written (bad start message, timeout,
+				// revoked before the audit): log only.
 				slog.Info("Exec session ended without a command",
 					"instance_id", inst.ID, "close_code", s.CloseCode, "close_reason", s.CloseReason)
 				return
@@ -235,6 +240,27 @@ func (h *StreamHandler) Exec(c *gin.Context) {
 			})
 		},
 	})
+}
+
+// logExecFailure logs a failure of the exec stream. The error comes from the
+// k8s layer already stripped of the exec URL (it carries every argument of the
+// command); only its Detail is logged. A session that ended on purpose (revoke,
+// maximum duration, shutdown) is no failure: debug level.
+func logExecFailure(ctx context.Context, instanceID, pod string, err error) {
+	// A raw error would hold the exec URL: sanitize it again (idempotent).
+	detail := err.Error()
+	var se *k8s.ExecStreamError
+	if !errors.As(err, &se) {
+		_ = errors.As(k8s.SanitizeExecError(err), &se)
+	}
+	if se != nil {
+		detail = se.Detail
+	}
+	level := slog.LevelWarn
+	if ctx.Err() != nil {
+		level = slog.LevelDebug
+	}
+	slog.Log(ctx, level, "Exec: stream failed", "instance_id", instanceID, "pod", pod, "error", detail)
 }
 
 var shellSafe = regexp.MustCompile(`^[A-Za-z0-9_@%+=:,./-]+$`)
