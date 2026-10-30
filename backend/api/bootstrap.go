@@ -102,6 +102,8 @@ type handlerSet struct {
 	// Streams is the session manager of the stream handler; main shuts it
 	// down right after the HTTP server.
 	Streams *podstream.Manager
+	// ExecStreams is the session manager of the exec sessions (kind exec).
+	ExecStreams *podstream.Manager
 }
 
 // routerDeps holds non-handler dependencies required to wire the router.
@@ -476,6 +478,36 @@ func portForwarderProvider(reg *cluster.Registry) handlers.PortForwarderProvider
 	}
 }
 
+// execClientProvider adapts the cluster registry to the exec client provider.
+func execClientProvider(reg *cluster.Registry) handlers.ExecClientProvider {
+	return func(clusterID string) (k8s.ExecClient, error) {
+		if reg == nil {
+			return nil, errors.New("cluster registry not configured")
+		}
+		c, err := reg.GetK8sClient(clusterID)
+		if err != nil {
+			return nil, err
+		}
+		if c == nil {
+			return nil, errors.New("cluster client not available")
+		}
+		return c, nil
+	}
+}
+
+// logExecWarnings logs the startup warnings of the exec settings.
+func logExecWarnings(c config.ExecConfig) {
+	if !c.Enabled {
+		return
+	}
+	if len(c.AllowedContainers) == 0 {
+		slog.Warn("STACK_EXEC_ENABLED is true but STACK_EXEC_ALLOWED_CONTAINERS is empty: every exec request is refused with container_not_allowed")
+	}
+	if c.AllowServiceAccountToken {
+		slog.Warn("STACK_EXEC_ALLOW_SERVICE_ACCOUNT_TOKEN is true: exec also reaches containers that hold a service-account token")
+	}
+}
+
 // buildHandlers creates all HTTP handlers.
 func buildHandlers(
 	cfg *config.Config,
@@ -573,17 +605,29 @@ func buildHandlers(
 		MaxDuration: cfg.Stream.PortForward.MaxDuration,
 		IdleTimeout: cfg.Stream.PortForward.IdleTimeout,
 	})
+	logExecWarnings(cfg.Stream.Exec)
+	// Exec has its own manager: its own limit per user and maximum duration,
+	// and no idle timeout. Its sessions are counted with kind=exec.
+	execStreams := podstream.NewManager(podstream.Config{
+		Kind:          podstream.KindExec,
+		MaxPerUser:    cfg.Stream.Exec.MaxPerUser,
+		MaxDuration:   cfg.Stream.Exec.MaxDuration,
+		NoIdleTimeout: true,
+	})
 	streamDeps := handlers.StreamDeps{
-		InstanceRepo:   repos.StackInstance,
-		ClusterRepo:    repos.Cluster,
-		Provider:       portForwarderProvider(svc.ClusterRegistry),
-		Manager:        streams,
-		Audit:          repos.AuditLog,
-		AllowedOrigins: cfg.CORS.AllowedOrigins,
-		SessionStore:   sessStore,
-		UserRepo:       repos.User,
-		APIKeyRepo:     repos.APIKey,
-		Config:         cfg.Stream,
+		ExecManager:     execStreams,
+		ExecProvider:    execClientProvider(svc.ClusterRegistry),
+		ChartConfigRepo: repos.ChartConfig,
+		InstanceRepo:    repos.StackInstance,
+		ClusterRepo:     repos.Cluster,
+		Provider:        portForwarderProvider(svc.ClusterRegistry),
+		Manager:         streams,
+		Audit:           repos.AuditLog,
+		AllowedOrigins:  cfg.CORS.AllowedOrigins,
+		SessionStore:    sessStore,
+		UserRepo:        repos.User,
+		APIKeyRepo:      repos.APIKey,
+		Config:          cfg.Stream,
 	}
 	if hub != nil {
 		streamDeps.Hub = hub
@@ -706,6 +750,7 @@ func buildHandlers(
 		NotificationChannel:   notificationChannelHandler,
 		Stream:                streamHandler,
 		Streams:               streams,
+		ExecStreams:           execStreams,
 	}, nil
 }
 

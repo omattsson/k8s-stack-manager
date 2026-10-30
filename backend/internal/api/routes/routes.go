@@ -208,7 +208,7 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 
 		// Web UI display config (title, logo, favicon, TTL default) — public,
 		// so the login page can use it before sign-in.
-		v1.GET("/ui-config", handlers.NewUIConfigHandler(cfg.Branding, cfg.App.DefaultInstanceTTLMinutes, cfg.App.MaxInstanceTTLDays, cfg.Stream.PortForward.Enabled))
+		v1.GET("/ui-config", handlers.NewUIConfigHandler(cfg.Branding, cfg.App.DefaultInstanceTTLMinutes, cfg.App.MaxInstanceTTLDays, cfg.Stream.PortForward.Enabled, cfg.Stream.Exec.Enabled))
 
 		// No /items routes: handlers.Handler (items.go) is the reference
 		// implementation of the CRUD pattern only. Unauthenticated item routes
@@ -403,6 +403,7 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 				// own audit entries (the audit middleware ignores GET).
 				if deps.StreamHandler != nil {
 					instances.GET("/:id/port-forward", deps.StreamHandler.PortForward)
+					instances.GET("/:id/exec", deps.StreamHandler.Exec)
 				}
 
 				// Bulk operations (DevOps/Admin only)

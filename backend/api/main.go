@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -215,6 +216,7 @@ func main() {
 		heartbeat:        svc.Heartbeat,
 		hub:              hub,
 		streams:          hs.Streams,
+		execStreams:      hs.ExecStreams,
 		wsFanout:         wsFanout,
 		clusterRegistry:  svc.ClusterRegistry,
 		sessionStore:     sessStore,
@@ -235,6 +237,7 @@ type shutdownDeps struct {
 	heartbeat        *replica.Heartbeat         // nil: no heartbeat repository
 	hub              *websocket.Hub
 	streams          *podstream.Manager // nil: no stream sessions
+	execStreams      *podstream.Manager // nil: no exec sessions
 	wsFanout         *websocket.Fanout  // nil: fan-out disabled
 	clusterRegistry  *cluster.Registry
 	sessionStore     sessionstore.SessionStore
@@ -254,14 +257,26 @@ func gracefulShutdown(srvs *servers, timeout time.Duration, deps shutdownDeps) {
 	}
 	// http.Server.Shutdown does not close hijacked connections: close the
 	// port-forward tunnels (1001) and wait for their goroutines.
-	if deps.streams != nil {
+	if deps.streams != nil || deps.execStreams != nil {
 		// Its own budget: the sessions write their end audit entries while
 		// they stop, and the database closes at the end of this function. The
 		// shared timeout may already be used up by the HTTP server shutdown.
 		streamCtx, streamCancel := ctxutil.Detach(context.Background(), streamShutdownBudget)
-		if err := deps.streams.Shutdown(streamCtx); err != nil {
-			slog.Error("Stream sessions did not stop in time", "error", err)
+		// Both managers close their sessions at once.
+		var wg sync.WaitGroup
+		for _, m := range []*podstream.Manager{deps.streams, deps.execStreams} {
+			if m == nil {
+				continue
+			}
+			wg.Add(1)
+			go func(m *podstream.Manager) {
+				defer wg.Done()
+				if err := m.Shutdown(streamCtx); err != nil {
+					slog.Error("Stream sessions did not stop in time", "kind", m.Kind(), "error", err)
+				}
+			}(m)
 		}
+		wg.Wait()
 		streamCancel()
 	}
 	if srvs.Pprof != nil {

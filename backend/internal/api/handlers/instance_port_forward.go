@@ -44,6 +44,7 @@ func (h *StreamHandler) PortForward(c *gin.Context) {
 	// The authentication time: before any check, so that a revoke which runs
 	// during the setup is later than the issue time of an API-key identity.
 	authTime := time.Now()
+	setStreamKind(c, podstream.KindPortForward)
 
 	// 1, 2: feature switch, API keys.
 	if !h.checkFeature(c, h.cfg.PortForward.Enabled) {
@@ -65,7 +66,7 @@ func (h *StreamHandler) PortForward(c *gin.Context) {
 	port := int32(port64)
 
 	// 4, 5, 6: instance, role, cluster switch.
-	inst := h.loadInstance(c, func(cl *models.Cluster) bool { return cl.AllowPortForward })
+	inst := h.loadInstance(c)
 	if inst == nil {
 		return
 	}
@@ -165,7 +166,7 @@ func (h *StreamHandler) PortForward(c *gin.Context) {
 	h.manager.StartPortForward(podstream.PortForwardOptions{
 		Conn: conn, Stream: stream, Slot: slot, Hub: h.hub,
 		Identity: identity, InstanceID: inst.ID,
-		PostRegister: h.postRegisterCheck(identity, inst.ID),
+		PostRegister: h.postRegisterCheck(identity, inst.ID, podstream.KindPortForward),
 		OnEnd: func(s podstream.Summary) {
 			h.writeAudit(userID, username, auditActionPortForwardEnd, inst.ID, map[string]any{
 				"service": service, "port": port, "pod": target.Pod,
@@ -186,12 +187,12 @@ func (h *StreamHandler) checkNamespaceOwner(c *gin.Context, inst *models.StackIn
 		if respondCancelled(c, err) {
 			return false
 		}
-		slog.Error("Port-forward: namespace owner lookup failed", "instance_id", inst.ID, "error", err)
+		slog.Error(streamLabel(c)+": namespace owner lookup failed", "instance_id", inst.ID, "error", err)
 		streamError(c, http.StatusInternalServerError, codeInternal, "")
 		return false
 	}
 	if shared {
-		slog.Warn("Port-forward denied: the namespace is shared with another instance",
+		slog.Warn(streamLabel(c)+" denied: the namespace is shared with another instance",
 			"instance_id", inst.ID, "namespace", inst.Namespace, "user_id", middleware.GetUserIDFromContext(c))
 		streamError(c, http.StatusForbidden, codeNamespaceNotAllowed, "The namespace of the instance is not allowed")
 		return false
@@ -205,13 +206,16 @@ func (h *StreamHandler) checkNamespaceOwner(c *gin.Context, inst *models.StackIn
 // kube_timeout (503). Anything unknown is a 500 with the generic message.
 func (h *StreamHandler) respondK8sError(c *gin.Context, err error, op string, dial bool) {
 	status, code, msg := mapStreamError(err, dial)
+	if code == codeNoReadyPod && streamKind(c) == podstream.KindExec {
+		msg = "No ready pod for the chart"
+	}
 	if code == codeInternal {
 		if errors.Is(err, context.Canceled) {
 			// The client left; nothing to answer.
 			c.AbortWithStatus(499)
 			return
 		}
-		slog.Error("Port-forward failed", "op", op, "instance_id", c.Param("id"), "error", err)
+		slog.Error(streamLabel(c)+" failed", "op", op, "instance_id", c.Param("id"), "error", err)
 	}
 	streamError(c, status, code, msg)
 }
@@ -235,6 +239,12 @@ func mapStreamError(err error, dial bool) (int, string, string) {
 		return http.StatusConflict, codeServiceNoSelector, "The service has no selector"
 	case errors.Is(err, k8s.ErrNoReadyPod):
 		return http.StatusServiceUnavailable, codeNoReadyPod, "No ready pod for the service"
+	case errors.Is(err, k8s.ErrContainerNotFound):
+		return http.StatusNotFound, codeContainerNotFound, "No ready pod runs the container"
+	case errors.Is(err, k8s.ErrContainerNotAllowed):
+		return http.StatusForbidden, codeContainerNotAllowed, "The container is not allowed for exec"
+	case errors.Is(err, k8s.ErrServiceAccountToken):
+		return http.StatusForbidden, codeServiceAccountToken, "The container holds a service-account token"
 	case errors.Is(err, k8s.ErrDialFailed):
 		return http.StatusBadGateway, codeDialFailed, "The connection to the pod failed"
 	case errors.Is(err, context.DeadlineExceeded):
