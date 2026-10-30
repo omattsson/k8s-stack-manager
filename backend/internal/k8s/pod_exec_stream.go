@@ -6,13 +6,14 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"regexp"
+	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/util/httpstream"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/remotecommand"
@@ -167,8 +168,9 @@ func (c *Client) releasePods(ctx context.Context, namespace, release string) ([]
 
 // holdsServiceAccountToken reports whether a command in the container can read
 // a service-account token: the effective automount is not false (the pod field,
-// else the field of the ServiceAccount, else true), or the container mounts a
-// volume with a projected serviceAccountToken source. A failed read of the
+// else the field of the ServiceAccount, else true), the container mounts a
+// volume with a projected serviceAccountToken source, or it reads a Secret of
+// the legacy type kubernetes.io/service-account-token. A failed read of the
 // ServiceAccount fails closed (the error is returned); a missing ServiceAccount
 // counts as automount true.
 func (c *Client) holdsServiceAccountToken(ctx context.Context, namespace string, pod *corev1.Pod, ctr *corev1.Container) (bool, error) {
@@ -203,14 +205,58 @@ func (c *Client) holdsServiceAccountToken(ctx context.Context, namespace string,
 	for _, vm := range ctr.VolumeMounts {
 		mounted[vm.Name] = true
 	}
+	// Secrets that the container reads: mounted secret volumes (also as a
+	// projected source), env valueFrom.secretKeyRef and envFrom.secretRef.
+	var secretNames []string
+	seen := map[string]bool{}
+	addSecret := func(name string) {
+		if name != "" && !seen[name] {
+			seen[name] = true
+			secretNames = append(secretNames, name)
+		}
+	}
 	for _, v := range pod.Spec.Volumes {
-		if !mounted[v.Name] || v.Projected == nil {
+		if !mounted[v.Name] {
+			continue
+		}
+		if v.Secret != nil {
+			addSecret(v.Secret.SecretName)
+		}
+		if v.Projected == nil {
 			continue
 		}
 		for _, src := range v.Projected.Sources {
 			if src.ServiceAccountToken != nil {
 				return true, nil
 			}
+			if src.Secret != nil {
+				addSecret(src.Secret.Name)
+			}
+		}
+	}
+	for _, e := range ctr.Env {
+		if e.ValueFrom != nil && e.ValueFrom.SecretKeyRef != nil {
+			addSecret(e.ValueFrom.SecretKeyRef.Name)
+		}
+	}
+	for _, ef := range ctr.EnvFrom {
+		if ef.SecretRef != nil {
+			addSecret(ef.SecretRef.Name)
+		}
+	}
+	// A legacy service-account token is a Secret of the type
+	// kubernetes.io/service-account-token. One read for each distinct name; a
+	// missing Secret is not a token, any other error fails closed.
+	for _, name := range secretNames {
+		sec, err := c.clientset.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
+		switch {
+		case err == nil:
+			if sec.Type == corev1.SecretTypeServiceAccountToken {
+				return true, nil
+			}
+		case k8serrors.IsNotFound(err):
+		default:
+			return false, fmt.Errorf("get secret %s/%s: %w", namespace, name, err)
 		}
 	}
 	return false, nil
@@ -224,6 +270,8 @@ func (c *Client) ExecCommand(ctx context.Context, namespace string, target ExecT
 		attribute.String("k8s.container", target.Container))
 	defer func() {
 		span.SetAttributes(attribute.Int("exec.exit_code", code))
+		// The error is sanitized below: the raw error of the stream holds the
+		// exec URL with every argument of the command.
 		endSpan(span, err)
 	}()
 
@@ -235,11 +283,73 @@ func (c *Client) ExecCommand(ctx context.Context, namespace string, target ExecT
 		VersionedParams(&corev1.PodExecOptions{
 			Container: target.Container, Command: command, Stdout: true, Stderr: true,
 		}, scheme.ParameterCodec).URL()
-	exec, err := newExecExecutor(rest.CopyConfig(c.restConfig), u)
+	exec, err := execExecutorFactory(rest.CopyConfig(c.restConfig), u)
 	if err != nil {
-		return -1, err
+		return -1, SanitizeExecError(err)
 	}
-	return streamExec(ctx, exec, stdout, stderr)
+	code, err = streamExec(ctx, exec, stdout, stderr)
+	return code, SanitizeExecError(err)
+}
+
+// execExecutorFactory builds the executor of ExecCommand. A variable so that
+// tests can inject a fake.
+var execExecutorFactory = newExecExecutor
+
+// ExecStreamError is a failure of the exec stream whose text is safe to show:
+// it holds no URL (the exec URL carries every argument of the command). Message
+// goes to the client; Detail (also URL-free) is for the server log.
+type ExecStreamError struct {
+	Message string
+	Detail  string
+	// Forbidden is true when the API server refused the exec (RBAC or an
+	// admission policy).
+	Forbidden bool
+}
+
+func (e *ExecStreamError) Error() string { return e.Message }
+
+// ErrExecRefused is the client text for a refused exec.
+const execRefusedMessage = "The cluster refused the exec"
+
+var urlPattern = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+.-]*://\S+`)
+
+// SanitizeExecError turns an error of the exec stream into an *ExecStreamError
+// without any URL: a *url.Error is replaced by its cause, and any URL left in
+// the text becomes "<url>". A Forbidden answer gets a fixed client text. nil
+// stays nil; a context error stays a context error.
+func SanitizeExecError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, context.Canceled) {
+		return context.Canceled
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return context.DeadlineExceeded
+	}
+	if errors.Is(err, ErrRESTConfigUnavailable) {
+		return err
+	}
+	cur := err
+	for {
+		var ue *url.Error
+		if !errors.As(cur, &ue) {
+			break
+		}
+		cur = ue.Err
+		if cur == nil {
+			cur = errors.New("request failed")
+			break
+		}
+	}
+	detail := urlPattern.ReplaceAllString(cur.Error(), "<url>")
+	if len(detail) > 500 {
+		detail = detail[:500]
+	}
+	if k8serrors.IsForbidden(cur) || strings.Contains(strings.ToLower(detail), "forbidden") {
+		return &ExecStreamError{Message: execRefusedMessage, Detail: detail, Forbidden: true}
+	}
+	return &ExecStreamError{Message: detail, Detail: detail}
 }
 
 // streamExec runs the executor and maps the end of the process to an exit code.
@@ -253,25 +363,4 @@ func streamExec(ctx context.Context, exec remotecommand.Executor, stdout, stderr
 		return ee.ExitStatus(), nil
 	}
 	return -1, err
-}
-
-// newExecExecutor returns the WebSocket executor with the SPDY executor as the
-// fallback (an upgrade failure or an HTTPS proxy error), as kubectl does. Both
-// are built only from the REST config of the cluster with the stock client-go
-// constructors, so the TLS settings (CA, certificate checks, client
-// certificates, proxy) are exactly those of every other call to the cluster. A
-// hand-built transport must not replace them: an SPDY upgrade transport
-// without a TLS config skips the certificate check.
-func newExecExecutor(cfg *rest.Config, u *url.URL) (remotecommand.Executor, error) {
-	spdyExec, err := remotecommand.NewSPDYExecutor(cfg, "POST", u)
-	if err != nil {
-		return nil, fmt.Errorf("build SPDY exec: %w", err)
-	}
-	wsExec, err := remotecommand.NewWebSocketExecutor(cfg, "GET", u.String())
-	if err != nil {
-		return nil, fmt.Errorf("build WebSocket exec: %w", err)
-	}
-	return remotecommand.NewFallbackExecutor(wsExec, spdyExec, func(err error) bool {
-		return httpstream.IsUpgradeFailure(err) || httpstream.IsHTTPSProxyError(err)
-	})
 }

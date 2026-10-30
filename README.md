@@ -524,6 +524,10 @@ Upgrade note: Earlier chart versions set `CORS_ALLOWED_ORIGINS` to `"*"` and `SE
 | `backend.allowedChartRepos` | `[]` | Chart repository URL prefixes that definitions and templates may use. Empty allows every chart source. |
 | `backend.rbac.scope` | `namespace` | `namespace`: the backend has namespaced rights only in stack namespaces (RoleBinding `k8s-stack-manager-access`). `cluster`: the namespaced rights apply in all namespaces (the rules of chart 0.6 and earlier). Use `cluster` only when stack charts need cluster-scoped objects. |
 | `backend.rbac.admissionPolicy.enabled` | `true` | Create a ValidatingAdmissionPolicy that limits the backend to stack namespaces (Kubernetes 1.30 or later). |
+| `backend.exec.enabled` | `false` | Exec in stack containers through the backend. With `rbac.scope: cluster` the chart adds `pods/exec` `get` to the ClusterRole (`create` on `pods/exec` stays granted for stack chart Roles) and renders the stream-scope ValidatingAdmissionPolicy while port-forward or exec is on. With `rbac.scope: namespace` it adds no rule. |
+| `backend.exec.allowedContainers` | `[]` | Container names that exec may use (DNS-1123 labels, exact; an invalid name fails the render). Empty: every exec request is refused. |
+| `backend.exec.maxDuration`, `maxCommandLength`, `maxPerUser` | `10m`, `4096`, `3` | Longest life of a session (up to `24h`), largest sum of the argument bytes (1 to 32768) and sessions per user and replica (1 to 100) |
+| `backend.exec.allowServiceAccountToken` | `false` | Allow exec in a container that holds a service-account token (the backend logs a warning at start) |
 | `backend.portForward.enabled` | `false` | Port-forward to stack services through the backend. With `rbac.scope: cluster` the chart adds `pods/portforward` to the ClusterRole and a ValidatingAdmissionPolicy that limits it to stack namespaces. Also `maxDuration` (`1h`), `idleTimeout` (`15m`), `maxPerUser` (`5`, per replica). |
 | `backend.streams.allowApiKeys` | `false` | Let API keys open stream tunnels. |
 | `backend.namespaceLabels` | `{}` | Extra labels on stack namespaces, for example Pod Security Admission levels. |
