@@ -461,7 +461,7 @@ func (*mockClusterRepoForSV) CountAll(ctx context.Context) (int, error) {
 	return 0, ctxDone(ctx, "count_all")
 }
 
-func (*mockClusterRepoForSV) StreamFlagsByIDs(ctx context.Context, _ []string, _ bool) (map[string]bool, error) {
+func (*mockClusterRepoForSV) StreamFlagsByIDs(ctx context.Context, _ []string, _ bool) (map[string]models.ClusterStreamFlags, error) {
 	return nil, ctx.Err()
 }
 

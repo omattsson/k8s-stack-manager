@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"backend/internal/models"
+	"backend/internal/podstream"
 	"backend/internal/websocket"
 
 	"github.com/stretchr/testify/assert"
@@ -207,6 +208,78 @@ func TestCanModifyInstanceAs(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tt.want, canModifyInstanceAs(tt.user, tt.role, tt.inst))
+		})
+	}
+}
+
+// The re-check applies the switch of the kind of each session: the exec
+// settings close exec sessions only and the port-forward settings close
+// port-forward sessions only.
+func TestStreamAccessChecker_KindSwitches(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		pfEnabled  bool
+		execOn     bool
+		cluster    *models.Cluster
+		inst       func(*models.StackInstance)
+		role       string
+		sessUser   string
+		wantPF     bool // port_forward session lost
+		wantExec   bool // exec session lost
+		clusterNil bool
+	}{
+		{name: "both on", pfEnabled: true, execOn: true, cluster: &models.Cluster{ID: "c1", AllowPortForward: true, AllowExec: true}},
+		{name: "exec feature off", pfEnabled: true, execOn: false, cluster: &models.Cluster{ID: "c1", AllowPortForward: true, AllowExec: true}, wantExec: true},
+		{name: "port-forward feature off", pfEnabled: false, execOn: true, cluster: &models.Cluster{ID: "c1", AllowPortForward: true, AllowExec: true}, wantPF: true},
+		{name: "allow_exec off", pfEnabled: true, execOn: true, cluster: &models.Cluster{ID: "c1", AllowPortForward: true}, wantExec: true},
+		{name: "allow_port_forward off", pfEnabled: true, execOn: true, cluster: &models.Cluster{ID: "c1", AllowExec: true}, wantPF: true},
+		{name: "cluster gone", pfEnabled: true, execOn: true, clusterNil: true, wantPF: true, wantExec: true},
+		{name: "instance stopped", pfEnabled: true, execOn: true, cluster: &models.Cluster{ID: "c1", AllowPortForward: true, AllowExec: true},
+			inst: func(i *models.StackInstance) { i.Status = models.StackStatusStopped }, wantPF: true, wantExec: true},
+		{name: "role downgraded", pfEnabled: true, execOn: true, cluster: &models.Cluster{ID: "c1", AllowPortForward: true, AllowExec: true},
+			role: "user", sessUser: "dev", wantPF: true, wantExec: true},
+		{name: "owner changed away from the session user", pfEnabled: true, execOn: true, cluster: &models.Cluster{ID: "c1", AllowPortForward: true, AllowExec: true},
+			inst: func(i *models.StackInstance) { i.OwnerID = "new-owner" }, role: "user", sessUser: "dev", wantPF: true, wantExec: true},
+		{name: "owner changed, devops session keeps access", pfEnabled: true, execOn: true, cluster: &models.Cluster{ID: "c1", AllowPortForward: true, AllowExec: true},
+			inst: func(i *models.StackInstance) { i.OwnerID = "new-owner" }, role: "devops", sessUser: "dev"},
+		{name: "devops keeps access", pfEnabled: true, execOn: true, cluster: &models.Cluster{ID: "c1", AllowPortForward: true, AllowExec: true},
+			role: "devops", sessUser: "dev"},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			instRepo, userRepo, clRepo := NewMockStackInstanceRepository(), NewMockUserRepository(), NewMockClusterRepository()
+			inst := &models.StackInstance{ID: "i1", OwnerID: "owner", Namespace: "ns", ClusterID: "c1", Status: models.StackStatusRunning}
+			if tt.inst != nil {
+				tt.inst(inst)
+			}
+			require.NoError(t, instRepo.Create(ctx, inst))
+			sess := tt.sessUser
+			if sess == "" {
+				sess = "owner"
+			}
+			role := tt.role
+			if role == "" {
+				role = "user"
+			}
+			require.NoError(t, userRepo.Create(ctx, &models.User{ID: sess, Username: sess, Role: role}))
+			if !tt.clusterNil {
+				require.NoError(t, clRepo.Create(ctx, tt.cluster))
+			}
+			cfg := defaultStreamCfg()
+			cfg.PortForward.Enabled = tt.pfEnabled
+			cfg.Exec.Enabled = tt.execOn
+			check := NewStreamAccessChecker(instRepo, userRepo, clRepo, cfg)
+			got := check(ctx, []websocket.Revocable{
+				&fakeRevocable{user: sess, instance: "i1", kind: podstream.KindPortForward},
+				&fakeRevocable{user: sess, instance: "i1", kind: podstream.KindExec},
+			})
+			require.Len(t, got, 2)
+			assert.Equal(t, tt.wantPF, got[0], "port-forward session")
+			assert.Equal(t, tt.wantExec, got[1], "exec session")
 		})
 	}
 }

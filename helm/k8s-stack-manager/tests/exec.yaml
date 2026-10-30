@@ -1,0 +1,15 @@
+# Exec on, rbac.scope cluster. Used by `make helm-test`.
+backend:
+  secrets:
+    JWT_SECRET: dummy-jwt-secret-for-template
+  exec:
+    enabled: true
+    allowedContainers:
+      - web
+      - app-1
+    maxDuration: 5m
+    maxCommandLength: 2048
+    maxPerUser: 2
+    allowServiceAccountToken: true
+  rbac:
+    scope: cluster

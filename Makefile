@@ -214,7 +214,7 @@ define e2e_start_backend
 		ADMIN_USERNAME=admin ADMIN_PASSWORD=admin SELF_REGISTRATION=true \
 		HELM_BINARY=$${HELM_BINARY:-helm} \
 		CORS_ALLOWED_ORIGINS=http://localhost:3000 \
-		RATE_LIMIT=10000 LOGIN_RATE_LIMIT=10000 PORT=8081 UNIQUE_INSTANCE_NAMES=true STACK_PORT_FORWARD_ENABLED=true $(E2E_STUB_BACKEND_ENV) $(1) \
+		RATE_LIMIT=10000 LOGIN_RATE_LIMIT=10000 PORT=8081 UNIQUE_INSTANCE_NAMES=true STACK_PORT_FORWARD_ENABLED=true STACK_EXEC_ENABLED=true STACK_EXEC_ALLOWED_CONTAINERS=web $(E2E_STUB_BACKEND_ENV) $(1) \
 		./tmp/main > ../frontend/test-logs/$(2) 2>&1 & echo $$! > $(E2E_PID)
 	@echo "Waiting for backend to be healthy..."
 	@n=0; until curl -sf http://localhost:8081/health/live >/dev/null 2>&1; do \
@@ -1157,6 +1157,40 @@ helm-test: ## Verify Deployment, Argo Rollout, and External Secrets Helm renders
 	if grep -q 'resources: \["pods/portforward"\]' "$$template_file"; then echo "namespace scope must not add a pods/portforward rule" >&2; exit 1; fi; \
 	grep -q 'name: .*-backend-scope$$' "$$template_file" && ! grep -q 'backend-stream-scope' "$$template_file" \
 		|| { echo "namespace scope must keep its own policy only" >&2; exit 1; }; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
+		--show-only templates/backend/configmap.yaml > "$$template_file"; \
+	grep -q 'STACK_EXEC_ENABLED: "false"' "$$template_file" && grep -q 'STACK_EXEC_ALLOWED_CONTAINERS: ""' "$$template_file" \
+		&& grep -q 'STACK_EXEC_MAX_DURATION: "10m"' "$$template_file" && grep -q 'STACK_EXEC_MAX_COMMAND_LENGTH: "4096"' "$$template_file" \
+		&& grep -q 'STACK_EXEC_MAX_PER_USER: "3"' "$$template_file" && grep -q 'STACK_EXEC_ALLOW_SERVICE_ACCOUNT_TOKEN: "false"' "$$template_file" \
+		|| { echo "backend ConfigMap must render the exec defaults (off)" >&2; exit 1; }; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/exec.yaml \
+		--api-versions admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy --show-only templates/backend/configmap.yaml > "$$template_file"; \
+	grep -q 'STACK_EXEC_ENABLED: "true"' "$$template_file" && grep -q 'STACK_EXEC_ALLOWED_CONTAINERS: "web,app-1"' "$$template_file" \
+		&& grep -q 'STACK_EXEC_MAX_DURATION: "5m"' "$$template_file" && grep -q 'STACK_EXEC_MAX_COMMAND_LENGTH: "2048"' "$$template_file" \
+		&& grep -q 'STACK_EXEC_MAX_PER_USER: "2"' "$$template_file" && grep -q 'STACK_EXEC_ALLOW_SERVICE_ACCOUNT_TOKEN: "true"' "$$template_file" \
+		|| { echo "tests/exec.yaml must render the six exec variables" >&2; exit 1; }; \
+	if helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/exec.yaml \
+		--set 'backend.exec.allowedContainers={web,Bad_Name}' > "$$template_file" 2>&1; then echo "an invalid exec container name must fail" >&2; exit 1; fi; \
+	grep -q 'is not a container name' "$$template_file" || { echo "missing exec container name error" >&2; exit 1; }; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/exec.yaml \
+		--api-versions admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy --show-only templates/backend/clusterrole.yaml > "$$template_file"; \
+	grep -q 'resources: \["pods/exec"\]' "$$template_file" && grep -A1 'resources: \["pods/exec"\]' "$$template_file" | grep -q 'verbs: \["get", "create"\]' \
+		|| { echo "cluster scope with backend.exec.enabled must grant pods/exec get and create" >&2; exit 1; }; \
+	if grep -q 'resources: \["pods/portforward"\]' "$$template_file"; then echo "exec alone must not grant pods/portforward" >&2; exit 1; fi; \
+	grep -q 'name: .*-backend-stream-scope' "$$template_file" && grep -q 'operations: \["CONNECT"\]' "$$template_file" \
+		|| { echo "exec alone must render the stream admission policy" >&2; exit 1; }; \
+	if helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/exec.yaml \
+		--show-only templates/backend/clusterrole.yaml > "$$template_file" 2>&1; then echo "exec on without the ValidatingAdmissionPolicy API must fail" >&2; exit 1; fi; \
+	grep -q 'backend.exec.enabled with backend.rbac.scope=cluster' "$$template_file" || { echo "missing exec stream policy API error" >&2; exit 1; }; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/exec.yaml \
+		--set backend.exec.enabled=false --show-only templates/backend/clusterrole.yaml > "$$template_file"; \
+	grep -A1 'resources: \["pods/exec"\]' "$$template_file" | grep -q 'verbs: \["create"\]' \
+		|| { echo "exec off must keep pods/exec create (stack charts with exec Roles)" >&2; exit 1; }; \
+	if grep -A1 'resources: \["pods/exec"\]' "$$template_file" | grep -q '"get"'; then echo "exec off must not grant pods/exec get" >&2; exit 1; fi; \
+	if grep -q 'backend-stream-scope' "$$template_file"; then echo "both features off must render no stream policy" >&2; exit 1; fi; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/exec.yaml \
+		--set backend.rbac.scope=namespace --show-only templates/backend/clusterrole.yaml > "$$template_file"; \
+	if grep -q 'resources: \["pods/exec"\]' "$$template_file"; then echo "namespace scope must not add a pods/exec rule" >&2; exit 1; fi; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
 		--set metrics.enabled=true --set metrics.grafanaDashboard.enabled=true \
 		--show-only templates/grafana-dashboard.yaml > "$$template_file"; \

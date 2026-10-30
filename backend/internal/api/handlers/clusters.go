@@ -63,6 +63,7 @@ type CreateClusterRequest struct {
 	IsDefault           bool   `json:"is_default"`
 	UseInCluster        bool   `json:"use_in_cluster"`
 	AllowPortForward    bool   `json:"allow_port_forward"`
+	AllowExec           bool   `json:"allow_exec"`
 	RegistryURL         string `json:"registry_url"`
 	RegistryUsername    string `json:"registry_username"`
 	RegistryPassword    string `json:"registry_password"`
@@ -82,6 +83,7 @@ type UpdateClusterRequest struct {
 	IsDefault           *bool   `json:"is_default,omitempty"`
 	UseInCluster        *bool   `json:"use_in_cluster,omitempty"`
 	AllowPortForward    *bool   `json:"allow_port_forward,omitempty"`
+	AllowExec           *bool   `json:"allow_exec,omitempty"`
 	RegistryURL         *string `json:"registry_url,omitempty"`
 	RegistryUsername    *string `json:"registry_username,omitempty"`
 	RegistryPassword    *string `json:"registry_password,omitempty"`
@@ -282,6 +284,7 @@ func (h *ClusterHandler) CreateCluster(c *gin.Context) {
 		HealthStatus:        models.ClusterUnreachable,
 		UseInCluster:        req.UseInCluster,
 		AllowPortForward:    req.AllowPortForward,
+		AllowExec:           req.AllowExec,
 		RegistryURL:         req.RegistryURL,
 		RegistryUsername:    req.RegistryUsername,
 		RegistryPassword:    req.RegistryPassword,
@@ -444,6 +447,9 @@ func (h *ClusterHandler) UpdateCluster(c *gin.Context) {
 	}
 	if req.AllowPortForward != nil {
 		existing.AllowPortForward = *req.AllowPortForward
+	}
+	if req.AllowExec != nil {
+		existing.AllowExec = *req.AllowExec
 	}
 	if req.RegistryURL != nil {
 		existing.RegistryURL = *req.RegistryURL

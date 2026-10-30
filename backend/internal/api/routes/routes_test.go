@@ -1988,7 +1988,7 @@ func TestSetupRoutes_UIConfigIsPublic(t *testing.T) {
 	for k := range body {
 		keys = append(keys, k)
 	}
-	assert.ElementsMatch(t, []string{"title", "logo_url", "favicon_url", "default_instance_ttl_minutes", "max_instance_ttl_days", "port_forward_enabled"}, keys)
+	assert.ElementsMatch(t, []string{"title", "logo_url", "favicon_url", "default_instance_ttl_minutes", "max_instance_ttl_days", "port_forward_enabled", "exec_enabled"}, keys)
 	assert.NotEmpty(t, body["title"])
 }
 
@@ -2030,7 +2030,7 @@ func (*stubClusterRepo) CountAll(ctx context.Context) (int, error) {
 	return 0, nil
 }
 
-func (*stubClusterRepo) StreamFlagsByIDs(ctx context.Context, _ []string, _ bool) (map[string]bool, error) {
+func (*stubClusterRepo) StreamFlagsByIDs(ctx context.Context, _ []string, _ bool) (map[string]models.ClusterStreamFlags, error) {
 	return nil, ctx.Err()
 }
 

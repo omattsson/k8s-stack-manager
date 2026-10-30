@@ -17,7 +17,7 @@ import (
 // are allowed: the endpoint is public.
 const uiConfigSchema = `{
 "type": "object",
-"required": ["title", "logo_url", "favicon_url", "default_instance_ttl_minutes", "max_instance_ttl_days", "port_forward_enabled"],
+"required": ["title", "logo_url", "favicon_url", "default_instance_ttl_minutes", "max_instance_ttl_days", "port_forward_enabled", "exec_enabled"],
 "additionalProperties": false,
 "properties": {
 "title": {"type": "string", "minLength": 1},
@@ -25,7 +25,8 @@ const uiConfigSchema = `{
 "favicon_url": {"type": "string", "minLength": 1},
 "default_instance_ttl_minutes": {"type": "integer", "minimum": 0, "maximum": 525600},
 "max_instance_ttl_days": {"type": "integer", "minimum": 1, "maximum": 365},
-"port_forward_enabled": {"type": "boolean"}
+"port_forward_enabled": {"type": "boolean"},
+"exec_enabled": {"type": "boolean"}
 }
 }`
 
@@ -52,6 +53,7 @@ func TestGetUIConfig(t *testing.T) {
 		defaultTTL  int
 		maxDays     int
 		portForward bool
+		exec        bool
 		want        UIConfigResponse
 	}{
 		{
@@ -109,6 +111,11 @@ func TestGetUIConfig(t *testing.T) {
 			want:        defaults(UIConfigResponse{PortForwardEnabled: true}),
 		},
 		{
+			name: "exec on",
+			exec: true,
+			want: defaults(UIConfigResponse{ExecEnabled: true}),
+		},
+		{
 			name:       "TTL default above 30 days with a larger maximum",
 			defaultTTL: MaxTTLMinutes + 60,
 			maxDays:    90,
@@ -122,7 +129,7 @@ func TestGetUIConfig(t *testing.T) {
 			t.Parallel()
 			gin.SetMode(gin.TestMode)
 			r := gin.New()
-			r.GET("/api/v1/ui-config", NewUIConfigHandler(tt.branding, tt.defaultTTL, tt.maxDays, tt.portForward))
+			r.GET("/api/v1/ui-config", NewUIConfigHandler(tt.branding, tt.defaultTTL, tt.maxDays, tt.portForward, tt.exec))
 
 			w := httptest.NewRecorder()
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/ui-config", nil)

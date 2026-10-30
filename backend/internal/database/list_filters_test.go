@@ -212,7 +212,7 @@ func TestGORMClusterRepository_StreamFlagsByIDs(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	repo := setupClusterRepo(t)
-	on := &models.Cluster{Name: "on", APIServerURL: "https://on.example.com", AllowPortForward: true}
+	on := &models.Cluster{Name: "on", APIServerURL: "https://on.example.com", AllowPortForward: true, AllowExec: true}
 	off := &models.Cluster{Name: "off", APIServerURL: "https://off.example.com"}
 	def := &models.Cluster{Name: "default", APIServerURL: "https://def.example.com", AllowPortForward: true}
 	for _, c := range []*models.Cluster{on, off, def} {
@@ -221,7 +221,7 @@ func TestGORMClusterRepository_StreamFlagsByIDs(t *testing.T) {
 	require.NoError(t, repo.SetDefault(ctx, def.ID))
 	// A damaged secret column of an unrelated cluster must not matter: the
 	// query reads neither the kubeconfig nor the registry password.
-	broken := &models.Cluster{Name: "broken", APIServerURL: "https://broken.example.com", AllowPortForward: true}
+	broken := &models.Cluster{Name: "broken", APIServerURL: "https://broken.example.com", AllowPortForward: true, AllowExec: true}
 	require.NoError(t, repo.Create(ctx, broken))
 	require.NoError(t, repo.db.Model(&models.Cluster{}).Where("id = ?", broken.ID).
 		Updates(map[string]any{"kubeconfig_data": "QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQQ=="}).Error)
@@ -232,14 +232,14 @@ func TestGORMClusterRepository_StreamFlagsByIDs(t *testing.T) {
 		name           string
 		ids            []string
 		includeDefault bool
-		want           map[string]bool
+		want           map[string]models.ClusterStreamFlags
 	}{
-		{"by ID", []string{on.ID, off.ID}, false, map[string]bool{on.ID: true, off.ID: false}},
-		{"missing ID is absent", []string{on.ID, "missing"}, false, map[string]bool{on.ID: true}},
-		{"no IDs", nil, false, map[string]bool{}},
-		{"default under the empty key", []string{off.ID}, true, map[string]bool{off.ID: false, models.DefaultClusterKey: true}},
-		{"only the default", nil, true, map[string]bool{models.DefaultClusterKey: true}},
-		{"damaged row is readable", []string{broken.ID}, false, map[string]bool{broken.ID: true}},
+		{"by ID", []string{on.ID, off.ID}, false, map[string]models.ClusterStreamFlags{on.ID: {PortForward: true, Exec: true}, off.ID: {}}},
+		{"missing ID is absent", []string{on.ID, "missing"}, false, map[string]models.ClusterStreamFlags{on.ID: {PortForward: true, Exec: true}}},
+		{"no IDs", nil, false, map[string]models.ClusterStreamFlags{}},
+		{"default under the empty key", []string{off.ID}, true, map[string]models.ClusterStreamFlags{off.ID: {}, models.DefaultClusterKey: {PortForward: true}}},
+		{"only the default", nil, true, map[string]models.ClusterStreamFlags{models.DefaultClusterKey: {PortForward: true}}},
+		{"damaged row is readable", []string{broken.ID}, false, map[string]models.ClusterStreamFlags{broken.ID: {PortForward: true, Exec: true}}},
 	}
 	for _, tt := range tests {
 		tt := tt
@@ -267,7 +267,7 @@ func TestGORMClusterRepository_StreamFlagsByIDs(t *testing.T) {
 		ids = append(ids, on.ID)
 		got, err := repo.StreamFlagsByIDs(ctx, ids, false)
 		require.NoError(t, err)
-		assert.Equal(t, map[string]bool{on.ID: true}, got)
+		assert.Equal(t, map[string]models.ClusterStreamFlags{on.ID: {PortForward: true, Exec: true}}, got)
 	})
 }
 

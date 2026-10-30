@@ -113,6 +113,8 @@ Without the policy, the cluster-wide RoleBinding right could give the backend ac
 
 **Port-forward rights.** With scope `namespace`, the ClusterRole `<fullname>-stack-access` already allows `*/*/*` in stack namespaces, so the chart adds no rule for `pods/portforward`. With scope `cluster` and `backend.portForward.enabled`, the backend ClusterRole gets `pods/portforward` (`get`, `create`). A second ValidatingAdmissionPolicy (`<fullname>-backend-stream-scope`, rendered only while the feature is on; the install fails on a cluster without that API unless you set `backend.rbac.admissionPolicy.enabled=false`) then limits CONNECT on `pods/portforward` and `pods/exec` by the backend service account to namespaces with the label `managed-by=k8s-stack-manager`. A cluster that you register with a kubeconfig needs the same verbs in that identity.
 
+**Exec rights.** With scope `namespace`, `<fullname>-stack-access` allows `*/*/*` in stack namespaces, so the chart adds no rule for exec. With scope `cluster`, the backend ClusterRole gets `pods/exec` `get` (the WebSocket transport) only while `backend.exec.enabled` is true. `create` on `pods/exec` stays granted in cluster scope as before, whatever `backend.exec.enabled` says: stack charts whose Roles grant `pods/exec` still need it to deploy (RBAC escalation prevention: the backend can only grant a Role what it holds itself), and the SPDY fallback of exec uses it too. The `<fullname>-backend-stream-scope` ValidatingAdmissionPolicy renders while port-forward or exec is on (cluster scope), with the same namespace-label limit on CONNECT for `pods/exec` and `pods/portforward`. The service-account rule of exec also reads ServiceAccounts and, for the Secrets that the container references, Secrets in the stack namespace (`get`); a failed read refuses the exec.
+
 `backend.rbac.scope: cluster` keeps the rules of chart 0.6 and earlier. The backend has rights on namespaced objects in all namespaces. Use it only when stack charts need cluster-scoped objects.
 
 ### Stack Instance
@@ -397,6 +399,31 @@ Port-forward opens a TCP tunnel from your computer to a service of a stack, thro
 - The backend refuses a namespace without the label `managed-by=k8s-stack-manager` and the namespace of the backend.
 - The audit entries hold the service, port and pod, never the data of the tunnel.
 
+### Exec
+
+Exec runs one command in a container of a stack, through the backend, and streams its output. Use it for a one-off task such as `bin/console cache:clear`. There is no shell, no stdin and no TTY. The feature is off by default.
+
+- Command: `stackctl stack exec <instance name> <chart> -- <command> [args...]`. The instance page lists the command for each chart when the feature is on and you can change the instance.
+- The API is `GET /stack-instances/:id/exec?chart=<chart name>&container=<name>` with a WebSocket upgrade (`container` is optional). It takes the `Authorization` header (or `X-API-Key` when `STACK_STREAM_ALLOW_API_KEYS=true`), never `?token=`. The chart name is the Helm release name and must be a chart of the definition of the instance (404 `chart_not_found`).
+- Who: the owner, `devops` and `admin`. Other users get 403.
+- Switches: `STACK_EXEC_ENABLED=true` (Helm `backend.exec.enabled`), the cluster switch **Allow exec** (`allow_exec`, `admin`, off by default) and `STACK_EXEC_ALLOWED_CONTAINERS`, a short list of container names. Without the first the API returns 404 `feature_disabled`; without the second 403 `cluster_exec_disabled`; a container that is not in the list (or an empty list) gives 403 `container_not_allowed`.
+- The server chooses the pod: the first Running and Ready pod of the release, by name, in the namespace of the instance. Without `container`, it takes the first allowed container of the first pod that has one. No ready pod: 503 `no_ready_pod`. The pod runs no such container: 404 `container_not_found`.
+- Protocol: within 10 s the client sends the text frame `{"type":"start","command":["bin/console","cache:clear"]}` (1 to 256 arguments, the first not empty, no NUL byte, at most `STACK_EXEC_MAX_COMMAND_LENGTH` bytes). The read limit for this frame is 64 KiB or, for a large `STACK_EXEC_MAX_COMMAND_LENGTH`, 6 times that length plus 4 KiB (JSON escapes a control character as six bytes), so a command within the limit never closes the socket with 1009. The server answers `{"type":"started","pod":"...","container":"..."}`, then sends the output as binary frames (first byte 1 for stdout or 2 for stderr, at most 32 KiB per frame), and ends with `{"type":"exit","exit_code":N}` and the close code 1000.
+- Close codes: 1000 the command ended (read `exit_code`), 1001 server shutdown, 1008 access revoked, 1009 client frame above the read limit (see above), 1011 internal error (also when the start audit entry cannot be written; the command does not run then), 4001 maximum duration (no exit frame), 4400 invalid start message, 4408 no start message in 10 s, 4502 Kubernetes stream error (an `error` frame comes first).
+- Limits: a session closes after `STACK_EXEC_MAX_DURATION` (default 10m). A user has at most `STACK_EXEC_MAX_PER_USER` sessions (default 3) per replica; more give 429 `exec_limit`.
+- Access ends the session like a port-forward tunnel (delete, disable, role change, logout, API key delete, stop, clean or delete of the instance, the cluster switch or `STACK_EXEC_ENABLED` going off). See [Port-forward](#port-forward).
+
+**Security notes.**
+
+- Exec shows the container environment and its secrets (`env`, `/proc/1/environ`, mounted files). Turn it on only where the stack owners may see them, and keep `STACK_EXEC_ALLOWED_CONTAINERS` short. `devops` and `admin` users reach every stack on a cluster that allows it. Keep `allow_exec` off on clusters with real data.
+- A container that holds a service-account token is refused (403 `service_account_token`): the effective `automountServiceAccountToken` (pod, else ServiceAccount, else true) is not false, the container mounts a projected `serviceAccountToken` volume, or it reads a Secret of the legacy type `kubernetes.io/service-account-token` (a `secret` volume, a projected `secret` source, `env.valueFrom.secretKeyRef` or `envFrom.secretRef`; one read for each distinct Secret, a missing Secret is not a token). When the pod sets `shareProcessNamespace: true`, a command can read the files and the environment of the other containers through `/proc`, so the rule then applies to every running container of the pod (regular containers, sidecars with `restartPolicy: Always`, ephemeral containers). A failed read of the ServiceAccount or of a Secret refuses too: 403 `token_check_forbidden` when the cluster refuses the read, 500 otherwise. The backend needs `get` on ServiceAccounts and Secrets in the stack namespace. `STACK_EXEC_ALLOW_SERVICE_ACCOUNT_TOKEN=true` turns the refusal off; the backend then logs a warning at start.
+- A stalled upgrade does not outlive the session: the WebSocket handshake and the SPDY upgrade of an exec both end when the session ends (a revoke, the maximum duration, a shutdown), and a connection that completes late is closed. A stalled API server or proxy also ends the upgrade after 20 s (4502); behind a proxy the abandoned SPDY connection is closed only when the proxy closes it. TLS is exactly that of every other call to the cluster.
+- Error texts that the client sees hold no URL (the exec URL carries every argument of the command). A refusal by the cluster (RBAC or an admission policy) shows as "The cluster refused the exec"; the server log has the detail without the URL.
+- The process can keep running in the container after the stream closes (a revoke, the maximum duration, a lost connection). The backend does not kill it.
+- The backend never wraps the command in a shell. A client that wants a shell sends `["sh","-c","..."]` itself, which the allowed-container list does not prevent: only allow containers where that is acceptable.
+- The backend refuses a namespace without the label `managed-by=k8s-stack-manager` and the namespace of the backend.
+- The audit entries `exec` (start) and `exec_end` (end) hold the chart, container, pod and, at the start, the command (shell-quoted, cut at 1000 characters). The command arguments are not redacted: do not put a secret in an argument. The entries never hold the output or the environment. The start entry is written before the command runs; if it fails, the command does not run.
+
 ### Value Override
 
 A value override is a per-chart configuration override on a stack instance. The application deep-merges it with the chart defaults when it exports the Helm values. It substitutes the template variables (`{{.Branch}}`, `{{.Namespace}}`, `{{.InstanceName}}`, `{{.StackName}}`, `{{.Owner}}`) at export time.
@@ -417,6 +444,7 @@ The application records every mutating API call (POST, PUT, DELETE) with the use
   - Cleanup policy `run`.
   - User `disable`, `enable`, `reset_password`, and `change_role` (the old and the new role are in the details).
   - Instance `follow` and `unfollow`.
+  - Instance `exec` (a command starts) and `exec_end` (it ends). The handler writes both. The start details hold the chart, container, pod, the command (shell-quoted, cut at 1000 characters) and the auth method; the end details hold the exit code (or null), the result (`zero`, `nonzero`, `error`, `timeout`, `revoked`, `client_closed`, `shutdown`), the duration, the bytes of stdout and stderr and the close code and reason. A session that ends before a command ran writes no entry.
   - Instance `port_forward` (a tunnel starts) and `port_forward_end` (a tunnel ends). The handler writes both, because the audit log ignores GET. The details hold the service, port and pod (the end entry also the bytes in and out, the duration and the close code and reason), never the data.
 - Deploy, stop, clean, and rollback store the ID of the deployment log in the details.
 - Some actions come from the application itself and not from an API call: `expired` (the TTL reaper), `cleanup_policy_executed` (the cleanup scheduler), and `interrupted` (the recovery of an interrupted operation).
@@ -651,6 +679,7 @@ Template -> (instantiate) -> Definition + ChartConfigs -> (create instance) -> I
 | Edit the instance, extend the TTL | yes | yes | yes | no (403) |
 | Read or change value, branch, and quota overrides | yes | yes | yes | no (403) |
 | Open a port-forward tunnel to a service ([Port-forward](#port-forward)) | yes | yes | yes | no (403) |
+| Run a command in a container ([Exec](#exec)) | yes | yes | yes | no (403) |
 | Set a quota override above the cluster quota | no (403) | yes | yes | no (403) |
 
 - Bulk operations (`/stack-instances/bulk/*`) need the `devops` or `admin` role.
@@ -762,7 +791,7 @@ WebSocket connections (`/ws`):
 - Without fan-out (`WS_FANOUT_ENABLED=false`, the default for Docker Compose and local development), a client sees only the events of its own replica. Use one replica then.
 - A message larger than 512 KiB, or a message sent while the fan-out buffer is full, reaches only the clients of the replica that sent it. After a database outage, events older than 30 seconds are not delivered. The page shows the current state after a reload.
 - An in-app notification goes only to the sockets of the notified user.
-- Port-forward limits are per replica, and each replica closes its own tunnels on shutdown (1001).
+- Port-forward and exec limits are per replica, and each replica closes its own tunnels and exec sessions on shutdown (1001).
 
 ### Git Integration
 

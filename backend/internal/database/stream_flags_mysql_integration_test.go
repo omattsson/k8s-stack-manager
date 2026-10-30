@@ -23,10 +23,10 @@ func TestDatabaseMySQL_ClusterStreamFlagsAndInstanceFindByIDs(t *testing.T) {
 	db := clusters.db
 	instances := NewGORMStackInstanceRepository(db)
 
-	on := &models.Cluster{ID: "sf-on", Name: "sf-on", APIServerURL: "https://on.example.com", KubeconfigPath: "/kc/on", AllowPortForward: true}
+	on := &models.Cluster{ID: "sf-on", Name: "sf-on", APIServerURL: "https://on.example.com", KubeconfigPath: "/kc/on", AllowPortForward: true, AllowExec: true}
 	off := &models.Cluster{ID: "sf-off", Name: "sf-off", APIServerURL: "https://off.example.com", KubeconfigPath: "/kc/off"}
 	def := &models.Cluster{ID: "sf-def", Name: "sf-def", APIServerURL: "https://def.example.com", KubeconfigPath: "/kc/def", AllowPortForward: true}
-	broken := &models.Cluster{ID: "sf-broken", Name: "sf-broken", APIServerURL: "https://broken.example.com", KubeconfigPath: "/kc/broken", AllowPortForward: true}
+	broken := &models.Cluster{ID: "sf-broken", Name: "sf-broken", APIServerURL: "https://broken.example.com", KubeconfigPath: "/kc/broken", AllowPortForward: true, AllowExec: true}
 	for _, c := range []*models.Cluster{on, off, def, broken} {
 		require.NoError(t, clusters.Create(ctx, c))
 	}
@@ -38,7 +38,10 @@ func TestDatabaseMySQL_ClusterStreamFlagsAndInstanceFindByIDs(t *testing.T) {
 
 	got, err := clusters.StreamFlagsByIDs(ctx, []string{on.ID, off.ID, broken.ID, "missing"}, true)
 	require.NoError(t, err)
-	assert.Equal(t, map[string]bool{on.ID: true, off.ID: false, broken.ID: true, models.DefaultClusterKey: true}, got)
+	assert.Equal(t, map[string]models.ClusterStreamFlags{
+		on.ID: {PortForward: true, Exec: true}, off.ID: {}, broken.ID: {PortForward: true, Exec: true},
+		models.DefaultClusterKey: {PortForward: true},
+	}, got)
 
 	a := &models.StackInstance{Name: "sf-a", StackDefinitionID: "d1", Namespace: "ns-a", OwnerID: "alice", ClusterID: on.ID, Branch: "main", Status: models.StackStatusRunning}
 	b := &models.StackInstance{Name: "sf-b", StackDefinitionID: "d1", Namespace: "ns-b", OwnerID: "bob", Branch: "dev", Status: models.StackStatusStopped}
@@ -79,4 +82,29 @@ func TestDatabaseMySQL_InstanceNamespaceShared(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, shared, "both rows of a shared namespace are refused")
 	}
+}
+
+// TestDatabaseMySQL_ClusterAllowExecMigration checks on MySQL that the
+// allow_exec column exists after the migrations, defaults to false, that Down
+// removes it and that Up and Down are idempotent.
+func TestDatabaseMySQL_ClusterAllowExecMigration(t *testing.T) {
+	ctx := context.Background()
+	_, clusters := setupClusterContextMySQL(t, 5)
+	db := clusters.db
+	m := db.Migrator()
+
+	assert.True(t, m.HasColumn(&models.Cluster{}, "AllowExec"))
+	c := &models.Cluster{ID: "ae-default", Name: "ae-default", APIServerURL: "https://ae.example.com", KubeconfigPath: "/kc/ae"}
+	require.NoError(t, clusters.Create(ctx, c))
+	got, err := clusters.StreamFlagsByIDs(ctx, []string{c.ID}, false)
+	require.NoError(t, err)
+	assert.Equal(t, models.ClusterStreamFlags{}, got[c.ID], "a new cluster allows nothing")
+
+	mig := clusterAllowExecMigration()
+	require.NoError(t, mig.Down(db))
+	assert.False(t, m.HasColumn(&models.Cluster{}, "AllowExec"))
+	require.NoError(t, mig.Down(db), "Down must be idempotent")
+	require.NoError(t, mig.Up(db))
+	require.NoError(t, mig.Up(db), "Up must be idempotent")
+	assert.True(t, m.HasColumn(&models.Cluster{}, "AllowExec"))
 }

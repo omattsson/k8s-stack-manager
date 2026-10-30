@@ -2369,7 +2369,7 @@ func (m *MockClusterRepository) NamesByIDs(ctx context.Context, ids []string) (m
 	return out, nil
 }
 
-func (m *MockClusterRepository) StreamFlagsByIDs(ctx context.Context, ids []string, includeDefault bool) (map[string]bool, error) {
+func (m *MockClusterRepository) StreamFlagsByIDs(ctx context.Context, ids []string, includeDefault bool) (map[string]models.ClusterStreamFlags, error) {
 	m.streamFlagCalls.Add(1)
 	if err := ctxDone(ctx, "stream_flags_by_ids"); err != nil {
 		return nil, err
@@ -2380,16 +2380,16 @@ func (m *MockClusterRepository) StreamFlagsByIDs(ctx context.Context, ids []stri
 	if m.err != nil {
 		return nil, m.err
 	}
-	out := make(map[string]bool, len(ids)+1)
+	out := make(map[string]models.ClusterStreamFlags, len(ids)+1)
 	for _, id := range ids {
 		if cl, ok := m.clusters[id]; ok {
-			out[id] = cl.AllowPortForward
+			out[id] = models.ClusterStreamFlags{PortForward: cl.AllowPortForward, Exec: cl.AllowExec}
 		}
 	}
 	if includeDefault {
 		for id, cl := range m.clusters {
 			if cl.IsDefault || id == m.defaultID {
-				out[models.DefaultClusterKey] = cl.AllowPortForward
+				out[models.DefaultClusterKey] = models.ClusterStreamFlags{PortForward: cl.AllowPortForward, Exec: cl.AllowExec}
 				break
 			}
 		}

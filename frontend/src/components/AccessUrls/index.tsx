@@ -32,12 +32,18 @@ interface AccessUrlsProps {
   portForwardEnabled?: boolean;
   /** Name of the instance, as stackctl takes it on the command line. */
   instanceName?: string;
+  /**
+   * Show a `stackctl stack exec` command for each chart. The caller sets it when
+   * the server has the feature on (ui-config `exec_enabled`), the cluster allows
+   * exec and the user can modify the instance. Needs `instanceName`.
+   */
+  execEnabled?: boolean;
 }
 
 interface AccessEntry {
   chartName: string;
   serviceName: string;
-  serviceType: 'Ingress' | 'LoadBalancer' | 'NodePort' | 'ClusterIP';
+  serviceType: 'Ingress' | 'LoadBalancer' | 'NodePort' | 'ClusterIP' | 'Exec';
   url?: string;
   copyText: string;
   label: string;
@@ -49,6 +55,7 @@ const buildEntries = (
   status: NamespaceStatus,
   showPortForward: boolean,
   stackctlInstance: string | undefined,
+  execInstance?: string,
 ): AccessEntry[] => {
   const entries: AccessEntry[] = [];
 
@@ -67,6 +74,19 @@ const buildEntries = (
 
   // Service entries per chart
   (status.charts || []).forEach((chart: ChartStatus) => {
+    if (execInstance) {
+      // One line per chart; the backend takes the Helm release name as the chart.
+      const release = chart.release_name || chart.chart_name;
+      const cmd = `stackctl stack exec ${execInstance} ${release} -- <command>`;
+      entries.push({
+        chartName: release,
+        serviceName: release,
+        serviceType: 'Exec',
+        copyText: cmd,
+        label: cmd,
+        copyLabel: `Copy stackctl exec ${release}`,
+      });
+    }
     (chart.services || []).forEach((svc: ServiceInfo) => {
       // Skip services already covered by ingress
       const hasIngress = (svc.ingress_hosts || []).length > 0;
@@ -141,10 +161,10 @@ const typeColor = (type: string): 'primary' | 'success' | 'warning' | 'default' 
   }
 };
 
-const AccessUrls = ({ status, showPortForward = false, portForwardEnabled = false, instanceName }: AccessUrlsProps) => {
+const AccessUrls = ({ status, showPortForward = false, portForwardEnabled = false, instanceName, execEnabled = false }: AccessUrlsProps) => {
   const { showSuccess, showError } = useNotification();
 
-  const entries = buildEntries(status, showPortForward, portForwardEnabled ? instanceName : undefined);
+  const entries = buildEntries(status, showPortForward, portForwardEnabled ? instanceName : undefined, execEnabled ? instanceName : undefined);
 
   if (entries.length === 0) return null;
 

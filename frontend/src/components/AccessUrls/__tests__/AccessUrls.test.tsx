@@ -168,6 +168,32 @@ describe('AccessUrls', () => {
     expect(screen.getByText('stackctl stack port-forward my-app database 5432')).toBeInTheDocument();
   });
 
+  it('shows a stackctl exec line per chart when execEnabled is set (#723)', async () => {
+    render(
+      <NotificationProvider>
+        <AccessUrls status={clusterIPStatus()} execEnabled instanceName="my-app" />
+      </NotificationProvider>,
+    );
+
+    expect(screen.getByText('stackctl stack exec my-app database -- <command>')).toBeInTheDocument();
+    expect(screen.queryByText(/stackctl stack port-forward/)).not.toBeInTheDocument();
+
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    await user.click(screen.getByRole('button', { name: 'Copy stackctl exec database' }));
+    expect(writeText).toHaveBeenCalledWith('stackctl stack exec my-app database -- <command>');
+  });
+
+  it('hides the stackctl exec line when execEnabled is off', () => {
+    render(
+      <NotificationProvider>
+        <AccessUrls status={clusterIPStatus()} instanceName="my-app" />
+      </NotificationProvider>,
+    );
+    expect(screen.queryByText(/stackctl stack exec/)).not.toBeInTheDocument();
+  });
+
   it('renders NodePort services', () => {
     const status: NamespaceStatus = {
       namespace: 'stack-test',

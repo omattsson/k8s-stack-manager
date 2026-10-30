@@ -93,7 +93,12 @@ func (s *Session) Identity() websocket.ClientIdentity { return s.identity }
 func (s *Session) InstanceID() string { return s.instance }
 
 // Kind implements websocket.Revocable.
-func (s *Session) Kind() string { return KindPortForward }
+func (s *Session) Kind() string {
+	if s.m == nil {
+		return KindPortForward
+	}
+	return s.m.cfg.Kind
+}
 
 // Revoke implements websocket.Revocable. It records the close and returns; the
 // session goroutine does the close.
@@ -142,7 +147,7 @@ func (m *Manager) StartPortForward(o PortForwardOptions) *Session {
 		s.teardown(nil, nil, false)
 		return s
 	}
-	recordActive(KindPortForward, 1)
+	recordActive(m.cfg.Kind, 1)
 	go s.run(o.Hub, o.PostRegister)
 	return s
 }
@@ -201,8 +206,13 @@ func (s *Session) supervise() {
 	ping := time.NewTicker(s.m.cfg.Timings.PingInterval)
 	defer ping.Stop()
 	idle := s.m.cfg.IdleTimeout
-	idleTimer := time.NewTimer(idle)
-	defer idleTimer.Stop()
+	var idleTimer *time.Timer
+	var idleC <-chan time.Time // nil: no idle timeout
+	if !s.m.cfg.NoIdleTimeout {
+		idleTimer = time.NewTimer(idle)
+		idleC = idleTimer.C
+		defer idleTimer.Stop()
+	}
 	for {
 		select {
 		case <-s.ctx.Done():
@@ -221,7 +231,7 @@ func (s *Session) supervise() {
 				s.finish(closeAbnormalOnly, "ping failed")
 				return
 			}
-		case <-idleTimer.C:
+		case <-idleC:
 			since := time.Since(time.Unix(0, s.lastActivity.Load()))
 			if since >= idle {
 				s.finish(CloseIdleTimeout, "idle timeout")
@@ -276,7 +286,7 @@ func (s *Session) clientToPod() {
 			return
 		}
 		s.bytesIn.Add(int64(len(data)))
-		recordBytes(KindPortForward, DirectionClientToPod, int64(len(data)))
+		recordBytes(s.m.cfg.Kind, DirectionClientToPod, int64(len(data)))
 		s.touch()
 	}
 }
@@ -294,7 +304,7 @@ func (s *Session) podToClient() {
 				return
 			}
 			s.bytesOut.Add(int64(n))
-			recordBytes(KindPortForward, DirectionPodToClient, int64(n))
+			recordBytes(s.m.cfg.Kind, DirectionPodToClient, int64(n))
 			s.touch()
 		}
 		if err != nil {
@@ -357,9 +367,9 @@ func (s *Session) teardown(unregister func(), pumps *sync.WaitGroup, counted boo
 		Duration: time.Since(s.start), CloseCode: code, CloseReason: TruncateReason(reason),
 	}
 	if counted {
-		recordActive(KindPortForward, -1)
+		recordActive(s.m.cfg.Kind, -1)
 	}
-	recordClosed(KindPortForward, closeReasonLabel(code))
+	recordClosed(s.m.cfg.Kind, closeReasonLabel(code))
 	if s.onEnd != nil {
 		s.onEnd(sum)
 	}

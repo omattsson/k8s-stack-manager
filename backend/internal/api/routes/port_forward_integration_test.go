@@ -147,15 +147,16 @@ func (r *itClusterRepo) List(_ context.Context) ([]models.Cluster, error) {
 	return []models.Cluster{r.cluster}, nil
 }
 
-func (r *itClusterRepo) StreamFlagsByIDs(_ context.Context, ids []string, includeDefault bool) (map[string]bool, error) {
+func (r *itClusterRepo) StreamFlagsByIDs(_ context.Context, ids []string, includeDefault bool) (map[string]models.ClusterStreamFlags, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	out := map[string]bool{}
+	f := models.ClusterStreamFlags{PortForward: r.cluster.AllowPortForward, Exec: r.cluster.AllowExec}
+	out := map[string]models.ClusterStreamFlags{}
 	for _, id := range ids {
-		out[id] = r.cluster.AllowPortForward
+		out[id] = f
 	}
 	if includeDefault {
-		out[models.DefaultClusterKey] = r.cluster.AllowPortForward
+		out[models.DefaultClusterKey] = f
 	}
 	return out, nil
 }
@@ -289,6 +290,33 @@ func startEchoListener(t *testing.T) string {
 
 type itOpts struct {
 	allowAPIKeys bool
+	// serverReadTimeout sets http.Server.ReadTimeout of the test server.
+	serverReadTimeout time.Duration
+}
+
+// itCharts serves one chart ("web") for the definition of the instance.
+type itCharts struct{ models.ChartConfigRepository }
+
+func (itCharts) ListByDefinition(context.Context, string) ([]models.ChartConfig, error) {
+	return []models.ChartConfig{{ID: "cc1", StackDefinitionID: "d1", ChartName: "web"}}, nil
+}
+
+// itExecClient is the exec client of the harness: the namespace check passes,
+// the target is fixed and the command is the run function of the test.
+type itExecClient struct {
+	run func(ctx context.Context, cmd []string, stdout, stderr io.Writer) (int, error)
+}
+
+func (itExecClient) CheckStreamNamespace(context.Context, string, string) error { return nil }
+func (itExecClient) ResolveExecTarget(_ context.Context, _ string, req k8s.ExecTargetRequest) (*k8s.ExecTarget, error) {
+	c := req.Container
+	if c == "" {
+		c = "web"
+	}
+	return &k8s.ExecTarget{Pod: "web-0", Container: c}, nil
+}
+func (e itExecClient) ExecCommand(ctx context.Context, _ string, _ k8s.ExecTarget, cmd []string, so, se io.Writer) (int, error) {
+	return e.run(ctx, cmd, so, se)
 }
 
 type itHarness struct {
@@ -301,6 +329,8 @@ type itHarness struct {
 	audit     *itAudit
 	fwd       *itForwarder
 	mgr       *podstream.Manager
+	execMgr   *podstream.Manager
+	exec      *itExecClient
 	apiKey    string // raw API key of user "owner"
 }
 
@@ -317,17 +347,20 @@ func newITHarness(t *testing.T, o itOpts) *itHarness {
 		PortForward: config.PortForwardConfig{
 			Enabled: true, MaxDuration: time.Minute, IdleTimeout: time.Minute, MaxPerUser: 3,
 		},
+		Exec: config.ExecConfig{
+			Enabled: true, AllowedContainers: []string{"web"}, MaxDuration: time.Minute, MaxCommandLength: 4096, MaxPerUser: 3,
+		},
 	}
 
 	h := &itHarness{
 		store:     sessionstore.NewMemoryStore(),
-		instances: &itInstanceRepo{inst: &models.StackInstance{ID: "i1", OwnerID: "owner", Namespace: "ns", ClusterID: "c1", Status: models.StackStatusRunning}},
+		instances: &itInstanceRepo{inst: &models.StackInstance{ID: "i1", OwnerID: "owner", Namespace: "ns", ClusterID: "c1", StackDefinitionID: "d1", Status: models.StackStatusRunning}},
 		users: &itUserRepo{users: map[string]*models.User{
 			"owner": {ID: "owner", Username: "owner", Role: "user"},
 			"dev":   {ID: "dev", Username: "dev", Role: "devops"},
 			"other": {ID: "other", Username: "other", Role: "user"},
 		}},
-		clusters: &itClusterRepo{cluster: models.Cluster{ID: "c1", AllowPortForward: true}},
+		clusters: &itClusterRepo{cluster: models.Cluster{ID: "c1", AllowPortForward: true, AllowExec: true}},
 		audit:    &itAudit{},
 		fwd:      &itForwarder{addr: startEchoListener(t)},
 	}
@@ -340,6 +373,13 @@ func newITHarness(t *testing.T, o itOpts) *itHarness {
 	h.mgr = podstream.NewManager(podstream.Config{MaxPerUser: 3, Timings: podstream.Timings{PingInterval: 100 * time.Millisecond}})
 	t.Cleanup(func() { _ = h.mgr.Shutdown(context.Background()) })
 
+	h.execMgr = podstream.NewManager(podstream.Config{
+		Kind: podstream.KindExec, MaxPerUser: 3, MaxDuration: time.Minute, NoIdleTimeout: true,
+		Timings: podstream.Timings{PingInterval: 100 * time.Millisecond},
+	})
+	t.Cleanup(func() { _ = h.execMgr.Shutdown(context.Background()) })
+	h.exec = &itExecClient{run: func(context.Context, []string, io.Writer, io.Writer) (int, error) { return 0, nil }}
+
 	rawKey, prefix, hash, err := models.GenerateAPIKey()
 	require.NoError(t, err)
 	h.apiKey = rawKey
@@ -347,8 +387,10 @@ func newITHarness(t *testing.T, o itOpts) *itHarness {
 
 	sh := handlers.NewStreamHandler(handlers.StreamDeps{
 		InstanceRepo: h.instances, ClusterRepo: h.clusters,
-		Provider: func(string) (k8s.PortForwarder, error) { return h.fwd, nil },
-		Manager:  h.mgr, Hub: h.hub, Audit: h.audit, AllowedOrigins: "*", Config: cfg.Stream,
+		Provider:    func(string) (k8s.PortForwarder, error) { return h.fwd, nil },
+		ExecManager: h.execMgr, ChartConfigRepo: itCharts{},
+		ExecProvider: func(string) (k8s.ExecClient, error) { return h.exec, nil },
+		Manager:      h.mgr, Hub: h.hub, Audit: h.audit, AllowedOrigins: "*", Config: cfg.Stream,
 		SessionStore: h.store, UserRepo: h.users, APIKeyRepo: keys,
 	})
 
@@ -371,7 +413,9 @@ func newITHarness(t *testing.T, o itOpts) *itHarness {
 	h.hub.SetRevocableAccessChecker(handlers.NewStreamAccessChecker(h.instances, h.users, h.clusters, cfg.Stream))
 	h.hub.StartRevalidation(itRevalidate, handlers.NewWebSocketRevocationChecker(h.store, h.users, keys))
 
-	h.srv = httptest.NewServer(router)
+	h.srv = httptest.NewUnstartedServer(router)
+	h.srv.Config.ReadTimeout = o.serverReadTimeout
+	h.srv.Start()
 	t.Cleanup(h.srv.Close)
 	return h
 }

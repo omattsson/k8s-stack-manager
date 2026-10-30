@@ -330,6 +330,8 @@ definitions:
     type: object
   handlers.CreateClusterRequest:
     properties:
+      allow_exec:
+        type: boolean
       allow_port_forward:
         type: boolean
       api_server_url:
@@ -861,6 +863,12 @@ definitions:
           create forms (DEFAULT_INSTANCE_TTL_MINUTES). 0: no expiry.
         example: 480
         type: integer
+      exec_enabled:
+        description: |-
+          ExecEnabled is true when exec is on (STACK_EXEC_ENABLED). The UI shows
+          the stackctl hint then.
+        example: false
+        type: boolean
       favicon_url:
         description: FaviconURL is the browser tab icon (APP_FAVICON_URL).
         example: /favicon.svg
@@ -890,6 +898,8 @@ definitions:
     type: object
   handlers.UpdateClusterRequest:
     properties:
+      allow_exec:
+        type: boolean
       allow_port_forward:
         type: boolean
       api_server_url:
@@ -2262,6 +2272,12 @@ definitions:
     type: object
   models.Cluster:
     properties:
+      allow_exec:
+        description: |-
+          AllowExec lets users run commands in the containers of the stacks of
+          this cluster. Off by default; only an admin sets it. Exec shows the
+          container environment and its secrets.
+        type: boolean
       allow_port_forward:
         description: |-
           AllowPortForward lets users open port-forward tunnels to the stacks of
@@ -7601,6 +7617,118 @@ paths:
       summary: Preview deployment changes
       tags:
       - stack-instances
+  /api/v1/stack-instances/{id}/exec:
+    get:
+      consumes:
+      - application/json
+      description: 'Upgrades the connection to a WebSocket that runs one command in
+        a container of the chart (Helm release) of the instance and streams its output.
+        The command runs without stdin and without a TTY. Authentication: the Authorization
+        header (JWT) or, when STACK_STREAM_ALLOW_API_KEYS is true, the X-API-Key header;
+        the route never accepts a token in the query string. The caller must be the
+        owner of the instance, a devops user or an admin, exec must be on (STACK_EXEC_ENABLED)
+        and the cluster must allow it (allow_exec). Only containers in STACK_EXEC_ALLOWED_CONTAINERS
+        can be used, and a container that holds a service-account token is refused
+        unless STACK_EXEC_ALLOW_SERVICE_ACCOUNT_TOKEN is true. The pod is always chosen
+        by the server: the first Running and Ready pod of the release, by name. All
+        checks run before the upgrade and give an HTTP status with a stable code in
+        the body ({"error","code"}). Protocol after the upgrade: the client sends
+        one text frame within 10 s, {"type":"start","command":["bin/console","cache:clear"]}
+        (1 to 256 arguments, the first not empty, no NUL byte, at most STACK_EXEC_MAX_COMMAND_LENGTH
+        bytes in total; the server never uses a shell). The server answers with the
+        text frame {"type":"started","pod":"...","container":"..."}, then sends the
+        output as binary frames: the first byte is the stream (1 stdout, 2 stderr),
+        the rest is raw output, at most 32 KiB per frame. The command ends with the
+        text frame {"type":"exit","exit_code":N} and the close code 1000. A Kubernetes
+        stream error ends with {"type":"error","message":"..."} and 4502; an internal
+        error with {"type":"error","message":"Internal server error"} and 1011. Later
+        client frames are ignored. The server pings every 30 s. Close codes: 1000
+        the command ended, 1001 server shutdown, 1008 access revoked, 1009 client
+        frame larger than the read limit (64 KiB, or 6 times STACK_EXEC_MAX_COMMAND_LENGTH
+        plus 4 KiB when that is larger), 1011 internal error (also when the audit
+        entry cannot be written; the command does not run then), 4001 maximum duration
+        (no exit frame), 4400 invalid start message, 4408 no start message in 10 s,
+        4502 Kubernetes stream error. The remote process can keep running after the
+        stream closes. Exec shows the container environment and its secrets: turn
+        it on only where the stack owners may see them. The start and the end of each
+        command are audited (exec, exec_end).'
+      parameters:
+      - description: Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Chart name (the Helm release name, DNS-1123 subdomain, at most
+          53 characters)
+        in: query
+        name: chart
+        required: true
+        type: string
+      - description: 'Container name (DNS-1123 label). Omitted: the first allowed
+          container of the first pod that has one'
+        in: query
+        name: container
+        type: string
+      produces:
+      - application/json
+      responses:
+        "101":
+          description: Switching Protocols
+        "400":
+          description: invalid_chart, invalid_container, upgrade_required
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: api_key_not_allowed, forbidden, cluster_exec_disabled, namespace_not_allowed,
+            container_not_allowed, service_account_token, token_check_forbidden, origin_not_allowed
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: feature_disabled, instance_not_found, chart_not_found, container_not_found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: instance_not_deployed
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "429":
+          description: exec_limit
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: no_ready_pod, kube_timeout, shutting_down
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Run a command in a container of a stack instance
+      tags:
+      - stack-instances
   /api/v1/stack-instances/{id}/extend:
     post:
       consumes:
@@ -9849,10 +9977,11 @@ paths:
         URL and favicon URL (APP_TITLE, APP_LOGO_URL, APP_FAVICON_URL), the start
         value of the TTL field in the create forms (default_instance_ttl_minutes,
         DEFAULT_INSTANCE_TTL_MINUTES; 0 means no expiry), the maximum TTL and stop-time
-        distance in days (max_instance_ttl_days, MAX_INSTANCE_TTL_DAYS), and whether
-        port-forward is on (port_forward_enabled, STACK_PORT_FORWARD_ENABLED). Public:
-        no authentication, so the login page can use it. An empty logo_url means the
-        built-in logo. A URL is a same-origin path or an https URL. Cached for 5 minutes.'
+        distance in days (max_instance_ttl_days, MAX_INSTANCE_TTL_DAYS), whether port-forward
+        is on (port_forward_enabled, STACK_PORT_FORWARD_ENABLED), and whether exec
+        is on (exec_enabled, STACK_EXEC_ENABLED). Public: no authentication, so the
+        login page can use it. An empty logo_url means the built-in logo. A URL is
+        a same-origin path or an https URL. Cached for 5 minutes.'
       produces:
       - application/json
       responses:

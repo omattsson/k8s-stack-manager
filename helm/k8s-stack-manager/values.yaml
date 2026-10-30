@@ -324,6 +324,55 @@ backend:
     # Open tunnels per user and replica (1 to 100).
     maxPerUser: 5
 
+  # Run a command in a stack container through the backend over a WebSocket
+  # (GET /api/v1/stack-instances/:id/exec, used by `stackctl stack exec`).
+  # Off by default. No shell, no stdin, no TTY: one command, its output, its
+  # exit code.
+  # SECURITY: a command shows the environment of the container, including its
+  # secrets (`env`, /proc/1/environ), and reads every file the container can
+  # read. The owner of an instance and every devops and admin user can run
+  # commands in the allowed containers of their stacks. Keep allowedContainers
+  # short and name only containers whose environment you accept to expose.
+  # Every command is audited (exec, exec_end) with its arguments, which are
+  # not redacted: do not put secrets in command arguments.
+  # The backend refuses a container that holds a service-account token
+  # (automount, a projected token, or a Secret of type
+  # kubernetes.io/service-account-token mounted or referenced in env) unless
+  # allowServiceAccountToken is true. With shareProcessNamespace every running
+  # container of the pod counts: a command reads their files through /proc.
+  # Two switches must both be on: this one, and the per-cluster switch
+  # allow_exec (Admin > Clusters, off by default). API keys follow
+  # backend.streams.allowApiKeys.
+  # RBAC: with rbac.scope=namespace the stack-access ClusterRole already grants
+  # */*/* in each stack namespace (pods/exec, serviceaccounts get and secrets
+  # get included), so no extra rule is rendered. With rbac.scope=cluster the chart
+  # keeps pods/exec create in the backend ClusterRole as before (stack charts
+  # whose Roles grant pods/exec need the backend to hold it: no escalate verb)
+  # and adds get when this is enabled. A registered cluster with its own
+  # kubeconfig needs the same verbs in that identity, and get on serviceaccounts
+  # and secrets (a refused read gives 403 token_check_forbidden).
+  # The limits are per backend replica. Ingress: see portForward (a session is
+  # a long WebSocket; nginx-ingress needs proxy-read-timeout and
+  # proxy-send-timeout of at least maxDuration plus a margin).
+  exec:
+    enabled: false
+    # Container names that may run commands: exact names, no wildcard, each a
+    # DNS-1123 label (an invalid name fails the render). Empty = every request
+    # is refused with container_not_allowed (the backend warns at startup).
+    allowedContainers: []
+    # Maximum lifetime of a command (above 0, at most 24h); the backend closes
+    # the session with code 4001.
+    maxDuration: 10m
+    # Maximum size of the command: the sum of the argument bytes (1 to 32768).
+    maxCommandLength: 4096
+    # Running commands per user and replica (1 to 100).
+    maxPerUser: 3
+    # Allow commands in pods that mount a service-account token. By default the
+    # backend refuses these (service_account_token): the token would be readable
+    # with the command. With shareProcessNamespace the token of any running
+    # container of the pod counts. true turns the refusal off (startup warning).
+    allowServiceAccountToken: false
+
   # Settings shared by port-forward and exec streams.
   streams:
     # Let API keys open stream tunnels. API keys have no scopes: a leaked CI
@@ -439,17 +488,17 @@ backend:
     # label, and may change or delete only namespaces whose name starts with
     # "stack-" or that have the label. Without it, the cluster-wide RoleBinding
     # write right could give the backend access to any namespace.
-    # For scope cluster, with backend.portForward.enabled, a second policy
-    # limits CONNECT on pods/exec and pods/portforward by the backend service
-    # account to namespaces with that label, so these cannot reach system
-    # namespaces. It is rendered only while port-forward is on (the exec feature
-    # will widen this), and the install fails when the cluster lacks the
-    # ValidatingAdmissionPolicy API; set enabled=false only knowingly. A
-    # render without cluster access (helm template, GitOps renderers) needs
+    # For scope cluster, with backend.portForward.enabled or
+    # backend.exec.enabled, a second policy limits CONNECT on pods/exec and
+    # pods/portforward by the backend service account to namespaces with that
+    # label, so these cannot reach system namespaces. It is rendered only while
+    # one of the two features is on, and the install fails when the cluster
+    # lacks the ValidatingAdmissionPolicy API; set enabled=false only
+    # knowingly. A render without cluster access (helm template, GitOps
+    # renderers) needs
     # --api-versions admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy.
-    # The
-    # namespace of the backend is protected by the backend itself and by its
-    # lack of the label.
+    # The namespace of the backend is protected by the backend itself and by
+    # its lack of the label.
     admissionPolicy:
       enabled: true
 

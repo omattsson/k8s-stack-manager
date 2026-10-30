@@ -169,6 +169,8 @@ const (
 	AuditActionInterrupted           = "interrupted"             // deployer.InterruptRecovery
 	AuditActionPortForward           = "port_forward"            // handlers.StreamHandler (start of a tunnel)
 	AuditActionPortForwardEnd        = "port_forward_end"        // handlers.StreamHandler (end of a tunnel)
+	AuditActionExec                  = "exec"                    // handlers.StreamHandler (start of an exec command)
+	AuditActionExecEnd               = "exec_end"                // handlers.StreamHandler (end of an exec command)
 )
 
 // KnownAuditActions lists every action that new audit entries can have. The
@@ -184,6 +186,7 @@ var KnownAuditActions = []string{
 	AuditActionChangeRole, AuditActionFollow, AuditActionUnfollow,
 	AuditActionQuickDeploy, AuditActionExpired, AuditActionCleanupPolicyExecuted,
 	AuditActionInterrupted, AuditActionPortForward, AuditActionPortForwardEnd,
+	AuditActionExec, AuditActionExecEnd,
 }
 
 // KnownAuditEntityTypes lists every entity type that new audit entries can
@@ -218,6 +221,8 @@ var auditRoutes = map[string]AuditRoute{
 	// (handlers/instance_stream.go) writes port_forward at the start and
 	// port_forward_end at the end of a tunnel:
 	// GET /stack-instances/:id/port-forward.
+	// Exec: the same. StreamHandler writes exec when the command starts and
+	// exec_end when it ends: GET /stack-instances/:id/exec.
 
 	// Stack definitions.
 	"POST /stack-definitions/import":      {Action: AuditActionImport, EntityType: "stack_definition"},

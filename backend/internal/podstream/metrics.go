@@ -12,6 +12,9 @@ import (
 // KindPortForward is the kind label of the port-forward sessions.
 const KindPortForward = "port_forward"
 
+// KindExec is the kind label of the exec sessions.
+const KindExec = "exec"
+
 // Directions of stack_stream.bytes_total.
 const (
 	DirectionClientToPod = "client_to_pod"
@@ -23,6 +26,7 @@ type streamInstruments struct {
 	bytesTotal     metric.Int64Counter
 	sessionsClosed metric.Int64Counter
 	rejected       metric.Int64Counter
+	execExit       metric.Int64Counter
 }
 
 // instruments holds the current instruments. It is replaced by
@@ -66,6 +70,13 @@ func UseMeterProvider(mp metric.MeterProvider) {
 	if err != nil {
 		otel.Handle(err)
 	}
+	in.execExit, err = meter.Int64Counter(
+		"stack_stream.exec_exit_total",
+		metric.WithDescription("Finished exec commands by result (zero, nonzero, error, timeout)"),
+		metric.WithUnit("{command}"))
+	if err != nil {
+		otel.Handle(err)
+	}
 	instruments.Store(&in)
 }
 
@@ -79,6 +90,15 @@ func RecordRejected(kind, reason string) {
 	}
 	in.rejected.Add(context.Background(), 1,
 		metric.WithAttributes(kindAttr(kind), attribute.String("reason", reason)))
+}
+
+// recordExecExit counts a finished exec command.
+func recordExecExit(result string) {
+	in := instruments.Load()
+	if in == nil || in.execExit == nil {
+		return
+	}
+	in.execExit.Add(context.Background(), 1, metric.WithAttributes(attribute.String("result", result)))
 }
 
 func recordActive(kind string, delta int64) {
@@ -131,6 +151,10 @@ func closeReasonLabel(code int) string {
 		return "idle_timeout"
 	case ClosePodError:
 		return "pod_error"
+	case CloseBadStart:
+		return "bad_start"
+	case CloseStartTimeout:
+		return "start_timeout"
 	default:
 		return "other"
 	}

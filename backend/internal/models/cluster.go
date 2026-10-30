@@ -42,6 +42,17 @@ type Cluster struct {
 	// AllowPortForward lets users open port-forward tunnels to the stacks of
 	// this cluster. Off by default; only an admin sets it.
 	AllowPortForward bool `json:"allow_port_forward" gorm:"default:false"`
+	// AllowExec lets users run commands in the containers of the stacks of
+	// this cluster. Off by default; only an admin sets it. Exec shows the
+	// container environment and its secrets.
+	AllowExec bool `json:"allow_exec" gorm:"default:false"`
+}
+
+// ClusterStreamFlags are the per-cluster switches of the stream routes
+// (ClusterRepository.StreamFlagsByIDs).
+type ClusterStreamFlags struct {
+	PortForward bool
+	Exec        bool
 }
 
 // RegistryConfig returns the registry configuration for this cluster, or nil
@@ -92,12 +103,13 @@ type ClusterRepository interface {
 	// NamesByIDs returns the name of each cluster in ids that exists, keyed
 	// by ID, in one query.
 	NamesByIDs(ctx context.Context, ids []string) (map[string]string, error)
-	// StreamFlagsByIDs returns allow_port_forward of each cluster in ids that
-	// exists, keyed by ID, in one query that selects only id, is_default and
-	// allow_port_forward (no decryption of kubeconfig or registry password).
-	// With includeDefault the flag of the default cluster is added under the
-	// key DefaultClusterKey (absent when no default cluster exists).
-	StreamFlagsByIDs(ctx context.Context, ids []string, includeDefault bool) (map[string]bool, error)
+	// StreamFlagsByIDs returns allow_port_forward and allow_exec of each
+	// cluster in ids that exists, keyed by ID, in one query that selects only
+	// id, is_default, allow_port_forward and allow_exec (no decryption of
+	// kubeconfig or registry password). With includeDefault the flags of the
+	// default cluster are added under the key DefaultClusterKey (absent when no
+	// default cluster exists).
+	StreamFlagsByIDs(ctx context.Context, ids []string, includeDefault bool) (map[string]ClusterStreamFlags, error)
 	CountAll(ctx context.Context) (int, error)
 	CountByHealthStatus(ctx context.Context, status string) (int, error)
 	FindDefault(ctx context.Context) (*Cluster, error)

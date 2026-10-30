@@ -54,6 +54,7 @@ const emptyCreateForm: CreateClusterRequest = {
   is_default: false,
   use_in_cluster: false,
   allow_port_forward: false,
+  allow_exec: false,
 };
 
 const healthColor = (status: string): 'success' | 'warning' | 'error' | 'default' => {
@@ -129,6 +130,7 @@ const Clusters = () => {
       is_default: cluster.is_default,
       use_in_cluster: cluster.use_in_cluster ?? false,
       allow_port_forward: cluster.allow_port_forward ?? false,
+      allow_exec: cluster.allow_exec ?? false,
     });
     setDialogError(null);
     setDialogOpen(true);
@@ -168,6 +170,7 @@ const Clusters = () => {
           is_default: form.is_default,
           use_in_cluster: inCluster,
           allow_port_forward: form.allow_port_forward ?? false,
+          allow_exec: form.allow_exec ?? false,
         };
         if (!inCluster && (form.kubeconfig_data ?? '').trim()) {
           update.kubeconfig_data = form.kubeconfig_data;
@@ -455,6 +458,21 @@ const Clusters = () => {
               />
               <FormHelperText id="allow-port-forward-help" sx={{ ml: 0 }}>
                 Lets owners, devops and admins open a tunnel to services of instances on this cluster with stackctl. The server setting STACK_PORT_FORWARD_ENABLED must also be on. Port-forward bypasses NetworkPolicies and ingress authentication.
+              </FormHelperText>
+            </Box>
+            <Box>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={form.allow_exec ?? false}
+                    onChange={(e) => setForm({ ...form, allow_exec: e.target.checked })}
+                    slotProps={{ input: { 'aria-describedby': 'allow-exec-help' } }}
+                  />
+                }
+                label="Allow exec"
+              />
+              <FormHelperText id="allow-exec-help" sx={{ ml: 0 }}>
+                Lets owners, devops and admins run commands in containers of instances on this cluster with stackctl. The server setting STACK_EXEC_ENABLED must also be on. Exec shows the environment of the container, including secrets. Only containers in the server list STACK_EXEC_ALLOWED_CONTAINERS can be used.
               </FormHelperText>
             </Box>
           </Box>

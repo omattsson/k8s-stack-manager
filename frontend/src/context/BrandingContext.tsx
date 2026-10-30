@@ -31,6 +31,8 @@ export interface Branding {
   maxTtlDays: number;
   /** The server allows port-forward tunnels (STACK_PORT_FORWARD_ENABLED). */
   portForwardEnabled: boolean;
+  /** The server allows exec in stack containers (STACK_EXEC_ENABLED). */
+  execEnabled: boolean;
 }
 
 /** Values used when the UI config cannot be loaded, and outside a BrandingProvider. */
@@ -41,6 +43,7 @@ export const BRANDING_DEFAULTS: Branding = {
   defaultTtlMinutes: 0,
   maxTtlDays: DEFAULT_MAX_TTL_DAYS,
   portForwardEnabled: false,
+  execEnabled: false,
 };
 
 /**
@@ -103,6 +106,7 @@ export const brandingFromConfig = (data: unknown): Branding => {
     defaultTtlMinutes: ttlFromConfig(cfg.default_instance_ttl_minutes, maxTtlDays),
     maxTtlDays,
     portForwardEnabled: cfg.port_forward_enabled === true,
+    execEnabled: cfg.exec_enabled === true,
   };
 };
 
@@ -139,6 +143,7 @@ const cacheUIConfig = (data: unknown) => {
         default_instance_ttl_minutes: cfg.default_instance_ttl_minutes,
         max_instance_ttl_days: cfg.max_instance_ttl_days,
         port_forward_enabled: cfg.port_forward_enabled,
+        exec_enabled: cfg.exec_enabled,
       }),
     );
   } catch {

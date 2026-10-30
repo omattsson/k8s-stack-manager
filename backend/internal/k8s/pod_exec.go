@@ -10,6 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/remotecommand"
 )
 
@@ -50,22 +51,7 @@ func (c *Client) ExecInDeploymentPod(
 		return "", fmt.Errorf("list pods for %s/%s: %w", namespace, deploymentName, err)
 	}
 
-	var targetPod *corev1.Pod
-	for i := range pods.Items {
-		p := &pods.Items[i]
-		if p.Status.Phase != corev1.PodRunning {
-			continue
-		}
-		for _, cond := range p.Status.Conditions {
-			if cond.Type == corev1.PodReady && cond.Status == corev1.ConditionTrue {
-				targetPod = p
-				break
-			}
-		}
-		if targetPod != nil {
-			break
-		}
-	}
+	targetPod := SelectReadyPod(pods.Items)
 	if targetPod == nil {
 		return "", fmt.Errorf("no ready pod found for deployment %s/%s", namespace, deploymentName)
 	}
@@ -90,9 +76,9 @@ func (c *Client) ExecInDeploymentPod(
 			Stderr:    true,
 		}, scheme.ParameterCodec)
 
-	exec, err := remotecommand.NewSPDYExecutor(c.restConfig, "POST", req.URL())
+	exec, err := newExecExecutor(rest.CopyConfig(c.restConfig), req.URL())
 	if err != nil {
-		return "", fmt.Errorf("build SPDY exec for %s/%s: %w", namespace, targetPod.Name, err)
+		return "", fmt.Errorf("build exec for %s/%s: %w", namespace, targetPod.Name, err)
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -101,7 +87,8 @@ func (c *Client) ExecInDeploymentPod(
 		Stderr: &stderr,
 	}); err != nil {
 		combined := combineBuffers(stdout.String(), stderr.String())
-		return combined, fmt.Errorf("exec in %s/%s: %w", namespace, targetPod.Name, err)
+		// The raw error holds the exec URL with every argument of the command.
+		return combined, fmt.Errorf("exec in %s/%s: %w", namespace, targetPod.Name, SanitizeExecError(err))
 	}
 
 	combined := combineBuffers(stdout.String(), stderr.String())

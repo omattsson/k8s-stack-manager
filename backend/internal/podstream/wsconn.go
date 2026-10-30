@@ -3,6 +3,7 @@ package podstream
 import (
 	"errors"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -50,12 +51,15 @@ func (t Timings) withDefaults() Timings {
 }
 
 // wsConn wraps a gorilla connection with the deadlines of a long-lived
-// stream. Reads come from one goroutine. Data writes come from one goroutine
-// too; control frames (ping, close) use WriteControl, which gorilla allows
-// concurrently with the data writer.
+// stream. Reads come from one goroutine at a time. Data writes are serialized
+// by writeMu (exec writes stdout, stderr and text frames from several
+// goroutines); control frames (ping, close) use WriteControl, which gorilla
+// allows concurrently with the data writer.
 type wsConn struct {
 	c *gorilla.Conn
 	t Timings
+	// writeMu serializes the data writes (exec writes from several goroutines).
+	writeMu sync.Mutex
 }
 
 // newWSConn prepares c right after the upgrade. The deadlines of the
@@ -98,11 +102,18 @@ func (w *wsConn) read() (int, []byte, error) {
 	return mt, data, err
 }
 
-// writeBinary sends one binary frame with a write deadline. Call it from one
-// goroutine only.
-func (w *wsConn) writeBinary(p []byte) error {
+// writeBinary sends one binary frame with a write deadline. Data writes are
+// serialized.
+func (w *wsConn) writeBinary(p []byte) error { return w.writeData(gorilla.BinaryMessage, p) }
+
+// writeText sends one text frame with a write deadline.
+func (w *wsConn) writeText(p []byte) error { return w.writeData(gorilla.TextMessage, p) }
+
+func (w *wsConn) writeData(mt int, p []byte) error {
+	w.writeMu.Lock()
+	defer w.writeMu.Unlock()
 	_ = w.c.SetWriteDeadline(time.Now().Add(w.t.WriteTimeout))
-	return w.c.WriteMessage(gorilla.BinaryMessage, p)
+	return w.c.WriteMessage(mt, p)
 }
 
 func (w *wsConn) ping() error {

@@ -1,5 +1,5 @@
 // Package podstream owns the long-lived WebSocket sessions that tunnel to a
-// pod (port-forward now, exec later): limits, the session registry, the copy
+// pod (port-forward and exec): limits, the session registry, the copy
 // pumps, deadlines, close codes and metrics. The HTTP handler runs the checks
 // and the upgrade, then hands the connection to the Manager.
 package podstream
@@ -24,6 +24,8 @@ const (
 	CloseInternalError = 1011
 	CloseMaxDuration   = 4001
 	CloseIdleTimeout   = 4002
+	CloseBadStart      = 4400 // exec: the first client message is not a valid start message
+	CloseStartTimeout  = 4408 // exec: no start message in time
 	ClosePodError      = 4502
 	closeAbnormalOnly  = 1006 // never sent; the connection is gone
 )
@@ -37,14 +39,19 @@ var (
 	ErrShutdown = errors.New("stream manager is shutting down")
 )
 
-// Config configures a Manager. Zero values: MaxPerUser 5, ProcessCap 500,
-// MaxDuration 1h, IdleTimeout 15m.
+// Config configures a Manager. Zero values: Kind port_forward, MaxPerUser 5,
+// ProcessCap 500, MaxDuration 1h, IdleTimeout 15m.
 type Config struct {
+	// Kind is the kind label of the sessions of this manager (KindPortForward
+	// or KindExec). Each kind has its own Manager and so its own limits.
+	Kind        string
 	Timings     Timings
 	MaxDuration time.Duration
 	IdleTimeout time.Duration
 	MaxPerUser  int
 	ProcessCap  int
+	// NoIdleTimeout turns the idle timeout off (exec has none).
+	NoIdleTimeout bool
 }
 
 // Manager holds the limits and the registry of the open sessions of one
@@ -62,6 +69,9 @@ type Manager struct {
 
 // NewManager returns a Manager. Call Shutdown when the process stops.
 func NewManager(cfg Config) *Manager {
+	if cfg.Kind == "" {
+		cfg.Kind = KindPortForward
+	}
 	if cfg.MaxPerUser <= 0 {
 		cfg.MaxPerUser = 5
 	}
@@ -80,6 +90,9 @@ func NewManager(cfg Config) *Manager {
 	base, cancel := context.WithCancel(context.Background())
 	return &Manager{baseCtx: base, cancelBase: cancel, perUser: map[string]int{}, cfg: cfg}
 }
+
+// Kind is the kind label of the sessions of this manager.
+func (m *Manager) Kind() string { return m.cfg.Kind }
 
 // MaxDuration is the longest life of a session.
 func (m *Manager) MaxDuration() time.Duration { return m.cfg.MaxDuration }
@@ -105,11 +118,11 @@ func (m *Manager) Acquire(userID string) (*Slot, error) {
 		return nil, ErrShutdown
 	}
 	if m.total >= m.cfg.ProcessCap {
-		RecordRejected(KindPortForward, "process_cap")
+		RecordRejected(m.cfg.Kind, "process_cap")
 		return nil, ErrLimitReached
 	}
 	if m.perUser[userID] >= m.cfg.MaxPerUser {
-		RecordRejected(KindPortForward, "user_limit")
+		RecordRejected(m.cfg.Kind, "user_limit")
 		return nil, ErrLimitReached
 	}
 	m.total++
