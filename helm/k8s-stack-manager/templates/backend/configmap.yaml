@@ -88,6 +88,34 @@ data:
   STACK_PORT_FORWARD_MAX_PER_USER: {{ .maxPerUser | toString | quote }}
   {{- end }}
   {{- end }}
+  {{- /* Exec settings. An explicit backend.env value wins. */}}
+  {{- with .Values.backend.exec }}
+  {{- $names := list }}
+  {{- range (.allowedContainers | default list) }}
+  {{- if not (regexMatch "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" (toString .)) }}
+  {{- fail (printf "backend.exec.allowedContainers: %q is not a container name (a DNS-1123 label: lowercase letters, digits and '-', at most 63 characters, starting and ending with a letter or digit)" (toString .)) }}
+  {{- end }}
+  {{- $names = append $names (toString .) }}
+  {{- end }}
+  {{- if not (hasKey $.Values.backend.env "STACK_EXEC_ENABLED") }}
+  STACK_EXEC_ENABLED: {{ .enabled | toString | quote }}
+  {{- end }}
+  {{- if not (hasKey $.Values.backend.env "STACK_EXEC_ALLOWED_CONTAINERS") }}
+  STACK_EXEC_ALLOWED_CONTAINERS: {{ join "," $names | quote }}
+  {{- end }}
+  {{- if not (hasKey $.Values.backend.env "STACK_EXEC_MAX_DURATION") }}
+  STACK_EXEC_MAX_DURATION: {{ .maxDuration | toString | quote }}
+  {{- end }}
+  {{- if not (hasKey $.Values.backend.env "STACK_EXEC_MAX_COMMAND_LENGTH") }}
+  STACK_EXEC_MAX_COMMAND_LENGTH: {{ .maxCommandLength | int64 | toString | quote }}
+  {{- end }}
+  {{- if not (hasKey $.Values.backend.env "STACK_EXEC_MAX_PER_USER") }}
+  STACK_EXEC_MAX_PER_USER: {{ .maxPerUser | int64 | toString | quote }}
+  {{- end }}
+  {{- if not (hasKey $.Values.backend.env "STACK_EXEC_ALLOW_SERVICE_ACCOUNT_TOKEN") }}
+  STACK_EXEC_ALLOW_SERVICE_ACCOUNT_TOKEN: {{ .allowServiceAccountToken | toString | quote }}
+  {{- end }}
+  {{- end }}
   {{- if not (hasKey .Values.backend.env "STACK_STREAM_ALLOW_API_KEYS") }}
   STACK_STREAM_ALLOW_API_KEYS: {{ .Values.backend.streams.allowApiKeys | toString | quote }}
   {{- end }}

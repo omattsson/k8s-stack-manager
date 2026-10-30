@@ -35,9 +35,16 @@ rules:
       - resourcequotas
       - limitranges
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+{{- if .Values.backend.exec.enabled }}
+  # Exec through the backend (backend.exec). The websocket transport of
+  # client-go uses get, the SPDY transport uses create. Nothing else in the
+  # backend runs pods/exec (ExecInDeploymentPod has no production caller), so
+  # the rule is rendered only with the feature. serviceaccounts get (above)
+  # serves the service-account-token check.
   - apiGroups: [""]
     resources: ["pods/exec"]
-    verbs: ["create"]
+    verbs: ["get", "create"]
+{{- end }}
 {{- if .Values.backend.portForward.enabled }}
   # Port-forward through the backend (backend.portForward). The websocket
   # transport of client-go uses get, the SPDY transport uses create.
@@ -213,19 +220,18 @@ spec:
   policyName: {{ $fullname }}-backend-scope
   validationActions: [Deny]
 {{- end }}
-{{- else if and .Values.backend.rbac.admissionPolicy.enabled .Values.backend.portForward.enabled }}
+{{- else if and .Values.backend.rbac.admissionPolicy.enabled (or .Values.backend.portForward.enabled .Values.backend.exec.enabled) }}
 {{- /* A security control: do not install without it on a cluster that cannot enforce it. */}}
 {{- if not (.Capabilities.APIVersions.Has "admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy") }}
-{{- fail "backend.portForward.enabled with backend.rbac.scope=cluster needs the ValidatingAdmissionPolicy API (admissionregistration.k8s.io/v1, Kubernetes 1.30 or later), which this cluster does not serve. Upgrade Kubernetes, or set backend.rbac.admissionPolicy.enabled=false knowingly: then the backend can open port-forwards into any namespace, including kube-system." }}
+{{- fail "backend.portForward.enabled or backend.exec.enabled with backend.rbac.scope=cluster needs the ValidatingAdmissionPolicy API (admissionregistration.k8s.io/v1, Kubernetes 1.30 or later), which this cluster does not serve. Upgrade Kubernetes, or set backend.rbac.admissionPolicy.enabled=false knowingly: then the backend can open port-forwards and run commands in any namespace, including kube-system." }}
 {{- end }}
 ---
-# Scope cluster with backend.portForward.enabled: the backend ClusterRole
+# Scope cluster with backend.portForward.enabled or backend.exec.enabled: the backend ClusterRole
 # allows pods/exec and pods/portforward in every namespace. This policy limits
 # CONNECT on both subresources by the backend service account to namespaces
 # with the label managed-by=k8s-stack-manager, so a wrong database row or a
-# bug cannot reach a pod in kube-system. It is not rendered while port-forward
-# is off (the policy needs Kubernetes 1.30 or later); the exec feature (#723)
-# will widen the condition. The namespace of the backend is protected by the
+# bug cannot reach a pod in kube-system. It is not rendered while both
+# features are off (the policy needs Kubernetes 1.30 or later). The namespace of the backend is protected by the
 # Go guard (POD_NAMESPACE check) and because that namespace has no
 # managed-by label; this policy only tests the label.
 #
