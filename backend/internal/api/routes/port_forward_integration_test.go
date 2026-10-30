@@ -147,15 +147,16 @@ func (r *itClusterRepo) List(_ context.Context) ([]models.Cluster, error) {
 	return []models.Cluster{r.cluster}, nil
 }
 
-func (r *itClusterRepo) StreamFlagsByIDs(_ context.Context, ids []string, includeDefault bool) (map[string]bool, error) {
+func (r *itClusterRepo) StreamFlagsByIDs(_ context.Context, ids []string, includeDefault bool) (map[string]models.ClusterStreamFlags, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	out := map[string]bool{}
+	f := models.ClusterStreamFlags{PortForward: r.cluster.AllowPortForward, Exec: r.cluster.AllowExec}
+	out := map[string]models.ClusterStreamFlags{}
 	for _, id := range ids {
-		out[id] = r.cluster.AllowPortForward
+		out[id] = f
 	}
 	if includeDefault {
-		out[models.DefaultClusterKey] = r.cluster.AllowPortForward
+		out[models.DefaultClusterKey] = f
 	}
 	return out, nil
 }

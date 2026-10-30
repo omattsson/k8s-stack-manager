@@ -1135,6 +1135,9 @@ func (d *Database) AutoMigrate() error {
 	// port-forward tunnels (#722).
 	migrator.AddMigration(clusterAllowPortForwardMigration())
 
+	// Migration 67: clusters.allow_exec, the per-cluster switch of exec (#723).
+	migrator.AddMigration(clusterAllowExecMigration())
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err
@@ -2092,6 +2095,31 @@ func clusterAllowPortForwardMigration() schema.Migration {
 			m := tx.Migrator()
 			if m.HasTable(&models.Cluster{}) && m.HasColumn(&models.Cluster{}, "AllowPortForward") {
 				return m.DropColumn(&models.Cluster{}, "AllowPortForward")
+			}
+			return nil
+		},
+	}
+}
+
+// clusterAllowExecMigration is migration 67. It adds clusters.allow_exec
+// (boolean, NOT NULL, default false): the per-cluster switch of exec (#723).
+// Existing clusters get false. Up and Down are idempotent.
+func clusterAllowExecMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261030000067",
+		Name:        "add_cluster_allow_exec",
+		Description: "Add allow_exec to clusters (per-cluster switch of exec sessions)",
+		Up: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if !m.HasTable(&models.Cluster{}) || m.HasColumn(&models.Cluster{}, "AllowExec") {
+				return nil
+			}
+			return m.AddColumn(&models.Cluster{}, "AllowExec")
+		},
+		Down: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if m.HasTable(&models.Cluster{}) && m.HasColumn(&models.Cluster{}, "AllowExec") {
+				return m.DropColumn(&models.Cluster{}, "AllowExec")
 			}
 			return nil
 		},

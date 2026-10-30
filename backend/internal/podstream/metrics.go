@@ -12,6 +12,9 @@ import (
 // KindPortForward is the kind label of the port-forward sessions.
 const KindPortForward = "port_forward"
 
+// KindExec is the kind label of the exec sessions.
+const KindExec = "exec"
+
 // Directions of stack_stream.bytes_total.
 const (
 	DirectionClientToPod = "client_to_pod"

@@ -7,9 +7,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
-// Defaults and limits of the stream settings (port-forward, later exec).
+// Defaults and limits of the stream settings (port-forward and exec).
 const (
 	DefaultPortForwardMaxDuration = time.Hour
 	DefaultPortForwardIdleTimeout = 15 * time.Minute
@@ -18,7 +20,45 @@ const (
 	MaxStreamDuration = 24 * time.Hour
 	// maxStreamPerUser is the upper bound of STACK_PORT_FORWARD_MAX_PER_USER.
 	maxStreamPerUser = 100
+
+	// Defaults and limits of the exec settings.
+	DefaultExecMaxDuration   = 10 * time.Minute
+	DefaultExecMaxCommandLen = 4096
+	DefaultExecMaxPerUser    = 3
+	maxExecCommandLen        = 32768
 )
+
+// ExecConfig holds the settings of the exec sessions (#723).
+type ExecConfig struct {
+	// AllowedContainers are the container names that exec may target
+	// (env: STACK_EXEC_ALLOWED_CONTAINERS, comma-separated DNS-1123 labels,
+	// exact names). Empty: every request is refused with container_not_allowed.
+	AllowedContainers []string
+	// MaxDuration is the longest life of an exec session
+	// (env: STACK_EXEC_MAX_DURATION, default 10m, > 0 and <= 24h).
+	MaxDuration time.Duration
+	// MaxCommandLength is the largest sum of the argument bytes
+	// (env: STACK_EXEC_MAX_COMMAND_LENGTH, default 4096, 1..32768).
+	MaxCommandLength int
+	// MaxPerUser is the number of open exec sessions of a user in this replica
+	// (env: STACK_EXEC_MAX_PER_USER, default 3, 1..100).
+	MaxPerUser int
+	// Enabled turns the feature on (env: STACK_EXEC_ENABLED, default false).
+	Enabled bool
+	// AllowServiceAccountToken turns off the refusal of a container that holds
+	// a service-account token (env: STACK_EXEC_ALLOW_SERVICE_ACCOUNT_TOKEN, default false).
+	AllowServiceAccountToken bool
+}
+
+// ContainerAllowed reports whether name is in the allowed list.
+func (e ExecConfig) ContainerAllowed(name string) bool {
+	for _, a := range e.AllowedContainers {
+		if a == name {
+			return true
+		}
+	}
+	return false
+}
 
 // PortForwardConfig holds the settings of the port-forward tunnels.
 type PortForwardConfig struct {
@@ -46,6 +86,7 @@ type StreamConfig struct {
 	// namespace guard refuses this namespace.
 	BackendNamespace string
 	PortForward      PortForwardConfig
+	Exec             ExecConfig
 	// AllowAPIKeys lets API keys open streams (env: STACK_STREAM_ALLOW_API_KEYS, default false).
 	AllowAPIKeys bool
 }
@@ -72,6 +113,21 @@ func (c *StreamConfig) check(strict bool) error {
 	}
 	if (strict || p.MaxPerUser != 0) && (p.MaxPerUser < 1 || p.MaxPerUser > maxStreamPerUser) {
 		return fmt.Errorf("STACK_PORT_FORWARD_MAX_PER_USER must be between 1 and %d", maxStreamPerUser)
+	}
+	e := c.Exec
+	if (strict || e.MaxDuration != 0) && (e.MaxDuration <= 0 || e.MaxDuration > MaxStreamDuration) {
+		return errors.New("STACK_EXEC_MAX_DURATION must be more than 0 and at most 24h")
+	}
+	if (strict || e.MaxCommandLength != 0) && (e.MaxCommandLength < 1 || e.MaxCommandLength > maxExecCommandLen) {
+		return fmt.Errorf("STACK_EXEC_MAX_COMMAND_LENGTH must be between 1 and %d", maxExecCommandLen)
+	}
+	if (strict || e.MaxPerUser != 0) && (e.MaxPerUser < 1 || e.MaxPerUser > maxStreamPerUser) {
+		return fmt.Errorf("STACK_EXEC_MAX_PER_USER must be between 1 and %d", maxStreamPerUser)
+	}
+	for _, name := range e.AllowedContainers {
+		if len(validation.IsDNS1123Label(name)) > 0 {
+			return fmt.Errorf("STACK_EXEC_ALLOWED_CONTAINERS entry %q is not a DNS-1123 label", name)
+		}
 	}
 	return nil
 }
@@ -118,6 +174,34 @@ func loadStreamConfig() StreamConfig {
 			setErr(fmt.Errorf("STACK_PORT_FORWARD_MAX_PER_USER %q is not a whole number", raw))
 		} else {
 			c.PortForward.MaxPerUser = v
+		}
+	}
+	c.Exec.Enabled = boolean("STACK_EXEC_ENABLED")
+	c.Exec.AllowServiceAccountToken = boolean("STACK_EXEC_ALLOW_SERVICE_ACCOUNT_TOKEN")
+	c.Exec.MaxDuration = duration("STACK_EXEC_MAX_DURATION", DefaultExecMaxDuration)
+	c.Exec.MaxCommandLength = DefaultExecMaxCommandLen
+	if raw := strings.TrimSpace(os.Getenv("STACK_EXEC_MAX_COMMAND_LENGTH")); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil {
+			setErr(fmt.Errorf("STACK_EXEC_MAX_COMMAND_LENGTH %q is not a whole number", raw))
+		} else {
+			c.Exec.MaxCommandLength = v
+		}
+	}
+	c.Exec.MaxPerUser = DefaultExecMaxPerUser
+	if raw := strings.TrimSpace(os.Getenv("STACK_EXEC_MAX_PER_USER")); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil {
+			setErr(fmt.Errorf("STACK_EXEC_MAX_PER_USER %q is not a whole number", raw))
+		} else {
+			c.Exec.MaxPerUser = v
+		}
+	}
+	if raw := strings.TrimSpace(os.Getenv("STACK_EXEC_ALLOWED_CONTAINERS")); raw != "" {
+		for _, part := range strings.Split(raw, ",") {
+			if name := strings.TrimSpace(part); name != "" {
+				c.Exec.AllowedContainers = append(c.Exec.AllowedContainers, name)
+			}
 		}
 	}
 	c.AllowAPIKeys = boolean("STACK_STREAM_ALLOW_API_KEYS")

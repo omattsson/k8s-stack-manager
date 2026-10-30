@@ -181,7 +181,7 @@ func (r *notFoundClusterRepo) SetDefault(ctx context.Context, _ string) error { 
 
 func (*transientErrorClusterRepo) CountAll(ctx context.Context) (int, error) { return 0, ctx.Err() }
 
-func (*transientErrorClusterRepo) StreamFlagsByIDs(ctx context.Context, _ []string, _ bool) (map[string]bool, error) {
+func (*transientErrorClusterRepo) StreamFlagsByIDs(ctx context.Context, _ []string, _ bool) (map[string]models.ClusterStreamFlags, error) {
 	return nil, ctx.Err()
 }
 
@@ -197,7 +197,7 @@ func (*transientErrorClusterRepo) CountByHealthStatus(ctx context.Context, statu
 
 func (*notFoundClusterRepo) CountAll(ctx context.Context) (int, error) { return 0, ctx.Err() }
 
-func (*notFoundClusterRepo) StreamFlagsByIDs(ctx context.Context, _ []string, _ bool) (map[string]bool, error) {
+func (*notFoundClusterRepo) StreamFlagsByIDs(ctx context.Context, _ []string, _ bool) (map[string]models.ClusterStreamFlags, error) {
 	return nil, ctx.Err()
 }
 

@@ -1485,7 +1485,7 @@ func (*stubClusterRepo) CountByHealthStatus(ctx context.Context, status string) 
 	}
 	return 0, nil
 }
-func (*stubClusterRepo) StreamFlagsByIDs(ctx context.Context, _ []string, _ bool) (map[string]bool, error) {
+func (*stubClusterRepo) StreamFlagsByIDs(ctx context.Context, _ []string, _ bool) (map[string]models.ClusterStreamFlags, error) {
 	return nil, ctx.Err()
 }
 

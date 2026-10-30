@@ -22,7 +22,7 @@ import (
 // It reads the instances of the open sessions with one FindByIDs call (columns
 // id, owner_id, status, namespace, cluster_id), all users with one FindByIDs
 // call and the cluster switches with one StreamFlagsByIDs call that selects
-// only the id, is_default and allow_port_forward columns of the clusters in
+// only the id, is_default, allow_port_forward and allow_exec columns of the clusters in
 // use (no decryption: a damaged kubeconfig of another cluster cannot disable
 // the check). A failed lookup fails open: the affected sessions stay and the
 // next run retries; the log line is rate-limited. A run whose context ends
@@ -103,10 +103,17 @@ func NewStreamAccessChecker(instanceRepo models.StackInstanceRepository, userRep
 				lost[i] = true
 				continue
 			}
-			if flags != nil && r.Kind() == podstream.KindPortForward {
-				allowed, found := flags[inst.ClusterID]
-				if !found || !allowed {
-					lost[i] = true
+			if flags != nil {
+				f, found := flags[inst.ClusterID]
+				switch r.Kind() {
+				case podstream.KindPortForward:
+					if !found || !f.PortForward {
+						lost[i] = true
+					}
+				case podstream.KindExec:
+					if !found || !f.Exec {
+						lost[i] = true
+					}
 				}
 			}
 		}
@@ -121,6 +128,8 @@ func streamKindEnabled(cfg config.StreamConfig, kind string) bool {
 	switch kind {
 	case podstream.KindPortForward:
 		return cfg.PortForward.Enabled
+	case podstream.KindExec:
+		return cfg.Exec.Enabled
 	default:
 		return true
 	}
@@ -196,11 +205,11 @@ func loadStreamUsers(ctx context.Context, repo models.UserRepository, rs []webso
 	return streamUsers{byID: m, ok: true}
 }
 
-// loadStreamClusterFlags returns allow_port_forward of the clusters that the
+// loadStreamClusterFlags returns the stream switches (allow_port_forward, allow_exec) of the clusters that the
 // known instances use (the default cluster under models.DefaultClusterKey for
 // an instance without a cluster ID), read with one projected call. It returns
 // nil when the lookup failed, there is no repository or no cluster is needed.
-func loadStreamClusterFlags(ctx context.Context, repo models.ClusterRepository, instances streamInstances, logFail func(string, ...any)) map[string]bool {
+func loadStreamClusterFlags(ctx context.Context, repo models.ClusterRepository, instances streamInstances, logFail func(string, ...any)) map[string]models.ClusterStreamFlags {
 	if repo == nil {
 		return nil
 	}

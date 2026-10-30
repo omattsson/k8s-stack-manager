@@ -480,21 +480,23 @@ func (r *GORMClusterRepository) SetDefault(ctx context.Context, id string) error
 // clusterIDsPerQuery bounds the IN list of one StreamFlagsByIDs query.
 const clusterIDsPerQuery = 500
 
-// StreamFlagsByIDs returns allow_port_forward of the clusters in ids that
-// exist, keyed by ID. It selects only id, is_default and allow_port_forward,
+// StreamFlagsByIDs returns the stream switches (allow_port_forward and
+// allow_exec) of the clusters in ids that exist, keyed by ID. It selects only
+// id, is_default, allow_port_forward and allow_exec,
 // so it never reads or decrypts the kubeconfig or the registry password and a
 // damaged secret column cannot fail it. With includeDefault the flag of the
 // default cluster is stored under models.DefaultClusterKey.
-func (r *GORMClusterRepository) StreamFlagsByIDs(ctx context.Context, ids []string, includeDefault bool) (map[string]bool, error) {
-	out := make(map[string]bool, len(ids)+1)
+func (r *GORMClusterRepository) StreamFlagsByIDs(ctx context.Context, ids []string, includeDefault bool) (map[string]models.ClusterStreamFlags, error) {
+	out := make(map[string]models.ClusterStreamFlags, len(ids)+1)
 	type row struct {
 		ID               string
 		IsDefault        bool
 		AllowPortForward bool
+		AllowExec        bool
 	}
 	query := func(db *gorm.DB) ([]row, error) {
 		var rows []row
-		if err := db.Model(&models.Cluster{}).Select("id, is_default, allow_port_forward").Find(&rows).Error; err != nil {
+		if err := db.Model(&models.Cluster{}).Select("id, is_default, allow_port_forward, allow_exec").Find(&rows).Error; err != nil {
 			return nil, dberrors.NewDatabaseError("stream_flags_by_ids", err)
 		}
 		return rows, nil
@@ -506,7 +508,7 @@ func (r *GORMClusterRepository) StreamFlagsByIDs(ctx context.Context, ids []stri
 			return nil, err
 		}
 		for _, rw := range rows {
-			out[rw.ID] = rw.AllowPortForward
+			out[rw.ID] = models.ClusterStreamFlags{PortForward: rw.AllowPortForward, Exec: rw.AllowExec}
 		}
 	}
 	if includeDefault {
@@ -515,7 +517,7 @@ func (r *GORMClusterRepository) StreamFlagsByIDs(ctx context.Context, ids []stri
 			return nil, err
 		}
 		if len(rows) > 0 {
-			out[models.DefaultClusterKey] = rows[0].AllowPortForward
+			out[models.DefaultClusterKey] = models.ClusterStreamFlags{PortForward: rows[0].AllowPortForward, Exec: rows[0].AllowExec}
 		}
 	}
 	return out, nil

@@ -53,13 +53,14 @@ func (r *pfInstanceRepo) FindByIDs(_ context.Context, ids []string) (map[string]
 
 type pfClusterRepo struct{ models.ClusterRepository }
 
-func (pfClusterRepo) StreamFlagsByIDs(_ context.Context, ids []string, includeDefault bool) (map[string]bool, error) {
-	out := map[string]bool{}
+func (pfClusterRepo) StreamFlagsByIDs(_ context.Context, ids []string, includeDefault bool) (map[string]models.ClusterStreamFlags, error) {
+	f := models.ClusterStreamFlags{PortForward: true, Exec: true}
+	out := map[string]models.ClusterStreamFlags{}
 	for _, id := range ids {
-		out[id] = true
+		out[id] = f
 	}
 	if includeDefault {
-		out[models.DefaultClusterKey] = true
+		out[models.DefaultClusterKey] = f
 	}
 	return out, nil
 }
