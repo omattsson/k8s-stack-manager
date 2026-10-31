@@ -2,8 +2,8 @@ apiVersion: v2
 name: k8s-stack-manager
 description: Self-service environments for multi-service Helm applications on your own Kubernetes clusters (web UI, API, MySQL)
 type: application
-version: 0.13.0
-appVersion: "0.15.0"
+version: 0.14.0
+appVersion: "0.15.1"
 keywords:
   - kubernetes
   - helm
@@ -34,9 +34,9 @@ annotations:
       url: https://github.com/omattsson/stackctl
   artifacthub.io/images: |
     - name: backend
-      image: ghcr.io/omattsson/k8s-stack-manager/backend:0.15.0
+      image: ghcr.io/omattsson/k8s-stack-manager/backend:0.15.1
     - name: frontend
-      image: ghcr.io/omattsson/k8s-stack-manager/frontend:0.15.0
+      image: ghcr.io/omattsson/k8s-stack-manager/frontend:0.15.1
     - name: mysql
       image: mysql:8.0
   artifacthub.io/screenshots: |
