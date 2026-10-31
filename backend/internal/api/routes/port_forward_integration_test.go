@@ -315,6 +315,9 @@ func (itExecClient) ResolveExecTarget(_ context.Context, _ string, req k8s.ExecT
 	}
 	return &k8s.ExecTarget{Pod: "web-0", Container: c}, nil
 }
+func (itExecClient) ExecContainers(context.Context, string, []string, k8s.ExecContainersRequest) (map[string]k8s.ReleaseExecContainers, k8s.ExecHintStats, error) {
+	return map[string]k8s.ReleaseExecContainers{}, k8s.ExecHintStats{}, nil
+}
 func (e itExecClient) ExecCommand(ctx context.Context, _ string, _ k8s.ExecTarget, cmd []string, so, se io.Writer) (int, error) {
 	return e.run(ctx, cmd, so, se)
 }

@@ -90,7 +90,8 @@ describe('BrandingContext', () => {
     );
     await waitFor(() => expect(screen.getByTestId('title')).toHaveTextContent('Platform Portal'));
     expect(screen.getByTestId('logo')).toHaveTextContent('/branding/logo.svg');
-    expect(document.title).toBe('Platform Portal');
+    // The title and the favicon are set in an effect after the render: wait for them too.
+    await waitFor(() => expect(document.title).toBe('Platform Portal'));
     expect(faviconHref()).toBe('https://cdn.example.com/favicon.png');
     // Not an SVG: the type attribute of index.html must go.
     expect(document.querySelector('link[rel~="icon"]')?.hasAttribute('type')).toBe(false);
@@ -146,6 +147,21 @@ describe('BrandingContext', () => {
       });
     });
 
+    it('does not cache stream_api_keys_allowed but uses the server value', async () => {
+      mockGet.mockResolvedValue({ title: 'P', logo_url: '', favicon_url: '/f.svg', exec_enabled: true, stream_api_keys_allowed: true });
+      render(
+        <BrandingProvider>
+          <Probe />
+        </BrandingProvider>,
+      );
+      await waitFor(() => expect(mockGet).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(localStorage.getItem(UI_CONFIG_STORAGE_KEY)).not.toBeNull());
+      const cached = JSON.parse(localStorage.getItem(UI_CONFIG_STORAGE_KEY) ?? '{}');
+      expect(cached.exec_enabled).toBe(true);
+      expect(cached).not.toHaveProperty('stream_api_keys_allowed');
+      expect(loadCachedBranding().streamApiKeysAllowed).toBe(false);
+    });
+
     it('caches the TTL default and uses it at the next start', async () => {
       mockGet.mockResolvedValue({ title: 'P', logo_url: '', favicon_url: '/f.svg', default_instance_ttl_minutes: 240 });
       render(
@@ -198,9 +214,9 @@ describe('BrandingContext', () => {
 
   describe('brandingFromConfig', () => {
     it.each([
-      ['empty logo uses the built-in logo', { title: 'A', logo_url: '', favicon_url: '/f.svg' }, { title: 'A', logoUrl: '/logo.svg', faviconUrl: '/f.svg', defaultTtlMinutes: 0, maxTtlDays: 30, portForwardEnabled: false, execEnabled: false }],
-      ['blank title uses the default', { title: '  ', logo_url: '/l.svg', favicon_url: '/f.svg' }, { title: BRANDING_DEFAULTS.title, logoUrl: '/l.svg', faviconUrl: '/f.svg', defaultTtlMinutes: 0, maxTtlDays: 30, portForwardEnabled: false, execEnabled: false }],
-      ['javascript URL is ignored', { title: 'A', logo_url: 'javascript:alert(1)', favicon_url: 'data:image/svg+xml,<svg/>' }, { title: 'A', logoUrl: '/logo.svg', faviconUrl: '/favicon.svg', defaultTtlMinutes: 0, maxTtlDays: 30, portForwardEnabled: false, execEnabled: false }],
+      ['empty logo uses the built-in logo', { title: 'A', logo_url: '', favicon_url: '/f.svg' }, { title: 'A', logoUrl: '/logo.svg', faviconUrl: '/f.svg', defaultTtlMinutes: 0, maxTtlDays: 30, portForwardEnabled: false, execEnabled: false, streamApiKeysAllowed: false }],
+      ['blank title uses the default', { title: '  ', logo_url: '/l.svg', favicon_url: '/f.svg' }, { title: BRANDING_DEFAULTS.title, logoUrl: '/l.svg', faviconUrl: '/f.svg', defaultTtlMinutes: 0, maxTtlDays: 30, portForwardEnabled: false, execEnabled: false, streamApiKeysAllowed: false }],
+      ['javascript URL is ignored', { title: 'A', logo_url: 'javascript:alert(1)', favicon_url: 'data:image/svg+xml,<svg/>' }, { title: 'A', logoUrl: '/logo.svg', faviconUrl: '/favicon.svg', defaultTtlMinutes: 0, maxTtlDays: 30, portForwardEnabled: false, execEnabled: false, streamApiKeysAllowed: false }],
       ['non-object body gives the defaults', 'not json', BRANDING_DEFAULTS],
     ])('%s', (_name, input, expected) => {
       expect(brandingFromConfig(input)).toEqual(expected);
@@ -277,5 +293,13 @@ describe('BrandingContext', () => {
     ])('%s -> %s', (url, expected) => {
       expect(isSafeImageUrl(url)).toBe(expected);
     });
+  });
+});
+
+describe('brandingFromConfig stream_api_keys_allowed', () => {
+  it('is true only for a boolean true', () => {
+    expect(brandingFromConfig({ title: 'A', stream_api_keys_allowed: true }).streamApiKeysAllowed).toBe(true);
+    expect(brandingFromConfig({ title: 'A', stream_api_keys_allowed: 'true' }).streamApiKeysAllowed).toBe(false);
+    expect(brandingFromConfig({ title: 'A' }).streamApiKeysAllowed).toBe(false);
   });
 });

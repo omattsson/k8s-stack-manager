@@ -121,6 +121,11 @@ type NamespaceStatus struct {
 	Charts      []ChartStatus `json:"charts"`
 	Ingresses   []IngressInfo `json:"ingresses,omitempty"`
 	Events      []PodEvent    `json:"events,omitempty"`
+	// ExecHints is true when the server checked exec for the caller (only on
+	// /status and /pods with exec_hints=true, for a caller who may exec). Then a
+	// chart without exec_containers has no usable container. Never set on the
+	// watcher cache or the WebSocket broadcast.
+	ExecHints bool `json:"exec_hints,omitempty" example:"true"`
 }
 
 // PodEvent represents a Kubernetes event associated with a pod or other resource
@@ -143,6 +148,13 @@ type ChartStatus struct {
 	Deployments []DeploymentInfo `json:"deployments"`
 	Pods        []PodInfo        `json:"pods"`
 	Services    []ServiceInfo    `json:"services"`
+	// ExecContainers are the containers that "stackctl stack exec <stack> <chart>
+	// -c <name>" is accepted for, in the order the route considers them (pods by
+	// name, containers in spec order). Set only with exec_hints=true.
+	ExecContainers []string `json:"exec_containers,omitempty" example:"web,worker"`
+	// ExecDefaultContainer is the container the route picks without -c. Set
+	// only when that call would be accepted.
+	ExecDefaultContainer string `json:"exec_default_container,omitempty" example:"web"`
 }
 
 // DeploymentInfo summarizes a Kubernetes Deployment.

@@ -184,8 +184,16 @@ vi.mock('../../../components/PodStatusDisplay', () => ({
 }));
 
 vi.mock('../../../components/AccessUrls', () => ({
-  default: ({ status, portForwardEnabled, execEnabled, instanceName }: { status: { ingresses?: { url: string }[] }; portForwardEnabled?: boolean; execEnabled?: boolean; instanceName?: string }) => (
-    <div data-testid="access-urls" data-port-forward={String(!!portForwardEnabled)} data-exec={String(!!execEnabled)} data-instance-name={instanceName ?? ''}>
+  default: ({ status, portForwardEnabled, execEnabled, instanceName, streamApiKeysAllowed }: { status: { ingresses?: { url: string }[]; exec_hints?: boolean; charts?: { exec_containers?: string[] }[] | null }; portForwardEnabled?: boolean; execEnabled?: boolean; instanceName?: string; streamApiKeysAllowed?: boolean }) => (
+    <div
+      data-testid="access-urls"
+      data-port-forward={String(!!portForwardEnabled)}
+      data-exec={String(!!execEnabled)}
+      data-instance-name={instanceName ?? ''}
+      data-stream-keys={String(!!streamApiKeysAllowed)}
+      data-exec-hints={String(status.exec_hints)}
+      data-exec-containers={JSON.stringify((status.charts ?? []).map((c) => c.exec_containers ?? null))}
+    >
       {(status.ingresses || []).map((ing: { url: string }, i: number) => (
         <span key={i}>{ing.url}</span>
       ))}
@@ -789,7 +797,7 @@ describe('StackInstances Detail', () => {
     });
 
     await waitFor(() => {
-      expect(instanceService.getPods).toHaveBeenCalledWith('123');
+      expect(instanceService.getPods).toHaveBeenCalledWith('123', { execHints: true });
     });
   });
 
@@ -2448,7 +2456,7 @@ describe('StackInstances Detail permissions', () => {
     expect(instanceService.getOverrides).not.toHaveBeenCalled();
     expect(branchOverrideService.list).not.toHaveBeenCalled();
     expect(instanceService.getDeployLogPage).toHaveBeenCalledWith('123', { limit: 10, action: undefined, status: undefined });
-    expect(instanceService.getPods).toHaveBeenCalledWith('123');
+    expect(instanceService.getPods).toHaveBeenCalledWith('123', { execHints: true });
     expect(screen.queryByText('Failed to load instance details')).not.toBeInTheDocument();
   });
 
@@ -3333,5 +3341,184 @@ describe('StackInstances Detail deployment history (#626)', () => {
     });
     expect(await screen.findByText('Deployment History (5)')).toBeInTheDocument();
     expect(screen.getByTestId('log-actions').textContent).toBe('stop,deploy,deploy,deploy,deploy');
+  });
+});
+
+describe('Detail exec hints from getPods and the watcher', () => {
+  const hintChart = (release: string, ready: string[], exec?: string[]) => ({
+    release_name: release,
+    chart_name: release,
+    status: 'healthy',
+    deployments: [],
+    pods: ready.map((name) => ({ name, ready: true })),
+    services: [],
+    ...(exec ? { exec_containers: exec } : {}),
+  });
+  const ns = (charts: unknown[], extra: Record<string, unknown> = {}) => ({
+    namespace: 'stack-test',
+    status: 'healthy',
+    charts,
+    ingresses: [{ name: 'web', host: 'app.example.com', path: '/', tls: true, url: 'https://app.example.com' }],
+    last_checked: '2025-01-01T00:00:00Z',
+    ...extra,
+  });
+  const renderWith = (streamApiKeysAllowed = false) =>
+    render(
+      <StaticBrandingProvider value={{ ...BRANDING_DEFAULTS, execEnabled: true, streamApiKeysAllowed }}>
+        <MemoryRouter initialEntries={['/stack-instances/123']}>
+          <NotificationProvider>
+            <Routes>
+              <Route path="/stack-instances/:id" element={<Detail />} />
+            </Routes>
+          </NotificationProvider>
+        </MemoryRouter>
+      </StaticBrandingProvider>,
+    );
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.clearAllMocks();
+  });
+
+  it('keeps exec_containers on a watcher status and passes streamApiKeysAllowed', async () => {
+    const hinted = ns([hintChart('web', ['p1'], ['app'])], { exec_hints: true });
+    setupMocks({ status: 'running' }, { k8sStatus: hinted });
+    renderWith(true);
+
+    const el = await screen.findByTestId('access-urls');
+    await waitFor(() => expect(el).toHaveAttribute('data-exec-containers', '[["app"]]'));
+    expect(el).toHaveAttribute('data-stream-keys', 'true');
+
+    act(() => {
+      wsState.handler?.({
+        type: 'instance.status',
+        payload: { instance_id: '123', namespace_status: ns([hintChart('web', ['p1'])]) },
+      });
+    });
+    expect(screen.getByTestId('access-urls')).toHaveAttribute('data-exec-containers', '[["app"]]');
+    expect(screen.getByTestId('access-urls')).toHaveAttribute('data-exec-hints', 'true');
+  });
+
+  it('does not throw on a watcher status with null charts', async () => {
+    setupMocks({ status: 'running' }, { k8sStatus: ns([hintChart('web', ['p1'], ['app'])], { exec_hints: true }) });
+    renderWith();
+    await screen.findByTestId('access-urls');
+
+    act(() => {
+      wsState.handler?.({
+        type: 'instance.status',
+        payload: { instance_id: '123', namespace_status: ns([], { charts: null }) },
+      });
+    });
+    expect(screen.getByTestId('access-urls')).toHaveAttribute('data-exec-containers', '[]');
+  });
+
+  it('refetches the hints once, debounced, when the ready pods change', async () => {
+    const first = ns([hintChart('web', ['p1'], ['app'])], { exec_hints: true });
+    setupMocks({ status: 'running' }, { k8sStatus: first });
+    renderWith();
+    await screen.findByTestId('access-urls');
+    await waitFor(() => expect(screen.getByTestId('access-urls')).toHaveAttribute('data-exec-hints', 'true'));
+    expect(instanceService.getPods).toHaveBeenCalledTimes(1);
+
+    vi.useFakeTimers();
+    const refreshed = ns([hintChart('web', ['p2'], ['app', 'side'])], { exec_hints: true });
+    (instanceService.getPods as MockFn).mockResolvedValue(refreshed);
+    const send = (pod: string) => act(() => {
+      wsState.handler?.({
+        type: 'instance.status',
+        payload: { instance_id: '123', namespace_status: ns([hintChart('web', [pod])]) },
+      });
+    });
+    send('p2');
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    send('p3');
+    expect(instanceService.getPods).toHaveBeenCalledTimes(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1900); });
+    expect(instanceService.getPods).toHaveBeenCalledTimes(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+    expect(instanceService.getPods).toHaveBeenCalledTimes(2);
+    expect(instanceService.getPods).toHaveBeenLastCalledWith('123', { execHints: true });
+    expect(screen.getByTestId('access-urls')).toHaveAttribute('data-exec-containers', '[["app","side"]]');
+  });
+
+  it('does not refetch when the ready pods are unchanged', async () => {
+    setupMocks({ status: 'running' }, { k8sStatus: ns([hintChart('web', ['p1'], ['app'])], { exec_hints: true }) });
+    renderWith();
+    await screen.findByTestId('access-urls');
+    await waitFor(() => expect(screen.getByTestId('access-urls')).toHaveAttribute('data-exec-hints', 'true'));
+
+    vi.useFakeTimers();
+    act(() => {
+      wsState.handler?.({
+        type: 'instance.status',
+        payload: { instance_id: '123', namespace_status: ns([hintChart('web', ['p1'])]) },
+      });
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(instanceService.getPods).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not refetch for a server that sends no hints, and keeps the fallback', async () => {
+    setupMocks({ status: 'running' }, { k8sStatus: ns([hintChart('web', ['p1'])]) });
+    renderWith();
+    await screen.findByTestId('access-urls');
+
+    vi.useFakeTimers();
+    act(() => {
+      wsState.handler?.({
+        type: 'instance.status',
+        payload: { instance_id: '123', namespace_status: ns([hintChart('web', ['p2'])]) },
+      });
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(instanceService.getPods).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('access-urls')).toHaveAttribute('data-exec-hints', 'undefined');
+  });
+
+  it('keeps hints on without lists after a reset and refetches', async () => {
+    setupMocks({ status: 'running' }, { k8sStatus: ns([hintChart('web', ['p1'], ['app'])], { exec_hints: true }) });
+    renderWith();
+    await screen.findByTestId('access-urls');
+    await waitFor(() => expect(screen.getByTestId('access-urls')).toHaveAttribute('data-exec-hints', 'true'));
+
+    // The reset to null, then running again with a getPods call that does not answer.
+    (instanceService.getPods as MockFn).mockReturnValue(new Promise(() => {}));
+    act(() => {
+      wsState.handler?.({ type: 'deployment.status', payload: { instance_id: '123', status: 'stopping' } });
+    });
+    act(() => {
+      wsState.handler?.({ type: 'deployment.status', payload: { instance_id: '123', status: 'running' } });
+    });
+    expect(instanceService.getPods).toHaveBeenCalledTimes(2);
+    vi.useFakeTimers();
+    act(() => {
+      wsState.handler?.({
+        type: 'instance.status',
+        payload: { instance_id: '123', namespace_status: ns([hintChart('web', ['p1'])]) },
+      });
+    });
+    expect(screen.getByTestId('access-urls')).toHaveAttribute('data-exec-hints', 'true');
+    expect(screen.getByTestId('access-urls')).toHaveAttribute('data-exec-containers', '[null]');
+    await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+    expect(instanceService.getPods).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not fetch after unmount', async () => {
+    setupMocks({ status: 'running' }, { k8sStatus: ns([hintChart('web', ['p1'], ['app'])], { exec_hints: true }) });
+    const { unmount } = renderWith();
+    await screen.findByTestId('access-urls');
+    await waitFor(() => expect(screen.getByTestId('access-urls')).toHaveAttribute('data-exec-hints', 'true'));
+
+    vi.useFakeTimers();
+    act(() => {
+      wsState.handler?.({
+        type: 'instance.status',
+        payload: { instance_id: '123', namespace_status: ns([hintChart('web', ['p2'])]) },
+      });
+    });
+    unmount();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(instanceService.getPods).toHaveBeenCalledTimes(1);
   });
 });

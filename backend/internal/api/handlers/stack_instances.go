@@ -187,6 +187,15 @@ type InstanceHandler struct {
 	// set of Kubernetes calls (namespaceStatus).
 	statusFlight singleflight.Group
 	uniqueNames  bool
+	// execHints computes the exec hints of /status and /pods (nil: never).
+	execHints ExecHintProvider
+}
+
+// WithExecHints turns on exec_hints=true on GET /:id/status and /:id/pods.
+// Returns h for chaining.
+func (h *InstanceHandler) WithExecHints(p ExecHintProvider) *InstanceHandler {
+	h.execHints = p
+	return h
 }
 
 // InstanceSessionRevoker closes the local long-lived sessions of a stack
@@ -2270,10 +2279,11 @@ func (h *InstanceHandler) GetDeployLog(c *gin.Context) {
 
 // GetInstanceStatus godoc
 // @Summary     Get instance K8s status
-// @Description Get detailed Kubernetes resource status for a stack instance
+// @Description Get detailed Kubernetes resource status for a stack instance. exec_hints=true adds the exec fields for a caller who may modify the instance (owner, devops, admin) when exec is on (STACK_EXEC_ENABLED) and the cluster allows it (allow_exec): the response has exec_hints=true, and each chart has exec_containers (the containers that "stackctl stack exec <stack> <chart> -c <name>" is accepted for: in STACK_EXEC_ALLOWED_CONTAINERS, in a Running and Ready pod of the chart, and without a service-account token unless STACK_EXEC_ALLOW_SERVICE_ACCOUNT_TOKEN is true; in the order the route considers them) and exec_default_container (the container the route picks without -c; only when that call would be accepted). A chart without exec_containers has no usable container. When the hints cannot be computed (the stack is not deployed, the namespace is shared, a database or cluster read fails, or the computation takes more than 3 seconds), exec_hints is true and no chart has a list; this never fails the request. For other callers, or with exec off or the cluster switch off, the response has no exec fields. Without the parameter nothing changes and no extra reads run. With it, one computation costs a few database reads, one namespace GET, one pod list and one GET for each distinct ServiceAccount and Secret of the token check (at most 64 GETs; a container beyond that is left out). A caller waits at most 3 seconds for the computation; after that exec_hints is true without lists. A cluster lookup that fails gives no exec fields.
 // @Tags        stack-instances
 // @Produce     json
 // @Param       id path string true "Instance ID"
+// @Param       exec_hints query bool false "true: add exec_hints, exec_containers and exec_default_container for a caller who may exec (see the description)"
 // @Success     200 {object} k8s.NamespaceStatus
 // @Failure     404 {object} map[string]string
 // @Failure     503 {object} map[string]string
@@ -2295,7 +2305,12 @@ func (h *InstanceHandler) GetInstanceStatus(c *gin.Context) {
 	// Try cached status from watcher first.
 	if h.k8sWatcher != nil {
 		if nsStatus, ok := h.k8sWatcher.GetStatus(id); ok {
-			c.JSON(http.StatusOK, nsStatus)
+			// The cached status is shared: withExecHints annotates a copy.
+			out, ok := h.withExecHints(c, inst, nsStatus)
+			if !ok {
+				return
+			}
+			c.JSON(http.StatusOK, out)
 			return
 		}
 	}
@@ -2331,7 +2346,12 @@ func (h *InstanceHandler) GetInstanceStatus(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 			return
 		}
-		c.JSON(http.StatusOK, nsStatus)
+		// The status of a shared read is shared: withExecHints annotates a copy.
+		out, ok := h.withExecHints(c, inst, nsStatus)
+		if !ok {
+			return
+		}
+		c.JSON(http.StatusOK, out)
 		return
 	}
 
@@ -2340,11 +2360,12 @@ func (h *InstanceHandler) GetInstanceStatus(c *gin.Context) {
 
 // GetInstancePods godoc
 // @Summary     Get instance pod status
-// @Description Returns detailed pod health including container states, conditions, and recent events
+// @Description Returns detailed pod health including container states, conditions, and recent events. exec_hints=true adds the exec fields for a caller who may modify the instance (owner, devops, admin) when exec is on (STACK_EXEC_ENABLED) and the cluster allows it (allow_exec): the response has exec_hints=true, and each chart has exec_containers (the containers that "stackctl stack exec <stack> <chart> -c <name>" is accepted for: in STACK_EXEC_ALLOWED_CONTAINERS, in a Running and Ready pod of the chart, and without a service-account token unless STACK_EXEC_ALLOW_SERVICE_ACCOUNT_TOKEN is true; in the order the route considers them) and exec_default_container (the container the route picks without -c; only when that call would be accepted). A chart without exec_containers has no usable container. When the hints cannot be computed (the stack is not deployed, the namespace is shared, a database or cluster read fails, or the computation takes more than 3 seconds), exec_hints is true and no chart has a list; this never fails the request. For other callers, or with exec off or the cluster switch off, the response has no exec fields. Without the parameter nothing changes and no extra reads run. With it, one computation costs a few database reads, one namespace GET, one pod list and one GET for each distinct ServiceAccount and Secret of the token check (at most 64 GETs; a container beyond that is left out). A caller waits at most 3 seconds for the computation; after that exec_hints is true without lists. A cluster lookup that fails gives no exec fields.
 // @Tags        stack-instances
 // @Produce     json
 // @Security    BearerAuth
 // @Param       id path string true "Instance ID"
+// @Param       exec_hints query bool false "true: add exec_hints, exec_containers and exec_default_container for a caller who may exec (see the description)"
 // @Success     200 {object} k8s.NamespaceStatus
 // @Failure     400 {object} map[string]string
 // @Failure     404 {object} map[string]string
@@ -2409,7 +2430,11 @@ func (h *InstanceHandler) GetInstancePods(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 			return
 		}
-		c.JSON(http.StatusOK, nsStatus)
+		out, ok := h.withExecHints(c, inst, nsStatus)
+		if !ok {
+			return
+		}
+		c.JSON(http.StatusOK, out)
 		return
 	}
 

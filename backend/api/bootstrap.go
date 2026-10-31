@@ -634,6 +634,8 @@ func buildHandlers(
 		streamDeps.Hub = hub
 	}
 	streamHandler := handlers.NewStreamHandler(streamDeps)
+	// /status and /pods with exec_hints=true use the checks of the exec route.
+	instanceHandler.WithExecHints(streamHandler)
 
 	// Git handler.
 	gitHandler := handlers.NewGitHandler(svc.GitRegistry)

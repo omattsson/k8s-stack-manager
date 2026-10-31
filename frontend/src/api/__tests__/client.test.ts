@@ -892,6 +892,18 @@ describe('instanceService', () => {
     expect(result).toEqual(status);
   });
 
+  it('getStatus and getPods send exec_hints=true only with the execHints option', async () => {
+    const api = mockApi;
+    api.get.mockResolvedValue(mockResponse({ namespace: 'n' }));
+
+    await instanceService.getStatus('i1', { execHints: true });
+    expect(api.get).toHaveBeenLastCalledWith('/api/v1/stack-instances/i1/status', { params: { exec_hints: true } });
+    await instanceService.getPods('i1', { execHints: true });
+    expect(api.get).toHaveBeenLastCalledWith('/api/v1/stack-instances/i1/pods', { params: { exec_hints: true } });
+    await instanceService.getPods('i1', {});
+    expect(api.get).toHaveBeenLastCalledWith('/api/v1/stack-instances/i1/pods');
+  });
+
   it('getPods sends GET to pods endpoint', async () => {
     const api = mockApi;
     const podStatus = { namespace: 'stack-test', status: 'healthy', charts: [], last_checked: '2024-01-01T00:00:00Z' };

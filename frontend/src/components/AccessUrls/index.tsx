@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import {
   Box,
   Typography,
@@ -33,11 +34,20 @@ interface AccessUrlsProps {
   /** Name of the instance, as stackctl takes it on the command line. */
   instanceName?: string;
   /**
-   * Show a `stackctl stack exec` command for each chart. The caller sets it when
-   * the server has the feature on (ui-config `exec_enabled`), the cluster allows
-   * exec and the user can modify the instance. Needs `instanceName`.
+   * Show `stackctl stack exec` commands. The caller sets it when the server has
+   * the feature on (ui-config `exec_enabled`), the cluster allows exec and the
+   * user can modify the instance. Needs `instanceName`. With `status.exec_hints`
+   * the lines follow the containers the server accepts (`exec_containers`, with
+   * `-c` unless the single container is the default); without it (older server)
+   * there is one line per chart without `-c`.
    */
   execEnabled?: boolean;
+  /**
+   * Streams accept API keys (ui-config `stream_api_keys_allowed`). Only changes
+   * the help text of the stackctl commands: when true it no longer says that
+   * API keys are not accepted.
+   */
+  streamApiKeysAllowed?: boolean;
 }
 
 interface AccessEntry {
@@ -49,6 +59,8 @@ interface AccessEntry {
   label: string;
   /** Accessible name of the copy button. */
   copyLabel: string;
+  /** The entry is a stackctl command (exec or port-forward). */
+  stackctl?: boolean;
 }
 
 const buildEntries = (
@@ -75,17 +87,36 @@ const buildEntries = (
   // Service entries per chart
   (status.charts || []).forEach((chart: ChartStatus) => {
     if (execInstance) {
-      // One line per chart; the backend takes the Helm release name as the chart.
+      // The backend takes the Helm release name as the chart.
       const release = chart.release_name || chart.chart_name;
-      const cmd = `stackctl stack exec ${execInstance} ${release} -- <command>`;
-      entries.push({
-        chartName: release,
-        serviceName: release,
-        serviceType: 'Exec',
-        copyText: cmd,
-        label: cmd,
-        copyLabel: `Copy stackctl exec ${release}`,
-      });
+      const pushExec = (container?: string) => {
+        const cmd = container
+          ? `stackctl stack exec ${execInstance} ${release} -c ${container} -- <command>`
+          : `stackctl stack exec ${execInstance} ${release} -- <command>`;
+        entries.push({
+          chartName: release,
+          serviceName: container ? `${release} (${container})` : release,
+          serviceType: 'Exec',
+          copyText: cmd,
+          label: cmd,
+          copyLabel: container ? `Copy stackctl exec ${release} ${container}` : `Copy stackctl exec ${release}`,
+          stackctl: true,
+        });
+      };
+      if (status.exec_hints !== true) {
+        // Fallback for older servers (and responses without hints): the server did
+        // not say which containers exec accepts, so show one line per chart without -c.
+        pushExec();
+      } else {
+        const containers = chart.exec_containers ?? [];
+        if (containers.length === 1 && containers[0] === chart.exec_default_container) {
+          // A call without -c is accepted and picks this container.
+          pushExec();
+        } else {
+          // No accepted container: no line. Several, or one that is not the default: -c names it.
+          containers.forEach((c) => pushExec(c));
+        }
+      }
     }
     (chart.services || []).forEach((svc: ServiceInfo) => {
       // Skip services already covered by ingress
@@ -142,6 +173,7 @@ const buildEntries = (
               copyText: cmd,
               label: cmd,
               copyLabel: `Copy stackctl port-forward ${svc.name} ${port}`,
+              stackctl: true,
             });
           });
         }
@@ -161,12 +193,23 @@ const typeColor = (type: string): 'primary' | 'success' | 'warning' | 'default' 
   }
 };
 
-const AccessUrls = ({ status, showPortForward = false, portForwardEnabled = false, instanceName, execEnabled = false }: AccessUrlsProps) => {
+const AccessUrls = ({ status, showPortForward = false, portForwardEnabled = false, instanceName, execEnabled = false, streamApiKeysAllowed = false }: AccessUrlsProps) => {
   const { showSuccess, showError } = useNotification();
+  // Unique per component, so two AccessUrls on a page do not share the id.
+  const helpId = useId();
 
   const entries = buildEntries(status, showPortForward, portForwardEnabled ? instanceName : undefined, execEnabled ? instanceName : undefined);
 
   if (entries.length === 0) return null;
+
+  const hasStackctl = entries.some((e) => e.stackctl);
+  const stackctlHelp = (
+    <>
+      stackctl commands need stackctl and a session: run{' '}
+      <Box component="code" sx={{ fontFamily: 'monospace' }}>stackctl login</Box> first.
+      {streamApiKeysAllowed ? '' : ' API keys are not accepted.'}
+    </>
+  );
 
   const handleCopy = async (text: string) => {
     try {
@@ -192,7 +235,7 @@ const AccessUrls = ({ status, showPortForward = false, portForwardEnabled = fals
               secondaryAction={
                 <Box sx={{ display: 'flex', gap: 0.5 }}>
                   <Tooltip title="Copy">
-                    <IconButton size="small" onClick={() => handleCopy(entry.copyText)} aria-label={entry.copyLabel}>
+                    <IconButton size="small" onClick={() => handleCopy(entry.copyText)} aria-label={entry.copyLabel} aria-describedby={entry.stackctl ? helpId : undefined}>
                       <ContentCopyIcon fontSize="small" />
                     </IconButton>
                   </Tooltip>
@@ -236,6 +279,11 @@ const AccessUrls = ({ status, showPortForward = false, portForwardEnabled = fals
           ))}
         </List>
       </Paper>
+      {hasStackctl && (
+        <Typography id={helpId} variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+          {stackctlHelp}
+        </Typography>
+      )}
     </Box>
   );
 };

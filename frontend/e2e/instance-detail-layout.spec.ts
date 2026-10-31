@@ -39,7 +39,8 @@ async function mockRunningInstance(page: Page, id: string, status: string) {
     if (!res.ok()) return route.fulfill({ response: res });
     return route.fulfill({ response: res, json: { ...(await res.json()), status } });
   });
-  await page.route(`**/api/v1/stack-instances/${id}/pods`, (route) =>
+  // A RegExp, not a glob: the page asks for /pods?exec_hints=true.
+  await page.route(new RegExp(`/api/v1/stack-instances/${id}/pods(\\?.*)?$`), (route) =>
     route.fulfill({ json: namespaceStatus }));
 }
 

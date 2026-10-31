@@ -37,6 +37,7 @@ import DeployPreviewDialog from '../../components/DeployPreviewDialog';
 import DeploymentHistory from '../../components/DeploymentHistory';
 import PodStatusDisplay from '../../components/PodStatusDisplay';
 import AccessUrls from '../../components/AccessUrls';
+import { mergeWatcherStatus, execPodSetChanged } from './mergeWatcherStatus';
 import FavoriteButton from '../../components/FavoriteButton';
 import FollowButton from '../../components/FollowButton';
 import InstanceQuotaSection from '../../components/InstanceQuota';
@@ -120,6 +121,47 @@ const Detail = () => {
   const streamingBufferRef = useRef<Record<string, string[]>>({});
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [k8sStatus, setK8sStatus] = useState<NamespaceStatus | null>(null);
+  // Mirror of k8sStatus for the WebSocket handler, which compares the old and the new pod set.
+  const k8sStatusRef = useRef<NamespaceStatus | null>(null);
+  useEffect(() => { k8sStatusRef.current = k8sStatus; }, [k8sStatus]);
+  // True once a getPods() response of this instance had exec_hints. The watcher status
+  // never has them, so the merge then keeps "hints on, no lists" instead of the
+  // fallback of older servers (one exec line per chart).
+  const serverSendsExecHintsRef = useRef(false);
+  const execRefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const currentIdRef = useRef(id);
+  // Reset the per-instance exec state when the instance changes or the page closes.
+  useEffect(() => {
+    currentIdRef.current = id;
+    serverSendsExecHintsRef.current = false;
+    return () => {
+      currentIdRef.current = undefined;
+      if (execRefetchTimerRef.current) {
+        clearTimeout(execRefetchTimerRef.current);
+        execRefetchTimerRef.current = null;
+      }
+    };
+  }, [id]);
+  /** Store a getPods() response and remember whether the server sends exec hints. */
+  const applyPodsStatus = useCallback((status: NamespaceStatus) => {
+    if (status?.exec_hints === true) serverSendsExecHintsRef.current = true;
+    k8sStatusRef.current = status;
+    setK8sStatus(status);
+  }, []);
+  /** Fetch the pods again after 2 s without another call (trailing debounce), to refresh the exec hints. */
+  const scheduleExecRefetch = useCallback(() => {
+    if (!id) return;
+    if (execRefetchTimerRef.current) clearTimeout(execRefetchTimerRef.current);
+    execRefetchTimerRef.current = setTimeout(() => {
+      execRefetchTimerRef.current = null;
+      instanceService.getPods(id, { execHints: true }).then((status) => {
+        if (currentIdRef.current !== id) return;
+        // Keep the events of the status on the page when the new one has none.
+        const prev = k8sStatusRef.current;
+        applyPodsStatus(!status?.events?.length && prev?.events?.length ? { ...status, events: prev.events } : status);
+      }).catch(() => {});
+    }, 2000);
+  }, [id, applyPodsStatus]);
   const [statusLoading, setStatusLoading] = useState(false);
   const [cloneOpen, setCloneOpen] = useState(false);
   const [rollbackOpen, setRollbackOpen] = useState(false);
@@ -205,9 +247,9 @@ const Detail = () => {
         if (inst.status === 'running' || inst.status === 'partial' || inst.status === 'deploying' || inst.status === 'stabilizing' || inst.status === 'error' || inst.status === 'stopping' || inst.status === 'cleaning') {
           try {
             setStatusLoading(true);
-            const status = await instanceService.getPods(id);
+            const status = await instanceService.getPods(id, { execHints: true });
             if (stale) return;
-            setK8sStatus(status);
+            applyPodsStatus(status);
           } catch { /* ignore */ }
           finally { if (!stale) setStatusLoading(false); }
         }
@@ -221,7 +263,7 @@ const Detail = () => {
     return () => {
       stale = true;
     };
-  }, [id, userId, userRole]);
+  }, [id, userId, userRole, applyPodsStatus]);
 
   /**
    * Fetch the instance and store it. When a WebSocket status arrived while the
@@ -265,12 +307,13 @@ const Detail = () => {
       // Clear stale K8s status at the start of any operation or when resources are gone.
       // The watcher will push fresh status via instance.status messages as pods come up.
       if (newStatus === 'deploying' || newStatus === 'stopping' || newStatus === 'cleaning' || newStatus === 'stopped' || newStatus === 'draft') {
+        k8sStatusRef.current = null;
         setK8sStatus(null);
       }
 
       // Fetch current K8s status for terminal states where resources may exist.
       if (newStatus === 'running' || newStatus === 'partial' || newStatus === 'stabilizing' || newStatus === 'error') {
-        instanceService.getPods(id).then(setK8sStatus).catch(() => {});
+        instanceService.getPods(id, { execHints: true }).then((s) => { if (currentIdRef.current === id) applyPodsStatus(s); }).catch(() => {});
       }
 
       // On active states, insert a placeholder log entry so streaming lines
@@ -352,16 +395,19 @@ const Detail = () => {
     if (msg.type === 'instance.status') {
       const nsPayload = msg.payload as { instance_id?: string; namespace_status?: NamespaceStatus };
       if (nsPayload.namespace_status) {
-        setK8sStatus((prev) => {
-          const incoming = nsPayload.namespace_status!;
-          if (!prev || !prev.events?.length) return incoming;
-          // Preserve events from the previous getPods() call.
-          return { ...incoming, events: incoming.events?.length ? incoming.events : prev.events };
-        });
+        // The broadcast has no events and no exec fields: keep them from the last getPods() call.
+        const incoming = nsPayload.namespace_status;
+        const prev = k8sStatusRef.current;
+        const hintsSupported = serverSendsExecHintsRef.current;
+        const next = mergeWatcherStatus(prev, incoming, { execHintsSupported: hintsSupported });
+        k8sStatusRef.current = next;
+        setK8sStatus(next);
+        // A new or restarted pod can change what exec accepts: fetch the hints again.
+        if (hintsSupported && execPodSetChanged(prev, incoming)) scheduleExecRefetch();
       }
     }
 
-  }, [id, refreshInstance, addRunning, refreshDeployLogs]);
+  }, [id, refreshInstance, addRunning, refreshDeployLogs, applyPodsStatus, scheduleExecRefetch]);
 
   const { subscribeInstance } = useWebSocket(handleWsMessage);
 
@@ -653,7 +699,7 @@ const Detail = () => {
     setStopDraft(savedStopTime);
   }, [savedStopTime]);
 
-  const { maxTtlDays, portForwardEnabled, execEnabled } = useBranding();
+  const { maxTtlDays, portForwardEnabled, execEnabled, streamApiKeysAllowed } = useBranding();
   const stopDraftChanged = stopDraft !== undefined && stopDraft !== savedStopTime;
   const stopDraftError = stopDraftChanged ? stopTimeError(stopDraft, stopTimeBounds(maxTtlDays)) : null;
 
@@ -1060,6 +1106,7 @@ const Detail = () => {
             portForwardEnabled={needPortForwardFlag && clusterAllowsPortForward}
             execEnabled={needExecFlag && clusterAllowsExec}
             instanceName={instance.name}
+            streamApiKeysAllowed={streamApiKeysAllowed}
           />
         )}
 

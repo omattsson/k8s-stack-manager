@@ -42,6 +42,16 @@ type fakeExecClient struct {
 	calls      []string
 	lastReq    k8s.ExecTargetRequest
 	lastNS     string
+	// hints and hintsErr are what ExecContainers returns; lastHintReq and
+	// hintReleases are what it was asked.
+	hints        map[string]k8s.ReleaseExecContainers
+	hintsErr     error
+	lastHintReq  k8s.ExecContainersRequest
+	hintReleases []string
+	hintsPanic   bool          // ExecContainers panics
+	hintDelay    chan struct{} // when set, ExecContainers waits for it to close
+	// inner, when set, answers ExecContainers with the real client logic.
+	inner *k8s.Client
 }
 
 func (f *fakeExecClient) note(s string) {
@@ -82,6 +92,41 @@ func (f *fakeExecClient) ResolveExecTarget(_ context.Context, ns string, req k8s
 		c = "web"
 	}
 	return &k8s.ExecTarget{Pod: "web-0", Container: c}, nil
+}
+
+func (f *fakeExecClient) ExecContainers(ctx context.Context, ns string, releases []string, req k8s.ExecContainersRequest) (map[string]k8s.ReleaseExecContainers, k8s.ExecHintStats, error) {
+	f.note("hints")
+	f.mu.Lock()
+	f.lastHintReq = req
+	f.hintReleases = releases
+	delay := f.hintDelay
+	f.mu.Unlock()
+	if f.hintsPanic {
+		panic("boom")
+	}
+	if delay != nil {
+		select {
+		case <-delay:
+		case <-ctx.Done():
+			return nil, k8s.ExecHintStats{}, ctx.Err()
+		}
+	}
+	if f.inner != nil {
+		return f.inner.ExecContainers(ctx, ns, releases, req)
+	}
+	return f.hints, k8s.ExecHintStats{}, f.hintsErr
+}
+
+func (f *fakeExecClient) calledCount(s string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, c := range f.calls {
+		if c == s {
+			n++
+		}
+	}
+	return n
 }
 
 func (f *fakeExecClient) ExecCommand(ctx context.Context, ns string, _ k8s.ExecTarget, cmd []string, so, se io.Writer) (int, error) {

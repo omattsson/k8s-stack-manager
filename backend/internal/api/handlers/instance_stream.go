@@ -19,6 +19,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	gorilla "github.com/gorilla/websocket"
+	"golang.org/x/sync/singleflight"
 )
 
 // Audit actions written by the stream handlers (the audit middleware ignores
@@ -125,6 +126,14 @@ type StreamHandler struct {
 	// cluster switch), also run once after the registration.
 	accessCheck websocket.RevocableAccessChecker
 	cfg         config.StreamConfig
+	// hintFlight lets concurrent exec-hint reads of one instance share one
+	// computation (sharedExecHints).
+	hintFlight singleflight.Group
+	// hintWait is how long a caller waits for the flight (0: execHintWait).
+	// hintJoined, when set, is called by each caller once it has joined the
+	// flight (tests).
+	hintWait   time.Duration
+	hintJoined func()
 }
 
 // NewStreamHandler creates a StreamHandler.
