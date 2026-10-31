@@ -146,6 +146,21 @@ describe('BrandingContext', () => {
       });
     });
 
+    it('does not cache stream_api_keys_allowed but uses the server value', async () => {
+      mockGet.mockResolvedValue({ title: 'P', logo_url: '', favicon_url: '/f.svg', exec_enabled: true, stream_api_keys_allowed: true });
+      render(
+        <BrandingProvider>
+          <Probe />
+        </BrandingProvider>,
+      );
+      await waitFor(() => expect(mockGet).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(localStorage.getItem(UI_CONFIG_STORAGE_KEY)).not.toBeNull());
+      const cached = JSON.parse(localStorage.getItem(UI_CONFIG_STORAGE_KEY) ?? '{}');
+      expect(cached.exec_enabled).toBe(true);
+      expect(cached).not.toHaveProperty('stream_api_keys_allowed');
+      expect(loadCachedBranding().streamApiKeysAllowed).toBe(false);
+    });
+
     it('caches the TTL default and uses it at the next start', async () => {
       mockGet.mockResolvedValue({ title: 'P', logo_url: '', favicon_url: '/f.svg', default_instance_ttl_minutes: 240 });
       render(

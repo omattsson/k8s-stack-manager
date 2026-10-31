@@ -133,6 +133,9 @@ export const loadCachedBranding = (): Branding => {
 
 /**
  * Store the UI config (only the known fields) for the next start.
+ * stream_api_keys_allowed is not stored: only the stackctl help line uses
+ * it, which shows after the stack data loads, and the name looks like a
+ * secret to code scanners.
  * @param data - Response body of GET /api/v1/ui-config
  */
 const cacheUIConfig = (data: unknown) => {
@@ -148,7 +151,6 @@ const cacheUIConfig = (data: unknown) => {
         max_instance_ttl_days: cfg.max_instance_ttl_days,
         port_forward_enabled: cfg.port_forward_enabled,
         exec_enabled: cfg.exec_enabled,
-        stream_api_keys_allowed: cfg.stream_api_keys_allowed,
       }),
     );
   } catch {
