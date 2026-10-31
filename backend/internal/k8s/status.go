@@ -257,14 +257,10 @@ func (c *Client) GetNamespaceStatus(ctx context.Context, namespace string, opts 
 	}
 	charts := make(map[string]*chartResources)
 
-	getRelease := func(labels map[string]string) string {
-		for _, key := range helmReleaseLabels {
-			if v, ok := labels[key]; ok {
-				return v
-			}
-		}
-		return ""
-	}
+	// A chart that labels nothing with the release still has the Helm
+	// annotations on its Deployments and Services, and its pods belong to
+	// a Deployment (podRelease).
+	byDeployment := deploymentReleases(namespace, deployList.Items)
 
 	ensureChart := func(release string) *chartResources {
 		if _, ok := charts[release]; !ok {
@@ -278,7 +274,7 @@ func (c *Client) GetNamespaceStatus(ctx context.Context, namespace string, opts 
 	}
 
 	for _, d := range deployList.Items {
-		release := getRelease(d.Labels)
+		release := objectRelease(namespace, &d)
 		if release == "" {
 			release = "_unmanaged"
 		}
@@ -302,7 +298,7 @@ func (c *Client) GetNamespaceStatus(ctx context.Context, namespace string, opts 
 	}
 
 	for _, p := range podList.Items {
-		release := getRelease(p.Labels)
+		release := podRelease(&p, byDeployment)
 		if release == "" {
 			release = "_unmanaged"
 		}
@@ -381,7 +377,7 @@ func (c *Client) GetNamespaceStatus(ctx context.Context, namespace string, opts 
 	}
 
 	for _, s := range svcList.Items {
-		release := getRelease(s.Labels)
+		release := objectRelease(namespace, &s)
 		if release == "" {
 			release = "_unmanaged"
 		}

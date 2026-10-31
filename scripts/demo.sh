@@ -122,6 +122,19 @@ EOF
   if ! stackctl stack get "${STACK}" &>/dev/null; then
     stackctl stack create --definition "Hello World" --name "${STACK}" --ttl 0 >/dev/null
   fi
+
+  # The podinfo pods use the default ServiceAccount of the stack namespace.
+  # The server refuses exec into a container that holds a service-account
+  # token, so the demo turns off the token mount before the first deploy.
+  stack_ns="$(stackctl stack get "${STACK}" -o json | sed -n 's/.*"namespace": "\([^"]*\)".*/\1/p' | head -1)"
+  if [ -n "${stack_ns}" ]; then
+    kc get namespace "${stack_ns}" &>/dev/null || kc create namespace "${stack_ns}" >/dev/null
+    for _ in $(seq 1 30); do
+      kc -n "${stack_ns}" get serviceaccount default &>/dev/null && break
+      sleep 1
+    done
+    kc -n "${stack_ns}" patch serviceaccount default -p '{"automountServiceAccountToken": false}' >/dev/null
+  fi
   say "Deploying the stack ${STACK}"
   stackctl stack deploy "${STACK}" --follow
 
@@ -138,6 +151,7 @@ Try stackctl (use the demo config in this shell first):
   stackctl stack list
   stackctl stack pods ${STACK}
   stackctl stack port-forward ${STACK} podinfo 9898      # then open http://localhost:9898
+  stackctl stack exec ${STACK} podinfo -- hostname
 
 Remove everything:  scripts/demo.sh down   (or make demo-down)
 EOF
