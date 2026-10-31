@@ -90,7 +90,8 @@ describe('BrandingContext', () => {
     );
     await waitFor(() => expect(screen.getByTestId('title')).toHaveTextContent('Platform Portal'));
     expect(screen.getByTestId('logo')).toHaveTextContent('/branding/logo.svg');
-    expect(document.title).toBe('Platform Portal');
+    // The title and the favicon are set in an effect after the render: wait for them too.
+    await waitFor(() => expect(document.title).toBe('Platform Portal'));
     expect(faviconHref()).toBe('https://cdn.example.com/favicon.png');
     // Not an SVG: the type attribute of index.html must go.
     expect(document.querySelector('link[rel~="icon"]')?.hasAttribute('type')).toBe(false);
