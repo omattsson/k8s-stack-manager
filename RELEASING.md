@@ -16,7 +16,7 @@ The draft is a list of titles. Before you publish, add at the top: the chart ver
 
 ## Steps
 
-1. Open a pull request `chore(release): vX.Y.Z` that sets `version` (chart) and `appVersion` (app) in `helm/k8s-stack-manager/Chart.yaml`. The draft leaves this pull request out.
+1. Open a pull request `chore(release): vX.Y.Z` that sets `version` (chart) and `appVersion` (app) in `helm/k8s-stack-manager/Chart.yaml`, and the backend and frontend image tags in its `artifacthub.io/images` annotation (Artifact Hub scans these images). The draft leaves this pull request out.
 2. Merge it. The workflow `helm-release.yml` (chart-releaser) publishes the chart release.
 3. Open the draft release `vX.Y.Z` on GitHub. Check the version and the target (the merge commit on `main`). Complete the notes, then publish it.
 4. The tag `vX.Y.Z` starts `docker-build.yml`: the backend and frontend images for amd64 and arm64.

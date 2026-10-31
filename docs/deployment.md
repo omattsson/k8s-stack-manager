@@ -148,7 +148,7 @@ To use a service principal for a store that the chart creates, set `authType: Se
 ### What the chart deploys
 
 - **Backend.** A Deployment and a Service. With `argoRollouts.enabled=true`, the chart creates an Argo Rollout (canary steps 20%, 50%, 80%), a stable Service, and a canary Service instead. The chart also creates a ServiceAccount with RBAC, a PodDisruptionBudget (on by default), and an optional HPA and ServiceMonitor.
-- **Frontend.** A Deployment (or an Argo Rollout) with nginx. nginx serves only the React application. The ingress sends the API requests to the backend. You can switch the frontend off with `frontend.enabled=false`.
+- **Frontend.** A Deployment (or an Argo Rollout) with nginx. nginx serves only the React application. The ingress sends the API requests to the backend. Without an ingress, set `frontend.apiProxy.enabled=true`: nginx then proxies `/api`, `/ws`, `/health` and `/swagger` (WebSocket upgrades included) to the backend Service, so a `kubectl port-forward` to the frontend Service gives the UI and the API on one address. You can switch the frontend off with `frontend.enabled=false`.
 - **MySQL.** A bundled MySQL (`mysql.enabled`, default `true`). For production, point `backend.env.DB_*` at an external database.
 - **Ingress.** With `ingress.type=traefik`, the chart creates an IngressRoute and a Middleware with secure response headers. The IngressRoute sends `/api`, `/ws`, `/health`, and `/swagger` to the backend, and `/` to the frontend. A Middleware that removes the `/api` prefix is optional (`ingress.traefik.middlewares.stripApiPrefix`, default off). With `ingress.type=ingress`, the chart creates a standard Ingress with the same paths.
 

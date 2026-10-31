@@ -1,0 +1,29 @@
+# Helm values of scripts/demo.sh: one replica each, no ingress (the UI and
+# the API go through a port-forward to the frontend), port-forward and exec
+# on. For a local demo only: the database has no persistent volume.
+backend:
+  replicas: 1
+  pdb:
+    enabled: false
+  portForward:
+    enabled: true
+  exec:
+    enabled: true
+    # The container of the podinfo chart of the Hello World definition.
+    # The podinfo pods carry no app.kubernetes.io/instance or
+    # helm.sh/release label, so exec does not find them yet.
+    allowedContainers: [podinfo]
+
+frontend:
+  replicas: 1
+  pdb:
+    enabled: false
+  apiProxy:
+    enabled: true
+
+mysql:
+  persistence:
+    enabled: false
+
+ingress:
+  type: none

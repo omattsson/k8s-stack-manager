@@ -1,4 +1,4 @@
-.PHONY: loadtest-stackctl gosec e2e-prepare test-e2e-isolated dev dev-otel dev-api-only compose-api-only seed dev-backend dev-frontend dev-local dev-local-backend dev-local-frontend prod prod-backend prod-frontend build clean prune test test-backend test-backend-integration test-backend-all test-backend-repeat test-frontend test-e2e integration-infra-start integration-infra-stop install docs fmt lint loadtest loadtest-start loadtest-start-backend loadtest-start-frontend loadtest-stop loadtest-stop-backend loadtest-stop-frontend loadtest-backend loadtest-backend-run loadtest-stress loadtest-stress-run loadtest-frontend loadtest-frontend-run loadtest-capture loadtest-k8s-config loadtest-start-replica loadtest-stop-replica loadtest-users loadtest-users-run loadtest-mysql-stats-reset loadtest-mysql-stats loadtest-full loadtest-ramp
+.PHONY: demo demo-down loadtest-stackctl gosec e2e-prepare test-e2e-isolated dev dev-otel dev-api-only compose-api-only seed dev-backend dev-frontend dev-local dev-local-backend dev-local-frontend prod prod-backend prod-frontend build clean prune test test-backend test-backend-integration test-backend-all test-backend-repeat test-frontend test-e2e integration-infra-start integration-infra-stop install docs fmt lint loadtest loadtest-start loadtest-start-backend loadtest-start-frontend loadtest-stop loadtest-stop-backend loadtest-stop-frontend loadtest-backend loadtest-backend-run loadtest-stress loadtest-stress-run loadtest-frontend loadtest-frontend-run loadtest-capture loadtest-k8s-config loadtest-start-replica loadtest-stop-replica loadtest-users loadtest-users-run loadtest-mysql-stats-reset loadtest-mysql-stats loadtest-full loadtest-ramp
 
 # Development mode for both services
 dev:
@@ -24,6 +24,12 @@ compose-api-only: ## Start backend + mysql only with default env (matches Helm f
 
 seed: ## Seed dev environment with sample data (requires running dev stack)
 	@./scripts/seed-dev-data.sh
+
+demo: ## Try the app in a kind cluster: install the chart and deploy a stack (needs docker, kind, kubectl, helm, stackctl)
+	@./scripts/demo.sh up
+
+demo-down: ## Delete the demo kind cluster and its files
+	@./scripts/demo.sh down
 
 # Development mode for backend only
 dev-backend:
@@ -1128,6 +1134,15 @@ helm-test: ## Verify Deployment, Argo Rollout, and External Secrets Helm renders
 		&& grep -q 'STACK_PORT_FORWARD_IDLE_TIMEOUT: "15m"' "$$template_file" && grep -q 'STACK_PORT_FORWARD_MAX_PER_USER: "5"' "$$template_file" \
 		&& grep -q 'STACK_STREAM_ALLOW_API_KEYS: "false"' "$$template_file" \
 		|| { echo "backend ConfigMap must render the port-forward defaults (off)" >&2; exit 1; }; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/frontend/configmap.yaml \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template > "$$template_file"; \
+	if grep -qE 'proxy_pass|connection_upgrade' "$$template_file"; then echo "frontend.apiProxy must be off by default" >&2; exit 1; fi; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/frontend/configmap.yaml \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template --set frontend.apiProxy.enabled=true > "$$template_file"; \
+	grep -qF 'location ~ ^/(api|ws|health|swagger)(/|$$) {' "$$template_file" || { echo "frontend.apiProxy must route /api, /ws, /health and /swagger" >&2; exit 1; }; \
+	grep -qF 'proxy_pass http://k8s-stack-manager-backend:8081;' "$$template_file" || { echo "frontend.apiProxy must proxy to the backend Service" >&2; exit 1; }; \
+	grep -qF 'proxy_set_header Connection $$connection_upgrade;' "$$template_file" || { echo "frontend.apiProxy must pass WebSocket upgrades" >&2; exit 1; }; \
+	grep -qF 'map $$http_upgrade $$connection_upgrade' "$$template_file" || { echo "frontend.apiProxy needs the upgrade map" >&2; exit 1; }; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/port-forward.yaml \
 		--api-versions admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy --show-only templates/backend/configmap.yaml > "$$template_file"; \
 	grep -q 'STACK_PORT_FORWARD_ENABLED: "true"' "$$template_file" && grep -q 'STACK_PORT_FORWARD_MAX_DURATION: "2h"' "$$template_file" \
