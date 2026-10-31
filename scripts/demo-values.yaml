@@ -9,9 +9,8 @@ backend:
     enabled: true
   exec:
     enabled: true
-    # The container of the podinfo chart of the Hello World definition.
-    # The podinfo pods carry no app.kubernetes.io/instance or
-    # helm.sh/release label, so exec does not find them yet.
+    # The container of the podinfo chart of the Hello World definition
+    # (demo.sh turns off the service-account token of its pods).
     allowedContainers: [podinfo]
 
 frontend:

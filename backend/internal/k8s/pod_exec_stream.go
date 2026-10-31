@@ -79,9 +79,9 @@ type ExecClient interface {
 var _ ExecClient = (*Client)(nil)
 
 // ResolveExecTarget finds the pod and the container for a command. The pod
-// comes only from a list in namespace: the pods that carry the release in the
-// label app.kubernetes.io/instance or helm.sh/release, Running, Ready and not
-// terminating, sorted by name. Nothing of the request names a pod.
+// comes only from a list in namespace: the pods of the release (releasePods),
+// Running, Ready and not terminating, sorted by name. Nothing of the request
+// names a pod.
 func (c *Client) ResolveExecTarget(ctx context.Context, namespace string, req ExecTargetRequest) (t *ExecTarget, err error) {
 	ctx, span := startSpan(ctx, "k8s.ResolveExecTarget", attribute.String("k8s.namespace", namespace))
 	defer func() { endSpan(span, err) }()
@@ -167,7 +167,9 @@ func execPickError(ready []corev1.Pod, requested string) error {
 }
 
 // releasePods lists the pods of a Helm release by both label keys and merges
-// the results by name.
+// the results by name. When no pod carries a release label, the pods of the
+// release's Deployments count (ownerReleasePods), for charts that do not
+// label their pods.
 func (c *Client) releasePods(ctx context.Context, namespace, release string) ([]corev1.Pod, error) {
 	seen := map[string]bool{}
 	var out []corev1.Pod
@@ -184,6 +186,9 @@ func (c *Client) releasePods(ctx context.Context, namespace, release string) ([]
 				out = append(out, p)
 			}
 		}
+	}
+	if len(out) == 0 {
+		return c.ownerReleasePods(ctx, namespace, release)
 	}
 	return out, nil
 }

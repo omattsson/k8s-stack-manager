@@ -50,7 +50,9 @@ type ReleaseExecContainers struct {
 // ExecContainers tells, for each release, which containers ResolveExecTarget
 // would accept. It lists the pods of the namespace once and groups them by
 // release in memory (a pod belongs to a release when app.kubernetes.io/instance
-// or helm.sh/release is the release name, like releasePods). The pod and
+// or helm.sh/release is the release name, like releasePods; when a release has
+// no labelled pod and some pods have no release label, one Deployment list
+// assigns those pods through their Deployment, like ownerReleasePods). The pod and
 // container choice is the one of ResolveExecTarget (pickExecContainer). Unless
 // AllowServiceAccountToken, a container is listed only when the token check
 // says it holds no token; a failed check (Forbidden included) leaves it out.
@@ -90,6 +92,9 @@ func (c *Client) ExecContainers(ctx context.Context, namespace string, releases 
 				break // both labels name the release: one entry
 			}
 		}
+	}
+	if err := c.addOwnerReleasePods(ctx, namespace, list.Items, byRelease); err != nil {
+		return nil, stats, err
 	}
 
 	memo := newTokenMemo()
