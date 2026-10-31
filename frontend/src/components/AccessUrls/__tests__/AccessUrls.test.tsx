@@ -194,6 +194,113 @@ describe('AccessUrls', () => {
     expect(screen.queryByText(/stackctl stack exec/)).not.toBeInTheDocument();
   });
 
+  describe('exec hints and stackctl help', () => {
+    const hinted = (charts: { exec_containers?: string[]; exec_default_container?: string }[]): NamespaceStatus => {
+      const base = clusterIPStatus();
+      return { ...base, exec_hints: true, charts: base.charts.map((c, i) => ({ ...c, ...(charts[i] ?? {}) })) };
+    };
+    const renderExec = (status: NamespaceStatus, extra: { streamApiKeysAllowed?: boolean; portForwardEnabled?: boolean } = {}) =>
+      render(
+        <NotificationProvider>
+          <AccessUrls status={status} execEnabled instanceName="my-app" {...extra} />
+        </NotificationProvider>,
+      );
+    const HELP = 'stackctl commands need stackctl and a session: run stackctl login first. API keys are not accepted.';
+    const HELP_KEYS = 'stackctl commands need stackctl and a session: run stackctl login first.';
+    /** The help element a copy button refers to (aria-describedby). */
+    const helpOf = (button: HTMLElement): HTMLElement => {
+      const id = button.getAttribute('aria-describedby');
+      expect(id).toBeTruthy();
+      const el = document.getElementById(id as string);
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    };
+
+    it('shows no exec line for a chart without exec_containers', () => {
+      renderExec(hinted([{}]));
+      expect(screen.queryByText(/stackctl stack exec/)).not.toBeInTheDocument();
+    });
+
+    it('shows a line without -c for one container that is the default', () => {
+      renderExec(hinted([{ exec_containers: ['app'], exec_default_container: 'app' }]));
+      expect(screen.getByText('stackctl stack exec my-app database -- <command>')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Copy stackctl exec database' })).toBeInTheDocument();
+    });
+
+    it('shows a line with -c for one container that is not the default', () => {
+      renderExec(hinted([{ exec_containers: ['app'] }]));
+      expect(screen.getByText('stackctl stack exec my-app database -c app -- <command>')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Copy stackctl exec database app' })).toBeInTheDocument();
+    });
+
+    it('shows a line with -c per container and copies the right command', async () => {
+      renderExec(hinted([{ exec_containers: ['app', 'sidecar'], exec_default_container: 'app' }]));
+      expect(screen.getByText('stackctl stack exec my-app database -c app -- <command>')).toBeInTheDocument();
+      expect(screen.getByText('stackctl stack exec my-app database -c sidecar -- <command>')).toBeInTheDocument();
+
+      const user = userEvent.setup();
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+      await user.click(screen.getByRole('button', { name: 'Copy stackctl exec database sidecar' }));
+      expect(writeText).toHaveBeenCalledWith('stackctl stack exec my-app database -c sidecar -- <command>');
+    });
+
+    it('falls back to one line per chart without -c when exec_hints is absent', () => {
+      const status = { ...clusterIPStatus(), exec_hints: undefined };
+      renderExec(status);
+      expect(screen.getByText('stackctl stack exec my-app database -- <command>')).toBeInTheDocument();
+    });
+
+    it('shows the help text with an exec line, linked to the copy button', () => {
+      renderExec(hinted([{ exec_containers: ['app'], exec_default_container: 'app' }]));
+      const help = helpOf(screen.getByRole('button', { name: 'Copy stackctl exec database' }));
+      expect(help).toHaveTextContent(HELP);
+      expect(help.querySelector('code')).toHaveTextContent('stackctl login');
+    });
+
+    it('shows the help text with only stackctl port-forward lines', () => {
+      render(
+        <NotificationProvider>
+          <AccessUrls status={clusterIPStatus()} portForwardEnabled instanceName="my-app" />
+        </NotificationProvider>,
+      );
+      const button = screen.getByRole('button', { name: 'Copy stackctl port-forward database 5432' });
+      expect(helpOf(button)).toHaveTextContent(HELP);
+    });
+
+    it('leaves out the API key sentence when streams accept API keys', () => {
+      renderExec(hinted([{ exec_containers: ['app'], exec_default_container: 'app' }]), { streamApiKeysAllowed: true });
+      const help = helpOf(screen.getByRole('button', { name: 'Copy stackctl exec database' }));
+      expect(help.textContent).toBe(HELP_KEYS);
+      expect(screen.queryByText(/API keys are not accepted/)).not.toBeInTheDocument();
+    });
+
+    it('shows no help text without stackctl entries', () => {
+      const status: NamespaceStatus = {
+        namespace: 'stack-test',
+        status: 'healthy',
+        charts: [],
+        ingresses: [{ name: 'i', host: 'a.example.com', path: '/', tls: true, url: 'https://a.example.com' }],
+        last_checked: '2025-01-01T00:00:00Z',
+      };
+      render(<NotificationProvider><AccessUrls status={status} /></NotificationProvider>);
+      expect(screen.queryByText('stackctl login')).not.toBeInTheDocument();
+      expect(document.querySelector('code')).toBeNull();
+    });
+
+    it('gives two AccessUrls different help ids', () => {
+      const status = hinted([{ exec_containers: ['app'], exec_default_container: 'app' }]);
+      render(
+        <NotificationProvider>
+          <AccessUrls status={status} execEnabled instanceName="a" />
+          <AccessUrls status={status} execEnabled instanceName="b" />
+        </NotificationProvider>,
+      );
+      const [first, second] = screen.getAllByRole('button', { name: 'Copy stackctl exec database' });
+      expect(first.getAttribute('aria-describedby')).not.toBe(second.getAttribute('aria-describedby'));
+    });
+  });
+
   it('renders NodePort services', () => {
     const status: NamespaceStatus = {
       namespace: 'stack-test',

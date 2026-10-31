@@ -252,6 +252,17 @@ export interface ChartStatus {
   deployments: DeploymentStatusInfo[];
   pods: PodInfo[];
   services: ServiceInfo[];
+  /**
+   * Containers that `stackctl stack exec <stack> <chart> -c <name>` is accepted for, in
+   * the server's order. Only set when the request had `exec_hints=true` and the caller
+   * may exec; never in WebSocket `instance.status` messages. See `NamespaceStatus.exec_hints`.
+   */
+  exec_containers?: string[];
+  /**
+   * The container the server picks without `-c`. Present only when a call without `-c`
+   * is accepted. Same availability as `exec_containers`.
+   */
+  exec_default_container?: string;
 }
 
 export interface DeploymentStatusInfo {
@@ -329,6 +340,13 @@ export interface NamespaceStatus {
   ingresses?: IngressInfo[];
   events?: PodEvent[];
   last_checked: string;
+  /**
+   * True when the server checked exec for this caller (request had `exec_hints=true`,
+   * exec is on for the server and the cluster, and the caller may modify the instance).
+   * Then a chart without `exec_containers` has no container that exec accepts.
+   * Absent on older servers and in WebSocket `instance.status` messages.
+   */
+  exec_hints?: boolean;
 }
 
 export interface ValueOverride {
@@ -1261,4 +1279,6 @@ export interface UIConfig {
   port_forward_enabled?: boolean;
   /** Exec in stack containers is on (STACK_EXEC_ENABLED). */
   exec_enabled?: boolean;
+  /** Streams (exec, port-forward) accept API keys (STACK_STREAM_ALLOW_API_KEYS). */
+  stream_api_keys_allowed?: boolean;
 }

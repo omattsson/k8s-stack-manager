@@ -33,6 +33,8 @@ export interface Branding {
   portForwardEnabled: boolean;
   /** The server allows exec in stack containers (STACK_EXEC_ENABLED). */
   execEnabled: boolean;
+  /** Streams (exec, port-forward) accept API keys (STACK_STREAM_ALLOW_API_KEYS). */
+  streamApiKeysAllowed: boolean;
 }
 
 /** Values used when the UI config cannot be loaded, and outside a BrandingProvider. */
@@ -44,6 +46,7 @@ export const BRANDING_DEFAULTS: Branding = {
   maxTtlDays: DEFAULT_MAX_TTL_DAYS,
   portForwardEnabled: false,
   execEnabled: false,
+  streamApiKeysAllowed: false,
 };
 
 /**
@@ -107,6 +110,7 @@ export const brandingFromConfig = (data: unknown): Branding => {
     maxTtlDays,
     portForwardEnabled: cfg.port_forward_enabled === true,
     execEnabled: cfg.exec_enabled === true,
+    streamApiKeysAllowed: cfg.stream_api_keys_allowed === true,
   };
 };
 
@@ -144,6 +148,7 @@ const cacheUIConfig = (data: unknown) => {
         max_instance_ttl_days: cfg.max_instance_ttl_days,
         port_forward_enabled: cfg.port_forward_enabled,
         exec_enabled: cfg.exec_enabled,
+        stream_api_keys_allowed: cfg.stream_api_keys_allowed,
       }),
     );
   } catch {

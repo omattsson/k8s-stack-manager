@@ -1988,7 +1988,7 @@ func TestSetupRoutes_UIConfigIsPublic(t *testing.T) {
 	for k := range body {
 		keys = append(keys, k)
 	}
-	assert.ElementsMatch(t, []string{"title", "logo_url", "favicon_url", "default_instance_ttl_minutes", "max_instance_ttl_days", "port_forward_enabled", "exec_enabled"}, keys)
+	assert.ElementsMatch(t, []string{"title", "logo_url", "favicon_url", "default_instance_ttl_minutes", "max_instance_ttl_days", "port_forward_enabled", "exec_enabled", "stream_api_keys_allowed"}, keys)
 	assert.NotEmpty(t, body["title"])
 }
 

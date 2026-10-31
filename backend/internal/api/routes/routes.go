@@ -208,7 +208,7 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 
 		// Web UI display config (title, logo, favicon, TTL default) — public,
 		// so the login page can use it before sign-in.
-		v1.GET("/ui-config", handlers.NewUIConfigHandler(cfg.Branding, cfg.App.DefaultInstanceTTLMinutes, cfg.App.MaxInstanceTTLDays, cfg.Stream.PortForward.Enabled, cfg.Stream.Exec.Enabled))
+		v1.GET("/ui-config", handlers.NewUIConfigHandler(cfg.Branding, cfg.App.DefaultInstanceTTLMinutes, cfg.App.MaxInstanceTTLDays, cfg.Stream.PortForward.Enabled, cfg.Stream.Exec.Enabled, cfg.Stream.AllowAPIKeys))
 
 		// No /items routes: handlers.Handler (items.go) is the reference
 		// implementation of the CRUD pattern only. Unauthenticated item routes

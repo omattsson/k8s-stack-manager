@@ -7685,7 +7685,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns detailed pod health including container states, conditions, and recent events",
+                "description": "Returns detailed pod health including container states, conditions, and recent events. exec_hints=true adds the exec fields for a caller who may modify the instance (owner, devops, admin) when exec is on (STACK_EXEC_ENABLED) and the cluster allows it (allow_exec): the response has exec_hints=true, and each chart has exec_containers (the containers that \"stackctl stack exec \u003cstack\u003e \u003cchart\u003e -c \u003cname\u003e\" is accepted for: in STACK_EXEC_ALLOWED_CONTAINERS, in a Running and Ready pod of the chart, and without a service-account token unless STACK_EXEC_ALLOW_SERVICE_ACCOUNT_TOKEN is true; in the order the route considers them) and exec_default_container (the container the route picks without -c; only when that call would be accepted). A chart without exec_containers has no usable container. When the hints cannot be computed (the stack is not deployed, the namespace is shared, a database or cluster read fails, or the computation takes more than 3 seconds), exec_hints is true and no chart has a list; this never fails the request. For other callers, or with exec off or the cluster switch off, the response has no exec fields. Without the parameter nothing changes and no extra reads run. With it, one computation costs a few database reads, one namespace GET, one pod list and one GET for each distinct ServiceAccount and Secret of the token check (at most 64 GETs; a container beyond that is left out). A caller waits at most 3 seconds for the computation; after that exec_hints is true without lists. A cluster lookup that fails gives no exec fields.",
                 "produces": [
                     "application/json"
                 ],
@@ -7700,6 +7700,12 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "true: add exec_hints, exec_containers and exec_default_container for a caller who may exec (see the description)",
+                        "name": "exec_hints",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -8266,7 +8272,7 @@ const docTemplate = `{
         },
         "/api/v1/stack-instances/{id}/status": {
             "get": {
-                "description": "Get detailed Kubernetes resource status for a stack instance",
+                "description": "Get detailed Kubernetes resource status for a stack instance. exec_hints=true adds the exec fields for a caller who may modify the instance (owner, devops, admin) when exec is on (STACK_EXEC_ENABLED) and the cluster allows it (allow_exec): the response has exec_hints=true, and each chart has exec_containers (the containers that \"stackctl stack exec \u003cstack\u003e \u003cchart\u003e -c \u003cname\u003e\" is accepted for: in STACK_EXEC_ALLOWED_CONTAINERS, in a Running and Ready pod of the chart, and without a service-account token unless STACK_EXEC_ALLOW_SERVICE_ACCOUNT_TOKEN is true; in the order the route considers them) and exec_default_container (the container the route picks without -c; only when that call would be accepted). A chart without exec_containers has no usable container. When the hints cannot be computed (the stack is not deployed, the namespace is shared, a database or cluster read fails, or the computation takes more than 3 seconds), exec_hints is true and no chart has a list; this never fails the request. For other callers, or with exec off or the cluster switch off, the response has no exec fields. Without the parameter nothing changes and no extra reads run. With it, one computation costs a few database reads, one namespace GET, one pod list and one GET for each distinct ServiceAccount and Secret of the token check (at most 64 GETs; a container beyond that is left out). A caller waits at most 3 seconds for the computation; after that exec_hints is true without lists. A cluster lookup that fails gives no exec fields.",
                 "produces": [
                     "application/json"
                 ],
@@ -8281,6 +8287,12 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "true: add exec_hints, exec_containers and exec_default_container for a caller who may exec (see the description)",
+                        "name": "exec_hints",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -9947,7 +9959,7 @@ const docTemplate = `{
         },
         "/api/v1/ui-config": {
             "get": {
-                "description": "Returns the display values of the web UI: product title, logo URL and favicon URL (APP_TITLE, APP_LOGO_URL, APP_FAVICON_URL), the start value of the TTL field in the create forms (default_instance_ttl_minutes, DEFAULT_INSTANCE_TTL_MINUTES; 0 means no expiry), the maximum TTL and stop-time distance in days (max_instance_ttl_days, MAX_INSTANCE_TTL_DAYS), whether port-forward is on (port_forward_enabled, STACK_PORT_FORWARD_ENABLED), and whether exec is on (exec_enabled, STACK_EXEC_ENABLED). Public: no authentication, so the login page can use it. An empty logo_url means the built-in logo. A URL is a same-origin path or an https URL. Cached for 5 minutes.",
+                "description": "Returns the display values of the web UI: product title, logo URL and favicon URL (APP_TITLE, APP_LOGO_URL, APP_FAVICON_URL), the start value of the TTL field in the create forms (default_instance_ttl_minutes, DEFAULT_INSTANCE_TTL_MINUTES; 0 means no expiry), the maximum TTL and stop-time distance in days (max_instance_ttl_days, MAX_INSTANCE_TTL_DAYS), whether port-forward is on (port_forward_enabled, STACK_PORT_FORWARD_ENABLED), whether exec is on (exec_enabled, STACK_EXEC_ENABLED), and whether the stream routes accept an API key (stream_api_keys_allowed, STACK_STREAM_ALLOW_API_KEYS). Public: no authentication, so the login page can use it. An empty logo_url means the built-in logo. A URL is a same-origin path or an https URL. Cached for 5 minutes.",
                 "produces": [
                     "application/json"
                 ],
@@ -12072,6 +12084,11 @@ const docTemplate = `{
                     "type": "boolean",
                     "example": false
                 },
+                "stream_api_keys_allowed": {
+                    "description": "StreamAPIKeysAllowed is true when the stream routes (port-forward, exec)\naccept an API key (STACK_STREAM_ALLOW_API_KEYS). The UI leaves the\n\"API keys are not accepted\" hint out then. A public boolean, like\nExecEnabled; it is needed even when exec is off.",
+                    "type": "boolean",
+                    "example": false
+                },
                 "title": {
                     "description": "Title is the product name (APP_TITLE).",
                     "type": "string",
@@ -13419,6 +13436,22 @@ const docTemplate = `{
                         "$ref": "#/definitions/k8s.DeploymentInfo"
                     }
                 },
+                "exec_containers": {
+                    "description": "ExecContainers are the containers that \"stackctl stack exec \u003cstack\u003e \u003cchart\u003e\n-c \u003cname\u003e\" is accepted for, in the order the route considers them (pods by\nname, containers in spec order). Set only with exec_hints=true.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "web",
+                        "worker"
+                    ]
+                },
+                "exec_default_container": {
+                    "description": "ExecDefaultContainer is the container the route picks without -c. Set\nonly when that call would be accepted.",
+                    "type": "string",
+                    "example": "web"
+                },
                 "pods": {
                     "type": "array",
                     "items": {
@@ -13578,6 +13611,11 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/k8s.PodEvent"
                     }
+                },
+                "exec_hints": {
+                    "description": "ExecHints is true when the server checked exec for the caller (only on\n/status and /pods with exec_hints=true, for a caller who may exec). Then a\nchart without exec_containers has no usable container. Never set on the\nwatcher cache or the WebSocket broadcast.",
+                    "type": "boolean",
+                    "example": true
                 },
                 "ingresses": {
                     "type": "array",

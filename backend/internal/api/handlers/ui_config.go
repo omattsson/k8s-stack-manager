@@ -34,6 +34,11 @@ type UIConfigResponse struct {
 	// ExecEnabled is true when exec is on (STACK_EXEC_ENABLED). The UI shows
 	// the stackctl hint then.
 	ExecEnabled bool `json:"exec_enabled" example:"false"`
+	// StreamAPIKeysAllowed is true when the stream routes (port-forward, exec)
+	// accept an API key (STACK_STREAM_ALLOW_API_KEYS). The UI leaves the
+	// "API keys are not accepted" hint out then. A public boolean, like
+	// ExecEnabled; it is needed even when exec is off.
+	StreamAPIKeysAllowed bool `json:"stream_api_keys_allowed" example:"false"`
 }
 
 // NewUIConfigHandler returns the handler of GET /api/v1/ui-config. The
@@ -43,15 +48,16 @@ type UIConfigResponse struct {
 // value below 1 gives the default of 30 days). A default TTL below 1 or above
 // the limit is sent as 0: the create endpoints ignore a value below 1 and
 // reject a TTL above the limit, so the forms must not start with it.
-func NewUIConfigHandler(b config.BrandingConfig, defaultTTLMinutes, maxTTLDays int, portForwardEnabled, execEnabled bool) gin.HandlerFunc {
+func NewUIConfigHandler(b config.BrandingConfig, defaultTTLMinutes, maxTTLDays int, portForwardEnabled, execEnabled, streamAPIKeysAllowed bool) gin.HandlerFunc {
 	maxTTL := maxTTLMinutesFromDays(maxTTLDays)
 	resp := UIConfigResponse{
-		Title:              b.Title,
-		LogoURL:            b.LogoURL,
-		FaviconURL:         b.FaviconURL,
-		MaxInstanceTTLDays: maxTTL / (24 * 60),
-		PortForwardEnabled: portForwardEnabled,
-		ExecEnabled:        execEnabled,
+		Title:                b.Title,
+		LogoURL:              b.LogoURL,
+		FaviconURL:           b.FaviconURL,
+		MaxInstanceTTLDays:   maxTTL / (24 * 60),
+		PortForwardEnabled:   portForwardEnabled,
+		ExecEnabled:          execEnabled,
+		StreamAPIKeysAllowed: streamAPIKeysAllowed,
 	}
 	if defaultTTLMinutes > 0 && defaultTTLMinutes <= maxTTL {
 		resp.DefaultInstanceTTLMinutes = defaultTTLMinutes
@@ -69,7 +75,7 @@ func NewUIConfigHandler(b config.BrandingConfig, defaultTTLMinutes, maxTTLDays i
 
 // getUIConfig godoc
 // @Summary      Web UI display config
-// @Description  Returns the display values of the web UI: product title, logo URL and favicon URL (APP_TITLE, APP_LOGO_URL, APP_FAVICON_URL), the start value of the TTL field in the create forms (default_instance_ttl_minutes, DEFAULT_INSTANCE_TTL_MINUTES; 0 means no expiry), the maximum TTL and stop-time distance in days (max_instance_ttl_days, MAX_INSTANCE_TTL_DAYS), whether port-forward is on (port_forward_enabled, STACK_PORT_FORWARD_ENABLED), and whether exec is on (exec_enabled, STACK_EXEC_ENABLED). Public: no authentication, so the login page can use it. An empty logo_url means the built-in logo. A URL is a same-origin path or an https URL. Cached for 5 minutes.
+// @Description  Returns the display values of the web UI: product title, logo URL and favicon URL (APP_TITLE, APP_LOGO_URL, APP_FAVICON_URL), the start value of the TTL field in the create forms (default_instance_ttl_minutes, DEFAULT_INSTANCE_TTL_MINUTES; 0 means no expiry), the maximum TTL and stop-time distance in days (max_instance_ttl_days, MAX_INSTANCE_TTL_DAYS), whether port-forward is on (port_forward_enabled, STACK_PORT_FORWARD_ENABLED), whether exec is on (exec_enabled, STACK_EXEC_ENABLED), and whether the stream routes accept an API key (stream_api_keys_allowed, STACK_STREAM_ALLOW_API_KEYS). Public: no authentication, so the login page can use it. An empty logo_url means the built-in logo. A URL is a same-origin path or an https URL. Cached for 5 minutes.
 // @Tags         ui
 // @Produce      json
 // @Success      200  {object}  UIConfigResponse

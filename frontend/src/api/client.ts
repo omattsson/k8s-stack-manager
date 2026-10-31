@@ -996,6 +996,23 @@ export const definitionService = {
   },
 };
 
+/** Options of the instance status and pods requests. */
+export interface InstanceStatusOptions {
+  /** Add the query `exec_hints=true`. Older servers ignore it. */
+  execHints?: boolean;
+}
+
+/**
+ * GET a namespace status; adds `exec_hints=true` only when the option is set.
+ * @param url - Request path (client paths include `/api/v1`)
+ * @param options - `execHints: true` adds the query `exec_hints=true`
+ * @returns The Axios response with the namespace status
+ * @see GET /api/v1/stack-instances/:id/status
+ * @see GET /api/v1/stack-instances/:id/pods
+ */
+const getWithExecHints = (url: string, options?: InstanceStatusOptions) =>
+  options?.execHints ? api.get<NamespaceStatus>(url, { params: { exec_hints: true } }) : api.get<NamespaceStatus>(url);
+
 /** Stack instance service for managing deployed stack instances. Maps to `/api/v1/stack-instances`. */
 export const instanceService = {
   /**
@@ -1440,12 +1457,15 @@ export const instanceService = {
   /**
    * Get live Kubernetes namespace status for an instance.
    * @param id - Instance ID
+   * @param options - `execHints: true` adds the query `exec_hints=true`: for a caller who may
+   *   exec, the status then has `exec_hints`, `exec_containers` and `exec_default_container`.
+   *   Older servers ignore it.
    * @returns Namespace status with pod/service details
    * @see GET /api/v1/stack-instances/:id/status
    */
-  getStatus: async (id: string): Promise<NamespaceStatus> => {
+  getStatus: async (id: string, options?: InstanceStatusOptions): Promise<NamespaceStatus> => {
     try {
-      const response = await api.get(`/api/v1/stack-instances/${id}/status`);
+      const response = await getWithExecHints(`/api/v1/stack-instances/${id}/status`, options);
       return response.data;
     } catch (error) {
       console.error('Failed to fetch instance status:', error);
@@ -1455,12 +1475,15 @@ export const instanceService = {
   /**
    * Get detailed pod health status including container states and events.
    * @param id - Instance ID
+   * @param options - `execHints: true` adds the query `exec_hints=true`: for a caller who may
+   *   exec, the status then has `exec_hints`, `exec_containers` and `exec_default_container`.
+   *   Older servers ignore it.
    * @returns Namespace status with pod details
    * @see GET /api/v1/stack-instances/:id/pods
    */
-  getPods: async (id: string): Promise<NamespaceStatus> => {
+  getPods: async (id: string, options?: InstanceStatusOptions): Promise<NamespaceStatus> => {
     try {
-      const response = await api.get<NamespaceStatus>(`/api/v1/stack-instances/${id}/pods`);
+      const response = await getWithExecHints(`/api/v1/stack-instances/${id}/pods`, options);
       return response.data;
     } catch (error) {
       console.error('Failed to fetch pod status:', error);

@@ -66,6 +66,9 @@ type ExecClient interface {
 	CheckStreamNamespace(ctx context.Context, namespace, backendNamespace string) error
 	// ResolveExecTarget picks the pod and the container of a command.
 	ResolveExecTarget(ctx context.Context, namespace string, req ExecTargetRequest) (*ExecTarget, error)
+	// ExecContainers lists, for each release, the containers that
+	// ResolveExecTarget would accept for the release. See ExecContainersRequest.
+	ExecContainers(ctx context.Context, namespace string, releases []string, req ExecContainersRequest) (map[string]ReleaseExecContainers, ExecHintStats, error)
 	// ExecCommand runs the command without stdin and without a TTY and copies
 	// the output to stdout and stderr. It returns the exit code of the process.
 	// A nil error means the process ended (the exit code may be non-zero); any
@@ -87,55 +90,18 @@ func (c *Client) ResolveExecTarget(ctx context.Context, namespace string, req Ex
 	if err != nil {
 		return nil, err
 	}
-	var ready []corev1.Pod
-	for i := range pods {
-		if PodReady(&pods[i]) {
-			ready = append(ready, pods[i])
-		}
-	}
+	ready := readySortedPods(pods)
 	if len(ready) == 0 {
 		return nil, ErrNoReadyPod
 	}
-	SortPodsByName(ready)
 
-	allowed := req.AllowedContainer
-	if allowed == nil {
-		allowed = func(string) bool { return false }
-	}
-	var pod *corev1.Pod
-	var ctr *corev1.Container
-	for i := range ready {
-		p := &ready[i]
-		for j := range p.Spec.Containers {
-			cc := &p.Spec.Containers[j]
-			if req.Container != "" && cc.Name != req.Container {
-				continue
-			}
-			if allowed(cc.Name) {
-				pod, ctr = p, cc
-				break
-			}
-		}
-		if pod != nil {
-			break
-		}
-	}
+	pod, ctr := pickExecContainer(ready, req.Container, req.AllowedContainer)
 	if pod == nil {
-		if req.Container == "" {
-			return nil, ErrContainerNotAllowed
-		}
-		for i := range ready {
-			for _, cc := range ready[i].Spec.Containers {
-				if cc.Name == req.Container {
-					return nil, ErrContainerNotAllowed // runs, but is not in the list
-				}
-			}
-		}
-		return nil, ErrContainerNotFound
+		return nil, execPickError(ready, req.Container)
 	}
 
 	if !req.AllowServiceAccountToken {
-		holds, err := c.holdsServiceAccountToken(ctx, namespace, pod, ctr)
+		holds, err := c.holdsServiceAccountToken(ctx, namespace, pod, ctr, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -145,6 +111,59 @@ func (c *Client) ResolveExecTarget(ctx context.Context, namespace string, req Ex
 	}
 	span.SetAttributes(attribute.String("k8s.pod", pod.Name), attribute.String("k8s.container", ctr.Name))
 	return &ExecTarget{Pod: pod.Name, Container: ctr.Name}, nil
+}
+
+// readySortedPods keeps the pods that are Running, Ready and not terminating,
+// sorted by name. The exec route and the exec hints share it.
+func readySortedPods(pods []corev1.Pod) []corev1.Pod {
+	var ready []corev1.Pod
+	for i := range pods {
+		if PodReady(&pods[i]) {
+			ready = append(ready, pods[i])
+		}
+	}
+	SortPodsByName(ready)
+	return ready
+}
+
+// pickExecContainer chooses the pod and the container of a command from the
+// ready pods (sorted by name): the first allowed container, in spec order, of
+// the first pod that has one; with a requested name only a container of that
+// name counts. It returns nil, nil when there is none. A nil allowed func
+// allows nothing.
+func pickExecContainer(ready []corev1.Pod, requested string, allowed func(string) bool) (*corev1.Pod, *corev1.Container) {
+	if allowed == nil {
+		allowed = func(string) bool { return false }
+	}
+	for i := range ready {
+		p := &ready[i]
+		for j := range p.Spec.Containers {
+			cc := &p.Spec.Containers[j]
+			if requested != "" && cc.Name != requested {
+				continue
+			}
+			if allowed(cc.Name) {
+				return p, cc
+			}
+		}
+	}
+	return nil, nil
+}
+
+// execPickError is the error when pickExecContainer found nothing: the
+// container runs but is not allowed, or no ready pod runs it.
+func execPickError(ready []corev1.Pod, requested string) error {
+	if requested == "" {
+		return ErrContainerNotAllowed
+	}
+	for i := range ready {
+		for _, cc := range ready[i].Spec.Containers {
+			if cc.Name == requested {
+				return ErrContainerNotAllowed // runs, but is not in the list
+			}
+		}
+	}
+	return ErrContainerNotFound
 }
 
 // releasePods lists the pods of a Helm release by both label keys and merges
@@ -179,8 +198,14 @@ func (c *Client) releasePods(ctx context.Context, namespace, release string) ([]
 // running container of the pod is checked. A failed read of the ServiceAccount
 // or of a Secret fails closed (the error is returned; a Forbidden read wraps
 // ErrTokenCheckForbidden); a missing ServiceAccount counts as automount true.
-func (c *Client) holdsServiceAccountToken(ctx context.Context, namespace string, pod *corev1.Pod, ctr *corev1.Container) (bool, error) {
-	automount, err := c.effectiveAutomount(ctx, namespace, pod)
+//
+// memo (may be nil) keeps the reads of one batch of checks: each ServiceAccount
+// and each Secret is read at most once.
+func (c *Client) holdsServiceAccountToken(ctx context.Context, namespace string, pod *corev1.Pod, ctr *corev1.Container, memo *tokenMemo) (bool, error) {
+	if memo == nil {
+		memo = newTokenMemo()
+	}
+	automount, err := c.effectiveAutomount(ctx, namespace, pod, memo)
 	if err != nil || automount {
 		return automount, err
 	}
@@ -196,23 +221,78 @@ func (c *Client) holdsServiceAccountToken(ctx context.Context, namespace string,
 	// kubernetes.io/service-account-token. One read for each distinct name; a
 	// missing Secret is not a token, any other error fails closed.
 	for _, name := range secretNames {
-		sec, err := c.clientset.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
-		switch {
-		case err == nil:
-			if sec.Type == corev1.SecretTypeServiceAccountToken {
-				return true, nil
-			}
-		case k8serrors.IsNotFound(err):
-		default:
-			return false, tokenCheckError("secret", namespace, name, err)
+		isToken, err := c.secretIsToken(ctx, namespace, name, memo)
+		if err != nil {
+			return false, err
+		}
+		if isToken {
+			return true, nil
 		}
 	}
 	return false, nil
 }
 
+// secretIsToken reports whether the Secret has the type
+// kubernetes.io/service-account-token. A missing Secret is not a token; any
+// other error is returned. The answer is kept in memo.
+func (c *Client) secretIsToken(ctx context.Context, namespace, name string, memo *tokenMemo) (bool, error) {
+	if r, ok := memo.secrets[name]; ok {
+		return r.value, r.err
+	}
+	if !memo.takeRead() {
+		return false, errTokenReadBudget
+	}
+	var r memoResult
+	sec, err := c.clientset.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
+	switch {
+	case err == nil:
+		r.value = sec.Type == corev1.SecretTypeServiceAccountToken
+	case k8serrors.IsNotFound(err):
+	default:
+		r.err = tokenCheckError("secret", namespace, name, err)
+	}
+	memo.secrets[name] = r
+	return r.value, r.err
+}
+
+// memoResult is one kept answer of a token check read (an error is kept too,
+// so a refused read is not repeated).
+type memoResult struct {
+	value bool
+	err   error
+}
+
+// tokenMemo keeps the ServiceAccount and Secret reads of one batch of token
+// checks, by name. It is not safe for concurrent use.
+type tokenMemo struct {
+	serviceAccounts map[string]memoResult
+	secrets         map[string]memoResult
+	// reads counts the real Kubernetes reads (memo misses; a NotFound counts).
+	// With maxReads > 0 a further read is refused with errTokenReadBudget.
+	reads    int
+	maxReads int
+}
+
+// errTokenReadBudget is returned by a token check that would exceed the read
+// budget of the memo. It is not kept in the memo and it is not Forbidden.
+var errTokenReadBudget = errors.New("the read budget of the service-account-token check is spent")
+
+// takeRead counts one real read; it reports false when the budget is spent.
+func (m *tokenMemo) takeRead() bool {
+	if m.maxReads > 0 && m.reads >= m.maxReads {
+		return false
+	}
+	m.reads++
+	return true
+}
+
+func newTokenMemo() *tokenMemo {
+	return &tokenMemo{serviceAccounts: map[string]memoResult{}, secrets: map[string]memoResult{}}
+}
+
 // effectiveAutomount is the automountServiceAccountToken of the pod: the pod
 // field, else the field of its ServiceAccount, else true.
-func (c *Client) effectiveAutomount(ctx context.Context, namespace string, pod *corev1.Pod) (bool, error) {
+func (c *Client) effectiveAutomount(ctx context.Context, namespace string, pod *corev1.Pod, memo *tokenMemo) (bool, error) {
 	if pod.Spec.AutomountServiceAccountToken != nil {
 		return *pod.Spec.AutomountServiceAccountToken, nil
 	}
@@ -223,18 +303,25 @@ func (c *Client) effectiveAutomount(ctx context.Context, namespace string, pod *
 	if name == "" {
 		name = "default"
 	}
+	if r, ok := memo.serviceAccounts[name]; ok {
+		return r.value, r.err
+	}
+	if !memo.takeRead() {
+		return false, errTokenReadBudget
+	}
+	r := memoResult{value: true} // a missing ServiceAccount counts as automount true
 	sa, err := c.clientset.CoreV1().ServiceAccounts(namespace).Get(ctx, name, metav1.GetOptions{})
 	switch {
 	case err == nil:
 		if sa.AutomountServiceAccountToken != nil {
-			return *sa.AutomountServiceAccountToken, nil
+			r.value = *sa.AutomountServiceAccountToken
 		}
-		return true, nil
 	case k8serrors.IsNotFound(err):
-		return true, nil
 	default:
-		return false, tokenCheckError("service account", namespace, name, err)
+		r = memoResult{err: tokenCheckError("service account", namespace, name, err)}
 	}
+	memo.serviceAccounts[name] = r
+	return r.value, r.err
 }
 
 // tokenCheckError wraps a failed read of the token check. A Forbidden read

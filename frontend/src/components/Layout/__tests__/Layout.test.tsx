@@ -282,7 +282,7 @@ describe('Layout', () => {
     });
 
     render(
-      <StaticBrandingProvider value={{ title: 'Platform Portal', logoUrl: '/branding/logo.svg', faviconUrl: '/f.svg', defaultTtlMinutes: 0, maxTtlDays: 30, portForwardEnabled: false, execEnabled: false }}>
+      <StaticBrandingProvider value={{ title: 'Platform Portal', logoUrl: '/branding/logo.svg', faviconUrl: '/f.svg', defaultTtlMinutes: 0, maxTtlDays: 30, portForwardEnabled: false, execEnabled: false, streamApiKeysAllowed: false }}>
         <MemoryRouter>
           <Layout>
             <div>Content</div>
