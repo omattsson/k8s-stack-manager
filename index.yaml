@@ -1,6 +1,57 @@
 apiVersion: v1
 entries:
   k8s-stack-manager:
+  - annotations:
+      artifacthub.io/category: integration-delivery
+      artifacthub.io/images: |
+        - name: backend
+          image: ghcr.io/omattsson/k8s-stack-manager/backend:0.15.1
+        - name: frontend
+          image: ghcr.io/omattsson/k8s-stack-manager/frontend:0.15.1
+        - name: mysql
+          image: mysql:8.0
+      artifacthub.io/license: MIT
+      artifacthub.io/links: |
+        - name: Documentation
+          url: https://github.com/omattsson/k8s-stack-manager#readme
+        - name: Getting Started
+          url: https://github.com/omattsson/k8s-stack-manager/blob/main/docs/getting-started.md
+        - name: stackctl (CLI)
+          url: https://github.com/omattsson/stackctl
+      artifacthub.io/screenshots: |
+        - title: Dashboard
+          url: https://raw.githubusercontent.com/omattsson/k8s-stack-manager/main/docs/screenshots/dashboard.png
+        - title: Port-forward and exec commands on the stack page
+          url: https://raw.githubusercontent.com/omattsson/k8s-stack-manager/main/docs/screenshots/access-urls.png
+        - title: Template gallery
+          url: https://raw.githubusercontent.com/omattsson/k8s-stack-manager/main/docs/screenshots/templates.png
+    apiVersion: v2
+    appVersion: 0.15.1
+    created: "2026-10-31T21:19:55.318634791Z"
+    description: Self-service environments for multi-service Helm applications on
+      your own Kubernetes clusters (web UI, API, MySQL)
+    digest: 058b47d985c2fac44ac8b9068b33ceaef01280b45981af1aeb53db1391364f04
+    home: https://github.com/omattsson/k8s-stack-manager
+    icon: https://raw.githubusercontent.com/omattsson/k8s-stack-manager/main/frontend/public/logo.svg
+    keywords:
+    - kubernetes
+    - helm
+    - stack-manager
+    - argo-rollouts
+    - platform-engineering
+    - ephemeral-environments
+    - preview-environments
+    - self-service
+    maintainers:
+    - name: omattsson
+      url: https://github.com/omattsson
+    name: k8s-stack-manager
+    sources:
+    - https://github.com/omattsson/k8s-stack-manager
+    type: application
+    urls:
+    - https://github.com/omattsson/k8s-stack-manager/releases/download/k8s-stack-manager-0.14.0/k8s-stack-manager-0.14.0.tgz
+    version: 0.14.0
   - apiVersion: v2
     appVersion: 0.15.0
     created: "2026-10-31T14:40:35.924179741Z"
@@ -505,4 +556,4 @@ entries:
     urls:
     - https://github.com/omattsson/k8s-stack-manager/releases/download/k8s-stack-manager-0.2.0/k8s-stack-manager-0.2.0.tgz
     version: 0.2.0
-generated: "2026-10-31T14:40:35.92452157Z"
+generated: "2026-10-31T21:19:55.319058975Z"
