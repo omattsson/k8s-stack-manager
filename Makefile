@@ -1139,10 +1139,10 @@ helm-test: ## Verify Deployment, Argo Rollout, and External Secrets Helm renders
 	if grep -qE 'proxy_pass|connection_upgrade' "$$template_file"; then echo "frontend.apiProxy must be off by default" >&2; exit 1; fi; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/frontend/configmap.yaml \
 		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template --set frontend.apiProxy.enabled=true > "$$template_file"; \
-	grep -q 'location ~ ^/(api|ws|health|swagger)(/|$$) {' "$$template_file" || { echo "frontend.apiProxy must route /api, /ws, /health and /swagger" >&2; exit 1; }; \
-	grep -q 'proxy_pass http://k8s-stack-manager-backend:8081;' "$$template_file" || { echo "frontend.apiProxy must proxy to the backend Service" >&2; exit 1; }; \
-	grep -q 'proxy_set_header Connection $$connection_upgrade;' "$$template_file" || { echo "frontend.apiProxy must pass WebSocket upgrades" >&2; exit 1; }; \
-	grep -q 'map $$http_upgrade $$connection_upgrade' "$$template_file" || { echo "frontend.apiProxy needs the upgrade map" >&2; exit 1; }; \
+	grep -qF 'location ~ ^/(api|ws|health|swagger)(/|$$) {' "$$template_file" || { echo "frontend.apiProxy must route /api, /ws, /health and /swagger" >&2; exit 1; }; \
+	grep -qF 'proxy_pass http://k8s-stack-manager-backend:8081;' "$$template_file" || { echo "frontend.apiProxy must proxy to the backend Service" >&2; exit 1; }; \
+	grep -qF 'proxy_set_header Connection $$connection_upgrade;' "$$template_file" || { echo "frontend.apiProxy must pass WebSocket upgrades" >&2; exit 1; }; \
+	grep -qF 'map $$http_upgrade $$connection_upgrade' "$$template_file" || { echo "frontend.apiProxy needs the upgrade map" >&2; exit 1; }; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/port-forward.yaml \
 		--api-versions admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy --show-only templates/backend/configmap.yaml > "$$template_file"; \
 	grep -q 'STACK_PORT_FORWARD_ENABLED: "true"' "$$template_file" && grep -q 'STACK_PORT_FORWARD_MAX_DURATION: "2h"' "$$template_file" \
