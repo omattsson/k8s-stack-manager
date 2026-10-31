@@ -428,8 +428,10 @@ func TestDeployInstance(t *testing.T) {
 		instanceID string
 		setup      func(*MockStackInstanceRepository, *MockStackDefinitionRepository, *MockChartConfigRepository)
 		noManager  bool
-		wantStatus int
-		checkFn    func(*testing.T, *httptest.ResponseRecorder)
+		// terminatingNS is a namespace with phase Terminating on the cluster.
+		terminatingNS string
+		wantStatus    int
+		checkFn       func(*testing.T, *httptest.ResponseRecorder)
 	}{
 		{
 			name:       "happy path — draft instance returns 202",
@@ -523,6 +525,28 @@ func TestDeployInstance(t *testing.T) {
 			wantStatus: http.StatusAccepted,
 		},
 		{
+			name:       "namespace still terminating returns 409 with the reason",
+			instanceID: "i8",
+			setup: func(instRepo *MockStackInstanceRepository, defRepo *MockStackDefinitionRepository, ccRepo *MockChartConfigRepository) {
+				seedInstance(t, instRepo, "i8", "stack-h", "d1", "uid-1", models.StackStatusDraft)
+				seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
+				require.NoError(t, ccRepo.Create(context.Background(), &models.ChartConfig{
+					ID:                "c4",
+					StackDefinitionID: "d1",
+					ChartName:         "app",
+					RepositoryURL:     "oci://example.com/charts/app",
+					DeployOrder:       1,
+				}))
+			},
+			terminatingNS: "stack-stack-h-owner",
+			wantStatus:    http.StatusConflict,
+			checkFn: func(t *testing.T, w *httptest.ResponseRecorder) {
+				var resp map[string]string
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+				assert.Equal(t, `namespace "stack-stack-h-owner" is still terminating; wait for it to be fully removed, then retry`, resp["error"])
+			},
+		},
+		{
 			name:       "no charts returns 400",
 			instanceID: "i7",
 			setup: func(instRepo *MockStackInstanceRepository, defRepo *MockStackDefinitionRepository, _ *MockChartConfigRepository) {
@@ -548,6 +572,19 @@ func TestDeployInstance(t *testing.T) {
 			var mgr *deployer.Manager
 			if !tt.noManager {
 				mgr = newTestManager(instRepo, logRepo)
+			}
+			if tt.terminatingNS != "" {
+				k8sClient := k8s.NewClientFromInterface(fake.NewSimpleClientset(&corev1.Namespace{
+					ObjectMeta: metav1.ObjectMeta{Name: tt.terminatingNS},
+					Status:     corev1.NamespaceStatus{Phase: corev1.NamespaceTerminating},
+				}))
+				mgr = deployer.NewManager(deployer.ManagerConfig{
+					Registry:      cluster.NewRegistryForTest("test-cluster", k8sClient, &noopHelmExecutor{}),
+					InstanceRepo:  instRepo,
+					DeployLogRepo: logRepo,
+					Hub:           &MockBroadcastSender{},
+					MaxConcurrent: 2,
+				})
 			}
 
 			router := setupDeployRouter(t,

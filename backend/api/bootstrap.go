@@ -394,6 +394,7 @@ func buildDomainServices(
 		Hooks:                      hookDispatcher,
 		Notifier:                   lifecycleNotifier,
 		ReplicaID:                  replicaID,
+		Heartbeats:                 repos.ReplicaHeartbeat,
 	})
 
 	// Recovery of operations whose replica stopped (leader-only worker) and

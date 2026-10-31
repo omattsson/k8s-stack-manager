@@ -138,7 +138,7 @@ func (m *Manager) runBlockingPostDeploy(instanceID string, deployLog *models.Dep
 		}
 	}
 	if lost {
-		res.cancelled = fmt.Errorf("deploy cancelled: another operation changed the instance (status %s) during the post-deploy hook", current)
+		res.cancelled = fmt.Errorf("%w: another operation changed the instance (status %s) during the post-deploy hook", ErrDeployCancelled, current)
 		logLine("WARNING: " + res.cancelled.Error())
 		slog.Warn("deploy cancelled during blocking post-deploy hooks: instance changed",
 			"instance_id", instanceID, "log_id", deployLog.ID, "status", current)

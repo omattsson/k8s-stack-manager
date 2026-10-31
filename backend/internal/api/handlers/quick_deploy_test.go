@@ -13,12 +13,16 @@ import (
 	"backend/internal/database"
 	"backend/internal/deployer"
 	"backend/internal/helm"
+	"backend/internal/k8s"
 	"backend/internal/models"
 	"backend/pkg/dberrors"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 func intPtr(i int) *int { return &i }
@@ -548,4 +552,58 @@ func TestQuickDeploy_RecordsCaller(t *testing.T) {
 	log, err := logRepo.FindByID(context.Background(), resp.LogID)
 	require.NoError(t, err)
 	assert.Equal(t, "uid-1", log.UserID)
+}
+
+// The deploy of a quick deploy cannot start while the namespace of an
+// earlier stack with the same name is still terminating: the instance gets
+// status error with the reason, not only "Deployment failed".
+func TestQuickDeploy_NamespaceTerminating(t *testing.T) {
+	t.Parallel()
+
+	tmplRepo := NewMockStackTemplateRepository()
+	tmplChartRepo := NewMockTemplateChartConfigRepository()
+	instRepo := NewMockStackInstanceRepository()
+	require.NoError(t, tmplRepo.Create(context.Background(), &models.StackTemplate{
+		ID: "t1", Name: "Template", IsPublished: true, OwnerID: "owner-1",
+		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+	}))
+	require.NoError(t, tmplChartRepo.Create(context.Background(), &models.TemplateChartConfig{
+		ID: "tc1", StackTemplateID: "t1", ChartName: "svc",
+		RepositoryURL: "oci://example.com/charts/svc", DeployOrder: 1,
+	}))
+
+	k8sClient := k8s.NewClientFromInterface(fake.NewSimpleClientset(&corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: "stack-ns-term-alice"},
+		Status:     corev1.NamespaceStatus{Phase: corev1.NamespaceTerminating},
+	}))
+	registry := cluster.NewRegistryForTest("test-cluster", k8sClient, &noopHelmExecutor{})
+	logRepo := NewMockDeploymentLogRepository()
+	mgr := deployer.NewManager(deployer.ManagerConfig{
+		Registry:      registry,
+		InstanceRepo:  instRepo,
+		DeployLogRepo: logRepo,
+		Hub:           &MockBroadcastSender{},
+		MaxConcurrent: 2,
+	})
+	router := setupQuickDeployRouter(t,
+		tmplRepo, tmplChartRepo, NewMockStackDefinitionRepository(), NewMockChartConfigRepository(), instRepo,
+		NewMockChartBranchOverrideRepository(), NewMockValueOverrideRepository(), NewMockAuditLogRepository(),
+		mgr, registry,
+		"uid-1", "alice", "user",
+		0,
+	)
+
+	body, _ := json.Marshal(quickDeployRequest{InstanceName: "ns-term"})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/templates/t1/quick-deploy", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+	var resp quickDeployResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Empty(t, resp.LogID)
+	require.NotNil(t, resp.Instance)
+	assert.Equal(t, models.StackStatusError, resp.Instance.Status)
+	assert.Equal(t, `Deployment failed: namespace "stack-ns-term-alice" is still terminating; wait for it to be fully removed, then retry`, resp.Instance.ErrorMessage)
 }

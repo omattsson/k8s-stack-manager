@@ -259,6 +259,10 @@ func (h *InstanceHandler) BulkDeploy(c *gin.Context) {
 		}
 
 		logID, err := h.deployManager.Deploy(wctx, req)
+		var nsErr *deployer.NamespaceTerminatingError
+		if errors.As(err, &nsErr) {
+			return "", nsErr
+		}
 		if err != nil {
 			return "", fmt.Errorf("failed to start deployment")
 		}

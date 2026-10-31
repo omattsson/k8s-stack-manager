@@ -75,6 +75,8 @@ type Manager struct {
 	// replicaID is the process identity stored on each deploy log (see
 	// ManagerConfig.ReplicaID).
 	replicaID string
+	// heartbeats is ManagerConfig.Heartbeats (may be nil).
+	heartbeats models.ReplicaHeartbeatRepository
 	// Wildcard TLS secret replication (local dev). When wildcardTLSSourceSecret
 	// is empty, replication is disabled.
 	wildcardTLSSourceNS     string
@@ -189,6 +191,11 @@ type ManagerConfig struct {
 	// this process stops without a clean shutdown (InterruptRecovery).
 	// Empty: logs get no replica ID and the recovery skips them.
 	ReplicaID string
+	// Heartbeats is optional. A stop that waits for a running deploy of
+	// another replica stops waiting when that replica has no heartbeat
+	// within replica.StaleAfter (waitForEarlierOperations). Nil: the wait
+	// ends only at the deadline of the deploy log.
+	Heartbeats models.ReplicaHeartbeatRepository
 }
 
 // DeployRequest contains everything needed to deploy a stack instance.
@@ -245,6 +252,7 @@ func NewManager(cfg ManagerConfig) *Manager {
 		quotaRepo:               cfg.QuotaRepo,
 		quotaOverrideRepo:       cfg.QuotaOverrideRepo,
 		replicaID:               cfg.ReplicaID,
+		heartbeats:              cfg.Heartbeats,
 		semaphore:               make(chan struct{}, maxConcurrent),
 		shutdownCtx:             ctx,
 		shutdownCancel:          cancel,
@@ -487,7 +495,7 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 			return "", fmt.Errorf("checking namespace phase: %w", phaseErr)
 		}
 		if phase == "Terminating" {
-			return "", fmt.Errorf("namespace %q is still terminating; wait for it to be fully removed, then retry", req.Instance.Namespace)
+			return "", &NamespaceTerminatingError{Namespace: req.Instance.Namespace}
 		}
 	}
 
@@ -579,12 +587,28 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 	return logID, nil
 }
 
+// NamespaceTerminatingError is the error of Deploy when the namespace of the
+// instance is still being deleted (an earlier clean or delete has not
+// finished, #182). No deploy log is written. The text is user-safe: the API
+// returns it with 409.
+type NamespaceTerminatingError struct{ Namespace string }
+
+func (e *NamespaceTerminatingError) Error() string {
+	return fmt.Sprintf("namespace %q is still terminating; wait for it to be fully removed, then retry", e.Namespace)
+}
+
+// ErrDeployCancelled is wrapped by the error of a deploy whose instance
+// another operation (a stop, clean, delete or new deploy) took. The text
+// names the status of that operation and the phase; it is user-safe, so the
+// log error message keeps it (sanitizeDeployError).
+var ErrDeployCancelled = errors.New("deploy cancelled")
+
 // cancelDeployAfterPreHook ends a deploy whose instance another operation
 // (a stop, clean, delete or new deploy) took during the pre-deploy hook.
 // current is the instance status of the other operation. No chart is
 // installed. finalizeDeploy only closes the log and keeps that status.
 func (m *Manager) cancelDeployAfterPreHook(instanceID string, deployLog *models.DeploymentLog, hookOutput, current, lastDeployedValues string) {
-	cancelErr := fmt.Errorf("deploy cancelled: another operation changed the instance (status %s) during the pre-deploy hook", current)
+	cancelErr := fmt.Errorf("%w: another operation changed the instance (status %s) during the pre-deploy hook", ErrDeployCancelled, current)
 	m.broadcastLog(instanceID, deployLog.ID, "WARNING: "+cancelErr.Error())
 	slog.Warn("deploy cancelled during pre-deploy hook: instance changed",
 		"instance_id", instanceID, "log_id", deployLog.ID, "status", current)
@@ -880,8 +904,28 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 
 	var failedCharts []string
 
+	// A stop is allowed while the status is deploying, so it (or a clean,
+	// delete or new deploy) can take the instance while Helm installs the
+	// charts. The deploy then installs no further chart, and the watcher
+	// cancels a running install. The stop waits for this log to end before
+	// it uninstalls (waitForEarlierOperations), so no release comes back
+	// after the stop.
+	installCtx, cancelInstalls := context.WithCancel(ctx)
+	defer cancelInstalls()
+	installWatch := watchOwnership(installCtx, cancelInstalls, m.stabilizePollInterval, func(wctx context.Context) (bool, string) {
+		return m.installsOwned(wctx, instanceID, deployLog.ID)
+	})
+	takenStatus := ""
+
 	for _, chart := range charts {
 		releaseName := chart.ChartConfig.ChartName
+
+		// ctx, not installCtx: after the watcher cancelled installCtx a read
+		// with it fails, and a failed read counts as owned.
+		if owned, current := m.installsOwned(ctx, instanceID, deployLog.ID); !owned {
+			takenStatus = current
+			break
+		}
 
 		// Check ALLOWED_CHART_REPOS again at deploy time: a chart config
 		// stored before the allowlist was set must not deploy.
@@ -921,7 +965,7 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 		// A release left in pending-* by an earlier, interrupted deploy blocks
 		// every upgrade; remove the stuck revision first.
 		if k8sClient != nil {
-			msg, recErr := recoverPendingRelease(ctx, helm, k8sClient.Clientset(), releaseName, namespace)
+			msg, recErr := recoverPendingRelease(installCtx, helm, k8sClient.Clientset(), releaseName, namespace)
 			if recErr != nil {
 				allOutput += fmt.Sprintf("WARNING: %s\n", recErr.Error())
 			} else if msg != "" {
@@ -932,7 +976,7 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 
 		// helm stops itself at --timeout and marks the release failed; the
 		// margin keeps this context from killing helm before that.
-		chartCtx, chartCancel := context.WithTimeout(ctx, timeout+chartTimeoutMargin)
+		chartCtx, chartCancel := context.WithTimeout(installCtx, timeout+chartTimeoutMargin)
 		output, err := helm.Install(chartCtx, InstallRequest{
 			ReleaseName:    releaseName,
 			ChartPath:      chartRef,
@@ -960,6 +1004,21 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 		}
 	}
 
+	if current, lost := installWatch.stop(); lost || takenStatus != "" {
+		if takenStatus == "" {
+			takenStatus = current
+		}
+		deployErr = fmt.Errorf("%w: another operation changed the instance (status %s) during the chart installs", ErrDeployCancelled, takenStatus)
+		line := "WARNING: " + deployErr.Error()
+		m.broadcastLog(instanceID, deployLog.ID, line)
+		podEventLines, _ := podWatch.stop()
+		allOutput += podEventLines + line + "\n"
+		slog.Warn("deploy cancelled during the chart installs: instance changed",
+			"instance_id", instanceID, "log_id", deployLog.ID, "status", takenStatus)
+		m.finalizeDeploy(instanceID, deployLog, allOutput, deployErr, false, lastDeployedValues, "")
+		return
+	}
+
 	if len(failedCharts) > 0 && len(failedCharts) == len(charts) {
 		deployErr = fmt.Errorf("all charts failed to deploy: %s", strings.Join(failedCharts, ", "))
 	} else if len(failedCharts) > 0 {
@@ -984,6 +1043,13 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 			m.broadcastLog(instanceID, deployLog.ID, line)
 			allOutput += line + "\n"
 			deployErr = waitErr
+		} else if taken := (*instanceTakenError)(nil); errors.As(waitErr, &taken) {
+			// The charts are installed, but the stop (or another
+			// operation) removes them: the deploy did not complete.
+			deployErr = fmt.Errorf("%w: %s during the readiness wait", ErrDeployCancelled, taken.takenBy())
+			line := "WARNING: " + deployErr.Error()
+			m.broadcastLog(instanceID, deployLog.ID, line)
+			allOutput += line + "\n"
 		} else if waitErr != nil {
 			readinessWarning = waitErr.Error()
 		}
@@ -1048,7 +1114,11 @@ func (m *Manager) awaitReadiness(k8sClient *k8s.Client, instanceID, namespace, l
 	if m.shutdownCtx.Err() != nil {
 		return m.readinessAfterShutdown(k8sClient, instanceID, namespace, logID, nil)
 	}
-	if err := m.markStabilizing(instanceID); err != nil {
+	if err := m.markStabilizing(instanceID, logID); err != nil {
+		var taken *instanceTakenError
+		if errors.As(err, &taken) {
+			m.broadcastLog(instanceID, logID, "Stabilization aborted: "+taken.cause())
+		}
 		return nil, err
 	}
 	m.broadcastStatus(instanceID, models.StackStatusStabilizing, logID)
@@ -1070,12 +1140,13 @@ func (m *Manager) awaitReadiness(k8sClient *k8s.Client, instanceID, namespace, l
 			m.broadcastLog(instanceID, logID, fmt.Sprintf("WARNING: readiness timeout after %s", m.stabilizeTimeout))
 			return last, fmt.Errorf("readiness timeout after %s", m.stabilizeTimeout)
 		case <-ticker.C:
-			// Abort early if the instance was stopped/cleaned while stabilizing.
-			if current, findErr := m.instanceRepo.FindByID(stabilizeCtx, instanceID); findErr == nil {
-				if current.Status != models.StackStatusStabilizing {
-					m.broadcastLog(instanceID, logID, fmt.Sprintf("Stabilization aborted: instance status changed to %s", current.Status))
-					return last, fmt.Errorf("stabilization aborted: status changed to %s", current.Status)
-				}
+			// Abort early if another operation took the instance while it
+			// stabilizes: a stop or clean changes the status, a stop that
+			// started just before markStabilizing leaves only a newer log.
+			if owned, current := m.hookPhaseOwned(stabilizeCtx, instanceID, logID, models.StackStatusStabilizing); !owned {
+				taken := &instanceTakenError{status: current, statusChanged: current != models.StackStatusStabilizing}
+				m.broadcastLog(instanceID, logID, "Stabilization aborted: "+taken.cause())
+				return last, taken
 			}
 
 			checkCtx, cancel := context.WithTimeout(stabilizeCtx, 5*time.Second)
@@ -1120,14 +1191,89 @@ func (m *Manager) readinessAfterShutdown(k8sClient *k8s.Client, instanceID, name
 	return nsStatus, ErrDeployInterrupted
 }
 
+// instanceTakenError is the result of a readiness wait whose instance another
+// operation (a stop, clean, delete or new deploy) took. The deploy or
+// rollback keeps the status of that operation; finalizeDeploy and
+// finalizeRollback only close the log.
+type instanceTakenError struct {
+	status string
+	// statusChanged is false when the status is still one of the
+	// operation: only a newer deployment log shows the other operation.
+	statusChanged bool
+}
+
+func (e *instanceTakenError) Error() string {
+	return "stabilization aborted: " + e.cause()
+}
+
+// cause says how the other operation showed.
+func (e *instanceTakenError) cause() string {
+	if e.statusChanged {
+		return "instance status changed to " + e.status
+	}
+	return "another operation started"
+}
+
+// takenBy is the text of the ErrDeployCancelled error, in the words of the
+// other cancel errors.
+func (e *instanceTakenError) takenBy() string {
+	if e.statusChanged {
+		return fmt.Sprintf("another operation changed the instance (status %s)", e.status)
+	}
+	return "another operation started"
+}
+
+// installsOwned reports whether the deploy of logID still owns the instance
+// during the chart installs: no newer deployment log exists. Every operation
+// that takes the instance (stop, clean, the clean of a delete, deploy,
+// rollback) writes one. The status alone does not count, so a full-row
+// write of another request that read the instance before the deploy does
+// not cancel the installs. A failed log read counts as owned. It also
+// returns the current status for the message ("unknown" when unread).
+func (m *Manager) installsOwned(ctx context.Context, instanceID, logID string) (bool, string) {
+	if !m.newerOperation(ctx, instanceID, logID) {
+		return true, ""
+	}
+	if inst, err := m.instanceRepo.FindByID(ctx, instanceID); err == nil {
+		return false, inst.Status
+	}
+	return false, "unknown"
+}
+
 // markStabilizing sets the instance status stabilizing at the start of the
-// readiness wait. A shutdown must not fail the read (see finalWriteCtx).
-func (m *Manager) markStabilizing(instanceID string) error {
+// readiness wait of the operation of logID. When another operation took the
+// instance (the status is not deploying or stabilizing, or a newer log
+// exists), it changes nothing and returns *instanceTakenError: a stop must
+// not get the status stabilizing back. A shutdown must not fail the read
+// (see finalWriteCtx).
+func (m *Manager) markStabilizing(instanceID, logID string) error {
 	ctx, cancel := m.finalWriteCtx()
 	defer cancel()
-	inst, err := m.instanceRepo.FindByID(ctx, instanceID)
+	state, inst, err := m.instanceOwnership(ctx, instanceID, logID, models.StackStatusDeploying, models.StackStatusStabilizing)
 	if err != nil {
 		return fmt.Errorf("find instance for stabilize: %w", err)
+	}
+	if state == ownershipLost {
+		return &instanceTakenError{status: inst.Status,
+			statusChanged: inst.Status != models.StackStatusDeploying && inst.Status != models.StackStatusStabilizing}
+	}
+	// A conditional update: a stop that commits after the check above keeps
+	// its status.
+	if marker, ok := m.instanceRepo.(models.InstanceStatusMarker); ok {
+		marked, markErr := marker.MarkStatus(ctx, instanceID, models.StackStatusStabilizing,
+			[]string{models.StackStatusDeploying, models.StackStatusStabilizing})
+		if markErr != nil {
+			slog.Warn("failed to set stabilizing status", "instance_id", instanceID, "error", markErr)
+			return nil
+		}
+		if !marked {
+			current := "unknown"
+			if cur, findErr := m.instanceRepo.FindByID(ctx, instanceID); findErr == nil {
+				current = cur.Status
+			}
+			return &instanceTakenError{status: current, statusChanged: true}
+		}
+		return nil
 	}
 	inst.Status = models.StackStatusStabilizing
 	if err := m.instanceRepo.Update(ctx, inst); err != nil {
@@ -1405,6 +1551,18 @@ func (m *Manager) StopWithCharts(ctx context.Context, instance *models.StackInst
 func (m *Manager) executeStopWithCharts(helm HelmExecutor, instanceID string, deployLog *models.DeploymentLog, namespace string, charts []ChartDeployInfo) {
 	defer m.wg.Done()
 	defer m.logTriggers.Delete(deployLog.ID)
+	// Before the concurrency slot: the deploy that this stop waits for may
+	// need a slot to end.
+	waitOutput := m.waitForEarlierOperations(instanceID, deployLog)
+	if m.shutdownCtx.Err() != nil {
+		// No uninstall on a cancelled context: the stop did not start.
+		m.finalizeStop(instanceID, deployLog, waitOutput, errStopInterrupted)
+		return
+	}
+	if m.newerOperation(m.shutdownCtx, instanceID, deployLog.ID) {
+		m.cancelStopForNewerOperation(instanceID, deployLog, waitOutput)
+		return
+	}
 	m.semaphore <- struct{}{}
 	defer func() { <-m.semaphore }()
 	if !m.extendDeadline(deployLog, helm, len(charts)) {
@@ -1417,7 +1575,7 @@ func (m *Manager) executeStopWithCharts(helm HelmExecutor, instanceID string, de
 		attribute.String("log.id", deployLog.ID),
 	)
 
-	var allOutput string
+	allOutput := waitOutput
 	var stopErr error
 	defer func() { finishSpan(stopErr) }()
 
@@ -1612,7 +1770,8 @@ func sanitizeDeployError(err error) string {
 	// which is the outermost fmt.Errorf wrapper in executeDeploy / executeStopWithCharts.
 	// Partial/total chart failure messages are already user-safe — pass through.
 	if strings.HasPrefix(msg, "all charts failed") || strings.HasPrefix(msg, "partial deploy") ||
-		errors.Is(err, ErrInvalidQuota) || errors.Is(err, ErrDeployInterrupted) || errors.Is(err, errPostDeployNotStarted) {
+		errors.Is(err, ErrInvalidQuota) || errors.Is(err, ErrDeployInterrupted) || errors.Is(err, errPostDeployNotStarted) ||
+		errors.Is(err, ErrDeployCancelled) || errors.Is(err, errStopInterrupted) {
 		return msg
 	}
 

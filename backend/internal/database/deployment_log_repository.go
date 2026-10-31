@@ -362,7 +362,7 @@ func (r *GORMDeploymentLogRepository) ListLatestByActions(ctx context.Context, i
 	}
 	var logs []models.DeploymentLog
 	if err := r.db.WithContext(ctx).
-		Select("id, stack_instance_id, action, status, started_at, completed_at, target_log_id, branch").
+		Select("id, stack_instance_id, action, status, replica_id, started_at, completed_at, deadline_at, target_log_id, branch").
 		Where("stack_instance_id = ? AND action IN ?", instanceID, actions).
 		Order("started_at DESC").
 		Limit(limit).
