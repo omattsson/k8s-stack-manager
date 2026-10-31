@@ -82,7 +82,7 @@ make dev
 make dev-local
 ```
 
-The default admin credentials for local development are `admin` / `admin`. See the [README](../README.md) for more options, for example a headless stack.
+The default admin credentials for local development are `admin` / `admin`. See [docs/development.md](../docs/development.md) for more options, and [docs/deployment.md](../docs/deployment.md#headless--api-only-deployment) for a headless stack.
 
 ### Running Tests and Checks
 

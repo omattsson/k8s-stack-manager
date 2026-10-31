@@ -4,6 +4,8 @@ K8s Stack Manager is a web application. It configures, stores, and manages multi
 
 Developers create **stack definitions**. A stack definition is a collection of Helm charts with configuration. Developers then start **stack instances**. A stack instance is a per-developer copy with its own branch and value overrides. The application records every change in an audit log and integrates with Git providers.
 
+Release notes and upgrade notes: [Releases](https://github.com/omattsson/k8s-stack-manager/releases).
+
 ## Getting Started
 
 Deploy the application to your cluster and create your first stack in about 10 minutes.
@@ -24,7 +26,7 @@ helm install stack-manager k8s-stack-manager/k8s-stack-manager \
 
 Read the [Getting Started guide](docs/getting-started.md) for the next steps. It shows how to configure stackctl, register a cluster, import the [starter definitions](examples/starter-templates/), and deploy your first stack.
 
-Note: If you do not need the web UI, go to the [Headless / API-only deployment](#headless--api-only-deployment) section. stackctl drives every workflow.
+Note: If you do not need the web UI, go to the [Headless / API-only deployment](docs/deployment.md#headless--api-only-deployment) section. stackctl drives every workflow.
 
 ## Features
 
@@ -37,6 +39,22 @@ Use the dashboard to view, search, and manage all your stack instances. You can:
 - Select instances and deploy, stop, clean, or delete up to 50 of them in one request. This needs the `devops` or `admin` role.
 
 ![Dashboard](docs/screenshots/dashboard.png)
+
+### Port-forward and exec
+
+Reach the services and the containers of a stack without a kubeconfig or access to the cluster. stackctl connects through the backend, and the backend checks your access to the stack.
+
+```bash
+# Forward a local port to a service of the stack
+stackctl stack port-forward my-stack mysql 3306
+
+# Run one command in a container of a chart
+stackctl stack exec my-stack backend -c php -- bin/console cache:clear
+```
+
+The stack page shows these commands, ready to copy. It lists exec commands only for the containers that exec accepts. Both features are off by default: an admin turns them on for the server and for each cluster. Only the owner of the stack, `devops` and `admin` users can use them, with a login session (`stackctl login`). They need k8s-stack-manager v0.15.0 and stackctl v0.10.0 or later. See [Port-forward](WIKI.md#port-forward), [Exec](WIKI.md#exec) and the [security model](docs/security.md).
+
+![Access URLs with port-forward and exec commands](docs/screenshots/access-urls.png)
 
 ### Template Gallery
 
@@ -116,520 +134,23 @@ The application has three roles. Each role includes the rights of the roles belo
 | `devops` | Everything of `user`. Create templates. Change, publish, and delete own templates (an `admin` can do this for all templates). Create, import, and export definitions, and add or remove charts. Operate all instances, and use bulk operations. Read the audit log, analytics, and cluster health. Manage notification channels. |
 | `admin` | Everything of `devops`. Manage clusters, quotas, shared values, users, API keys of other users, cleanup policies, and orphaned namespaces. Export the audit log. |
 
-Security controls of the application:
+See the [security model](docs/security.md) for the security controls: instance and definition access, the chart source allowlist, namespace-scoped RBAC, port-forward and exec, sessions and tokens, secrets at rest, and HTTP hardening.
 
-- **Instance access.** Only the owner, `admin` users, and `devops` users can change or operate an instance. Other users see it read-only. See [Stack instance permissions](WIKI.md#stack-instance-permissions).
-- **Definition access.** Only `devops` and `admin` users can create or import a definition, and add or remove charts. A user without these roles cannot change the chart name, repository, path, or version. The owner, `devops`, and `admin` can change or delete a definition.
-- **Chart source allowlist.** Helm installs charts with the identity of the backend. Set `ALLOWED_CHART_REPOS` (Helm value `backend.allowedChartRepos`) to a list of chart repository URL prefixes. The backend then rejects all other chart sources when a chart config is saved and again at deploy time. An empty list allows every chart source. Set the list on every cluster that untrusted users can deploy to. See [Chart sources](WIKI.md#chart-sources).
-- **Namespace-scoped RBAC.** With `backend.rbac.scope: namespace` (default), the Helm chart gives the backend namespaced rights only inside stack namespaces. A stack chart cannot read or change objects in other namespaces, and cannot create cluster-scoped objects. A ValidatingAdmissionPolicy (Kubernetes 1.30 or later) keeps the backend inside stack namespaces. See [Backend rights on the cluster](WIKI.md#backend-rights-on-the-cluster).
-- **Port-forward.** Off by default. A tunnel needs `STACK_PORT_FORWARD_ENABLED` (Helm `backend.portForward.enabled`) and the cluster switch `allow_port_forward` (admin, off by default). The backend refuses namespaces without the label `managed-by=k8s-stack-manager` and its own namespace. A tunnel goes past NetworkPolicies and past the authentication of an ingress or SSO proxy in front of a tool. Keep the switch off on clusters with real data. See [Port-forward](WIKI.md#port-forward).
-- **Exec.** Off by default. A command needs `STACK_EXEC_ENABLED` (Helm `backend.exec.enabled`), the cluster switch `allow_exec` (admin, off by default) and a container name in `STACK_EXEC_ALLOWED_CONTAINERS`. Exec shows the container environment and its secrets: turn it on only where the stack owners may see them. A container that holds a service-account token is refused. See [Exec](WIKI.md#exec).
-- **Sessions and tokens.** Access tokens are short-lived. Refresh tokens rotate. You can revoke users and sessions. See [Sessions](WIKI.md#sessions).
-- **Secrets at rest.** Kubeconfig data, registry passwords, notification channel secrets, and (when the key is set) notification channel webhook URLs are encrypted with a key that the application derives from `KUBECONFIG_ENCRYPTION_KEY`. Without the key, the backend refuses kubeconfig data, registry passwords, and channel secrets. It stores webhook URLs in plaintext.
-- **HTTP hardening.** The application sets security headers and rate limits, and has panic recovery. The Gin framework runs in release mode unless you set `APP_DEBUG=true` or `GIN_MODE`.
+## Documentation
 
-Note: The Helm chart sets `CORS_ALLOWED_ORIGINS` to `same-origin`: only the web UI on the ingress host can call the API from a browser. The code default is `*` (all origins) for local development; the backend logs a warning for `*` when `GO_ENV=production`.
-
-## Architecture
-
-```
-Frontend (React + MUI + TypeScript)
-        |
-        v
-Backend (Go + Gin)
-  |-- REST API with JWT and API-key auth
-  |-- MySQL (GORM)
-  |-- Git providers (Azure DevOps + GitHub + GitLab)
-  |-- Helm values (deep merge + template substitution)
-  |-- Multi-cluster support (kubeconfig encrypted at rest)
-  |-- Hooks and actions (HTTP, HMAC signed)
-  `-- Audit logging
-```
-
-See [ARCHITECTURE.md](ARCHITECTURE.md) for details.
-
-## Quick Start (development)
-
-### Prerequisites
-
-- Docker and Docker Compose
-- Go 1.27.3 or later (for local backend development)
-- Node.js 22.12 or later (for local frontend development). CI and the Docker images use Node.js 26.
-- MySQL 8.0 or later for an external database. Docker Compose uses MySQL 8.4. The MySQL in the Helm chart uses image tag `8.0` by default.
-
-### Start with Docker Compose
-
-```bash
-cp .env.example .env   # first time only; sets COMPOSE_PROFILES=full
-make dev
-```
-
-This command starts these services:
-
-- **Frontend**: http://localhost:3000
-- **Backend API**: http://localhost:8081
-- **Swagger docs**: http://localhost:8081/swagger/index.html
-
-The default admin credentials are `admin` / `admin`. These are the defaults of `docker-compose.yml`. Use them for local development only.
-
-Note: The Swagger UI is on only when `ENABLE_SWAGGER=true`. Docker Compose sets it to `true`. The default of the backend and of the Helm chart is `false`.
-
-### Start locally (without Docker for the application)
-
-```bash
-# Start MySQL, the backend, and the frontend with hot reload in one terminal.
-make dev-local
-
-# Or run them in separate terminals:
-make mysql-start           # MySQL in Docker; dev-local-backend does not start it
-make dev-local-backend     # backend (uses "air" for hot reload when installed)
-cd frontend && npm install && npm run dev
-```
-
-## Headless / API-only deployment
-
-K8s Stack Manager works without the React UI. The REST API drives every workflow of the dashboard. [stackctl](https://github.com/omattsson/stackctl) is the supported headless client. The options below are independent.
-
-### Why run headless?
-
-- CI/CD pipelines drive deploys, stops, and rollbacks with `stackctl`.
-- Air-gapped environments do not need the web UI.
-- The installation uses fewer resources: one Deployment less, and no nginx.
-- Preview environments start faster.
-
-The frontend authenticates against the backend in the same way as the CLI. When you remove it, you lose no backend function.
-
-### Docker Compose
-
-```bash
-# The Makefile target sets the profile for you
-make compose-api-only
-
-# Or set the profile with an environment variable (works with any compose subcommand)
-COMPOSE_PROFILES=api-only docker compose up
-```
-
-`docker-compose.yml` puts the frontend service in the profile `full`. The service runs only when that profile is active. `.env.example` sets `COMPOSE_PROFILES=full`. Remove it or change it to run headless.
-
-Note: If you have an old `.env` file without `COMPOSE_PROFILES=full`, add that line. Otherwise `docker compose up` starts the headless stack. `make dev` and `make prod` always use `--profile full`.
-
-### Helm chart
-
-Set `frontend.enabled=false`. The chart then renders no frontend resources (Deployment or Rollout, Service, ConfigMap, HPA, PDB, ServiceAccount) and no ingress rule for `/`. The backend routes (`/api`, `/ws`, `/health`, `/swagger`) stay.
-
-```bash
-# Install from the published Helm repo.
-# Use the local chart path helm/k8s-stack-manager only when you have a
-# repository checkout, for example for chart development.
-helm install stack-manager k8s-stack-manager/k8s-stack-manager \
-  --namespace stack-manager --create-namespace \
-  --set backend.secrets.JWT_SECRET=my-secret-at-least-16-chars \
-  --set frontend.enabled=false \
-  --set ingress.host=stacks.example.com
-```
-
-### stackctl CLI
-
-When the API is reachable, install stackctl and point it at the API:
-
-```bash
-# Install
-brew install --cask omattsson/tap/stackctl
-
-# Create a context and point it at the backend
-stackctl config use-context my-cluster
-stackctl config set api-url https://stacks.example.com
-stackctl login            # asks for the username and password
-# Or, when your installation has OIDC configured:
-stackctl login --sso      # opens a browser (RFC 8252 loopback flow)
-```
-
-`stackctl login --sso` uses the OIDC loopback flow. These steps run:
-
-1. The CLI calls the `cli-auth` endpoint of the backend.
-2. The CLI opens the returned `login_url` in your default browser.
-3. The CLI starts a local HTTP server on `127.0.0.1:<random-port>`.
-4. You sign in at the identity provider.
-5. The backend redirects the browser (HTTP 302) to the local server of the CLI, with the tokens in the query string.
-
-You do not copy any token. The CLI does not poll, and the frontend is not involved.
-
-After you sign in, each API operation has a CLI command:
-
-```bash
-stackctl template list
-stackctl stack deploy my-app
-stackctl stack watch --id <instance-id>    # real-time WebSocket events
-stackctl audit log export --format csv --output-file audit.csv
-```
-
-See the [stackctl README](https://github.com/omattsson/stackctl) for all commands.
-
-## Commands
-
-| Command | Description |
+| Document | Contents |
 |---|---|
-| `make dev` | Start the full stack with Docker Compose |
-| `make dev-k8s` | Start the full stack with access to a local Kubernetes cluster (Docker Desktop, Rancher Desktop) |
-| `make dev-otel` | Start the full stack and the OpenTelemetry stack (Grafana on port 3001, Prometheus on port 9090) |
-| `make compose-api-only` | Start the backend and MySQL only (headless) |
-| `make dev-api-only` | Same as `compose-api-only`, with development settings |
-| `make dev-local` | Run MySQL (Docker), and the backend and frontend locally |
-| `make mysql-start` | Start the MySQL container |
-| `make seed` | Add sample data to a running dev stack |
-| `make test` | Run all unit tests (backend and frontend) |
-| `make test-backend` | Run the backend unit tests |
-| `make test-frontend` | Run the frontend unit tests |
-| `make test-backend-all` | Run the backend unit and integration tests (starts MySQL) |
-| `make test-e2e` | Run the end-to-end Playwright tests (starts MySQL and the backend; set `E2E_KUBECONFIG` to a local cluster for the specs that need one), then the isolated tests (session lifecycle, last admin) with short session limits |
-| `make test-e2e-isolated` | Run only the isolated e2e tests (session lifecycle with short session limits, last admin), serially |
-| `make docs` | Regenerate the Swagger documentation |
-| `make fmt` | Format the backend and frontend code |
-| `make lint` | Lint the backend (`go vet`) and the frontend |
-| `make clean` | Stop the containers and remove the volumes (this deletes the database) |
-| `make install` | Install all dependencies |
-| `make helm-lint` | Lint the Helm chart |
-| `make helm-template` | Render the templates locally (dry run) |
-| `make helm-test` | Check the default render and the External Secrets render |
-| `make helm-install` | Install the chart into the current cluster (needs `JWT_SECRET`) |
-| `make helm-upgrade` | Upgrade an existing release (needs `JWT_SECRET`) |
-| `make helm-uninstall` | Uninstall the release |
-| `make loadtest` | Run the load tests (see [loadtest/README.md](loadtest/README.md)) |
-
-## Project Structure
-
-```
-backend/                        Go API server
-  api/                          Entry point (main.go) and bootstrap
-  internal/
-    api/                        Handlers, middleware, routes
-    auth/                       OIDC provider (PKCE)
-    cache/                      In-memory TTL cache
-    cluster/                    Multi-cluster registry, health poller, quota and secret monitors
-    config/                     Environment-based configuration
-    database/                   Repositories and migrations
-    deployer/                   Helm CLI wrapper for deploy, stop, clean, rollback
-    gitprovider/                Azure DevOps, GitHub and GitLab integration
-    health/                     Liveness and readiness checks
-    helm/                       Values merge and template substitution
-    hooks/                      Outbound lifecycle hooks and custom actions
-    k8s/                        Cluster client, status watcher, quotas
-    leader/                     Leader election (Kubernetes Lease)
-    models/                     Domain models and interfaces
-    notifier/                   In-app notifications and notification channels
-    replica/                    Replica identity and heartbeat
-    scheduler/                  Cron-based cleanup policy execution
-    sessionstore/               Token blocklist and OIDC state
-    telemetry/                  OpenTelemetry setup and metrics
-    ttl/                        TTL reaper for expired instances
-    websocket/                  Real-time event hub and fan-out
-  pkg/                          crypto (AES-GCM), dberrors, utils
-  docs/                         Swagger / OpenAPI (generated)
-  examples/                     Webhook handler examples (Go, Python)
-frontend/                       React single-page application
-  src/
-    api/                        API client and types
-    components/                 Shared UI components
-    context/                    Auth, branding, notification, and theme contexts
-    hooks/                      WebSocket and utility hooks
-    pages/                      Page components
-    routes.tsx                  Route definitions
-helm/k8s-stack-manager/         Helm chart
-  templates/backend/            Backend workload, services, configuration, RBAC
-  templates/frontend/           Frontend workload, services, nginx configuration
-  templates/traefik/            Traefik IngressRoute and middleware
-  templates/mysql/              Bundled MySQL
-  templates/otel/               OpenTelemetry collector
-  templates/external-secrets/   External Secrets Operator resources
-examples/starter-templates/     Starter definition bundles
-infra/                          Infrastructure examples
-loadtest/                       Load tests (k6 and Playwright)
-docs/                           Guides and screenshots
-docker-compose.yml              Local development stack
-```
-
-## API Overview
-
-Swagger documents all routes. All routes need authentication, except `/health/*`, `/api/v1/ping`, `/api/v1/ui-config`, and the login, refresh, logout, and OIDC routes. The Items handlers (`handlers/items.go`) are the reference implementation of a CRUD handler; no route registers them.
-
-| Group | Prefix | Description |
-|-------|--------|-------------|
-| Auth | `/api/v1/auth` | Login, register, current user, refresh, logout, logout-all |
-| OIDC | `/api/v1/auth/oidc` | OIDC configuration, authorize, callback, CLI login |
-| Templates | `/api/v1/templates` | Template CRUD, publish, unpublish, instantiate, clone, versions, bulk operations |
-| Quick Deploy | `/api/v1/templates/:id/quick-deploy` | One-click template deployment |
-| Definitions | `/api/v1/stack-definitions` | Definition CRUD, chart configs, import, export, upgrade |
-| Instances | `/api/v1/stack-instances` | Instance CRUD, clone, deploy, deploy preview, stop, clean, rollback, status, logs, compare, extend TTL, follow, custom actions, bulk operations |
-| Port-forward | `/api/v1/stack-instances/:id/port-forward` | WebSocket tunnel to a service port of the instance (`service`, `port`); owner, `devops`, `admin`; off by default |
-| Exec | `/api/v1/stack-instances/:id/exec` | WebSocket that runs one command in a container of a chart of the instance and streams its output (`chart`, optional `container`); owner, `devops`, `admin`; off by default |
-| Overrides | `/api/v1/stack-instances/:id/overrides` | Per-chart value overrides |
-| Branch Overrides | `/api/v1/stack-instances/:id/branches` | Per-chart branch overrides |
-| Quota Overrides | `/api/v1/stack-instances/:id/quota-overrides` | Per-instance resource quota override |
-| Git | `/api/v1/git` | Branch listing, validation, provider status |
-| Audit Logs | `/api/v1/audit-logs` | Filterable audit trail (`devops` or `admin`) and export (`admin`) |
-| Users | `/api/v1/users` | User management (`admin`): list, delete, disable, enable, password reset, role change |
-| API Keys | `/api/v1/users/:id/api-keys` | API key management |
-| Admin | `/api/v1/admin` | Orphaned namespaces (`admin`), notification channels (`devops`) |
-| Cleanup Policies | `/api/v1/admin/cleanup-policies` | Cron-based cleanup policy management (`admin`) |
-| Clusters | `/api/v1/clusters` | Cluster registration, health, test connection, quotas, utilization |
-| Shared Values | `/api/v1/clusters/:id/shared-values` | Per-cluster shared Helm values (`admin`) |
-| Analytics | `/api/v1/analytics` | Usage overview and template statistics (`devops`), user statistics (`admin`) |
-| Dashboard | `/api/v1/dashboard` | Overview for the landing page |
-| Notifications | `/api/v1/notifications` | List, mark read, count, preferences |
-| Favorites | `/api/v1/favorites` | Bookmarks |
-| UI Config | `/api/v1/ui-config` | Public branding values |
-| Health | `/health/*` | Liveness and readiness |
-| WebSocket | `/ws` | Real-time status and log events |
-
-## Configuration
-
-The table shows the key environment variables. The full list is in `backend/internal/config/config.go`, `docker-compose.yml`, and the Helm chart `values.yaml`.
-
-| Variable | Required | Description |
-|---|---|---|
-| `JWT_SECRET` | Yes | JWT signing secret (minimum 16 characters) |
-| `ADMIN_USERNAME` | No | Username of the initial admin user (default: `admin`) |
-| `ADMIN_PASSWORD` | Yes | Password of the initial admin user. The backend creates the user at startup when it does not exist. |
-| `SELF_REGISTRATION` | No | Let any signed-in user register new `user` accounts (default: `false`, also in the Helm chart; Docker Compose sets `true` for development). With `false`, only `admin` users register users. |
-| `OIDC_ENABLED` and `OIDC_*` | No | OpenID Connect single sign-on. See [OIDC single sign-on](WIKI.md#authentication). |
-| `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` | No | MySQL connection. Set them for your database (defaults: `localhost`, `3306`, `root`, empty, `app`). The Helm chart sets them for the bundled MySQL. |
-| `AZURE_DEVOPS_PAT` | No | Azure DevOps personal access token (PAT) |
-| `AZURE_DEVOPS_AUTH` | No | `pat` (default) or `workload-identity`. With `workload-identity`, the backend lists Azure DevOps branches with an Entra ID token from `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and `AZURE_FEDERATED_TOKEN_FILE`, not with a PAT. |
-| `GITHUB_TOKEN` | No | GitHub fine-grained personal access token. It requires `GITHUB_ALLOWED_REPOSITORIES`. See [GitHub authentication](#github-authentication). |
-| `GITHUB_ALLOWED_REPOSITORIES` | With `GITHUB_TOKEN` | Comma-separated `owner/repository` entries that may use the token (exact match) |
-| `GITLAB_TOKEN` | No | GitLab access token |
-| `GITLAB_BASE_URL` | No | Origin of a self-hosted GitLab (default: `https://gitlab.com`). See [GitLab custom origins](#gitlab-custom-origins). |
-| `DEFAULT_BRANCH` | No | Default Git branch (default: `master`) |
-| `KUBECONFIG_ENCRYPTION_KEY` | No | Passphrase. The backend derives an AES-256 key from it (SHA-256) to encrypt kubeconfig data, registry passwords, notification channel secrets, and notification channel webhook URLs. Without it, the backend rejects a cluster that has kubeconfig data or a registry password, and a channel that has a secret (400). It stores channel webhook URLs in plaintext, so set the key when a URL holds a token. Use a kubeconfig path or in-cluster configuration for clusters then. |
-| `ALLOWED_CHART_REPOS` | No | Comma-separated chart repository URL prefixes (`oci://`, `https://`, `http://`). Empty: every chart source is allowed. |
-| `NAMESPACE_LABELS` | No | Extra labels for stack namespaces (`key=value,key=value`) |
-| `UNIQUE_INSTANCE_NAMES` | No | `true`: an instance name must be unique on its cluster (409 on create, rename, clone and quick deploy). Use it when Ingress hosts use `{{.InstanceName}}`. Default: `false` |
-| `DEFAULT_INSTANCE_TTL_MINUTES` | No | TTL in minutes of a new instance that does not set one. The create forms start with it. Default: `0` (no expiry); the Helm chart sets `480`. |
-| `MAX_INSTANCE_TTL_DAYS` | No | Maximum TTL, and the latest fixed stop time from now, in days (1 to 365). Create, update, clone, quick deploy and extend refuse more (400). The web UI limits its TTL field and date picker with it. `DEFAULT_INSTANCE_TTL_MINUTES` must fit the limit, or the start fails. Default: `30`. Helm: `backend.maxInstanceTtlDays`. |
-| `HELM_HISTORY_MAX` | No | Helm revisions kept for each release (`--history-max` on deploy and rollback). Each revision is a Secret in the stack namespace (Helm's default storage). A whole number of `2` or more; another value stops the start. Default: not set, so Helm's own default applies (its `HELM_MAX_HISTORY` environment variable, else `10`). Helm: `backend.helmHistoryMax`. |
-| `CORS_ALLOWED_ORIGINS` | No | Allowed CORS origins: `*` (default; development only), `same-origin` (no cross-origin requests; Helm chart default) or a comma-separated list. The web UI on the same host always passes. |
-| `RATE_LIMIT` / `LOGIN_RATE_LIMIT` | No | Requests per minute for each IP address (defaults: `100` / `10`) |
-| `TRUSTED_PROXIES` | No | Comma-separated IPs or CIDR ranges of the proxies that may set the client IP with `X-Forwarded-For` or `X-Real-IP`. The per-IP rate limits count that client IP. Default: empty (no proxy is trusted; the client IP is the TCP peer). The Helm chart trusts the private IPv4 ranges and `fc00::/7`. An invalid entry, `0.0.0.0/0` or `::/0` stops the start. |
-| `ENABLE_SWAGGER` | No | Serve the Swagger UI at `/swagger` (default: `false`) |
-| `SESSION_STORE` | No | Session store backend: `mysql` (default) or `memory` |
-| `ACCESS_TOKEN_EXPIRATION` | No | Lifetime of an access token (default: `15m`) |
-| `SESSION_IDLE_TIMEOUT` | No | End a session after this time without requests (default: `30m`) |
-| `SESSION_MAX_LIFETIME` | No | Maximum session time from login. A refresh does not extend it (default: `12h`) |
-| `REFRESH_REUSE_GRACE` | No | A just-rotated refresh token still gets an access token for this time. This supports refreshes from several browser tabs. `0` disables it (default: `30s`). |
-| `SECURE_COOKIES` | No | Set the `Secure` flag on the refresh-token cookie. Use `true` behind HTTPS (default: `false`). The Helm chart sets `true` when the ingress has TLS. |
-| `APP_PUBLIC_URL` | No | Public https base URL of the web UI, for example `https://stacks.example.com`. Notification channels then get `instance_url` and Teams cards a "Stack Manager" button. An http URL, a same-origin path, a query or a fragment stops the start (default: empty). The Helm chart sets `https://<ingress.host>` when the ingress has TLS. |
-| `LEADER_ELECTION_ENABLED` | No | Elect one replica (Kubernetes Lease) to run the background workers. Needs the in-cluster service account. Default: `false`, which means this process always runs the workers. The Helm chart sets `true`. |
-| `LEADER_ELECTION_LEASE_NAME` | No | Name of the Lease (default: `k8s-stack-manager-workers`) |
-| `LEADER_ELECTION_NAMESPACE` | No | Namespace of the Lease (default: `POD_NAMESPACE`, else the namespace of the service account) |
-| `LEADER_ELECTION_LEASE_DURATION`, `LEADER_ELECTION_RENEW_DEADLINE`, `LEADER_ELECTION_RETRY_PERIOD` | No | Election timings (defaults: `15s`, `10s`, `2s`) |
-| `WS_FANOUT_ENABLED` | No | Share WebSocket messages between replicas through the `ws_events` table (default: `false`). The Helm chart sets `true`. |
-| `STACK_PORT_FORWARD_ENABLED` | No | Allow port-forward to stack services through the backend (default: `false`). The cluster also needs `allow_port_forward`. |
-| `STACK_PORT_FORWARD_MAX_DURATION`, `STACK_PORT_FORWARD_IDLE_TIMEOUT` | No | Longest life and idle time of a tunnel (defaults: `1h`, `15m`; both above 0 and at most `24h`; the idle time at most the maximum duration) |
-| `STACK_PORT_FORWARD_MAX_PER_USER` | No | Open tunnels per user and backend replica (default: `5`, 1 to 100) |
-| `STACK_EXEC_ENABLED` | No | Allow exec in stack containers through the backend (default: `false`). The cluster also needs `allow_exec`. |
-| `STACK_EXEC_ALLOWED_CONTAINERS` | No | Comma-separated container names (DNS-1123 labels, exact, no wildcard) that exec may use. Empty (default): every request is refused with `container_not_allowed`; the backend logs a warning when exec is on. |
-| `STACK_EXEC_MAX_DURATION` | No | Longest life of an exec session (default: `10m`, above 0 and at most `24h`) |
-| `STACK_EXEC_MAX_COMMAND_LENGTH` | No | Largest sum of the argument bytes of a command (default: `4096`, 1 to 32768) |
-| `STACK_EXEC_MAX_PER_USER` | No | Open exec sessions per user and backend replica (default: `3`, 1 to 100) |
-| `STACK_EXEC_ALLOW_SERVICE_ACCOUNT_TOKEN` | No | Allow exec in a container that holds a service-account token (default: `false`; `true` logs a warning at start) |
-| `STACK_STREAM_ALLOW_API_KEYS` | No | Let API keys open stream tunnels (default: `false`; API keys have no scopes) |
-| `WS_FANOUT_POLL_INTERVAL`, `WS_FANOUT_RETENTION` | No | Poll interval and row retention of the fan-out (defaults: `500ms`, `5m`) |
-| `DEPLOY_LOG_RETENTION_DAYS`, `AUDIT_LOG_RETENTION_DAYS`, `NOTIFICATION_RETENTION_DAYS`, `DELIVERY_LOG_RETENTION_DAYS`, `ACTION_RUN_RETENTION_DAYS` | No | Days that the log tables keep their rows (defaults: `180`, `365`, `90`, `30`, `180`). `ACTION_RUN_RETENTION_DAYS` applies to `action_runs`, the run history of custom actions. `0` keeps the rows forever. The leader deletes older rows every `LOG_RETENTION_INTERVAL` (default `1h`). The deploy counts of the Analytics page cover only the kept deploy logs. |
-| `APP_TITLE` | No | Product name in the browser tab, sidebar, app bar, login page, and setup wizard (default: `K8s Stack Manager`, maximum 100 characters) |
-| `APP_LOGO_URL` | No | Logo image: a same-origin path (`/branding/logo.svg`) or an `https://` URL (default: empty, which means the built-in logo) |
-| `APP_FAVICON_URL` | No | Browser tab icon. The same URL rule applies (default: `/favicon.svg`). Other schemes (`http:`, `javascript:`, `data:`) stop the startup with an error. |
-
-See [Sessions](WIKI.md#sessions) for the way the session limits work together. See [Branding](WIKI.md#branding) for the branding settings (Helm values `branding.*`).
-
-### GitHub authentication
-
-Public repositories work without a token. Leave `GITHUB_TOKEN` and `GITHUB_ALLOWED_REPOSITORIES` empty. GitHub then applies its lower rate limit for requests without authentication.
-
-For private repositories or a higher rate limit, use a fine-grained personal access token:
-
-- Give the token access only to the repositories in `GITHUB_ALLOWED_REPOSITORIES`, and only the permission **Contents: read**.
-- Set an expiry date. Replace the token before it expires.
-- `GITHUB_ALLOWED_REPOSITORIES` is a comma-separated list of `owner/repository` names. The match is exact and ignores case. Owners, wildcards, prefixes, and URLs are not accepted.
-- A request for a repository that is not in the list gives HTTP 403.
-- The backend does not start when `GITHUB_TOKEN` is set and the list is empty.
-- GitHub App authentication is not available.
-
-> **Upgrade: GitHub tokens.** If an installation sets `GITHUB_TOKEN`, set `GITHUB_ALLOWED_REPOSITORIES` before you update. Otherwise the new backend pods do not start. Installations without `GITHUB_TOKEN` are not affected.
-
-The backend follows a GitHub redirect only when it keeps the repository path, or when it goes to the `/repositories/{id}` path of a renamed or moved repository. Any other redirect is an upstream failure (HTTP 503), so the token never goes to another repository path.
-
-### GitLab custom origins
-
-`GITLAB_BASE_URL` is optional. The default is `https://gitlab.com`.
-
-- The value must be an absolute HTTP(S) origin: a scheme, a host name, and an optional port.
-- Credentials, query strings, fragments, paths (for example `/api/v4`), and a host name that ends with a dot are not accepted. The backend removes spaces around the value and a trailing slash, and adds `/api/v4`.
-- For Helm, set the value in `backend.env.GITLAB_BASE_URL`. It is not secret. Do not put it in `backend.secrets` or External Secrets.
-- With a custom origin, only repository URLs on that origin use the GitLab provider. HTTP(S) URLs must also use the same port. `gitlab.com` URLs are then not supported.
-- With an `http://` origin and a token, the backend logs a warning at startup, because the token goes over the network without encryption.
-
-> **Upgrade: GitLab.** The backend checks `GITLAB_BASE_URL` at startup and does not start when the value is not valid. A GitLab that uses a relative URL root (for example `https://example.com/gitlab`) is not supported. Branch listing did not work for it before. Check the value before you update. Repository URLs with a query string or a fragment are not accepted for any provider. Host names that end with a dot (for example `gitlab.com.`) are not supported.
-
-## Helm Chart (Kubernetes Deployment)
-
-The Helm chart in `helm/k8s-stack-manager/` deploys the backend, the frontend, and (optional) a bundled MySQL and an OpenTelemetry collector. The chart has these options:
-
-- **Workload kind.** The chart creates Deployments by default. Set `argoRollouts.enabled=true` to create Argo Rollouts with a canary strategy (20%, 50%, 80%) instead.
-- **Ingress type.** `ingress.type` is `traefik` (default), `ingress` (a standard Ingress for any controller), or `none` (use port-forward).
-- **Secrets.** Secrets come from a chart Secret or from the External Secrets Operator.
-
-### Prerequisites
-
-- A Kubernetes cluster with a configured `kubectl` context. Kubernetes 1.30 or later is needed for the default ValidatingAdmissionPolicy (`backend.rbac.admissionPolicy.enabled`).
-- Helm 3 or later.
-- MySQL 8.0 or later, when you set `mysql.enabled=false` (external database).
-- [Traefik](https://traefik.io/) with its CRDs, because the default `ingress.type` is `traefik`. If you do not use Traefik, set `ingress.type=ingress` or `ingress.type=none`.
-- The [Argo Rollouts](https://argoproj.github.io/argo-rollouts/) controller, only when `argoRollouts.enabled=true`. Weight-based traffic splitting also needs `ingress.type=traefik`.
-- The [External Secrets Operator](https://external-secrets.io/), only when `externalSecrets.enabled=true`.
-
-### Install
-
-Note: The chart needs a value for `backend.secrets.JWT_SECRET` when it renders. Set it with `--set`, with a values file, or with the `JWT_SECRET` environment variable for the `make` targets. The `make helm-install` and `make helm-upgrade` targets stop when `JWT_SECRET` is not set.
-
-```bash
-# Lint the chart
-make helm-lint
-
-# Install (the JWT_SECRET environment variable is required)
-JWT_SECRET=my-secret-at-least-16-chars make helm-install
-
-# Or install with custom values
-helm install k8s-stack-manager helm/k8s-stack-manager \
-  --namespace k8s-stack-manager --create-namespace \
-  --set backend.secrets.JWT_SECRET=my-secret-at-least-16-chars \
-  --set ingress.host=stacks.example.com
-
-# Upgrade after a change
-JWT_SECRET=my-secret-at-least-16-chars make helm-upgrade
-
-# Uninstall
-make helm-uninstall
-```
-
-Warning: Change the placeholder values `backend.secrets.ADMIN_PASSWORD` and `mysql.auth.rootPassword`. Keep `backend.env.CORS_ALLOWED_ORIGINS` at `same-origin` (default), or list the other origins that call the API from a browser. The notes after `helm install` warn you about each placeholder.
-
-Note: The chart sets `SELF_REGISTRATION` to `"false"`: only `admin` users register users. Set `backend.env.SELF_REGISTRATION` to `"true"` to let any signed-in user register new `user` accounts. The notes after `helm install` then show a warning.
-
-Upgrade note: Earlier chart versions set `CORS_ALLOWED_ORIGINS` to `"*"` and `SELF_REGISTRATION` to `"true"`. After an upgrade, a browser client on another origin gets 403, and only `admin` users register users. To keep the old behaviour, set these values explicitly: list the other origins in `backend.env.CORS_ALLOWED_ORIGINS` (or `"*"`), and set `backend.env.SELF_REGISTRATION: "true"`.
-
-### Security settings of the chart
-
-| Value | Default | Effect |
-|---|---|---|
-| `backend.allowedChartRepos` | `[]` | Chart repository URL prefixes that definitions and templates may use. Empty allows every chart source. |
-| `backend.rbac.scope` | `namespace` | `namespace`: the backend has namespaced rights only in stack namespaces (RoleBinding `k8s-stack-manager-access`). `cluster`: the namespaced rights apply in all namespaces (the rules of chart 0.6 and earlier). Use `cluster` only when stack charts need cluster-scoped objects. |
-| `backend.rbac.admissionPolicy.enabled` | `true` | Create a ValidatingAdmissionPolicy that limits the backend to stack namespaces (Kubernetes 1.30 or later). |
-| `backend.exec.enabled` | `false` | Exec in stack containers through the backend. With `rbac.scope: cluster` the chart adds `pods/exec` `get` to the ClusterRole (`create` on `pods/exec` stays granted for stack chart Roles) and renders the stream-scope ValidatingAdmissionPolicy while port-forward or exec is on. With `rbac.scope: namespace` it adds no rule. |
-| `backend.exec.allowedContainers` | `[]` | Container names that exec may use (DNS-1123 labels, exact; an invalid name fails the render). Empty: every exec request is refused. |
-| `backend.exec.maxDuration`, `maxCommandLength`, `maxPerUser` | `10m`, `4096`, `3` | Longest life of a session (up to `24h`), largest sum of the argument bytes (1 to 32768) and sessions per user and replica (1 to 100) |
-| `backend.exec.allowServiceAccountToken` | `false` | Allow exec in a container that holds a service-account token (the backend logs a warning at start) |
-| `backend.portForward.enabled` | `false` | Port-forward to stack services through the backend. With `rbac.scope: cluster` the chart adds `pods/portforward` to the ClusterRole and a ValidatingAdmissionPolicy that limits it to stack namespaces. Also `maxDuration` (`1h`), `idleTimeout` (`15m`), `maxPerUser` (`5`, per replica). |
-| `backend.streams.allowApiKeys` | `false` | Let API keys open stream tunnels. |
-| `backend.namespaceLabels` | `{}` | Extra labels on stack namespaces, for example Pod Security Admission levels. |
-| `ingress.traefik.priority` | `10000` | Traefik router priority of all IngressRoute routes. A high value stops another Ingress on the same host from taking a path of the stack manager. The frontend route gets this value minus 1. `0` uses the Traefik default. |
-
-See [Backend rights on the cluster](WIKI.md#backend-rights-on-the-cluster) and [Chart sources](WIKI.md#chart-sources) for details.
-
-### External Secrets Operator with Azure Key Vault
-
-Set `externalSecrets.enabled=true`. The [External Secrets Operator (ESO)](https://external-secrets.io/) then creates the backend Secret from Azure Key Vault. In this mode the chart does not render its inline backend Secret. ESO creates the Secret `<fullname>-backend`, which the backend workload uses.
-
-- When the bundled MySQL is on, ESO also creates the MySQL Secret with `MYSQL_ROOT_PASSWORD`. If `mysql.auth.user` is not empty, ESO also needs `MYSQL_PASSWORD`. The chart maps both keys only to the MySQL Secret.
-- The backend `DB_PASSWORD` comes from the MySQL credential mapping: `MYSQL_PASSWORD` when `mysql.auth.user` is set, else `MYSQL_ROOT_PASSWORD`.
-
-Before you install:
-
-1. Install ESO with its `external-secrets.io/v1` CRDs.
-2. Give the Azure identity read access to the Key Vault secrets.
-3. Configure AKS workload identity.
-4. For the `SecretStore` that the chart creates, create a federated identity credential for the managed identity. Use the subject `system:serviceaccount:<namespace>:<fullname>-backend`. `<fullname>` is the rendered fullname of the chart.
-
-The fullname for a release called `stack-manager` is `stack-manager-k8s-stack-manager`. When the release name already contains `k8s-stack-manager`, the chart uses the release name. `fullnameOverride` replaces the fullname. The chart adds the annotation `azure.workload.identity/client-id` to the ServiceAccount.
-
-```yaml
-# external-secrets-values.yaml
-backend:
-  env:
-    # The exact repositories that the token below may access.
-    GITHUB_ALLOWED_REPOSITORIES: example-org/api
-
-externalSecrets:
-  enabled: true
-  azureKeyVault:
-    vaultUrl: https://my-vault.vault.azure.net
-    tenantId: 00000000-0000-0000-0000-000000000000
-    authType: WorkloadIdentity
-    workloadIdentity:
-      clientId: 00000000-0000-0000-0000-000000000000
-  data:
-    - secretKey: JWT_SECRET
-      remoteRef:
-        key: k8s-stack-manager-jwt-secret
-    - secretKey: ADMIN_PASSWORD
-      remoteRef:
-        key: k8s-stack-manager-admin-password
-    - secretKey: GITHUB_TOKEN
-      remoteRef:
-        key: k8s-stack-manager-github-token
-    - secretKey: MYSQL_ROOT_PASSWORD
-      remoteRef:
-        key: k8s-stack-manager-mysql-root-password
-    - secretKey: MYSQL_PASSWORD
-      remoteRef:
-        key: k8s-stack-manager-mysql-password
-```
-
-```bash
-helm upgrade --install k8s-stack-manager helm/k8s-stack-manager \
-  --namespace k8s-stack-manager --create-namespace \
-  --values external-secrets-values.yaml
-```
-
-Rules for `externalSecrets.data`:
-
-- Each entry maps a Key Vault secret to an environment key. `JWT_SECRET` is required.
-- With `mysql.enabled=true`, the chart needs `MYSQL_ROOT_PASSWORD`. It also needs `MYSQL_PASSWORD` when `mysql.auth.user` is not empty.
-- With `mysql.enabled=true`, do not add `DB_PASSWORD`. The chart derives it from the MySQL mapping.
-- With `mysql.enabled=false`, add a `DB_PASSWORD` entry with a `remoteRef` to the password of the external database:
-
-```yaml
-externalSecrets:
-  data:
-    - secretKey: DB_PASSWORD
-      remoteRef:
-        key: k8s-stack-manager-external-db-password
-```
-
-- Do not put Key Vault values or Azure credentials in the values file.
-
-To use a store that another team manages, set `externalSecrets.secretStore.create=false`, `externalSecrets.secretStore.kind=ClusterSecretStore` (or `SecretStore`), and `externalSecrets.secretStore.name`. The chart then creates only the `ExternalSecret`. It does not configure the Azure authentication, and it does not annotate the ServiceAccount.
-
-When the remote `GITHUB_TOKEN` changes, ESO updates the Kubernetes Secret. A running backend process does not read the new value. After a rotation, restart the backend Deployment or start an Argo Rollout, unless a restart controller watches the Secret. A change of the remote value does not change the checksum of the chart, because Helm cannot see the remote value.
-
-To use a service principal for a store that the chart creates, set `authType: ServicePrincipal`. Set `externalSecrets.azureKeyVault.servicePrincipal.secretName` to an existing Kubernetes Secret. The Secret must contain the keys `client-id` and `client-secret`. Set `clientIdKey` and `clientSecretKey` in the same block when your keys have other names.
-
-### What the chart deploys
-
-- **Backend.** A Deployment and a Service. With `argoRollouts.enabled=true`, the chart creates an Argo Rollout (canary steps 20%, 50%, 80%), a stable Service, and a canary Service instead. The chart also creates a ServiceAccount with RBAC, a PodDisruptionBudget (on by default), and an optional HPA and ServiceMonitor.
-- **Frontend.** A Deployment (or an Argo Rollout) with nginx. nginx serves only the React application. The ingress sends the API requests to the backend. You can switch the frontend off with `frontend.enabled=false`.
-- **MySQL.** A bundled MySQL (`mysql.enabled`, default `true`). For production, point `backend.env.DB_*` at an external database.
-- **Ingress.** With `ingress.type=traefik`, the chart creates an IngressRoute and a Middleware with secure response headers. The IngressRoute sends `/api`, `/ws`, `/health`, and `/swagger` to the backend, and `/` to the frontend. A Middleware that removes the `/api` prefix is optional (`ingress.traefik.middlewares.stripApiPrefix`, default off). With `ingress.type=ingress`, the chart creates a standard Ingress with the same paths.
-
-See `helm/k8s-stack-manager/values.yaml` for all values.
-
-## Testing
-
-```bash
-make test                         # All unit tests
-make test-backend-all             # Backend unit and integration tests
-make test-e2e                     # Playwright end-to-end tests
-cd backend && make test-coverage  # Coverage report (80% threshold)
-```
+| [Getting Started](docs/getting-started.md) | Install the application, register a cluster, and deploy the first stack |
+| [Deployment](docs/deployment.md) | Helm chart, its security settings, External Secrets, headless (API-only) installations |
+| [Configuration](docs/configuration.md) | Environment variables, GitHub and GitLab authentication |
+| [Security model](docs/security.md) | Security controls of the application |
+| [API](docs/api.md) | Route groups of the REST API |
+| [Development](docs/development.md) | Local setup, `make` targets, tests, project structure, architecture overview |
+| [WIKI.md](WIKI.md) | Concepts and reference: templates, definitions, instances, permissions, sessions, port-forward, exec, branding, troubleshooting |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Architecture in detail |
+| [EXTENDING.md](EXTENDING.md) | Event hooks and actions |
+| [RELEASING.md](RELEASING.md) | Release steps |
+| [stackctl](https://github.com/omattsson/stackctl) | Command-line client |
 
 ## License
 
