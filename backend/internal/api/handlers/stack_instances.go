@@ -1738,7 +1738,7 @@ func (h *InstanceHandler) ExportAllValues(c *gin.Context) {
 // @Failure     400 {object} map[string]string
 // @Failure     403 {object} map[string]string "Caller is not the owner, an admin or a devops user"
 // @Failure     404 {object} map[string]string
-// @Failure     409 {object} map[string]string "Already deploying, or the fixed stop time has passed"
+// @Failure     409 {object} map[string]string "Already deploying, the fixed stop time has passed, or the namespace is still terminating"
 // @Router      /api/v1/stack-instances/{id}/deploy [post]
 func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 	id := c.Param("id")
@@ -1856,6 +1856,11 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 	}
 
 	logID, err := h.deployManager.Deploy(wctx, req)
+	var nsErr *deployer.NamespaceTerminatingError
+	if errors.As(err, &nsErr) {
+		c.JSON(http.StatusConflict, gin.H{"error": nsErr.Error()})
+		return
+	}
 	if err != nil {
 		slog.Error("Failed to start deployment",
 			logKeyInstanceID, id,

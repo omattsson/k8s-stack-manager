@@ -6618,7 +6618,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "Already deploying, or the fixed stop time has passed",
+                        "description": "Already deploying, the fixed stop time has passed, or the namespace is still terminating",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {

@@ -79,6 +79,30 @@ func (m *mockInstanceRepo) Update(ctx context.Context, inst *models.StackInstanc
 	return nil
 }
 
+// MarkStatus implements models.InstanceStatusMarker with the same
+// conditional semantics as the GORM repository.
+func (m *mockInstanceRepo) MarkStatus(ctx context.Context, id, to string, from []string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return false, m.err
+	}
+	inst, ok := m.items[id]
+	if !ok {
+		return false, nil
+	}
+	for _, st := range from {
+		if inst.Status == st {
+			inst.Status = to
+			return true, nil
+		}
+	}
+	return inst.Status == to, nil
+}
+
 // MarkCleanStart implements models.CleanStartMarker with the same
 // conditional semantics as the GORM repository.
 func (m *mockInstanceRepo) MarkCleanStart(ctx context.Context, id string, fromStatuses []string, deleteAfterClean bool) error {
@@ -1598,6 +1622,11 @@ func TestSanitizeDeployError(t *testing.T) {
 			name: "unknown error format",
 			err:  errors.New("something totally unexpected with secrets"),
 			want: "deployment operation failed",
+		},
+		{
+			name: "deploy cancelled by another operation",
+			err:  fmt.Errorf("%w: another operation changed the instance (status stopping) during the chart installs", ErrDeployCancelled),
+			want: "deploy cancelled: another operation changed the instance (status stopping) during the chart installs",
 		},
 	}
 

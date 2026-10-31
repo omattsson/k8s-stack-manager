@@ -451,6 +451,13 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 		)
 		inst.Status = models.StackStatusError
 		inst.ErrorMessage = "Deployment failed"
+		// A namespace that is still terminating (the clean or delete of a
+		// stack with the same namespace has not finished) is the common
+		// cause, and its text is user-safe.
+		var nsErr *deployer.NamespaceTerminatingError
+		if errors.As(deployErr, &nsErr) {
+			inst.ErrorMessage = "Deployment failed: " + nsErr.Error()
+		}
 		_ = h.instanceRepo.Update(finalCtx, inst)
 	}
 

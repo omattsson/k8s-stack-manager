@@ -204,6 +204,26 @@ func (r *GORMStackInstanceRepository) MarkNamespaceError(ctx context.Context, id
 	return res.RowsAffected > 0, nil
 }
 
+// MarkStatus implements models.InstanceStatusMarker with one conditional
+// update. MySQL counts a row whose values did not change as not affected,
+// so a 0 result reads the status again.
+func (r *GORMStackInstanceRepository) MarkStatus(ctx context.Context, id, to string, from []string) (bool, error) {
+	res := r.db.WithContext(ctx).Model(&models.StackInstance{}).
+		Where("id = ? AND status IN ?", id, from).
+		Updates(map[string]any{"status": to, "updated_at": time.Now().UTC()})
+	if res.Error != nil {
+		return false, dberrors.NewDatabaseError("mark_status", res.Error)
+	}
+	if res.RowsAffected > 0 {
+		return true, nil
+	}
+	var statuses []string
+	if err := r.db.WithContext(ctx).Model(&models.StackInstance{}).Where("id = ?", id).Pluck("status", &statuses).Error; err != nil {
+		return false, dberrors.NewDatabaseError("mark_status", err)
+	}
+	return len(statuses) == 1 && statuses[0] == to, nil
+}
+
 // ClearDeleteAfterClean clears delete_after_clean of the instance.
 func (r *GORMStackInstanceRepository) ClearDeleteAfterClean(ctx context.Context, id string) error {
 	if err := r.db.WithContext(ctx).Model(&models.StackInstance{}).Where("id = ?", id).

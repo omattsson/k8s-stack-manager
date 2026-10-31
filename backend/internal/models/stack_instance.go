@@ -125,6 +125,16 @@ type InstanceErrorMarker interface {
 	MarkNamespaceError(ctx context.Context, id, message string, now time.Time) (bool, error)
 }
 
+// InstanceStatusMarker is implemented by stack instance repositories that
+// change the status with a conditional update. The deploy manager uses it
+// for the status stabilizing: a stop that commits between its ownership
+// check and the write keeps its status.
+type InstanceStatusMarker interface {
+	// MarkStatus sets status to to when the stored status is one of from.
+	// It reports whether the stored status is to afterwards.
+	MarkStatus(ctx context.Context, id, to string, from []string) (bool, error)
+}
+
 // InstanceNameLookup is implemented by stack instance repositories that can
 // look up instance names on a cluster. UNIQUE_INSTANCE_NAMES needs it.
 type InstanceNameLookup interface {

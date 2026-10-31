@@ -90,6 +90,10 @@ func TestAwaitReadiness_ReturnsPrimaryURL(t *testing.T) {
 	instanceRepo := newMockInstanceRepo()
 	logRepo := newMockDeployLogRepo()
 	inst := seedInstance(t, instanceRepo, "inst-ready", "web", "owner-1")
+	// The readiness wait runs during a deploy: markStabilizing refuses an
+	// instance that another operation took.
+	inst.Status = models.StackStatusDeploying
+	require.NoError(t, instanceRepo.Update(context.Background(), inst))
 	mgr := NewManager(ManagerConfig{
 		Registry:              &mockClusterResolver{helm: &mockHelmExecutor{}},
 		InstanceRepo:          instanceRepo,
