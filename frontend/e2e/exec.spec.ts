@@ -242,14 +242,15 @@ test.describe('Exec (no cluster)', () => {
       last_checked: '2026-10-19T10:00:00Z',
     };
 
-    async function mockRunning(page: Page) {
+    async function mockRunning(page: Page, status: object = namespaceStatus) {
       await page.route(new RegExp(`/api/v1/stack-instances/${instanceId}(\\?.*)?$`), async (route) => {
         if (route.request().method() !== 'GET') return route.continue();
         const res = await route.fetch();
         if (!res.ok()) return route.fulfill({ response: res });
         return route.fulfill({ response: res, json: { ...(await res.json()), status: 'running' } });
       });
-      await page.route(`**/api/v1/stack-instances/${instanceId}/pods`, (route) => route.fulfill({ json: namespaceStatus }));
+      // A RegExp, not a glob: the page asks for /pods?exec_hints=true.
+      await page.route(new RegExp(`/api/v1/stack-instances/${instanceId}/pods(\\?.*)?$`), (route) => route.fulfill({ json: status }));
     }
 
     test.afterEach(async ({ page }) => {
@@ -264,6 +265,26 @@ test.describe('Exec (no cluster)', () => {
       await expect(
         page.getByText(`stackctl stack exec ${instanceName} e2e-exec-chart -- <command>`, { exact: true }),
       ).toBeVisible({ timeout: 10_000 });
+    });
+
+    test('with exec hints, one line per accepted container and none for a chart without one', async ({ page }) => {
+      await setClusterSwitch(true);
+      await loginAsAdmin(page);
+      await mockRunning(page, {
+        ...namespaceStatus,
+        exec_hints: true,
+        charts: [
+          { ...namespaceStatus.charts[0], exec_containers: ['app', 'worker'], exec_default_container: 'app' },
+          { chart_name: 'e2e-tok', release_name: 'e2e-tok', status: 'healthy', deployments: [], services: [], exec_containers: [] },
+        ],
+      });
+      await page.goto(`/stack-instances/${instanceId}`);
+      await expect(
+        page.getByText(`stackctl stack exec ${instanceName} e2e-exec-chart -c app -- <command>`, { exact: true }),
+      ).toBeVisible({ timeout: 10_000 });
+      await expect(page.getByText(`stackctl stack exec ${instanceName} e2e-exec-chart -c worker -- <command>`, { exact: true })).toBeVisible();
+      await expect(page.getByText(/stackctl stack exec .* e2e-tok/)).toHaveCount(0);
+      await expect(page.getByText(/API keys are not accepted/)).toBeVisible();
     });
 
     test('hides the command when the cluster does not allow exec', async ({ page }) => {

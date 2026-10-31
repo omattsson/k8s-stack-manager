@@ -192,7 +192,8 @@ test.describe('Port-forward (no cluster)', () => {
         if (!res.ok()) return route.fulfill({ response: res });
         return route.fulfill({ response: res, json: { ...(await res.json()), status: 'running' } });
       });
-      await page.route(`**/api/v1/stack-instances/${instanceId}/pods`, (route) => route.fulfill({ json: namespaceStatus }));
+      // A RegExp, not a glob: the page asks for /pods?exec_hints=true.
+      await page.route(new RegExp(`/api/v1/stack-instances/${instanceId}/pods(\\?.*)?$`), (route) => route.fulfill({ json: namespaceStatus }));
     }
 
     test.afterEach(async ({ page }) => {
