@@ -563,6 +563,14 @@ frontend:
   replicas: 2
   port: 8080
 
+  # Proxy the backend routes (/api, /ws, /health, /swagger) through the
+  # frontend nginx. Use it without an ingress: a `kubectl port-forward` to
+  # the frontend Service then gives a working UI and API on one address
+  # (for example scripts/demo.sh). With an ingress, leave it off: the
+  # ingress sends these routes to the backend.
+  apiProxy:
+    enabled: false
+
   resources:
     requests:
       memory: 64Mi

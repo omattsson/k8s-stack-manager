@@ -1,6 +1,6 @@
 apiVersion: v2
 name: k8s-stack-manager
-description: Helm-based stack manager with Go backend, React frontend, and MySQL
+description: Self-service environments for multi-service Helm applications on your own Kubernetes clusters (web UI, API, MySQL)
 type: application
 version: 0.13.0
 appVersion: "0.15.0"
@@ -9,6 +9,40 @@ keywords:
   - helm
   - stack-manager
   - argo-rollouts
+  - platform-engineering
+  - ephemeral-environments
+  - preview-environments
+  - self-service
 home: https://github.com/omattsson/k8s-stack-manager
+icon: https://raw.githubusercontent.com/omattsson/k8s-stack-manager/main/frontend/public/logo.svg
 sources:
   - https://github.com/omattsson/k8s-stack-manager
+maintainers:
+  - name: omattsson
+    url: https://github.com/omattsson
+# Artifact Hub (https://artifacthub.io). Set the image tags of
+# artifacthub.io/images to appVersion in each release pull request.
+annotations:
+  artifacthub.io/category: integration-delivery
+  artifacthub.io/license: MIT
+  artifacthub.io/links: |
+    - name: Documentation
+      url: https://github.com/omattsson/k8s-stack-manager#readme
+    - name: Getting Started
+      url: https://github.com/omattsson/k8s-stack-manager/blob/main/docs/getting-started.md
+    - name: stackctl (CLI)
+      url: https://github.com/omattsson/stackctl
+  artifacthub.io/images: |
+    - name: backend
+      image: ghcr.io/omattsson/k8s-stack-manager/backend:0.15.0
+    - name: frontend
+      image: ghcr.io/omattsson/k8s-stack-manager/frontend:0.15.0
+    - name: mysql
+      image: mysql:8.0
+  artifacthub.io/screenshots: |
+    - title: Dashboard
+      url: https://raw.githubusercontent.com/omattsson/k8s-stack-manager/main/docs/screenshots/dashboard.png
+    - title: Port-forward and exec commands on the stack page
+      url: https://raw.githubusercontent.com/omattsson/k8s-stack-manager/main/docs/screenshots/access-urls.png
+    - title: Template gallery
+      url: https://raw.githubusercontent.com/omattsson/k8s-stack-manager/main/docs/screenshots/templates.png

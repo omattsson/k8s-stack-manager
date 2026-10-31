@@ -1,12 +1,34 @@
 # K8s Stack Manager
 
-K8s Stack Manager is a web application. It configures, stores, and manages multi-service Helm-based application stacks. It deploys them to one or more Kubernetes clusters.
+**Self-service environments for multi-service Helm applications, on your own Kubernetes clusters.**
 
-Developers create **stack definitions**. A stack definition is a collection of Helm charts with configuration. Developers then start **stack instances**. A stack instance is a per-developer copy with its own branch and value overrides. The application records every change in an audit log and integrates with Git providers.
+Developers start a full copy of a stack (every chart, on their own branch, with their own values) from a template, with one click or one command. Platform teams keep control with roles, quotas, chart allowlists, time limits and an audit log. Developers need no kubeconfig and no access to the cluster. K8s Stack Manager is open source (MIT) and self-hosted.
+
+- **Per-developer stacks from templates.** Branches and value overrides for each chart, deploy preview, rollback, and comparison of two stacks.
+- **No cluster access needed.** Deploy, status, logs, port-forward and exec go through the API, with role checks and an audit log.
+- **Guardrails.** Roles, namespace-scoped RBAC, resource quotas, a chart source allowlist, time to live (TTL) and cleanup policies.
+- **Extensible without a fork.** HTTP hooks and actions for database refreshes, policy gates or chat notifications.
+- **Web UI and CLI.** [stackctl](https://github.com/omattsson/stackctl) drives every workflow, also in scripts and CI.
+
+How it works: a **stack definition** is a collection of Helm charts with their configuration. A **stack instance** is a per-developer copy of a definition with its own branch and value overrides. Teams publish definitions as **templates**, and developers start instances from them.
 
 Release notes and upgrade notes: [Releases](https://github.com/omattsson/k8s-stack-manager/releases).
 
 ## Getting Started
+
+### Try it on your machine
+
+With Docker, [kind](https://kind.sigs.k8s.io/), kubectl, Helm and [stackctl](https://github.com/omattsson/stackctl) installed, one command creates a kind cluster, installs the application and deploys a first stack (about 5 minutes):
+
+```bash
+git clone https://github.com/omattsson/k8s-stack-manager.git && cd k8s-stack-manager
+make demo        # then open http://localhost:8080
+make demo-down   # delete the demo cluster
+```
+
+The demo uses its own kind cluster (`kind-ksm-demo`) and its own stackctl configuration, so your other contexts stay as they are. See [scripts/demo.sh](scripts/demo.sh).
+
+### Install on your cluster
 
 Deploy the application to your cluster and create your first stack in about 10 minutes.
 
@@ -123,6 +145,16 @@ There are two mechanisms:
 Both mechanisms use plain HTTP with HMAC (hash-based message authentication code) signing. See the examples in Python ([backend/examples/webhook-handler-python/](backend/examples/webhook-handler-python/)) and in Go ([backend/examples/webhook-handler/](backend/examples/webhook-handler/)).
 
 Read [EXTENDING.md](EXTENDING.md) for the tutorial, the event reference, the action contract, and the security notes.
+
+## How it compares
+
+| If you use | K8s Stack Manager |
+|---|---|
+| Tilt, Skaffold or Garden for the inner development loop | Those tools run from the developer's machine against a cluster that the developer can access. K8s Stack Manager runs shared, per-developer stacks on central clusters, and developers need no cluster access. Both work together. |
+| Argo CD or Flux pull request environments | GitOps creates environments from Git events. K8s Stack Manager starts stacks on demand from a template, with a branch and values for each chart, a TTL and quotas. Keep GitOps for your shared environments. |
+| vCluster | A virtual cluster per team. K8s Stack Manager gives each stack a namespace with guardrails, without extra control planes. |
+| Backstage | A developer portal and catalog. K8s Stack Manager deploys and operates the stacks; link to it from your portal. |
+| Hosted preview environment services | K8s Stack Manager is self-hosted and MIT licensed: your clusters and your data, with no per-seat price. |
 
 ## Roles and security model
 

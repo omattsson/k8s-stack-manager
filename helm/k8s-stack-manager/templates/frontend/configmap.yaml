@@ -7,6 +7,13 @@ metadata:
     {{- include "k8s-stack-manager.frontend.labels" . | nindent 4 }}
 data:
   default.conf: |
+    {{- if .Values.frontend.apiProxy.enabled }}
+    map $http_upgrade $connection_upgrade {
+        default upgrade;
+        ''      close;
+    }
+
+    {{- end }}
     server {
         listen 8080;
         server_name _;
@@ -16,6 +23,24 @@ data:
             index index.html;
             try_files $uri $uri/ /index.html;
         }
+        {{- if .Values.frontend.apiProxy.enabled }}
+
+        # The backend routes through the frontend (frontend.apiProxy.enabled),
+        # for a port-forward to the frontend Service without an ingress.
+        # WebSocket upgrades pass for /ws and the stream routes.
+        location ~ ^/(api|ws|health|swagger)(/|$) {
+            proxy_pass http://{{ include "k8s-stack-manager.backend.serviceName" . }}:{{ .Values.backend.port }};
+            proxy_http_version 1.1;
+            proxy_set_header Host $http_host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $connection_upgrade;
+            proxy_read_timeout 3700s;
+            proxy_send_timeout 3700s;
+        }
+        {{- end }}
         {{- if include "k8s-stack-manager.brandingFilesEnabled" . }}
 
         # Branding files from the ConfigMap (branding.files). No SPA
