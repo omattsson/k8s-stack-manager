@@ -61,6 +61,8 @@ kubectl -n stack-manager port-forward svc/stack-manager-k8s-stack-manager-fronte
 
 ## Main values
 
+All values with their types, defaults and descriptions are in the values schema (`values.schema.json`, the Values schema tab on Artifact Hub) and in `values.yaml`. Helm checks the values against the schema.
+
 | Value | Default | Description |
 |---|---|---|
 | `backend.secrets.JWT_SECRET` | placeholder | Signing secret of the access tokens (16 characters or more). Required. |

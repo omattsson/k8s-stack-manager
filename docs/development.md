@@ -65,7 +65,8 @@ cd frontend && npm install && npm run dev
 | `make install` | Install all dependencies |
 | `make helm-lint` | Lint the Helm chart |
 | `make helm-template` | Render the templates locally (dry run) |
-| `make helm-test` | Check the default render and the External Secrets render |
+| `make helm-test` | Check the default render and the External Secrets render, and that `values.schema.json` is current |
+| `make helm-schema` | Regenerate `helm/k8s-stack-manager/values.schema.json` from `values.yaml` (run it after a change of `values.yaml`) |
 | `make helm-install` | Install the chart into the current cluster (needs `JWT_SECRET`) |
 | `make helm-upgrade` | Upgrade an existing release (needs `JWT_SECRET`) |
 | `make helm-uninstall` | Uninstall the release |

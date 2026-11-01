@@ -749,11 +749,18 @@ helm-lint: ## Lint the Helm chart
 	helm lint $(HELM_CHART) \
 		--values $(HELM_CHART)/tests/external-secrets-values.yaml
 
+helm-schema: ## Regenerate the values schema of the Helm chart from values.yaml
+	@tmp=$$(mktemp) && trap 'rm -f "$$tmp"' EXIT && \
+		go -C backend run ./tools/helmschema ../$(HELM_CHART)/values.yaml > "$$tmp" && \
+		cp "$$tmp" $(HELM_CHART)/values.schema.json
+
 helm-test: ## Verify Deployment, Argo Rollout, and External Secrets Helm renders
 	@set -e; \
 	template_file=$$(mktemp); \
 	notes_dir=$$(mktemp -d); \
 	trap 'rm -f "$$template_file"; rm -rf "$$notes_dir"' EXIT; \
+	go -C backend run ./tools/helmschema ../$(HELM_CHART)/values.yaml | cmp -s - $(HELM_CHART)/values.schema.json \
+		|| { echo "$(HELM_CHART)/values.schema.json is out of date: run make helm-schema" >&2; exit 1; }; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
 		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template > "$$template_file"; \
 	grep -q 'GITHUB_ALLOWED_REPOSITORIES: ""' "$$template_file"; \

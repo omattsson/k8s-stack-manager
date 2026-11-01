@@ -1,0 +1,1781 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "k8s-stack-manager Helm chart values",
+  "type": "object",
+  "properties": {
+    "global": {
+      "description": "Settings shared by all components.",
+      "type": "object",
+      "properties": {
+        "imageRegistry": {
+          "description": "Registry of the backend and frontend images. Empty: the image repository alone.",
+          "type": "string",
+          "default": "ghcr.io/omattsson"
+        },
+        "imagePullSecrets": {
+          "description": "Pull secrets of all pods, as in a pod spec: a list of {name: \u003csecret\u003e}.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "appArmor": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "description": "Set to true for environments with AppArmor support (e.g. most Linux distributions)",
+              "type": "boolean",
+              "default": false
+            }
+          }
+        }
+      }
+    },
+    "nameOverride": {
+      "description": "Replaces the chart name in the resource names.",
+      "type": "string",
+      "default": ""
+    },
+    "fullnameOverride": {
+      "description": "Replaces the full resource name prefix (\u003crelease\u003e-\u003cchart\u003e).",
+      "type": "string",
+      "default": ""
+    },
+    "argoRollouts": {
+      "description": "Argo Rollouts (progressive delivery) with a canary strategy instead of Deployments.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Use Argo Rollouts instead of Deployments. Weight-based traffic splitting needs ingress.type=traefik; with other ingress types the steps pause, but traffic is split per pod.",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "backend": {
+      "description": "The Go API server. It runs Helm for the stacks.",
+      "type": "object",
+      "properties": {
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": {
+              "description": "Image repository, below global.imageRegistry.",
+              "type": "string",
+              "default": "k8s-stack-manager/backend"
+            },
+            "tag": {
+              "description": "Image tag. Empty: the chart appVersion.",
+              "type": "string",
+              "default": ""
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": [
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ],
+              "default": "IfNotPresent"
+            }
+          }
+        },
+        "replicas": {
+          "description": "Every replica serves the HTTP API and WebSocket clients. Only the leader replica (see leaderElection) runs the background workers. The replicas share WebSocket events through the database (see wsFanout), so a client on any replica sees deploy logs and status events of all replicas.",
+          "type": "integer",
+          "minimum": 0,
+          "default": 2
+        },
+        "port": {
+          "description": "Port of the backend container and Service.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 8081
+        },
+        "leaderElection": {
+          "description": "Leader election (env LEADER_ELECTION_*). The replicas compete for a coordination.k8s.io Lease in the release namespace. Only the leader runs the background workers: TTL reaper, expiry warner, cleanup scheduler, quota and secret monitors, pull secret refresher, cluster health poller, k8s status watcher. A replica that loses the lease stops its workers and campaigns again; on shutdown the leader releases the lease. The chart creates a Role + RoleBinding (leases: get, create, update) for the backend service account when serviceAccount.create is true; otherwise grant these permissions yourself. POD_NAME and POD_NAMESPACE come from the downward API. Timings: backend.env LEADER_ELECTION_LEASE_DURATION (15s), LEADER_ELECTION_RENEW_DEADLINE (10s), LEADER_ELECTION_RETRY_PERIOD (2s). With enabled: false, every replica runs the workers (use one replica).",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "description": "Run the background workers only on the leader replica. Turn it off only with one replica.",
+              "type": "boolean",
+              "default": true
+            },
+            "leaseName": {
+              "description": "Lease name. Empty = \"\u003cfullname\u003e-workers\".",
+              "type": "string",
+              "default": ""
+            }
+          }
+        },
+        "wsFanout": {
+          "description": "WebSocket fan-out between replicas (env WS_FANOUT_*). Each replica delivers a WebSocket message to its own clients at once and writes one row to the ws_events table. Every replica polls the table each pollInterval and delivers the rows of the other replicas to its clients (delay up to about one pollInterval). The leader deletes rows older than retention every minute. Enabled by default: with one replica the cost is one small indexed query per pollInterval, and a scale-up needs no change. Set enabled: false only for a single replica that must not write to the database. The replica identity is POD_NAME (downward API). Note: the rows go to the MySQL binary log like all writes. The bundled MySQL 8 keeps binary logs for 30 days by default, so deploy log lines add to the binary log size on the MySQL volume for that time (binlog_expire_logs_seconds in mysql.config sets a shorter expiry).",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "description": "Share WebSocket events between replicas through the database.",
+              "type": "boolean",
+              "default": true
+            },
+            "pollInterval": {
+              "description": "Time between two polls (50ms to 1m).",
+              "type": "string",
+              "default": "500ms"
+            },
+            "retention": {
+              "description": "Age after which the leader deletes rows (at least 1m).",
+              "type": "string",
+              "default": "5m"
+            }
+          }
+        },
+        "logRetention": {
+          "description": "Log retention (env *_RETENTION_DAYS, LOG_RETENTION_INTERVAL). The leader worker log-retention deletes rows older than the number of days, in batches. 0 keeps the rows forever. deployment_logs keeps running logs, the newest deploy or rollback log, the newest successful deploy and the two newest successful deploy or rollback logs of each instance; the deploy counts of the Analytics page cover only the kept deploy logs. A whole number of days is required.",
+          "type": "object",
+          "properties": {
+            "deployLogDays": {
+              "type": [
+                "integer",
+                "string"
+              ],
+              "pattern": "^[0-9]+$",
+              "default": 180
+            },
+            "auditLogDays": {
+              "type": [
+                "integer",
+                "string"
+              ],
+              "pattern": "^[0-9]+$",
+              "default": 365
+            },
+            "notificationDays": {
+              "type": [
+                "integer",
+                "string"
+              ],
+              "pattern": "^[0-9]+$",
+              "default": 90
+            },
+            "deliveryLogDays": {
+              "type": [
+                "integer",
+                "string"
+              ],
+              "pattern": "^[0-9]+$",
+              "default": 30
+            },
+            "actionRunDays": {
+              "description": "action_runs: the run history of custom actions (by start time).",
+              "type": [
+                "integer",
+                "string"
+              ],
+              "pattern": "^[0-9]+$",
+              "default": 180
+            },
+            "interval": {
+              "description": "Time between two runs (at least 1m).",
+              "type": "string",
+              "default": "1h"
+            }
+          }
+        },
+        "resources": {
+          "description": "Resource requests and limits of the backend container.",
+          "type": "object",
+          "properties": {
+            "requests": {
+              "type": "object",
+              "properties": {
+                "memory": {
+                  "type": [
+                    "string",
+                    "number"
+                  ],
+                  "default": "256Mi"
+                },
+                "cpu": {
+                  "type": [
+                    "string",
+                    "number"
+                  ],
+                  "default": "100m"
+                }
+              }
+            },
+            "limits": {
+              "type": "object",
+              "properties": {
+                "memory": {
+                  "type": [
+                    "string",
+                    "number"
+                  ],
+                  "default": "1Gi"
+                },
+                "cpu": {
+                  "type": [
+                    "string",
+                    "number"
+                  ],
+                  "default": "1"
+                }
+              }
+            }
+          }
+        },
+        "env": {
+          "description": "Non-secret environment variables of the backend (ConfigMap). Any variable of the backend can be added; values are written as text. Secrets belong in backend.secrets.",
+          "type": "object",
+          "properties": {
+            "APP_NAME": {
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ],
+              "default": "k8s-stack-manager"
+            },
+            "GO_ENV": {
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ],
+              "default": "production"
+            },
+            "APP_DEBUG": {
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ],
+              "default": "false"
+            },
+            "SERVER_HOST": {
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ],
+              "default": "0.0.0.0"
+            },
+            "SERVER_PORT": {
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ],
+              "default": "8081"
+            },
+            "SERVER_READ_TIMEOUT": {
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ],
+              "default": "10s"
+            },
+            "SERVER_WRITE_TIMEOUT": {
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ],
+              "default": "0"
+            },
+            "SERVER_IDLE_TIMEOUT": {
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ],
+              "default": "30s"
+            },
+            "SERVER_SHUTDOWN_TIMEOUT": {
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ],
+              "default": "30s"
+            },
+            "LOG_LEVEL": {
+              "description": "debug, info, warn or error. An invalid value stops the backend at startup.",
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ],
+              "default": "info"
+            },
+            "RATE_LIMIT": {
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ],
+              "default": "2000"
+            },
+            "LOGIN_RATE_LIMIT": {
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ],
+              "default": "500"
+            },
+            "CORS_ALLOWED_ORIGINS": {
+              "description": "Origins that may call the API from a browser. \"same-origin\": only the web UI on the ingress host (no cross-origin requests). A comma-separated list adds other origins, for example \"https://portal.example.com\". \"*\" allows every origin (development only; NOTES warns).",
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ],
+              "default": "same-origin"
+            },
+            "SELF_REGISTRATION": {
+              "description": "\"true\": every signed-in user can create local accounts (POST /api/v1/auth/register). \"false\": only an admin can (NOTES warns when \"true\").",
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ],
+              "default": "false"
+            },
+            "DEFAULT_BRANCH": {
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ],
+              "default": "master"
+            },
+            "HELM_BINARY": {
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ],
+              "default": "helm"
+            },
+            "DEPLOYMENT_TIMEOUT": {
+              "description": "helm --timeout for one chart; a deploy of N charts may take N x this value.",
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ],
+              "default": "10m"
+            },
+            "MAX_CONCURRENT_DEPLOYS": {
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ],
+              "default": "5"
+            },
+            "K8S_CLIENT_QPS": {
+              "description": "Client-side request limit of each cluster client (requests per second, burst). The API server still applies its own priority and fairness.",
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ],
+              "default": "50"
+            },
+            "K8S_CLIENT_BURST": {
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ],
+              "default": "100"
+            },
+            "DEFAULT_INSTANCE_TTL_MINUTES": {
+              "description": "TTL in minutes of a new instance that does not set one. The create forms of the web UI start with this value (GET /api/v1/ui-config). \"0\" means no expiry; the maximum is backend.maxInstanceTtlDays (default 30 days, 43200 minutes).",
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ],
+              "default": "480"
+            },
+            "GITHUB_ALLOWED_REPOSITORIES": {
+              "description": "Exact, comma-separated owner/repository entries allowed for authenticated GitHub requests. Required when GITHUB_TOKEN is non-empty.",
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ],
+              "default": ""
+            },
+            "GITLAB_BASE_URL": {
+              "description": "Optional GitLab HTTP(S) origin (scheme + hostname, optional port). Do not include credentials, query, fragment, or a path such as /api/v4.",
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ],
+              "default": ""
+            },
+            "WILDCARD_TLS_SOURCE_NAMESPACE": {
+              "description": "Wildcard TLS secret replication — copies a shared TLS secret into every stack namespace so ingresses can reference it. Disabled when WILDCARD_TLS_SOURCE_SECRET is empty. Set to enable for local dev flows where a single pre-existing cert is reused across all stacks.",
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ],
+              "default": ""
+            },
+            "WILDCARD_TLS_SOURCE_SECRET": {
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ],
+              "default": ""
+            },
+            "WILDCARD_TLS_TARGET_SECRET": {
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ],
+              "default": ""
+            },
+            "JWT_EXPIRATION": {
+              "description": "Lifetime of a token of the old token flow. Sessions: ACCESS_TOKEN_EXPIRATION, SESSION_IDLE_TIMEOUT, SESSION_MAX_LIFETIME (see WIKI.md, Sessions).",
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ],
+              "default": "24h"
+            },
+            "ADMIN_USERNAME": {
+              "description": "Name of the admin user that the backend creates at the first start (password: backend.secrets.ADMIN_PASSWORD).",
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ],
+              "default": "admin"
+            },
+            "OIDC_ENABLED": {
+              "description": "Sign-in with OpenID Connect (the OIDC_* variables; the client secret is backend.secrets.OIDC_CLIENT_SECRET).",
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ],
+              "default": "false"
+            },
+            "OIDC_SCOPES": {
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ],
+              "default": "openid,profile,email"
+            },
+            "OIDC_ROLE_CLAIM": {
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ],
+              "default": "roles"
+            },
+            "OIDC_AUTO_PROVISION": {
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ],
+              "default": "true"
+            },
+            "OIDC_LOCAL_AUTH": {
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ],
+              "default": "true"
+            },
+            "OIDC_STATE_TTL": {
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ],
+              "default": "5m"
+            },
+            "SESSION_STORE": {
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ],
+              "default": "mysql"
+            },
+            "ENABLE_SWAGGER": {
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ],
+              "default": "false"
+            },
+            "SECURE_COOKIES": {
+              "description": "Secure flag of the refresh-token cookie. Unset: \"true\" when the ingress has TLS. Set \"true\" when TLS ends at a load balancer in front of the ingress.",
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ]
+            },
+            "APP_PUBLIC_URL": {
+              "description": "Public https base URL of the web UI, without a path (links in notification channel cards). Unset: https://\u003cingress.host\u003e when the ingress has TLS.",
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ]
+            },
+            "ACCESS_TOKEN_EXPIRATION": {
+              "description": "Lifetime of one access token (default 15m).",
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ]
+            },
+            "SESSION_IDLE_TIMEOUT": {
+              "description": "End a session after this time without requests (default 30m).",
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ]
+            },
+            "SESSION_MAX_LIFETIME": {
+              "description": "Absolute lifetime of a session from the login (default 12h).",
+              "type": [
+                "string",
+                "number",
+                "boolean"
+              ]
+            }
+          },
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          }
+        },
+        "namespaceRoleBindings": {
+          "description": "Per-stack-namespace RoleBindings (NAMESPACE_ROLE_BINDINGS_JSON). When set, the deployer applies one RoleBinding per entry to every stack namespace at pre-install time, binding the named ServiceAccount (typically in a centrally-deployed add-on namespace like `refresh-db`) to a pre-existing ClusterRole. This is the standard pattern for granting cross-namespace add-ons per-stack permissions without a cluster-wide binding. Prerequisites the deployer does NOT create on your behalf: The deployer treats each RoleBinding's Subjects as authoritative — any additional subjects added externally to a RoleBinding by the configured name will be dropped on the next reconcile. Disabled when the list is empty. The configmap-renderer serialises this list to JSON and puts it on the NAMESPACE_ROLE_BINDINGS_JSON env var.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "object",
+            "properties": {
+              "clusterRole": {
+                "description": "Existing ClusterRole to bind.",
+                "type": "string"
+              },
+              "serviceAccountName": {
+                "description": "Existing ServiceAccount to bind.",
+                "type": "string"
+              },
+              "serviceAccountNamespace": {
+                "description": "Namespace of the ServiceAccount.",
+                "type": "string"
+              },
+              "roleBindingName": {
+                "description": "Name of the RoleBinding. Default: clusterRole.",
+                "type": "string"
+              }
+            }
+          }
+        },
+        "namespaceLabels": {
+          "description": "Extra labels on every stack namespace (NAMESPACE_LABELS), in addition to managed-by=k8s-stack-manager and k8s-stack-manager.io/instance-name. The backend sets them when it creates a namespace and adds or corrects them on an existing namespace at each deploy and rollback. It does not remove other labels. Keys and values must be valid Kubernetes labels; the keys managed-by and k8s-stack-manager.io/instance-name are reserved (the backend sets them). The chart renders the map as sorted key=value pairs joined by commas. Empty = no extra labels. Main use: Pod Security Admission levels.",
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          }
+        },
+        "allowedChartRepos": {
+          "description": "Chart repositories that definitions and templates may use (ALLOWED_CHART_REPOS). Each entry is a URL prefix with a scheme and a host (oci, https or http). A chart must be in one of them: the backend checks chart configs when they are saved and again at deploy time. A chart path alone (local path, repo alias) is rejected when the list is set. Empty = every chart source is allowed. Set it on every cluster that untrusted users can deploy to: Helm runs with the backend service account.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "uniqueInstanceNames": {
+          "description": "Unique instance names for each cluster (UNIQUE_INSTANCE_NAMES). When true, create, rename, clone and quick deploy refuse a name that another instance uses on the same cluster (409, compared without case). Turn it on when the Ingress hosts of the stacks use {{.InstanceName}}: two stacks with the same name claim the same host. Existing duplicates stay; the backend logs them at startup.",
+          "type": "boolean",
+          "default": false
+        },
+        "maxInstanceTtlDays": {
+          "description": "Maximum TTL of an instance, and the maximum distance of a fixed stop time from now, in days (MAX_INSTANCE_TTL_DAYS). A whole number from 1 to 365. Create, update, clone, quick deploy and extend refuse a longer TTL or a later stop time (400). The web UI limits its TTL field and date picker with it.",
+          "type": [
+            "integer",
+            "number",
+            "string"
+          ],
+          "default": 30
+        },
+        "helmHistoryMax": {
+          "description": "Helm revisions kept for each release of a stack (HELM_HISTORY_MAX, passed as --history-max to helm upgrade --install and helm rollback). Each revision is a Secret in the stack namespace (Helm's default storage), and every deploy adds one for each chart. A whole number of 2 or more: a plain rollback needs the previous revision. A rollback to a deploy (target_log_id) uses the stored values and does not need older revisions. Unset (null): no flag, so Helm's own default applies (its HELM_MAX_HISTORY environment variable, else 10).",
+          "type": [
+            "integer",
+            "number",
+            "string",
+            "null"
+          ]
+        },
+        "trustedProxies": {
+          "description": "Proxies that may set the client IP with X-Forwarded-For or X-Real-IP (TRUSTED_PROXIES): IP addresses or CIDR ranges. The per-IP rate limits (RATE_LIMIT, LOGIN_RATE_LIMIT, the API-key upgrade of /ws) and the IP of a refresh token use the client IP. A request from any other peer counts for the peer address, and its headers are ignored. An empty list trusts no proxy; 0.0.0.0/0 and ::/0 are refused. The default trusts the private IPv4 ranges and the IPv6 unique local range, because the ingress controller runs in the cluster. Check that the pod IPs of the ingress controller are inside the list (add for example 100.64.0.0/10 for a pod network in the shared address space). Otherwise all users count as the ingress controller and share one login limit. The ingress controller must replace X-Forwarded-For and X-Real-IP with the real client (Traefik default; do not set forwardedHeaders.insecure, and keep forwardedHeaders.trustedIPs to your own load balancers). The backend skips trusted addresses in X-Forwarded-For, so a client with a private IP (VPN, a pod in the cluster) can choose its IP when a proxy appends to its header. Pods in the cluster can also call the backend service directly; a NetworkPolicy that allows only the ingress controller prevents this.",
+          "type": "array",
+          "default": [
+            "10.0.0.0/8",
+            "172.16.0.0/12",
+            "192.168.0.0/16",
+            "fc00::/7"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "portForward": {
+          "description": "Port-forward to a stack service through the backend over a WebSocket (GET /api/v1/stack-instances/:id/port-forward, used by `stackctl stack port-forward`). Off by default. SECURITY: a tunnel goes past NetworkPolicies and past ingress authentication (basic auth, SSO proxies in front of tools): the kubelet connects inside the network namespace of the pod. The owner of an instance and every devops and admin user can reach every port of the services of their stacks. Every tunnel is audited (port_forward, port_forward_end). Two switches must both be on: this one, and the per-cluster switch allow_port_forward (Admin \u003e Clusters, off by default). RBAC: with rbac.scope=namespace the stack-access ClusterRole already grants */*/* in each stack namespace, so no extra rule is rendered. With rbac.scope=cluster the chart adds pods/portforward (get, create) to the backend ClusterRole only when this is enabled. A registered cluster with its own kubeconfig needs the same verbs in that identity. The backend refuses a namespace without the label managed-by=k8s-stack-manager and its own namespace (POD_NAMESPACE, set by the chart through the downward API). The limits are per backend replica: the real limit is the number of replicas times maxPerUser. A process cap of 500 tunnels per replica applies. Ingress: a tunnel is a long WebSocket under /api. Traefik passes the upgrade; set no short timeouts on it. nginx-ingress (ingress.type=ingress) needs the annotations nginx.ingress.kubernetes.io/proxy-read-timeout and nginx.ingress.kubernetes.io/proxy-send-timeout (seconds) of at least maxDuration plus a margin, for example \"3700\" for the default 1h. The frontend image proxy has 3700s; raise it too when you raise maxDuration.",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "description": "Allow `stackctl stack port-forward` through the backend. Each cluster also needs \"Allow port-forward\".",
+              "type": "boolean",
+              "default": false
+            },
+            "maxDuration": {
+              "description": "Maximum lifetime of a tunnel (above 0, at most 24h); the backend closes it with code 4001.",
+              "type": "string",
+              "default": "1h"
+            },
+            "idleTimeout": {
+              "description": "Close a tunnel without data for this long (at most maxDuration); code 4002.",
+              "type": "string",
+              "default": "15m"
+            },
+            "maxPerUser": {
+              "description": "Open tunnels per user and replica (1 to 100).",
+              "type": [
+                "integer",
+                "string"
+              ],
+              "pattern": "^[0-9]+$",
+              "default": 5
+            }
+          }
+        },
+        "exec": {
+          "description": "Run a command in a stack container through the backend over a WebSocket (GET /api/v1/stack-instances/:id/exec, used by `stackctl stack exec`). Off by default. No shell, no stdin, no TTY: one command, its output, its exit code. SECURITY: a command shows the environment of the container, including its secrets (`env`, /proc/1/environ), and reads every file the container can read. The owner of an instance and every devops and admin user can run commands in the allowed containers of their stacks. Keep allowedContainers short and name only containers whose environment you accept to expose. Every command is audited (exec, exec_end) with its arguments, which are not redacted: do not put secrets in command arguments. The backend refuses a container that holds a service-account token (automount, a projected token, or a Secret of type kubernetes.io/service-account-token mounted or referenced in env) unless allowServiceAccountToken is true. With shareProcessNamespace every running container of the pod counts: a command reads their files through /proc. Two switches must both be on: this one, and the per-cluster switch allow_exec (Admin \u003e Clusters, off by default). API keys follow backend.streams.allowApiKeys. RBAC: with rbac.scope=namespace the stack-access ClusterRole already grants */*/* in each stack namespace (pods/exec, serviceaccounts get and secrets get included), so no extra rule is rendered. With rbac.scope=cluster the chart keeps pods/exec create in the backend ClusterRole as before (stack charts whose Roles grant pods/exec need the backend to hold it: no escalate verb) and adds get when this is enabled. A registered cluster with its own kubeconfig needs the same verbs in that identity, and get on serviceaccounts and secrets (a refused read gives 403 token_check_forbidden). The limits are per backend replica. Ingress: see portForward (a session is a long WebSocket; nginx-ingress needs proxy-read-timeout and proxy-send-timeout of at least maxDuration plus a margin).",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "description": "Allow `stackctl stack exec` through the backend. Each cluster also needs \"Allow exec\"; only containers in allowedContainers can be used.",
+              "type": "boolean",
+              "default": false
+            },
+            "allowedContainers": {
+              "description": "Container names that may run commands: exact names, no wildcard, each a DNS-1123 label (an invalid name fails the render). Empty = every request is refused with container_not_allowed (the backend warns at startup).",
+              "type": "array",
+              "default": [],
+              "items": {
+                "type": "string"
+              }
+            },
+            "maxDuration": {
+              "description": "Maximum lifetime of a command (above 0, at most 24h); the backend closes the session with code 4001.",
+              "type": "string",
+              "default": "10m"
+            },
+            "maxCommandLength": {
+              "description": "Maximum size of the command: the sum of the argument bytes (1 to 32768).",
+              "type": [
+                "integer",
+                "string"
+              ],
+              "pattern": "^[0-9]+$",
+              "default": 4096
+            },
+            "maxPerUser": {
+              "description": "Running commands per user and replica (1 to 100).",
+              "type": [
+                "integer",
+                "string"
+              ],
+              "pattern": "^[0-9]+$",
+              "default": 3
+            },
+            "allowServiceAccountToken": {
+              "description": "Allow commands in pods that mount a service-account token. By default the backend refuses these (service_account_token): the token would be readable with the command. With shareProcessNamespace the token of any running container of the pod counts. true turns the refusal off (startup warning).",
+              "type": "boolean",
+              "default": false
+            }
+          }
+        },
+        "streams": {
+          "description": "Settings shared by port-forward and exec streams.",
+          "type": "object",
+          "properties": {
+            "allowApiKeys": {
+              "description": "Let API keys open stream tunnels. API keys have no scopes: a leaked CI key would open tunnels with the rights of its user. Off by default.",
+              "type": "boolean",
+              "default": false
+            }
+          }
+        },
+        "extraEnv": {
+          "description": "Extra environment variables of the backend container (Kubernetes EnvVar syntax), for example HELM_REGISTRY_CONFIG for OCI registries that need a login.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "object"
+          }
+        },
+        "extraVolumes": {
+          "description": "Extra volumes of the backend pod (Kubernetes syntax).",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "object"
+          }
+        },
+        "extraVolumeMounts": {
+          "description": "Extra volume mounts of the backend container (Kubernetes syntax).",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "object"
+          }
+        },
+        "secrets": {
+          "description": "Secret environment variables of the backend (Secret). Any variable can be added, for example DB_PASSWORD for an external database. Empty values are left out.",
+          "type": "object",
+          "properties": {
+            "JWT_SECRET": {
+              "description": "Signing key of the access tokens. Required: at least 16 random characters.",
+              "type": "string"
+            },
+            "ADMIN_PASSWORD": {
+              "description": "Password of the admin user that the backend creates at the first start.",
+              "type": "string"
+            },
+            "KUBECONFIG_ENCRYPTION_KEY": {
+              "description": "Encrypts kubeconfig data, registry passwords, notification channel secrets and notification channel webhook URLs at rest. Use 32 or more random characters. Without it, the backend refuses cluster kubeconfig_data and registry_password (use kubeconfig_path) and a notification channel secret. It stores channel webhook URLs in plaintext: set the key when a URL holds a token.",
+              "type": "string"
+            },
+            "AZURE_DEVOPS_PAT": {
+              "description": "Azure DevOps personal access token (optional). Azure DevOps can also use workload identity: backend.env.AZURE_DEVOPS_AUTH=workload-identity with AZURE_CLIENT_ID, AZURE_TENANT_ID and AZURE_FEDERATED_TOKEN_FILE, and a projected service-account token (audience api://AzureADTokenExchange) in backend.extraVolumes and backend.extraVolumeMounts.",
+              "type": "string"
+            },
+            "GITHUB_TOKEN": {
+              "description": "GitHub token for branch lists of private repositories (optional; set backend.env.GITHUB_ALLOWED_REPOSITORIES too).",
+              "type": "string"
+            },
+            "GITLAB_TOKEN": {
+              "description": "GitLab token (optional).",
+              "type": "string"
+            },
+            "OIDC_CLIENT_SECRET": {
+              "description": "Client secret of the OIDC provider (optional).",
+              "type": "string"
+            }
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "rollout": {
+          "description": "Canary steps and analysis when argoRollouts.enabled is true.",
+          "type": "object",
+          "properties": {
+            "strategy": {
+              "type": "object",
+              "properties": {
+                "canary": {
+                  "type": "object",
+                  "properties": {
+                    "steps": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "analysis": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "default": false
+                },
+                "interval": {
+                  "type": "string",
+                  "default": "30s"
+                },
+                "count": {
+                  "type": "integer",
+                  "default": 5
+                },
+                "failureLimit": {
+                  "type": "integer",
+                  "default": 2
+                }
+              }
+            }
+          }
+        },
+        "pdb": {
+          "description": "PodDisruptionBudget. Set maxUnavailable or minAvailable, not both.",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true
+            },
+            "maxUnavailable": {
+              "type": [
+                "integer",
+                "string"
+              ],
+              "default": 1
+            },
+            "minAvailable": {
+              "description": "Alternative to maxUnavailable (use one of them).",
+              "type": [
+                "integer",
+                "string"
+              ]
+            }
+          }
+        },
+        "autoscaling": {
+          "description": "HorizontalPodAutoscaler of the backend (instead of a fixed replica count).",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false
+            },
+            "minReplicas": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 2
+            },
+            "maxReplicas": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 6
+            },
+            "targetCPUUtilizationPercentage": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "default": 75
+            },
+            "targetMemoryUtilizationPercentage": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "default": 80
+            }
+          }
+        },
+        "priorityClassName": {
+          "description": "Name of an existing PriorityClass for these pods. Empty: the cluster default. Use it so that the scheduler keeps the stack manager running when stack pods fill the nodes.",
+          "type": "string",
+          "default": ""
+        },
+        "serviceAccount": {
+          "type": "object",
+          "properties": {
+            "create": {
+              "description": "Create the backend service account and its RBAC (see backend.rbac).",
+              "type": "boolean",
+              "default": true
+            },
+            "annotations": {
+              "description": "Annotations of the service account (for example for workload identity).",
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "rbac": {
+          "description": "RBAC of the backend service account on the cluster where it runs. Helm installs the stack charts with this identity. Used only when backend.serviceAccount.create is true.",
+          "type": "object",
+          "properties": {
+            "scope": {
+              "description": "namespace (default): the backend has all rights, custom resources included, in each stack namespace (RoleBinding k8s-stack-manager-access); outside them it reads nodes and pods, and creates, labels and deletes stack namespaces. cluster: the rules of chart 0.6 and earlier, a fixed list of namespaced resources (no custom resources) in all namespaces. Helm runs as the backend in both scopes. Neither scope lets a chart create cluster-scoped objects such as CRDs or ClusterRoles.",
+              "type": "string",
+              "enum": [
+                "namespace",
+                "cluster"
+              ],
+              "default": "namespace"
+            },
+            "admissionPolicy": {
+              "description": "ValidatingAdmissionPolicy (Kubernetes 1.30 or later) that keeps the backend inside stack namespaces (label managed-by=k8s-stack-manager). With scope cluster it limits port-forward and exec to stack namespaces while one of them is on. Turn it off only knowingly. helm template without cluster access needs --api-versions admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy.",
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "default": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "externalSecrets": {
+      "description": "Create the backend Secret with the External Secrets Operator from Azure Key Vault (instead of backend.secrets). Install ESO and the SecretStore authentication first.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Create the backend Secret with the External Secrets Operator.",
+          "type": "boolean",
+          "default": false
+        },
+        "refreshInterval": {
+          "type": "string",
+          "default": "1h"
+        },
+        "secretStore": {
+          "type": "object",
+          "properties": {
+            "create": {
+              "description": "Set create=false and name to use a pre-existing SecretStore or ClusterSecretStore. ClusterSecretStore resources are cluster-scoped.",
+              "type": "boolean",
+              "default": true
+            },
+            "kind": {
+              "description": "SecretStore or ClusterSecretStore. With create=true only SecretStore.",
+              "type": "string",
+              "enum": [
+                "SecretStore",
+                "ClusterSecretStore"
+              ],
+              "default": "SecretStore"
+            },
+            "name": {
+              "description": "Name of an existing store when create is false.",
+              "type": "string",
+              "default": ""
+            }
+          }
+        },
+        "azureKeyVault": {
+          "type": "object",
+          "properties": {
+            "vaultUrl": {
+              "description": "e.g. https://my-vault.vault.azure.net",
+              "type": "string",
+              "default": ""
+            },
+            "tenantId": {
+              "type": "string",
+              "default": ""
+            },
+            "authType": {
+              "description": "WorkloadIdentity uses the backend ServiceAccount, which this chart annotates with workloadIdentity.clientId. ServicePrincipal credentials must exist in the referenced Secret; they are never stored in values.",
+              "type": "string",
+              "enum": [
+                "WorkloadIdentity",
+                "ServicePrincipal"
+              ],
+              "default": "WorkloadIdentity"
+            },
+            "workloadIdentity": {
+              "type": "object",
+              "properties": {
+                "clientId": {
+                  "type": "string",
+                  "default": ""
+                }
+              }
+            },
+            "servicePrincipal": {
+              "type": "object",
+              "properties": {
+                "secretName": {
+                  "type": "string",
+                  "default": ""
+                },
+                "clientIdKey": {
+                  "type": "string",
+                  "default": "client-id"
+                },
+                "clientSecretKey": {
+                  "type": "string",
+                  "default": "client-secret"
+                }
+              }
+            }
+          }
+        },
+        "data": {
+          "description": "Key Vault secrets to copy into the backend Secret. JWT_SECRET is required; with mysql.enabled also MYSQL_ROOT_PASSWORD (and MYSQL_PASSWORD when mysql.auth.user is set).",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "object",
+            "required": [
+              "secretKey",
+              "remoteRef"
+            ],
+            "properties": {
+              "secretKey": {
+                "description": "Key in the backend Secret, for example JWT_SECRET.",
+                "type": "string"
+              },
+              "remoteRef": {
+                "type": "object",
+                "required": [
+                  "key"
+                ],
+                "properties": {
+                  "key": {
+                    "description": "Name of the Key Vault secret.",
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "frontend": {
+      "description": "The web UI (nginx).",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Set to false for headless / API-only deployments — skips all frontend resources (Deployment/Rollout, Service, ConfigMap, HPA, PDB, ServiceAccount) and the ingress rule routing `/` to the frontend. The backend (/api, /ws, /health, /swagger) is unaffected.",
+          "type": "boolean",
+          "default": true
+        },
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": {
+              "description": "Image repository, below global.imageRegistry.",
+              "type": "string",
+              "default": "k8s-stack-manager/frontend"
+            },
+            "tag": {
+              "description": "Image tag. Empty: the chart appVersion.",
+              "type": "string",
+              "default": ""
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": [
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ],
+              "default": "IfNotPresent"
+            }
+          }
+        },
+        "replicas": {
+          "description": "Replicas of the frontend.",
+          "type": "integer",
+          "minimum": 0,
+          "default": 2
+        },
+        "port": {
+          "description": "Port of the frontend container and Service.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 8080
+        },
+        "apiProxy": {
+          "description": "Proxy the backend routes (/api, /ws, /health, /swagger) through the frontend nginx. Use it without an ingress: a `kubectl port-forward` to the frontend Service then gives a working UI and API on one address (for example scripts/demo.sh). With an ingress, leave it off: the ingress sends these routes to the backend.",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "description": "Proxy /api, /ws, /health and /swagger through the frontend, for installations without an ingress.",
+              "type": "boolean",
+              "default": false
+            }
+          }
+        },
+        "resources": {
+          "description": "Resource requests and limits of the frontend container.",
+          "type": "object",
+          "properties": {
+            "requests": {
+              "type": "object",
+              "properties": {
+                "memory": {
+                  "type": [
+                    "string",
+                    "number"
+                  ],
+                  "default": "64Mi"
+                },
+                "cpu": {
+                  "type": [
+                    "string",
+                    "number"
+                  ],
+                  "default": "50m"
+                }
+              }
+            },
+            "limits": {
+              "type": "object",
+              "properties": {
+                "memory": {
+                  "type": [
+                    "string",
+                    "number"
+                  ],
+                  "default": "256Mi"
+                },
+                "cpu": {
+                  "type": [
+                    "string",
+                    "number"
+                  ],
+                  "default": "200m"
+                }
+              }
+            }
+          }
+        },
+        "rollout": {
+          "description": "Canary steps and analysis when argoRollouts.enabled is true.",
+          "type": "object",
+          "properties": {
+            "strategy": {
+              "type": "object",
+              "properties": {
+                "canary": {
+                  "type": "object",
+                  "properties": {
+                    "steps": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "analysis": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "default": false
+                },
+                "interval": {
+                  "type": "string",
+                  "default": "30s"
+                },
+                "count": {
+                  "type": "integer",
+                  "default": 5
+                },
+                "failureLimit": {
+                  "type": "integer",
+                  "default": 2
+                }
+              }
+            }
+          }
+        },
+        "pdb": {
+          "description": "PodDisruptionBudget. Set maxUnavailable or minAvailable, not both.",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true
+            },
+            "maxUnavailable": {
+              "type": [
+                "integer",
+                "string"
+              ],
+              "default": 1
+            },
+            "minAvailable": {
+              "description": "Alternative to maxUnavailable (use one of them).",
+              "type": [
+                "integer",
+                "string"
+              ]
+            }
+          }
+        },
+        "autoscaling": {
+          "description": "HorizontalPodAutoscaler of the frontend (instead of a fixed replica count).",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false
+            },
+            "minReplicas": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 2
+            },
+            "maxReplicas": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 4
+            },
+            "targetCPUUtilizationPercentage": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "default": 75
+            },
+            "targetMemoryUtilizationPercentage": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "default": 80
+            }
+          }
+        },
+        "priorityClassName": {
+          "description": "Name of an existing PriorityClass for these pods. Empty: the cluster default. Use it so that the scheduler keeps the stack manager running when stack pods fill the nodes.",
+          "type": "string",
+          "default": ""
+        },
+        "serviceAccount": {
+          "type": "object",
+          "properties": {
+            "create": {
+              "type": "boolean",
+              "default": true
+            },
+            "annotations": {
+              "description": "Annotations of the service account (for example for workload identity).",
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "branding": {
+      "description": "The backend serves these values at GET /api/v1/ui-config (public, no token) and the web UI loads them at startup, also on the login page. The values go to the backend ConfigMap as APP_TITLE, APP_LOGO_URL and APP_FAVICON_URL. An explicit backend.env value wins. Empty: the built-in default. A URL is a same-origin path (\"/branding/logo.svg\") or an https URL. The backend refuses other forms at startup (http:, javascript:, data:, \"//host/...\").",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Product name in the browser tab, sidebar, app bar, login page and setup wizard (max 100 characters). Empty: \"K8s Stack Manager\".",
+          "type": "string",
+          "default": ""
+        },
+        "logoUrl": {
+          "description": "Logo image. Empty: the built-in logo.",
+          "type": "string",
+          "default": ""
+        },
+        "faviconUrl": {
+          "description": "Browser tab icon. Empty: the built-in /favicon.svg.",
+          "type": "string",
+          "default": ""
+        },
+        "files": {
+          "description": "Text files (SVG) that the frontend serves at /branding/\u003cname\u003e: file name -\u003e content. All files together at most 900 KiB.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "binaryFiles": {
+          "description": "Binary files (PNG, ICO) that the frontend serves at /branding/\u003cname\u003e: file name -\u003e base64 content.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "mysql": {
+      "description": "The bundled MySQL. For an external database set enabled to false, backend.env.DB_HOST, DB_PORT, DB_USER and DB_NAME, and backend.secrets.DB_PASSWORD.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Install the bundled MySQL.",
+          "type": "boolean",
+          "default": true
+        },
+        "priorityClassName": {
+          "description": "Name of an existing PriorityClass for these pods. Empty: the cluster default. Use it so that the scheduler keeps the stack manager running when stack pods fill the nodes.",
+          "type": "string",
+          "default": ""
+        },
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": {
+              "type": "string",
+              "default": "mysql"
+            },
+            "tag": {
+              "description": "MySQL version. 8.4 is the long-term support line; MySQL upgrades an 8.0 volume in place on the first start (back up first).",
+              "type": "string",
+              "default": "8.4"
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": [
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ],
+              "default": "IfNotPresent"
+            }
+          }
+        },
+        "auth": {
+          "type": "object",
+          "properties": {
+            "rootPassword": {
+              "description": "Password of the MySQL root user. Required with the bundled MySQL.",
+              "type": "string"
+            },
+            "database": {
+              "description": "Database name to create",
+              "type": "string",
+              "default": "app"
+            },
+            "user": {
+              "description": "Optional MySQL user that the backend uses instead of root.",
+              "type": "string",
+              "default": ""
+            },
+            "password": {
+              "description": "Password of mysql.auth.user.",
+              "type": "string"
+            }
+          }
+        },
+        "persistence": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "description": "Set false for local dev (uses emptyDir, data lost on pod restart)",
+              "type": "boolean",
+              "default": true
+            },
+            "size": {
+              "description": "Size of the MySQL volume.",
+              "type": "string",
+              "default": "5Gi"
+            },
+            "storageClass": {
+              "description": "StorageClass of the MySQL volume. Empty: the cluster default.",
+              "type": "string",
+              "default": ""
+            }
+          }
+        },
+        "resources": {
+          "description": "Resource requests and limits of the MySQL container.",
+          "type": "object",
+          "properties": {
+            "requests": {
+              "type": "object",
+              "properties": {
+                "memory": {
+                  "type": [
+                    "string",
+                    "number"
+                  ],
+                  "default": "256Mi"
+                },
+                "cpu": {
+                  "type": [
+                    "string",
+                    "number"
+                  ],
+                  "default": "100m"
+                }
+              }
+            },
+            "limits": {
+              "type": "object",
+              "properties": {
+                "memory": {
+                  "type": [
+                    "string",
+                    "number"
+                  ],
+                  "default": "1Gi"
+                },
+                "cpu": {
+                  "type": [
+                    "string",
+                    "number"
+                  ],
+                  "default": "500m"
+                }
+              }
+            }
+          }
+        },
+        "config": {
+          "description": "my.cnf of the bundled MySQL. Keep max_connections above the backend replicas x DB_MAX_OPEN_CONNS (default 25). Do not set options that MySQL 8.4 removed.",
+          "type": "string"
+        }
+      }
+    },
+    "otel": {
+      "description": "OpenTelemetry collector for traces and metrics of the backend.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Deploy an OpenTelemetry collector and send the traces and metrics of the backend to it.",
+          "type": "boolean",
+          "default": false
+        },
+        "priorityClassName": {
+          "description": "Name of an existing PriorityClass for these pods. Empty: the cluster default. Use it so that the scheduler keeps the stack manager running when stack pods fill the nodes.",
+          "type": "string",
+          "default": ""
+        },
+        "sampleRate": {
+          "description": "Trace sampling rate (0.0-1.0). Reduce for production.",
+          "type": [
+            "string",
+            "number"
+          ],
+          "default": "1.0"
+        },
+        "collector": {
+          "type": "object",
+          "properties": {
+            "image": {
+              "type": "object",
+              "properties": {
+                "repository": {
+                  "type": "string",
+                  "default": "otel/opentelemetry-collector-contrib"
+                },
+                "tag": {
+                  "type": "string",
+                  "default": "0.120.0"
+                }
+              }
+            },
+            "resources": {
+              "type": "object",
+              "properties": {
+                "requests": {
+                  "type": "object",
+                  "properties": {
+                    "cpu": {
+                      "type": [
+                        "string",
+                        "number"
+                      ],
+                      "default": "100m"
+                    },
+                    "memory": {
+                      "type": [
+                        "string",
+                        "number"
+                      ],
+                      "default": "256Mi"
+                    }
+                  }
+                },
+                "limits": {
+                  "type": "object",
+                  "properties": {
+                    "cpu": {
+                      "type": [
+                        "string",
+                        "number"
+                      ],
+                      "default": "500m"
+                    },
+                    "memory": {
+                      "type": [
+                        "string",
+                        "number"
+                      ],
+                      "default": "512Mi"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "hooks": {
+      "description": "Event hooks and custom actions (see EXTENDING.md).",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Render the hooks configuration (subscriptions and actions) and mount it into the backend.",
+          "type": "boolean",
+          "default": false
+        },
+        "subscriptions": {
+          "description": "HTTP hooks on lifecycle events (name, events, url, timeout_seconds, failure_policy, secret_env, applies_to). See EXTENDING.md.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "url"
+            ]
+          }
+        },
+        "actions": {
+          "description": "Named actions that users run on a stack (name, url, description, timeout_seconds, secret_env, label, confirm, parameters, log_path, applies_to). See EXTENDING.md.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "url"
+            ]
+          }
+        }
+      }
+    },
+    "ingress": {
+      "description": "How the UI and the API are reached from outside the cluster.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "description": "traefik: a Traefik IngressRoute (needs Traefik with its CRDs). ingress: a Kubernetes Ingress for any controller. none: no ingress (use frontend.apiProxy.enabled and a port-forward).",
+          "type": "string",
+          "enum": [
+            "traefik",
+            "ingress",
+            "none"
+          ],
+          "default": "traefik"
+        },
+        "host": {
+          "description": "Host name of the UI and API. Empty: every host name matches; set it when other applications share the ingress.",
+          "type": "string",
+          "default": ""
+        },
+        "traefik": {
+          "description": "Settings for ingress.type=traefik.",
+          "type": "object",
+          "properties": {
+            "entryPoints": {
+              "description": "Traefik entry points of the routes. With TLS, use the HTTPS entry point (for example websecure).",
+              "type": "array",
+              "default": [
+                "web"
+              ],
+              "items": {
+                "type": "string"
+              }
+            },
+            "tls": {
+              "description": "TLS of the IngressRoute: secretName of a TLS Secret. Set entryPoints to the HTTPS entry point too.",
+              "type": "object",
+              "properties": {
+                "secretName": {
+                  "type": "string"
+                }
+              }
+            },
+            "middlewares": {
+              "description": "Traefik middlewares of the routes.",
+              "type": "object",
+              "properties": {
+                "stripApiPrefix": {
+                  "description": "Strip /api before the backend. Keep false: the backend routes include /api.",
+                  "type": "boolean",
+                  "default": false
+                },
+                "secureHeaders": {
+                  "description": "Add security headers to the responses: frame deny, content-type nosniff, XSS filter and referrer policy strict-origin-when-cross-origin.",
+                  "type": "boolean",
+                  "default": true
+                }
+              }
+            },
+            "priority": {
+              "description": "Router priority of every route of the IngressRoute. Traefik orders routers by priority, by default the length of the rule, so another Ingress on the same host with a longer rule (for example a path under /api) would win. A high value keeps the stack manager routes first. The frontend route (/) gets this value minus 1, so /api, /ws, /health and /swagger still win over /. 0 = Traefik default (rule length).",
+              "type": "integer",
+              "minimum": 0,
+              "default": 10000
+            }
+          }
+        },
+        "className": {
+          "description": "IngressClass for ingress.type=ingress. Empty: the cluster default.",
+          "type": "string",
+          "default": ""
+        },
+        "tls": {
+          "description": "TLS of the Kubernetes Ingress (ingress.type=ingress), as in an Ingress spec: a list of {secretName, hosts}.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "object",
+            "properties": {
+              "secretName": {
+                "type": "string"
+              },
+              "hosts": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "annotations": {
+          "description": "Annotations of the Kubernetes Ingress (ingress.type=ingress), for example nginx proxy timeouts for port-forward and exec.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "metrics": {
+      "description": "Prometheus metrics of the backend (/metrics), a ServiceMonitor and a Grafana dashboard.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Serve Prometheus metrics on metrics.port.",
+          "type": "boolean",
+          "default": false
+        },
+        "port": {
+          "description": "Port of the metrics endpoint.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 9090
+        },
+        "serviceMonitor": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "description": "Create a ServiceMonitor (Prometheus Operator).",
+              "type": "boolean",
+              "default": false
+            },
+            "interval": {
+              "type": "string",
+              "default": "30s"
+            },
+            "scrapeTimeout": {
+              "type": "string",
+              "default": "10s"
+            },
+            "labels": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "grafanaDashboard": {
+          "description": "Grafana dashboard of the backend metrics (dashboards/k8s-stack-manager.json) in a ConfigMap. The Grafana dashboard sidecar (for example of kube-prometheus-stack) loads every ConfigMap with the label below. Without a sidecar, import the JSON file in Grafana or load it by URL. The dashboard needs the Prometheus scrape of /metrics (metrics.enabled and a ServiceMonitor or another scrape job): metrics that reach Prometheus only through the OpenTelemetry collector (otel.enabled) have no pod label and no Go runtime metrics.",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "description": "Create the ConfigMap with the Grafana dashboard. Needs metrics.enabled.",
+              "type": "boolean",
+              "default": false
+            },
+            "namespace": {
+              "description": "Namespace of the ConfigMap. Empty: the release namespace.",
+              "type": "string",
+              "default": ""
+            },
+            "labels": {
+              "description": "Label that the sidecar selects (sidecar.dashboards.label and labelValue).",
+              "type": "object",
+              "properties": {
+                "grafana_dashboard": {
+                  "type": "string",
+                  "default": "1"
+                }
+              },
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "annotations": {
+              "description": "Grafana folder, for sidecars with folderAnnotation set.",
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -69,7 +69,8 @@ startHTTPServer              # main server, optional pprof and metrics servers
 | Install dependencies | `make install` |
 | Helm lint | `make helm-lint` |
 | Helm dry-run render | `make helm-template` |
-| Helm render checks (default values, secrets, External Secrets, Traefik priority, Grafana dashboard ConfigMap) | `make helm-test` |
+| Helm render checks (default values, secrets, External Secrets, Traefik priority, Grafana dashboard ConfigMap, values schema current) | `make helm-test` |
+| Helm values schema (after a change of `values.yaml`; descriptions come from its comments, extra rules in `backend/tools/helmschema`) | `make helm-schema` |
 | Helm install, upgrade, uninstall | `make helm-install`, `make helm-upgrade`, `make helm-uninstall` |
 | Helm package for release | `make helm-release` |
 | Load tests | `make loadtest` (see the `loadtest-*` targets; `LOADTEST_PORT`, `LOADTEST_MYSQL=external`; memory and CPU: `make loadtest-capture` or `LOADTEST_CAPTURE=1`, see `loadtest/README.md`) |
