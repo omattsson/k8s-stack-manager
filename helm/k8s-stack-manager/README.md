@@ -106,8 +106,21 @@ helm upgrade stack-manager k8s-stack-manager/k8s-stack-manager \
 
 Before you uninstall:
 
-1. Delete the stacks (in the UI or with `stackctl stack delete`). A delete starts a clean in the background: the backend uninstalls the Helm releases, deletes the namespace and then removes the stack. Wait until the stacks are gone from `stackctl stack list`. An uninstall during a clean leaves stack workloads behind, and the namespaces of stacks that you do not delete stay; remove those yourself.
-2. Back up the database. `helm uninstall` also deletes the PersistentVolumeClaim of the bundled MySQL; with the usual `Delete` reclaim policy that removes the database for good: the users, the definitions and templates, and the stored cluster credentials.
+1. Back up the database before you delete anything: a later backup no longer holds the deleted stacks (their records, overrides and deploy history). `helm uninstall` deletes the PersistentVolumeClaim of the bundled MySQL; with the usual `Delete` reclaim policy that removes the database for good: the users, the definitions and templates, and the stored cluster credentials. For the bundled MySQL:
+
+   ```bash
+   (umask 077; kubectl -n stack-manager exec deploy/stack-manager-k8s-stack-manager-mysql -- \
+     sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysqldump -uroot --single-transaction app' \
+     > stack-manager-backup.sql)
+   ```
+
+   Keep `stack-manager-values.yaml` (or the backend Secret) with the backup: the stored cluster credentials are encrypted with `KUBECONFIG_ENCRYPTION_KEY`, and without that key the backup cannot restore them.
+2. Delete the stacks (in the UI or with `stackctl stack delete`). A delete starts a clean in the background: the backend uninstalls the Helm releases, deletes the namespace and then removes the stack. Wait until the stacks are gone from `stackctl stack list`. An uninstall during a clean leaves stack workloads behind.
+3. Check that the stack namespaces are gone. A stack leaves the list once the namespace delete is sent, but finalizers can keep a namespace in `Terminating`. This lists every namespace that the application created, also those of stacks that you did not delete (remove those yourself):
+
+   ```bash
+   kubectl get namespaces -l managed-by=k8s-stack-manager
+   ```
 
 ```bash
 helm uninstall stack-manager --namespace stack-manager
