@@ -18,10 +18,12 @@ This chart installs the backend (Go API), the web UI and, by default, a MySQL da
 
 ## Install
 
-Put the secrets in a values file that only you can read, not on the command line. The example generates random secrets; replace `stacks.example.com` with a DNS name that points to your ingress:
+Put the secrets in a values file that only you can read, not on the command line. The example generates random secrets and creates the file with mode 0600; it refuses to overwrite an existing file. Replace `stacks.example.com` with a DNS name that points to your ingress:
 
 ```bash
+(
 umask 077
+set -o noclobber
 cat > stack-manager-values.yaml <<EOF
 backend:
   secrets:
@@ -34,7 +36,7 @@ mysql:
 ingress:
   host: stacks.example.com
 EOF
-chmod 600 stack-manager-values.yaml
+)
 
 helm repo add k8s-stack-manager https://omattsson.github.io/k8s-stack-manager
 helm repo update
@@ -45,7 +47,7 @@ helm install stack-manager k8s-stack-manager/k8s-stack-manager \
 
 The admin password is `ADMIN_PASSWORD` in `stack-manager-values.yaml`.
 
-Set `ingress.host`: with an empty host the routes match every host name, and with the high default Traefik priority they can take traffic from other applications on the same entry point. Configure TLS before you sign in through an ingress that others can reach (`ingress.traefik.tls.secretName`, or `ingress.tls` for `ingress.type=ingress`); without it, the password and the session tokens go over plain HTTP. Until then, use a local port-forward (see [Without an ingress](#without-an-ingress)).
+Set `ingress.host`: with an empty host the routes match every host name, and with the high default Traefik priority they can take traffic from other applications on the same entry point. Configure TLS before you sign in through an ingress that others can reach (`ingress.traefik.tls.secretName`, or `ingress.tls` for `ingress.type=ingress`); without it, the password and the session tokens go over plain HTTP. With Traefik, also set `ingress.traefik.entryPoints` to your HTTPS entry point (for example `[websecure]`): the default is `web`, and a TLS router on `web` does not answer on port 443. Until then, use a local port-forward (see [Without an ingress](#without-an-ingress)).
 
 Open the address and sign in as `admin`. Then register a cluster (Admin > Clusters; the simplest option is the backend's own service account) and deploy a first stack. The [Getting Started guide](https://github.com/omattsson/k8s-stack-manager/blob/main/docs/getting-started.md) shows every step, also with stackctl.
 
@@ -71,7 +73,7 @@ kubectl -n stack-manager port-forward svc/stack-manager-k8s-stack-manager-fronte
 | `mysql.enabled` | `true` | Bundled MySQL. For an external database set `false`, `backend.env.DB_HOST`, `DB_PORT`, `DB_USER` and `DB_NAME`, and the password in `backend.secrets.DB_PASSWORD` (or External Secrets): `backend.env` is a ConfigMap. |
 | `mysql.persistence.enabled` | `true` | Persistent volume of the bundled MySQL (5Gi) |
 | `backend.allowedChartRepos` | `[]` | Chart repository URL prefixes that stacks may use. Empty allows every source. Set it on clusters that untrusted users deploy to. |
-| `backend.rbac.scope` | `namespace` | `namespace`: full rights only inside stack namespaces (a RoleBinding per stack namespace). The backend also reads nodes and pods in all namespaces, and creates, labels and deletes namespaces. `cluster`: the namespaced rights for Helm charts (pods, Secrets, Deployments, Roles and more) in all namespaces. Neither scope lets a chart create cluster-scoped objects such as CRDs, ClusterRoles or webhooks. |
+| `backend.rbac.scope` | `namespace` | `namespace`: all rights, custom resources included, in each stack namespace (RoleBinding `k8s-stack-manager-access`); outside them the backend reads nodes and pods, and creates, labels and deletes stack namespaces. `cluster`: a fixed list of namespaced resources (pods, Secrets, Deployments, Roles and more) in all namespaces, without namespaced custom resources. Helm runs as the backend in both scopes, so a stack chart can change objects in other stack namespaces too (with `cluster`, in any namespace). Neither scope lets a chart create cluster-scoped objects such as CRDs, ClusterRoles or webhooks. |
 | `backend.maxInstanceTtlDays` | `30` | Longest time to live and latest stop time of a stack |
 | `backend.portForward.enabled` | `false` | `stackctl stack port-forward` through the backend. Each cluster also needs "Allow port-forward". |
 | `backend.exec.enabled` | `false` | `stackctl stack exec` through the backend. Each cluster also needs "Allow exec", and only containers in `backend.exec.allowedContainers` can be used. |
@@ -102,13 +104,14 @@ helm upgrade stack-manager k8s-stack-manager/k8s-stack-manager \
 
 ## Uninstall
 
-Back up the database first. `helm uninstall` also deletes the PersistentVolumeClaim of the bundled MySQL; with the usual `Delete` reclaim policy that removes the database for good: the users, the definitions and templates, and the stored cluster credentials.
+Before you uninstall:
+
+1. Delete the stacks (in the UI or with `stackctl stack delete`). A delete starts a clean in the background: the backend uninstalls the Helm releases, deletes the namespace and then removes the stack. Wait until the stacks are gone from `stackctl stack list`. An uninstall during a clean leaves stack workloads behind, and the namespaces of stacks that you do not delete stay; remove those yourself.
+2. Back up the database. `helm uninstall` also deletes the PersistentVolumeClaim of the bundled MySQL; with the usual `Delete` reclaim policy that removes the database for good: the users, the definitions and templates, and the stored cluster credentials.
 
 ```bash
 helm uninstall stack-manager --namespace stack-manager
 ```
-
-The stack namespaces that the application created stay. Delete the stacks first (in the UI or with `stackctl stack delete`), or remove their namespaces yourself.
 
 ## License
 
