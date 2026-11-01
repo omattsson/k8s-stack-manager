@@ -1,5 +1,7 @@
 # K8s Stack Manager
 
+[![Artifact Hub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/k8s-stack-manager)](https://artifacthub.io/packages/helm/k8s-stack-manager/k8s-stack-manager)
+
 **Self-service environments for multi-service Helm applications, on your own Kubernetes clusters.**
 
 Developers start a full copy of a stack (every chart, on their own branch, with their own values) from a template, with one click or one command. Platform teams keep control with roles, quotas, chart allowlists, time limits and an audit log. Developers need no kubeconfig and no access to the cluster. K8s Stack Manager is open source (MIT) and self-hosted.
