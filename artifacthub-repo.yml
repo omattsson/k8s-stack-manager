@@ -1,0 +1,7 @@
+# Artifact Hub repository metadata file
+# https://github.com/artifacthub/hub/blob/master/docs/metadata/artifacthub-repo.yml
+#
+# The repository ID marks the repository as a verified publisher. Artifact Hub
+# reads this file the next time it processes the repository (when index.yaml
+# changes).
+repositoryID: 52aec80c-1694-402a-8240-8c26f28e34e7
