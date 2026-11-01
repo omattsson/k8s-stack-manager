@@ -165,9 +165,31 @@ func build(nd *yaml.Node) (*Schema, error) {
 		return buildMapping(nd)
 	case yaml.SequenceNode:
 		return buildSequence(nd)
+	case yaml.AliasNode:
+		// generate runs checkAliases first, so this ends.
+		return build(nd.Alias)
 	default:
 		return buildScalar(nd)
 	}
+}
+
+// checkAliases refuses an alias to a node that contains the alias, which
+// build would follow forever. active holds the nodes on the current path.
+func checkAliases(nd *yaml.Node, active map[*yaml.Node]bool) error {
+	if active[nd] {
+		return fmt.Errorf("line %d: an alias refers to a node that contains it", nd.Line)
+	}
+	active[nd] = true
+	defer delete(active, nd)
+	if nd.Kind == yaml.AliasNode {
+		return checkAliases(nd.Alias, active)
+	}
+	for _, c := range nd.Content {
+		if err := checkAliases(c, active); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func buildMapping(nd *yaml.Node) (*Schema, error) {
@@ -504,6 +526,9 @@ func generate(values []byte) ([]byte, error) {
 	}
 	if len(doc.Content) == 0 {
 		return nil, fmt.Errorf("parse values: empty document")
+	}
+	if err := checkAliases(doc.Content[0], map[*yaml.Node]bool{}); err != nil {
+		return nil, fmt.Errorf("parse values: %w", err)
 	}
 	root, err := build(doc.Content[0])
 	if err != nil {

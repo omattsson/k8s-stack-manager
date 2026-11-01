@@ -126,6 +126,25 @@ func TestScalarUsesYAMLRules(t *testing.T) {
 	assert.Nil(t, s.Items, "mixed item types get no items type")
 }
 
+func TestAliasesUseTheReferencedNode(t *testing.T) {
+	var doc yaml.Node
+	src := "a: &res\n  cpu: 100m\n  sizes: [1, 2]\nb: *res\nc: &n 5\nd: *n\n"
+	require.NoError(t, yaml.Unmarshal([]byte(src), &doc))
+	s, err := build(doc.Content[0])
+	require.NoError(t, err)
+	b := s.Properties.m["b"]
+	assert.Equal(t, "object", b.Type)
+	assert.Equal(t, "100m", b.Properties.m["cpu"].Default)
+	assert.Equal(t, []any{1, 2}, b.Properties.m["sizes"].Default)
+	assert.Equal(t, "integer", s.Properties.m["d"].Type)
+	assert.Equal(t, 5, s.Properties.m["d"].Default)
+}
+
+func TestGenerateRefusesCyclicAliases(t *testing.T) {
+	_, err := generate([]byte("a: &x\n  b: *x\n"))
+	assert.ErrorContains(t, err, "an alias refers to a node that contains it")
+}
+
 func TestQuantityRuleSkipsEmptyMaps(t *testing.T) {
 	requests := &Schema{Type: "object"}
 	keyRule("backend.resources.requests", requests)
