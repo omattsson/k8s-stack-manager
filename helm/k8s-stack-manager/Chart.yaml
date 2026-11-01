@@ -2,7 +2,7 @@ apiVersion: v2
 name: k8s-stack-manager
 description: Self-service environments for multi-service Helm applications on your own Kubernetes clusters (web UI, API, MySQL)
 type: application
-version: 0.14.0
+version: 0.14.1
 appVersion: "0.15.1"
 keywords:
   - kubernetes
