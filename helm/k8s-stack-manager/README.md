@@ -18,19 +18,23 @@ This chart installs the backend (Go API), the web UI and, by default, a MySQL da
 
 ## Install
 
-Put the secrets in a values file, not on the command line:
+Put the secrets in a values file that only you can read, not on the command line. The example generates random secrets; replace `stacks.example.com` with a DNS name that points to your ingress:
 
 ```bash
+umask 077
 cat > stack-manager-values.yaml <<EOF
 backend:
   secrets:
     JWT_SECRET: "$(openssl rand -base64 32)"
-    ADMIN_PASSWORD: "your-admin-password"
+    ADMIN_PASSWORD: "$(openssl rand -base64 18)"
     KUBECONFIG_ENCRYPTION_KEY: "$(openssl rand -hex 32)"
 mysql:
   auth:
-    rootPassword: "your-db-password"
+    rootPassword: "$(openssl rand -base64 24)"
+ingress:
+  host: stacks.example.com
 EOF
+chmod 600 stack-manager-values.yaml
 
 helm repo add k8s-stack-manager https://omattsson.github.io/k8s-stack-manager
 helm repo update
@@ -39,7 +43,11 @@ helm install stack-manager k8s-stack-manager/k8s-stack-manager \
   --values stack-manager-values.yaml
 ```
 
-Open the address of your ingress and sign in as `admin`. Then register a cluster (Admin > Clusters; the simplest option is the backend's own service account) and deploy a first stack. The [Getting Started guide](https://github.com/omattsson/k8s-stack-manager/blob/main/docs/getting-started.md) shows every step, also with stackctl.
+The admin password is `ADMIN_PASSWORD` in `stack-manager-values.yaml`.
+
+Set `ingress.host`: with an empty host the routes match every host name, and with the high default Traefik priority they can take traffic from other applications on the same entry point. Configure TLS before you sign in through an ingress that others can reach (`ingress.traefik.tls.secretName`, or `ingress.tls` for `ingress.type=ingress`); without it, the password and the session tokens go over plain HTTP. Until then, use a local port-forward (see [Without an ingress](#without-an-ingress)).
+
+Open the address and sign in as `admin`. Then register a cluster (Admin > Clusters; the simplest option is the backend's own service account) and deploy a first stack. The [Getting Started guide](https://github.com/omattsson/k8s-stack-manager/blob/main/docs/getting-started.md) shows every step, also with stackctl.
 
 ### Without an ingress
 
@@ -60,10 +68,10 @@ kubectl -n stack-manager port-forward svc/stack-manager-k8s-stack-manager-fronte
 | `ingress.host` | `""` | Host name of the ingress. Empty matches all hosts. |
 | `frontend.enabled` | `true` | `false` for a headless (API-only) installation |
 | `frontend.apiProxy.enabled` | `false` | Proxy `/api`, `/ws`, `/health` and `/swagger` through the frontend, for installations without an ingress |
-| `mysql.enabled` | `true` | Bundled MySQL. Set `false` and `backend.env.DB_*` for an external database. |
+| `mysql.enabled` | `true` | Bundled MySQL. For an external database set `false`, `backend.env.DB_HOST`, `DB_PORT`, `DB_USER` and `DB_NAME`, and the password in `backend.secrets.DB_PASSWORD` (or External Secrets): `backend.env` is a ConfigMap. |
 | `mysql.persistence.enabled` | `true` | Persistent volume of the bundled MySQL (5Gi) |
 | `backend.allowedChartRepos` | `[]` | Chart repository URL prefixes that stacks may use. Empty allows every source. Set it on clusters that untrusted users deploy to. |
-| `backend.rbac.scope` | `namespace` | `namespace`: the backend has rights only inside stack namespaces. `cluster`: in all namespaces (only for charts that need cluster-scoped objects). |
+| `backend.rbac.scope` | `namespace` | `namespace`: full rights only inside stack namespaces (a RoleBinding per stack namespace). The backend also reads nodes and pods in all namespaces, and creates, labels and deletes namespaces. `cluster`: the namespaced rights for Helm charts (pods, Secrets, Deployments, Roles and more) in all namespaces. Neither scope lets a chart create cluster-scoped objects such as CRDs, ClusterRoles or webhooks. |
 | `backend.maxInstanceTtlDays` | `30` | Longest time to live and latest stop time of a stack |
 | `backend.portForward.enabled` | `false` | `stackctl stack port-forward` through the backend. Each cluster also needs "Allow port-forward". |
 | `backend.exec.enabled` | `false` | `stackctl stack exec` through the backend. Each cluster also needs "Allow exec", and only containers in `backend.exec.allowedContainers` can be used. |
@@ -93,6 +101,8 @@ helm upgrade stack-manager k8s-stack-manager/k8s-stack-manager \
 ```
 
 ## Uninstall
+
+Back up the database first. `helm uninstall` also deletes the PersistentVolumeClaim of the bundled MySQL; with the usual `Delete` reclaim policy that removes the database for good: the users, the definitions and templates, and the stored cluster credentials.
 
 ```bash
 helm uninstall stack-manager --namespace stack-manager

@@ -27,17 +27,18 @@ helm repo add k8s-stack-manager https://omattsson.github.io/k8s-stack-manager
 helm repo update
 ```
 
-Create a values file with your secrets. Do not pass secrets with `--set`, because they stay in your shell history.
+Create a values file with your secrets that only you can read. Do not pass secrets with `--set`, because they stay in your shell history. The example generates random secrets.
 
 ```bash
+umask 077
 cat > stack-manager-values.yaml <<EOF
 backend:
   secrets:
     JWT_SECRET: "$(openssl rand -base64 32)"
-    ADMIN_PASSWORD: "your-admin-password"
+    ADMIN_PASSWORD: "$(openssl rand -base64 18)"
 mysql:
   auth:
-    rootPassword: "your-db-password"
+    rootPassword: "$(openssl rand -base64 24)"
 EOF
 ```
 
@@ -103,7 +104,7 @@ Create a context, set the API address, and sign in:
 stackctl config use-context my-cluster
 stackctl config set api-url http://localhost:8081
 stackctl login
-# Enter: admin / your-admin-password
+# Enter: admin / the ADMIN_PASSWORD of stack-manager-values.yaml
 ```
 
 Check the connection:
@@ -133,7 +134,7 @@ stackctl cluster list
 
 What rights does the backend have on the cluster?
 
-- With `backend.rbac.scope: namespace` (default), the chart gives the backend rights on namespaced objects only inside stack namespaces. The backend creates the RoleBinding `k8s-stack-manager-access` in each stack namespace. A ValidatingAdmissionPolicy keeps the backend there. A stack chart cannot create cluster-scoped objects (ClusterRoles, CRDs, webhooks) or objects in other namespaces. Set `backend.rbac.scope: cluster` for the old rules, which apply in all namespaces. Use this only when your charts need cluster-scoped objects.
+- With `backend.rbac.scope: namespace` (default), the chart gives the backend rights on namespaced objects only inside stack namespaces. The backend creates the RoleBinding `k8s-stack-manager-access` in each stack namespace. A ValidatingAdmissionPolicy keeps the backend there. A stack chart cannot create cluster-scoped objects (ClusterRoles, CRDs, webhooks) or objects in other namespaces. Set `backend.rbac.scope: cluster` for the old rules: the same namespaced rights in all namespaces. Use it only when your charts create objects in other namespaces; no scope lets a chart create cluster-scoped objects.
 - For an external cluster (kubeconfig), the credentials need the same rights. See [Backend rights on the cluster](../WIKI.md#backend-rights-on-the-cluster).
 - Each deploy and rollback also reads the pod problems of the stack namespace for the deploy log. This needs `list` on `events` and `get` and `list` on `pods`. Without these rights, the deploy works, but the deploy log has no `Pod event:` lines. The backend logs one warning for each operation.
 
