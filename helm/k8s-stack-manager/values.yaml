@@ -785,6 +785,8 @@ ingress:
   traefik:
     entryPoints:
       - web
+    # With a TLS secretName, set entryPoints to the HTTPS entry point of
+    # your Traefik (for example websecure).
     tls: {}
     #  secretName: k8s-stack-manager-tls
     middlewares:

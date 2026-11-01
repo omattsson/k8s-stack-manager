@@ -27,18 +27,22 @@ helm repo add k8s-stack-manager https://omattsson.github.io/k8s-stack-manager
 helm repo update
 ```
 
-Create a values file with your secrets. Do not pass secrets with `--set`, because they stay in your shell history.
+Create a values file with your secrets that only you can read. Do not pass secrets with `--set`, because they stay in your shell history. The example generates random secrets and creates the file with mode 0600; it refuses to overwrite an existing file.
 
 ```bash
+(
+umask 077
+set -o noclobber
 cat > stack-manager-values.yaml <<EOF
 backend:
   secrets:
     JWT_SECRET: "$(openssl rand -base64 32)"
-    ADMIN_PASSWORD: "your-admin-password"
+    ADMIN_PASSWORD: "$(openssl rand -base64 18)"
 mysql:
   auth:
-    rootPassword: "your-db-password"
+    rootPassword: "$(openssl rand -base64 24)"
 EOF
+)
 ```
 
 Install the chart:
@@ -83,7 +87,7 @@ The frontend pod serves only the web application. The ingress sends the paths `/
   ```
 
 - To use a host name, set `ingress.host` (for example `stacks.example.com`) and point the DNS name at the ingress.
-- To use TLS, set `ingress.traefik.tls.secretName`. For `ingress.type=ingress`, set `ingress.tls`. The chart then sets `SECURE_COOKIES=true`, and `APP_PUBLIC_URL=https://<ingress.host>` when `ingress.host` is set (the links in notification channel cards).
+- To use TLS, set `ingress.traefik.tls.secretName`, and set `ingress.traefik.entryPoints` to your HTTPS entry point (for example `[websecure]`): the default is `web`, and a TLS router on `web` does not answer on port 443. For `ingress.type=ingress`, set `ingress.tls`. The chart then sets `SECURE_COOKIES=true`, and `APP_PUBLIC_URL=https://<ingress.host>` when `ingress.host` is set (the links in notification channel cards).
 
 Warning: A `kubectl port-forward` to the frontend Service alone does not give a working UI. By default the frontend pod has no proxy for the API, so the login request fails. If you have no external address, use `kubectl port-forward` to the Service of your ingress controller, or set `frontend.apiProxy.enabled: true`: the frontend then proxies `/api`, `/ws`, `/health` and `/swagger` to the backend, and a port-forward to the frontend Service gives the UI and the API on one address (this is what `make demo` uses).
 
@@ -103,7 +107,7 @@ Create a context, set the API address, and sign in:
 stackctl config use-context my-cluster
 stackctl config set api-url http://localhost:8081
 stackctl login
-# Enter: admin / your-admin-password
+# Enter: admin / the ADMIN_PASSWORD of stack-manager-values.yaml
 ```
 
 Check the connection:
@@ -133,7 +137,9 @@ stackctl cluster list
 
 What rights does the backend have on the cluster?
 
-- With `backend.rbac.scope: namespace` (default), the chart gives the backend rights on namespaced objects only inside stack namespaces. The backend creates the RoleBinding `k8s-stack-manager-access` in each stack namespace. A ValidatingAdmissionPolicy keeps the backend there. A stack chart cannot create cluster-scoped objects (ClusterRoles, CRDs, webhooks) or objects in other namespaces. Set `backend.rbac.scope: cluster` for the old rules, which apply in all namespaces. Use this only when your charts need cluster-scoped objects.
+- With `backend.rbac.scope: namespace` (default), the backend has all rights on namespaced objects, custom resources included, inside stack namespaces. It creates the RoleBinding `k8s-stack-manager-access` in each stack namespace, and a ValidatingAdmissionPolicy keeps it there. Outside stack namespaces it reads nodes and pods, and creates, labels and deletes stack namespaces.
+- `backend.rbac.scope: cluster` gives the rules of chart 0.6 and earlier: a fixed list of namespaced resources (pods, Secrets, Deployments, Roles and more) in all namespaces. Namespaced custom resources are not on the list, so a chart that creates them fails in this scope. Use it only when your charts create objects outside stack namespaces.
+- Helm runs as the backend in both scopes. A stack chart therefore has the backend's rights in every stack namespace, not only its own (with `cluster`, in every namespace). Use `backend.allowedChartRepos` to allow only charts that you trust. No scope lets a chart create cluster-scoped objects (ClusterRoles, CRDs, webhooks).
 - For an external cluster (kubeconfig), the credentials need the same rights. See [Backend rights on the cluster](../WIKI.md#backend-rights-on-the-cluster).
 - Each deploy and rollback also reads the pod problems of the stack namespace for the deploy log. This needs `list` on `events` and `get` and `list` on `pods`. Without these rights, the deploy works, but the deploy log has no `Pod event:` lines. The backend logs one warning for each operation.
 
