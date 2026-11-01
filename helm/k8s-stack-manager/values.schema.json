@@ -119,7 +119,7 @@
           }
         },
         "wsFanout": {
-          "description": "WebSocket fan-out between replicas (env WS_FANOUT_*). Each replica delivers a WebSocket message to its own clients at once and writes one row to the ws_events table. Every replica polls the table each pollInterval and delivers the rows of the other replicas to its clients (delay up to about one pollInterval). The leader deletes rows older than retention every minute. Enabled by default: with one replica the cost is one small indexed query per pollInterval, and a scale-up needs no change. Set enabled: false only for a single replica that must not write to the database. The replica identity is POD_NAME (downward API). MySQL 8 keeps binary logs for 30 days by default, so deploy log lines add to the binary log size on the MySQL volume for that time (binlog_expire_logs_seconds in mysql.config sets a shorter expiry).",
+          "description": "WebSocket fan-out between replicas (env WS_FANOUT_*). Each replica delivers a WebSocket message to its own clients at once and writes one row to the ws_events table. Every replica polls the table each pollInterval and delivers the rows of the other replicas to its clients (delay up to about one pollInterval). The leader deletes rows older than retention every minute. Enabled by default: with one replica the cost is one small indexed query per pollInterval, and a scale-up needs no change. Set enabled: false only for a single replica that must not write to the database. The replica identity is POD_NAME (downward API). Note: the rows go to the MySQL binary log like all writes. The bundled MySQL 8 keeps binary logs for 30 days by default, so deploy log lines add to the binary log size on the MySQL volume for that time (binlog_expire_logs_seconds in mysql.config sets a shorter expiry).",
           "type": "object",
           "properties": {
             "enabled": {
@@ -176,6 +176,7 @@
               "default": 30
             },
             "actionRunDays": {
+              "description": "action_runs: the run history of custom actions (by start time).",
               "type": [
                 "integer",
                 "string"
@@ -669,7 +670,7 @@
           }
         },
         "portForward": {
-          "description": "Port-forward to a stack service through the backend over a WebSocket (GET /api/v1/stack-instances/:id/port-forward, used by `stackctl stack port-forward`). Off by default. authentication (basic auth, SSO proxies in front of tools): the kubelet connects inside the network namespace of the pod. The owner of an instance and every devops and admin user can reach every port of the services of their stacks. Every tunnel is audited (port_forward, port_forward_end). Two switches must both be on: this one, and the per-cluster switch allow_port_forward (Admin \u003e Clusters, off by default). */*/* in each stack namespace, so no extra rule is rendered. With rbac.scope=cluster the chart adds pods/portforward (get, create) to the backend ClusterRole only when this is enabled. A registered cluster with its own kubeconfig needs the same verbs in that identity. The backend refuses a namespace without the label managed-by=k8s-stack-manager and its own namespace (POD_NAMESPACE, set by the chart through the downward API). The limits are per backend replica: the real limit is the number of replicas times maxPerUser. A process cap of 500 tunnels per replica applies. upgrade; set no short timeouts on it. nginx-ingress (ingress.type=ingress) needs the annotations nginx.ingress.kubernetes.io/proxy-read-timeout and nginx.ingress.kubernetes.io/proxy-send-timeout (seconds) of at least maxDuration plus a margin, for example \"3700\" for the default 1h. The frontend image proxy has 3700s; raise it too when you raise maxDuration.",
+          "description": "Port-forward to a stack service through the backend over a WebSocket (GET /api/v1/stack-instances/:id/port-forward, used by `stackctl stack port-forward`). Off by default. SECURITY: a tunnel goes past NetworkPolicies and past ingress authentication (basic auth, SSO proxies in front of tools): the kubelet connects inside the network namespace of the pod. The owner of an instance and every devops and admin user can reach every port of the services of their stacks. Every tunnel is audited (port_forward, port_forward_end). Two switches must both be on: this one, and the per-cluster switch allow_port_forward (Admin \u003e Clusters, off by default). RBAC: with rbac.scope=namespace the stack-access ClusterRole already grants */*/* in each stack namespace, so no extra rule is rendered. With rbac.scope=cluster the chart adds pods/portforward (get, create) to the backend ClusterRole only when this is enabled. A registered cluster with its own kubeconfig needs the same verbs in that identity. The backend refuses a namespace without the label managed-by=k8s-stack-manager and its own namespace (POD_NAMESPACE, set by the chart through the downward API). The limits are per backend replica: the real limit is the number of replicas times maxPerUser. A process cap of 500 tunnels per replica applies. Ingress: a tunnel is a long WebSocket under /api. Traefik passes the upgrade; set no short timeouts on it. nginx-ingress (ingress.type=ingress) needs the annotations nginx.ingress.kubernetes.io/proxy-read-timeout and nginx.ingress.kubernetes.io/proxy-send-timeout (seconds) of at least maxDuration plus a margin, for example \"3700\" for the default 1h. The frontend image proxy has 3700s; raise it too when you raise maxDuration.",
           "type": "object",
           "properties": {
             "enabled": {
@@ -699,7 +700,7 @@
           }
         },
         "exec": {
-          "description": "Run a command in a stack container through the backend over a WebSocket (GET /api/v1/stack-instances/:id/exec, used by `stackctl stack exec`). Off by default. No shell, no stdin, no TTY: one command, its output, its exit code. secrets (`env`, /proc/1/environ), and reads every file the container can read. The owner of an instance and every devops and admin user can run commands in the allowed containers of their stacks. Keep allowedContainers short and name only containers whose environment you accept to expose. Every command is audited (exec, exec_end) with its arguments, which are not redacted: do not put secrets in command arguments. The backend refuses a container that holds a service-account token (automount, a projected token, or a Secret of type kubernetes.io/service-account-token mounted or referenced in env) unless allowServiceAccountToken is true. With shareProcessNamespace every running container of the pod counts: a command reads their files through /proc. Two switches must both be on: this one, and the per-cluster switch allow_exec (Admin \u003e Clusters, off by default). API keys follow backend.streams.allowApiKeys. */*/* in each stack namespace (pods/exec, serviceaccounts get and secrets get included), so no extra rule is rendered. With rbac.scope=cluster the chart keeps pods/exec create in the backend ClusterRole as before (stack charts whose Roles grant pods/exec need the backend to hold it: no escalate verb) and adds get when this is enabled. A registered cluster with its own kubeconfig needs the same verbs in that identity, and get on serviceaccounts and secrets (a refused read gives 403 token_check_forbidden). The limits are per backend replica. Ingress: see portForward (a session is a long WebSocket; nginx-ingress needs proxy-read-timeout and proxy-send-timeout of at least maxDuration plus a margin).",
+          "description": "Run a command in a stack container through the backend over a WebSocket (GET /api/v1/stack-instances/:id/exec, used by `stackctl stack exec`). Off by default. No shell, no stdin, no TTY: one command, its output, its exit code. SECURITY: a command shows the environment of the container, including its secrets (`env`, /proc/1/environ), and reads every file the container can read. The owner of an instance and every devops and admin user can run commands in the allowed containers of their stacks. Keep allowedContainers short and name only containers whose environment you accept to expose. Every command is audited (exec, exec_end) with its arguments, which are not redacted: do not put secrets in command arguments. The backend refuses a container that holds a service-account token (automount, a projected token, or a Secret of type kubernetes.io/service-account-token mounted or referenced in env) unless allowServiceAccountToken is true. With shareProcessNamespace every running container of the pod counts: a command reads their files through /proc. Two switches must both be on: this one, and the per-cluster switch allow_exec (Admin \u003e Clusters, off by default). API keys follow backend.streams.allowApiKeys. RBAC: with rbac.scope=namespace the stack-access ClusterRole already grants */*/* in each stack namespace (pods/exec, serviceaccounts get and secrets get included), so no extra rule is rendered. With rbac.scope=cluster the chart keeps pods/exec create in the backend ClusterRole as before (stack charts whose Roles grant pods/exec need the backend to hold it: no escalate verb) and adds get when this is enabled. A registered cluster with its own kubeconfig needs the same verbs in that identity, and get on serviceaccounts and secrets (a refused read gives 403 token_check_forbidden). The limits are per backend replica. Ingress: see portForward (a session is a long WebSocket; nginx-ingress needs proxy-read-timeout and proxy-send-timeout of at least maxDuration plus a margin).",
           "type": "object",
           "properties": {
             "enabled": {
@@ -903,15 +904,19 @@
               "default": 6
             },
             "targetCPUUtilizationPercentage": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 100,
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
               "default": 75
             },
             "targetMemoryUtilizationPercentage": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 100,
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
               "default": 80
             }
           }
@@ -1270,15 +1275,19 @@
               "default": 4
             },
             "targetCPUUtilizationPercentage": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 100,
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
               "default": 75
             },
             "targetMemoryUtilizationPercentage": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 100,
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
               "default": 80
             }
           }

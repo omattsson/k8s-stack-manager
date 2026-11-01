@@ -82,8 +82,12 @@ func (p *Props) MarshalJSON() ([]byte, error) {
 func f(v float64) *float64 { return &v }
 
 var (
-	dashes     = regexp.MustCompile(`^-{3,}$`)
-	commentKey = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]*:(\s|$)`)
+	dashes = regexp.MustCompile(`^-{3,}$`)
+	// A commented-out YAML key: "key:" alone, or with one value (a token, a
+	// quoted string, a flow list or map, a block marker) and an optional
+	// trailing comment. Prose with a heading ("SECURITY: a tunnel goes ...")
+	// has several words after the colon and is kept.
+	commentKey = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_./-]*:(\s*|\s+("[^"]*"|'[^']*'|\[[^\]]*\]|\{[^}]*\}|[|>][-+]?|\S+))(\s+#.*)?$`)
 )
 
 // isBannerLine reports whether a comment line is a row of dashes.
@@ -153,57 +157,71 @@ func scalar(nd *yaml.Node) (any, string) {
 func build(nd *yaml.Node) *Schema {
 	switch nd.Kind {
 	case yaml.MappingNode:
-		s := &Schema{Type: "object"}
-		if len(nd.Content) > 0 {
-			s.Properties = &Props{}
-		}
-		for i := 0; i+1 < len(nd.Content); i += 2 {
-			k, v := nd.Content[i], nd.Content[i+1]
-			c := build(v)
-			c.Description = describe(k.HeadComment, k.LineComment, v.LineComment)
-			s.Properties.set(k.Value, c)
-		}
-		return s
+		return buildMapping(nd)
 	case yaml.SequenceNode:
-		s := &Schema{Type: "array"}
-		var types []string
-		var def []any
-		for _, it := range nd.Content {
-			if it.Kind != yaml.ScalarNode {
-				types = append(types, "object")
-				continue
-			}
-			v, t := scalar(it)
-			types = append(types, t)
-			def = append(def, v)
-		}
-		if len(types) > 0 {
-			same := true
-			for _, t := range types {
-				same = same && t == types[0]
-			}
-			if same {
-				s.Items = &Schema{Type: types[0]}
-			}
-		}
-		if len(def) == len(nd.Content) {
-			if def == nil {
-				def = []any{}
-			}
-			s.Default = def
-		}
-		return s
+		return buildSequence(nd)
 	default:
-		v, t := scalar(nd)
-		s := &Schema{Default: v}
-		if t != "" {
-			s.Type = t
-		}
-		if t == "string" && strings.Contains(nd.Value, "\n") {
-			s.Default = nil // multi-line text (mysql.config) is easier to read in values.yaml
-		}
-		return s
+		return buildScalar(nd)
 	}
+}
+
+func buildMapping(nd *yaml.Node) *Schema {
+	s := &Schema{Type: "object"}
+	if len(nd.Content) > 0 {
+		s.Properties = &Props{}
+	}
+	for i := 0; i+1 < len(nd.Content); i += 2 {
+		k, v := nd.Content[i], nd.Content[i+1]
+		c := build(v)
+		c.Description = describe(k.HeadComment, k.LineComment, v.LineComment)
+		s.Properties.set(k.Value, c)
+	}
+	return s
+}
+
+// buildSequence types the items when they all have one type, and keeps a
+// list of scalars as the default.
+func buildSequence(nd *yaml.Node) *Schema {
+	s := &Schema{Type: "array"}
+	var types []string
+	def := []any{}
+	for _, it := range nd.Content {
+		if it.Kind != yaml.ScalarNode {
+			types = append(types, "object")
+			continue
+		}
+		v, t := scalar(it)
+		types = append(types, t)
+		def = append(def, v)
+	}
+	if len(types) > 0 && allEqual(types) {
+		s.Items = &Schema{Type: types[0]}
+	}
+	if len(def) == len(nd.Content) {
+		s.Default = def
+	}
+	return s
+}
+
+func allEqual(types []string) bool {
+	for _, t := range types {
+		if t != types[0] {
+			return false
+		}
+	}
+	return true
+}
+
+func buildScalar(nd *yaml.Node) *Schema {
+	v, t := scalar(nd)
+	s := &Schema{Default: v}
+	if t != "" {
+		s.Type = t
+	}
+	if t == "string" && strings.Contains(nd.Value, "\n") {
+		s.Default = nil // multi-line text (mysql.config) is easier to read in values.yaml
+	}
+	return s
 }
 
 func get(s *Schema, path string) *Schema {
@@ -237,35 +255,47 @@ var (
 	envScalar   = []string{"string", "number", "boolean"}
 )
 
+// keyRule applies the rules that depend on the last path segment.
+func keyRule(path string, s *Schema) {
+	last := path[strings.LastIndex(path, ".")+1:]
+	switch {
+	case strings.Contains(path, ".resources.") && s.Properties == nil:
+		s.Type = k8sQuantity // cpu: 1, memory: 1Gi
+	case last == "pullPolicy":
+		s.Enum = []any{"Always", "IfNotPresent", "Never"}
+	case last == "port":
+		s.Minimum, s.Maximum = f(1), f(65535)
+	case last == "replicas" || last == "minReplicas" || last == "maxReplicas":
+		s.Minimum = f(0)
+	case strings.HasSuffix(last, "UtilizationPercentage"):
+		// 0 or null leaves the metric out of the HPA; utilization is
+		// relative to the requests, so targets above 100 are valid.
+		s.Type, s.Minimum = []string{"integer", "null"}, f(0)
+	case last == "maxUnavailable" || last == "minAvailable":
+		s.Type = []string{"integer", "string"} // 1 or "25%"
+	case (last == "annotations" || last == "labels") && s.Type == "object":
+		s.AdditionalProperties = &Schema{Type: "string"}
+	case last == "priorityClassName":
+		s.Description = "Name of an existing PriorityClass for these pods. Empty: the cluster default. Use it so that the scheduler keeps the stack manager running when stack pods fill the nodes."
+	}
+}
+
+// envIntegerRule keeps quoted numbers valid for integers that the chart
+// renders into backend environment variables.
+func envIntegerRule(path string, s *Schema) {
+	// A quoted number in a values file works today, so keep accepting it.
+	if strings.HasPrefix(path, "backend.logRetention.") || strings.HasPrefix(path, "backend.portForward.max") ||
+		strings.HasPrefix(path, "backend.exec.max") {
+		if s.Type == "integer" {
+			s.Type, s.Pattern = []string{"integer", "string"}, digits
+		}
+	}
+}
+
 func rules(root *Schema) {
 	walk(root, "", func(path string, s *Schema) {
-		last := path[strings.LastIndex(path, ".")+1:]
-		switch {
-		case strings.Contains(path, ".resources.") && s.Properties == nil:
-			s.Type = k8sQuantity // cpu: 1, memory: 1Gi
-		case last == "pullPolicy":
-			s.Enum = []any{"Always", "IfNotPresent", "Never"}
-		case last == "port":
-			s.Minimum, s.Maximum = f(1), f(65535)
-		case last == "replicas" || last == "minReplicas" || last == "maxReplicas":
-			s.Minimum = f(0)
-		case strings.HasSuffix(last, "UtilizationPercentage"):
-			s.Minimum, s.Maximum = f(1), f(100)
-		case last == "maxUnavailable" || last == "minAvailable":
-			s.Type = []string{"integer", "string"} // 1 or "25%"
-		case (last == "annotations" || last == "labels") && s.Type == "object":
-			s.AdditionalProperties = &Schema{Type: "string"}
-		case last == "priorityClassName":
-			s.Description = "Name of an existing PriorityClass for these pods. Empty: the cluster default. Use it so that the scheduler keeps the stack manager running when stack pods fill the nodes."
-		}
-		// Integers that the chart renders into backend environment variables:
-		// a quoted number in a values file works today, so keep accepting it.
-		if strings.HasPrefix(path, "backend.logRetention.") || strings.HasPrefix(path, "backend.portForward.max") ||
-			strings.HasPrefix(path, "backend.exec.max") {
-			if s.Type == "integer" {
-				s.Type, s.Pattern = []string{"integer", "string"}, digits
-			}
-		}
+		keyRule(path, s)
+		envIntegerRule(path, s)
 	})
 
 	global := get(root, "global")

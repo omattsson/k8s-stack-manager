@@ -62,6 +62,20 @@ func TestSchemaRules(t *testing.T) {
 	assert.Equal(t, map[string]any{"type": []any{"string", "number", "boolean"}}, env["additionalProperties"])
 	assert.Equal(t, []any{"string", "number", "boolean"}, at("backend", "env", "SERVER_PORT")["type"])
 
+	// The security warnings of the stream features reach the descriptions.
+	assert.Contains(t, at("backend", "portForward")["description"], "SECURITY: a tunnel goes past NetworkPolicies")
+	assert.Contains(t, at("backend", "exec")["description"], "SECURITY: a command shows the environment of the container")
+
+	// HPA targets: 0 or null leaves the metric out; above 100 is valid.
+	for _, c := range []string{"backend", "frontend"} {
+		for _, m := range []string{"targetCPUUtilizationPercentage", "targetMemoryUtilizationPercentage"} {
+			target := at(c, "autoscaling", m)
+			assert.Equal(t, []any{"integer", "null"}, target["type"], c+"."+m)
+			assert.Equal(t, float64(0), target["minimum"], c+"."+m)
+			assert.NotContains(t, target, "maximum", c+"."+m)
+		}
+	}
+
 	// No placeholder passwords as defaults.
 	assert.NotContains(t, at("backend", "secrets", "JWT_SECRET"), "default")
 	assert.NotContains(t, at("mysql", "auth", "rootPassword"), "default")
@@ -78,6 +92,10 @@ func TestDescribe(t *testing.T) {
 		{"drops a section banner", []string{"# -----\n# Backend\n# -----\n# The API."}, "The API."},
 		{"drops commented-out keys", []string{"#  secretName: k8s-stack-manager-tls"}, ""},
 		{"drops an example", []string{"# Extra labels.\n# Example:\n# namespaceLabels:\n#   team: a"}, "Extra labels."},
+		{"drops a commented-out key with a value and a comment", []string{"# ACCESS_TOKEN_EXPIRATION: \"15m\"   # lifetime"}, ""},
+		{"drops a commented-out flow list", []string{"#   events: [\"deploy-finalized\"]\n# events: [a, b]"}, ""},
+		{"keeps a prose heading", []string{"# SECURITY: a tunnel goes past NetworkPolicies."}, "SECURITY: a tunnel goes past NetworkPolicies."},
+		{"keeps a two-word heading", []string{"# Note: the rows go to the binary log."}, "Note: the rows go to the binary log."},
 		{"line comment", []string{"", "# Database name to create"}, "Database name to create"},
 	}
 	for _, tt := range tests {
