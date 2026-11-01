@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 const chartDir = "../../../helm/k8s-stack-manager/"
@@ -110,4 +111,27 @@ func TestGenerateErrors(t *testing.T) {
 	assert.Error(t, err)
 	_, err = generate([]byte("a: [unclosed"))
 	assert.Error(t, err)
+	_, err = generate([]byte("a:\n  b: !!int abc\n"))
+	assert.ErrorContains(t, err, "a: b: line 2")
+}
+
+// The rules expect the chart paths, so the edge cases run through the
+// building blocks.
+func TestScalarUsesYAMLRules(t *testing.T) {
+	var doc yaml.Node
+	require.NoError(t, yaml.Unmarshal([]byte("[TRUE, 0x10, 1_000, 1.5, null, \"8.4\", text]"), &doc))
+	s, err := build(doc.Content[0])
+	require.NoError(t, err)
+	assert.Equal(t, []any{true, 16, 1000, 1.5, nil, "8.4", "text"}, s.Default)
+	assert.Nil(t, s.Items, "mixed item types get no items type")
+}
+
+func TestQuantityRuleSkipsEmptyMaps(t *testing.T) {
+	requests := &Schema{Type: "object"}
+	keyRule("backend.resources.requests", requests)
+	assert.Equal(t, "object", requests.Type)
+
+	cpu := &Schema{Type: "string"}
+	keyRule("backend.resources.requests.cpu", cpu)
+	assert.Equal(t, k8sQuantity, cpu.Type)
 }

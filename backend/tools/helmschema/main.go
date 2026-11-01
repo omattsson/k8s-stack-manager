@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"os"
 	"regexp"
-	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -137,24 +136,30 @@ func describe(comments ...string) string {
 	return strings.TrimSpace(d)
 }
 
-func scalar(nd *yaml.Node) (any, string) {
-	switch nd.Tag {
-	case "!!bool":
-		return nd.Value == "true", "boolean"
-	case "!!int":
-		v, _ := strconv.ParseInt(nd.Value, 10, 64)
-		return v, "integer"
-	case "!!float":
-		v, _ := strconv.ParseFloat(nd.Value, 64)
-		return v, "number"
-	case "!!null":
-		return nil, ""
+// scalar decodes a scalar with the YAML rules (TRUE, 0x10, 1_000) and
+// returns its value and JSON schema type ("" for null).
+func scalar(nd *yaml.Node) (any, string, error) {
+	var v any
+	if err := nd.Decode(&v); err != nil {
+		return nil, "", fmt.Errorf("line %d: %w", nd.Line, err)
+	}
+	switch x := v.(type) {
+	case nil:
+		return nil, "", nil
+	case bool:
+		return x, "boolean", nil
+	case int, int64, uint64:
+		return x, "integer", nil
+	case float64:
+		return x, "number", nil
+	case string:
+		return x, "string", nil
 	default:
-		return nd.Value, "string"
+		return nd.Value, "string", nil // for example a timestamp
 	}
 }
 
-func build(nd *yaml.Node) *Schema {
+func build(nd *yaml.Node) (*Schema, error) {
 	switch nd.Kind {
 	case yaml.MappingNode:
 		return buildMapping(nd)
@@ -165,23 +170,26 @@ func build(nd *yaml.Node) *Schema {
 	}
 }
 
-func buildMapping(nd *yaml.Node) *Schema {
+func buildMapping(nd *yaml.Node) (*Schema, error) {
 	s := &Schema{Type: "object"}
 	if len(nd.Content) > 0 {
 		s.Properties = &Props{}
 	}
 	for i := 0; i+1 < len(nd.Content); i += 2 {
 		k, v := nd.Content[i], nd.Content[i+1]
-		c := build(v)
+		c, err := build(v)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", k.Value, err)
+		}
 		c.Description = describe(k.HeadComment, k.LineComment, v.LineComment)
 		s.Properties.set(k.Value, c)
 	}
-	return s
+	return s, nil
 }
 
 // buildSequence types the items when they all have one type, and keeps a
 // list of scalars as the default.
-func buildSequence(nd *yaml.Node) *Schema {
+func buildSequence(nd *yaml.Node) (*Schema, error) {
 	s := &Schema{Type: "array"}
 	var types []string
 	def := []any{}
@@ -190,7 +198,10 @@ func buildSequence(nd *yaml.Node) *Schema {
 			types = append(types, "object")
 			continue
 		}
-		v, t := scalar(it)
+		v, t, err := scalar(it)
+		if err != nil {
+			return nil, err
+		}
 		types = append(types, t)
 		def = append(def, v)
 	}
@@ -200,7 +211,7 @@ func buildSequence(nd *yaml.Node) *Schema {
 	if len(def) == len(nd.Content) {
 		s.Default = def
 	}
-	return s
+	return s, nil
 }
 
 func allEqual(types []string) bool {
@@ -212,8 +223,11 @@ func allEqual(types []string) bool {
 	return true
 }
 
-func buildScalar(nd *yaml.Node) *Schema {
-	v, t := scalar(nd)
+func buildScalar(nd *yaml.Node) (*Schema, error) {
+	v, t, err := scalar(nd)
+	if err != nil {
+		return nil, err
+	}
 	s := &Schema{Default: v}
 	if t != "" {
 		s.Type = t
@@ -221,7 +235,7 @@ func buildScalar(nd *yaml.Node) *Schema {
 	if t == "string" && strings.Contains(nd.Value, "\n") {
 		s.Default = nil // multi-line text (mysql.config) is easier to read in values.yaml
 	}
-	return s
+	return s, nil
 }
 
 func get(s *Schema, path string) *Schema {
@@ -259,7 +273,7 @@ var (
 func keyRule(path string, s *Schema) {
 	last := path[strings.LastIndex(path, ".")+1:]
 	switch {
-	case strings.Contains(path, ".resources.") && s.Properties == nil:
+	case strings.Contains(path, ".resources.") && s.Type != "object":
 		s.Type = k8sQuantity // cpu: 1, memory: 1Gi
 	case last == "pullPolicy":
 		s.Enum = []any{"Always", "IfNotPresent", "Never"}
@@ -491,7 +505,10 @@ func generate(values []byte) ([]byte, error) {
 	if len(doc.Content) == 0 {
 		return nil, fmt.Errorf("parse values: empty document")
 	}
-	root := build(doc.Content[0])
+	root, err := build(doc.Content[0])
+	if err != nil {
+		return nil, fmt.Errorf("parse values: %w", err)
+	}
 	root.Schema = "http://json-schema.org/draft-07/schema#"
 	root.Title = "k8s-stack-manager Helm chart values"
 	rules(root)

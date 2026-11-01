@@ -750,7 +750,9 @@ helm-lint: ## Lint the Helm chart
 		--values $(HELM_CHART)/tests/external-secrets-values.yaml
 
 helm-schema: ## Regenerate the values schema of the Helm chart from values.yaml
-	go -C backend run ./tools/helmschema ../$(HELM_CHART)/values.yaml > $(HELM_CHART)/values.schema.json
+	@tmp=$$(mktemp) && trap 'rm -f "$$tmp"' EXIT && \
+		go -C backend run ./tools/helmschema ../$(HELM_CHART)/values.yaml > "$$tmp" && \
+		cp "$$tmp" $(HELM_CHART)/values.schema.json
 
 helm-test: ## Verify Deployment, Argo Rollout, and External Secrets Helm renders
 	@set -e; \
