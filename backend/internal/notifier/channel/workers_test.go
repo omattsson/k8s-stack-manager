@@ -321,6 +321,17 @@ func TestDispatcher_StopLeavesNoWorker(t *testing.T) {
 	d.Dispatch(context.Background(), EventPayload{EventType: "deployment.success"})
 	slowA.waitStarted(t, 1)
 	slowB.waitStarted(t, 1)
+	// The healthy channel finishes its delivery before Stop. Without the wait,
+	// a slow runner can still have it before the request when Stop cancels
+	// it, and an event that never started gets no delivery log.
+	require.Eventually(t, func() bool {
+		for _, l := range repo.Deliveries() {
+			if l.ChannelID == "h" {
+				return true
+			}
+		}
+		return false
+	}, 5*time.Second, 5*time.Millisecond, "the healthy channel gets its event")
 	assert.Equal(t, int64(3), d.workers.running.Load())
 
 	done := make(chan struct{})
