@@ -11,6 +11,14 @@ updates:
       - "go"
     commit-message:
       prefix: "deps(go):"
+    # One pull request for the minor and patch updates; a major update gets its own.
+    groups:
+      go-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
   - package-ecosystem: "npm"
     directory: "/frontend"
@@ -51,6 +59,14 @@ updates:
       - "ci"
     commit-message:
       prefix: "deps(actions):"
+    # One pull request for the minor and patch updates; a major update gets its own.
+    groups:
+      actions:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
   - package-ecosystem: "docker"
     directory: "/backend"

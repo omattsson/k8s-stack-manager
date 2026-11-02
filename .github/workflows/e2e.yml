@@ -15,14 +15,10 @@ on:
       - 'docker-compose.yml'
       - 'Makefile'
       - '.github/workflows/e2e.yml'
-  push:
-    branches: [ main ]
-    paths:
-      - 'frontend/**'
-      - 'backend/**'
-      - 'docker-compose.yml'
-      - 'Makefile'
-      - '.github/workflows/e2e.yml'
+  # No run on push to main: the pull request ran the suite on the same code.
+  # The weekly run checks main after several merges.
+  schedule:
+    - cron: '30 4 * * 1'
   workflow_dispatch:
 
 concurrency:

@@ -1,10 +1,22 @@
 name: CodeQL
 
+# Changes to docs, the Helm chart and the load tests skip the analysis; the
+# weekly run covers the whole repository.
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'helm/**'
+      - 'loadtest/**'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'helm/**'
+      - 'loadtest/**'
   schedule:
     - cron: '25 5 * * 3'
 
