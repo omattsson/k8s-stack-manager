@@ -2,8 +2,8 @@ apiVersion: v2
 name: k8s-stack-manager
 description: Self-service environments for multi-service Helm applications on your own Kubernetes clusters (web UI, API, MySQL)
 type: application
-version: 0.15.1
-appVersion: "0.16.0"
+version: 0.15.2
+appVersion: "0.16.1"
 keywords:
   - kubernetes
   - helm
@@ -27,12 +27,10 @@ maintainers:
 annotations:
   artifacthub.io/category: integration-delivery
   artifacthub.io/changes: |
-    - kind: added
-      description: Values schema (values.schema.json). Helm checks the values on install, upgrade, template and lint, and Artifact Hub lists every value with its type, default and description.
+    - kind: fixed
+      description: The stack page shows the stackctl port-forward and exec commands to stack owners with the role user. GET /clusters and GET /clusters/{id} now return allow_port_forward and allow_exec in the summary for this role.
     - kind: changed
-      description: A value of the wrong type now stops the install with a schema error, for example a switch given as a string (--set-string x.enabled=true; use true) or an image tag given as a number (quote it).
-    - kind: added
-      description: Changelog of each chart version on Artifact Hub (artifacthub.io/changes).
+      description: Dependency updates (Kubernetes client-go 0.37.2, axios 1.21.0, react-router-dom 7.18.5).
   artifacthub.io/license: MIT
   artifacthub.io/links: |
     - name: Documentation
@@ -43,9 +41,9 @@ annotations:
       url: https://github.com/omattsson/stackctl
   artifacthub.io/images: |
     - name: backend
-      image: ghcr.io/omattsson/k8s-stack-manager/backend:0.16.0
+      image: ghcr.io/omattsson/k8s-stack-manager/backend:0.16.1
     - name: frontend
-      image: ghcr.io/omattsson/k8s-stack-manager/frontend:0.16.0
+      image: ghcr.io/omattsson/k8s-stack-manager/frontend:0.16.1
     - name: mysql
       image: mysql:8.4
   artifacthub.io/screenshots: |
