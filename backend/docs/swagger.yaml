@@ -250,6 +250,10 @@ definitions:
     type: object
   handlers.ClusterSummary:
     properties:
+      allow_exec:
+        type: boolean
+      allow_port_forward:
+        type: boolean
       id:
         type: string
       is_default:
@@ -4399,7 +4403,7 @@ paths:
     get:
       description: Returns all registered clusters. Kubeconfig data is never included
         in responses. Admin/DevOps users receive full cluster details; other roles
-        receive a summary (id, name, is_default only).
+        receive a summary (id, name, is_default, allow_port_forward, allow_exec).
       produces:
       - application/json
       responses:
@@ -4504,7 +4508,7 @@ paths:
     get:
       description: Returns a single cluster by ID. Kubeconfig data is never included.
         Admin/DevOps users receive full cluster details; other roles receive a summary
-        (id, name, is_default only).
+        (id, name, is_default, allow_port_forward, allow_exec).
       parameters:
       - description: Cluster ID
         in: path

@@ -242,15 +242,15 @@ test.describe('Exec (no cluster)', () => {
       last_checked: '2026-10-19T10:00:00Z',
     };
 
-    async function mockRunning(page: Page, status: object = namespaceStatus) {
-      await page.route(new RegExp(`/api/v1/stack-instances/${instanceId}(\\?.*)?$`), async (route) => {
+    async function mockRunning(page: Page, status: object = namespaceStatus, id: string = instanceId) {
+      await page.route(new RegExp(`/api/v1/stack-instances/${id}(\\?.*)?$`), async (route) => {
         if (route.request().method() !== 'GET') return route.continue();
         const res = await route.fetch();
         if (!res.ok()) return route.fulfill({ response: res });
         return route.fulfill({ response: res, json: { ...(await res.json()), status: 'running' } });
       });
       // A RegExp, not a glob: the page asks for /pods?exec_hints=true.
-      await page.route(new RegExp(`/api/v1/stack-instances/${instanceId}/pods(\\?.*)?$`), (route) => route.fulfill({ json: status }));
+      await page.route(new RegExp(`/api/v1/stack-instances/${id}/pods(\\?.*)?$`), (route) => route.fulfill({ json: status }));
     }
 
     test.afterEach(async ({ page }) => {
@@ -285,6 +285,31 @@ test.describe('Exec (no cluster)', () => {
       await expect(page.getByText(`stackctl stack exec ${instanceName} e2e-exec-chart -c worker -- <command>`, { exact: true })).toBeVisible();
       await expect(page.getByText(/stackctl stack exec .* e2e-tok/)).toHaveCount(0);
       await expect(page.getByText(/API keys are not accepted/)).toBeVisible();
+    });
+
+    test('shows the stackctl exec command to the owner with the role user (#749)', async ({ page }) => {
+      // The user owns the instance; the cluster read is not mocked. The instance
+      // names its cluster, so the page reads GET /clusters/{id}.
+      await setClusterSwitch(true);
+      await loginAsUser(page);
+      await page.goto('/');
+      const userToken = await tokenFromPage(page);
+      const ownName = uniqueName('e2e-exec-own');
+      const created = await api.post(`${API_BASE}/api/v1/stack-instances`, {
+        headers: auth(userToken),
+        data: { stack_definition_id: definitionId, name: ownName, branch: 'main', cluster_id: clusterId },
+      });
+      expect(created.ok(), `create instance: ${created.status()}`).toBe(true);
+      const ownId: string = (await created.json()).id;
+      try {
+        await mockRunning(page, namespaceStatus, ownId);
+        await page.goto(`/stack-instances/${ownId}`);
+        await expect(
+          page.getByText(`stackctl stack exec ${ownName} e2e-exec-chart -- <command>`, { exact: true }),
+        ).toBeVisible({ timeout: 10_000 });
+      } finally {
+        await api.delete(`${API_BASE}/api/v1/stack-instances/${ownId}`, { headers: auth(adminToken) });
+      }
     });
 
     test('hides the command when the cluster does not allow exec', async ({ page }) => {

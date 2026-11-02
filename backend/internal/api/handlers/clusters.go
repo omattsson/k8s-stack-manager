@@ -44,10 +44,23 @@ const (
 const logKeyClusterID = "cluster_id"
 
 // ClusterSummary is the reduced response for non-admin/non-devops users.
+// The stream switches let the stack page show the stackctl commands to stack owners (#749).
 type ClusterSummary struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	IsDefault bool   `json:"is_default"`
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	IsDefault        bool   `json:"is_default"`
+	AllowPortForward bool   `json:"allow_port_forward"`
+	AllowExec        bool   `json:"allow_exec"`
+}
+
+func newClusterSummary(cl *models.Cluster) ClusterSummary {
+	return ClusterSummary{
+		ID:               cl.ID,
+		Name:             cl.Name,
+		IsDefault:        cl.IsDefault,
+		AllowPortForward: cl.AllowPortForward,
+		AllowExec:        cl.AllowExec,
+	}
 }
 
 // CreateClusterRequest is the input payload for creating a cluster.
@@ -223,7 +236,7 @@ func NewClusterHandlerWithQuotas(
 
 // ListClusters godoc
 // @Summary      List all clusters
-// @Description  Returns all registered clusters. Kubeconfig data is never included in responses. Admin/DevOps users receive full cluster details; other roles receive a summary (id, name, is_default only).
+// @Description  Returns all registered clusters. Kubeconfig data is never included in responses. Admin/DevOps users receive full cluster details; other roles receive a summary (id, name, is_default, allow_port_forward, allow_exec).
 // @Tags         clusters
 // @Produce      json
 // @Success      200  {array}   models.Cluster         "Full details (admin/devops)"
@@ -241,8 +254,8 @@ func (h *ClusterHandler) ListClusters(c *gin.Context) {
 
 	if !isPrivilegedRole(c) {
 		summaries := make([]ClusterSummary, len(clusters))
-		for i, cl := range clusters {
-			summaries[i] = ClusterSummary{ID: cl.ID, Name: cl.Name, IsDefault: cl.IsDefault}
+		for i := range clusters {
+			summaries[i] = newClusterSummary(&clusters[i])
 		}
 		c.JSON(http.StatusOK, summaries)
 		return
@@ -350,7 +363,7 @@ func (h *ClusterHandler) CreateCluster(c *gin.Context) {
 
 // GetCluster godoc
 // @Summary      Get cluster details
-// @Description  Returns a single cluster by ID. Kubeconfig data is never included. Admin/DevOps users receive full cluster details; other roles receive a summary (id, name, is_default only).
+// @Description  Returns a single cluster by ID. Kubeconfig data is never included. Admin/DevOps users receive full cluster details; other roles receive a summary (id, name, is_default, allow_port_forward, allow_exec).
 // @Tags         clusters
 // @Produce      json
 // @Param        id  path  string  true  "Cluster ID"
@@ -371,7 +384,7 @@ func (h *ClusterHandler) GetCluster(c *gin.Context) {
 	}
 
 	if !isPrivilegedRole(c) {
-		c.JSON(http.StatusOK, ClusterSummary{ID: cl.ID, Name: cl.Name, IsDefault: cl.IsDefault})
+		c.JSON(http.StatusOK, newClusterSummary(cl))
 		return
 	}
 
