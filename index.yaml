@@ -4,6 +4,62 @@ entries:
   - annotations:
       artifacthub.io/category: integration-delivery
       artifacthub.io/changes: |
+        - kind: fixed
+          description: The stack page shows the stackctl port-forward and exec commands to stack owners with the role user. GET /clusters and GET /clusters/{id} now return allow_port_forward and allow_exec in the summary for this role.
+        - kind: changed
+          description: Dependency updates (Kubernetes client-go 0.37.2, axios 1.21.0, react-router-dom 7.18.5).
+      artifacthub.io/images: |
+        - name: backend
+          image: ghcr.io/omattsson/k8s-stack-manager/backend:0.16.1
+        - name: frontend
+          image: ghcr.io/omattsson/k8s-stack-manager/frontend:0.16.1
+        - name: mysql
+          image: mysql:8.4
+      artifacthub.io/license: MIT
+      artifacthub.io/links: |
+        - name: Documentation
+          url: https://github.com/omattsson/k8s-stack-manager#readme
+        - name: Getting Started
+          url: https://github.com/omattsson/k8s-stack-manager/blob/main/docs/getting-started.md
+        - name: stackctl (CLI)
+          url: https://github.com/omattsson/stackctl
+      artifacthub.io/screenshots: |
+        - title: Dashboard
+          url: https://raw.githubusercontent.com/omattsson/k8s-stack-manager/main/docs/screenshots/dashboard.png
+        - title: Port-forward and exec commands on the stack page
+          url: https://raw.githubusercontent.com/omattsson/k8s-stack-manager/main/docs/screenshots/access-urls.png
+        - title: Template gallery
+          url: https://raw.githubusercontent.com/omattsson/k8s-stack-manager/main/docs/screenshots/templates.png
+    apiVersion: v2
+    appVersion: 0.16.1
+    created: "2026-11-02T09:41:22.349451793Z"
+    description: Self-service environments for multi-service Helm applications on
+      your own Kubernetes clusters (web UI, API, MySQL)
+    digest: 2404e04b359fafbe39e6be6318c4685c626b548272fb795ed45afa030bb440f4
+    home: https://github.com/omattsson/k8s-stack-manager
+    icon: https://raw.githubusercontent.com/omattsson/k8s-stack-manager/main/frontend/public/logo.svg
+    keywords:
+    - kubernetes
+    - helm
+    - stack-manager
+    - argo-rollouts
+    - platform-engineering
+    - ephemeral-environments
+    - preview-environments
+    - self-service
+    maintainers:
+    - name: omattsson
+      url: https://github.com/omattsson
+    name: k8s-stack-manager
+    sources:
+    - https://github.com/omattsson/k8s-stack-manager
+    type: application
+    urls:
+    - https://github.com/omattsson/k8s-stack-manager/releases/download/k8s-stack-manager-0.15.2/k8s-stack-manager-0.15.2.tgz
+    version: 0.15.2
+  - annotations:
+      artifacthub.io/category: integration-delivery
+      artifacthub.io/changes: |
         - kind: added
           description: Values schema (values.schema.json). Helm checks the values on install, upgrade, template and lint, and Artifact Hub lists every value with its type, default and description.
         - kind: changed
@@ -698,4 +754,4 @@ entries:
     urls:
     - https://github.com/omattsson/k8s-stack-manager/releases/download/k8s-stack-manager-0.2.0/k8s-stack-manager-0.2.0.tgz
     version: 0.2.0
-generated: "2026-11-01T11:59:42.018185774Z"
+generated: "2026-11-02T09:41:22.349670772Z"
