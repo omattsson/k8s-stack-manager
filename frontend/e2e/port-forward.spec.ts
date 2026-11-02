@@ -185,15 +185,15 @@ test.describe('Port-forward (no cluster)', () => {
       last_checked: '2026-10-19T10:00:00Z',
     };
 
-    async function mockRunning(page: Page) {
-      await page.route(new RegExp(`/api/v1/stack-instances/${instanceId}(\\?.*)?$`), async (route) => {
+    async function mockRunning(page: Page, id: string = instanceId) {
+      await page.route(new RegExp(`/api/v1/stack-instances/${id}(\\?.*)?$`), async (route) => {
         if (route.request().method() !== 'GET') return route.continue();
         const res = await route.fetch();
         if (!res.ok()) return route.fulfill({ response: res });
         return route.fulfill({ response: res, json: { ...(await res.json()), status: 'running' } });
       });
       // A RegExp, not a glob: the page asks for /pods?exec_hints=true.
-      await page.route(new RegExp(`/api/v1/stack-instances/${instanceId}/pods(\\?.*)?$`), (route) => route.fulfill({ json: namespaceStatus }));
+      await page.route(new RegExp(`/api/v1/stack-instances/${id}/pods(\\?.*)?$`), (route) => route.fulfill({ json: namespaceStatus }));
     }
 
     test.afterEach(async ({ page }) => {
@@ -208,6 +208,25 @@ test.describe('Port-forward (no cluster)', () => {
       await expect(page.getByText(`stackctl stack port-forward ${instanceName} web 9090`, { exact: true })).toBeVisible();
       // The kubectl hint stays for devops and admin.
       await expect(page.getByText(/kubectl port-forward svc\/web/)).toBeVisible();
+    });
+
+    test('shows the stackctl command to the owner with the role user (#749)', async ({ page }) => {
+      // The user owns the instance; the cluster read is not mocked. The instance
+      // has no cluster_id, so the page reads the default cluster from GET /clusters.
+      await loginAsUser(page);
+      await page.goto('/');
+      const userToken = await tokenFromPage(page);
+      const ownName = uniqueName('e2e-pf-own');
+      const ownId = await apiCreateInstance(api, userToken, definitionId, ownName);
+      try {
+        await mockRunning(page, ownId);
+        await page.goto(`/stack-instances/${ownId}`);
+        await expect(page.getByText(`stackctl stack port-forward ${ownName} web 80`, { exact: true })).toBeVisible({ timeout: 10_000 });
+        // No kubectl access for the role user.
+        await expect(page.getByText(/kubectl port-forward/)).toHaveCount(0);
+      } finally {
+        await api.delete(`${API_BASE}/api/v1/stack-instances/${ownId}`, { headers: auth(adminToken) });
+      }
     });
 
     test('hides the stackctl command when ui-config turns the feature off', async ({ page }) => {

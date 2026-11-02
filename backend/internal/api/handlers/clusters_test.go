@@ -780,12 +780,13 @@ func TestListClusters_FieldRestriction(t *testing.T) {
 	seedRepo := func() *MockClusterRepository {
 		repo := NewMockClusterRepository()
 		_ = repo.Create(context.Background(), &models.Cluster{
-			ID:           "cl-1",
-			Name:         "production",
-			APIServerURL: "https://k8s.prod.example.com",
-			Region:       "eastus",
-			HealthStatus: models.ClusterHealthy,
-			IsDefault:    true,
+			ID:               "cl-1",
+			Name:             "production",
+			APIServerURL:     "https://k8s.prod.example.com",
+			Region:           "eastus",
+			HealthStatus:     models.ClusterHealthy,
+			IsDefault:        true,
+			AllowPortForward: true,
 		})
 		return repo
 	}
@@ -833,6 +834,16 @@ func TestListClusters_FieldRestriction(t *testing.T) {
 				assert.Equal(t, "cl-1", summaries[0].ID)
 				assert.Equal(t, "production", summaries[0].Name)
 				assert.True(t, summaries[0].IsDefault)
+				assert.True(t, summaries[0].AllowPortForward)
+				assert.False(t, summaries[0].AllowExec)
+
+				var raw []map[string]interface{}
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &raw))
+				require.Len(t, raw, 1)
+				assert.Contains(t, raw[0], "allow_exec")
+				for _, field := range []string{"api_server_url", "health_status", "region"} {
+					assert.NotContains(t, raw[0], field)
+				}
 			}
 		})
 	}
@@ -864,6 +875,7 @@ func TestGetCluster_FieldRestriction(t *testing.T) {
 				Region:       "eastus",
 				HealthStatus: models.ClusterHealthy,
 				IsDefault:    true,
+				AllowExec:    true,
 			})
 			router := setupClusterRouter(clusterRepo, instanceRepo, nil, tt.role)
 
@@ -890,6 +902,15 @@ func TestGetCluster_FieldRestriction(t *testing.T) {
 				assert.Equal(t, "cl-1", summary.ID)
 				assert.Equal(t, "production", summary.Name)
 				assert.True(t, summary.IsDefault)
+				assert.False(t, summary.AllowPortForward)
+				assert.True(t, summary.AllowExec)
+
+				var raw map[string]interface{}
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &raw))
+				assert.Contains(t, raw, "allow_port_forward")
+				for _, field := range []string{"api_server_url", "health_status", "region"} {
+					assert.NotContains(t, raw, field)
+				}
 			}
 		})
 	}

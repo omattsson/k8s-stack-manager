@@ -1942,7 +1942,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns all registered clusters. Kubeconfig data is never included in responses. Admin/DevOps users receive full cluster details; other roles receive a summary (id, name, is_default only).",
+                "description": "Returns all registered clusters. Kubeconfig data is never included in responses. Admin/DevOps users receive full cluster details; other roles receive a summary (id, name, is_default, allow_port_forward, allow_exec).",
                 "produces": [
                     "application/json"
                 ],
@@ -2043,7 +2043,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns a single cluster by ID. Kubeconfig data is never included. Admin/DevOps users receive full cluster details; other roles receive a summary (id, name, is_default only).",
+                "description": "Returns a single cluster by ID. Kubeconfig data is never included. Admin/DevOps users receive full cluster details; other roles receive a summary (id, name, is_default, allow_port_forward, allow_exec).",
                 "produces": [
                     "application/json"
                 ],
@@ -11205,6 +11205,12 @@ const docTemplate = `{
         "handlers.ClusterSummary": {
             "type": "object",
             "properties": {
+                "allow_exec": {
+                    "type": "boolean"
+                },
+                "allow_port_forward": {
+                    "type": "boolean"
+                },
                 "id": {
                     "type": "string"
                 },
