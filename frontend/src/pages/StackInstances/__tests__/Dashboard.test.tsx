@@ -1,3 +1,4 @@
+import { StrictMode } from 'react';
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, waitFor, within, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -1396,6 +1397,38 @@ describe('Dashboard', () => {
       await waitFor(() => {
         expect(listAll.mock.calls.length).toBe(listCallsBefore + 1);
       }, { timeout: 3000 });
+    });
+
+    // The list loads twice under StrictMode, and a WebSocket event can reload it at
+    // any time. A new list while a status request runs must not lose its answer.
+    it('keeps the pod health when the list changes while the status is loading', async () => {
+      const list = () => [mockInstance({ id: 'inst-h', name: 'Health App', status: 'running', namespace: 'stack-h' })];
+      const answers: Array<(value: unknown) => void> = [];
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockImplementation(
+        () => new Promise((resolve) => { answers.push(resolve); }),
+      );
+      let answerStatus: (value: unknown) => void = () => undefined;
+      (instanceService.getStatus as ReturnType<typeof vi.fn>).mockReturnValue(new Promise((resolve) => { answerStatus = resolve; }));
+      render(
+        <StrictMode>
+          <MemoryRouter>
+            <NotificationProvider>
+              <Dashboard />
+            </NotificationProvider>
+          </MemoryRouter>
+        </StrictMode>
+      );
+      await waitFor(() => expect(answers).toHaveLength(2));
+      // The first list starts the status request.
+      await act(async () => { answers[0](list()); });
+      await waitFor(() => expect(instanceService.getStatus).toHaveBeenCalledTimes(1));
+      // The second list arrives while that request runs.
+      await act(async () => { answers[1](list()); });
+      await screen.findAllByText('Health App');
+      await act(async () => {
+        answerStatus({ namespace: 'stack-h', status: 'degraded', charts: [], last_checked: '2026-01-01T00:00:00Z' });
+      });
+      expect(await screen.findByRole('status', { name: 'Pod health: degraded' })).toBeInTheDocument();
     });
 
     it('shows pod health dot when status is fetched for running instance', async () => {

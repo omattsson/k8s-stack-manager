@@ -325,9 +325,9 @@ const Dashboard = () => {
     );
     if (newRunning.length === 0) return;
 
-    let cancelled = false;
-
-    // Mark as in-flight to avoid duplicate requests during async window
+    // Mark as in-flight to avoid duplicate requests during async window. A new list
+    // skips these IDs, so their answers must still be applied when the list changes
+    // (they merge by ID), or they stay in-flight and their health never shows.
     for (const inst of newRunning) {
       inFlightIdsRef.current.add(inst.id);
     }
@@ -339,7 +339,6 @@ const Dashboard = () => {
         return { id: inst.id, url, health: st.status };
       }),
     ).then((settled) => {
-      if (cancelled) return;
       const newUrls: Record<string, string> = {};
       const newHealth: Record<string, K8sHealthStatus> = {};
       settled.forEach((r, idx) => {
@@ -362,8 +361,6 @@ const Dashboard = () => {
         setInstanceHealth((prev) => ({ ...prev, ...newHealth }));
       }
     });
-
-    return () => { cancelled = true; };
   }, [instances]);
 
   // Live-update instance statuses via WebSocket.
