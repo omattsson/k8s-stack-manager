@@ -286,7 +286,7 @@ const Preview = () => {
                   <>
                     <Divider sx={{ my: 2 }} />
                     <Typography variant="subtitle2" gutterBottom>Default Values</Typography>
-                    <Paper variant="outlined" sx={{ p: 2, bgcolor: 'grey.50' }}>
+                    <Paper variant="outlined" sx={{ p: 2, bgcolor: 'action.hover' }}>
                       <Typography variant="body2" component="pre" sx={{ fontFamily: 'monospace', fontSize: 13, whiteSpace: 'pre-wrap', m: 0 }}>
                         {chart.default_values}
                       </Typography>

@@ -502,7 +502,8 @@ const Profile = () => {
               alignItems: 'center',
               gap: 1,
               p: 2,
-              bgcolor: 'grey.100',
+              // A fixed grey would keep the white text of dark mode: 1.09:1.
+              bgcolor: 'action.hover',
               borderRadius: 1,
             }}
           >
