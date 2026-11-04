@@ -670,9 +670,9 @@ describe('Profile Page', () => {
       expect(screen.getByText('Soon Key')).toBeInTheDocument();
     });
 
-    // Warning chip should be present (rendered as MuiChip with color="warning")
+    // Warning chip should be present, and say it in words: not only by its colour.
     const dateStr = soonDate.toLocaleDateString();
-    const chip = screen.getByText(dateStr);
-    expect(chip.closest('.MuiChip-root')).toBeInTheDocument();
+    const chip = screen.getByText(`Expires soon ${dateStr}`);
+    expect(chip.closest('.MuiChip-colorWarning')).toBeInTheDocument();
   });
 });

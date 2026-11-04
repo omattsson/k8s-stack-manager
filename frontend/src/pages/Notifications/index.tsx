@@ -19,6 +19,7 @@ import { useNavigate } from 'react-router-dom';
 import { notificationService } from '../../api/client';
 import LoadingState from '../../components/LoadingState';
 import NotificationMeta from '../../components/NotificationCenter/NotificationMeta';
+import NotificationTitle from '../../components/NotificationCenter/NotificationTitle';
 import { useAuth } from '../../context/AuthContext';
 import { notificationIcon, entityRoute } from '../../utils/notificationHelpers';
 import type { Notification } from '../../types';
@@ -135,7 +136,9 @@ const Notifications = () => {
                   {notificationIcon(notification.type)}
                 </ListItemIcon>
                 <ListItemText
-                  primary={notification.title}
+                  // A long stack name must wrap: it would widen the layout on a phone.
+                  sx={{ minWidth: 0, overflowWrap: 'anywhere' }}
+                  primary={<NotificationTitle notification={notification} />}
                   secondary={
                     <Box component="span" sx={{ display: 'flex', flexDirection: 'column', gap: 0.25 }}>
                       <Typography variant="body2" color="text.secondary" component="span">

@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { timeAgo } from '../../utils/timeAgo';
-import { useNavigate } from 'react-router-dom';
+import { Link as RouterLink, useNavigate } from 'react-router-dom';
+import { scrollFocusIntoView } from '../../utils/scrollFocusIntoView';
 import { useWebSocket } from '../../hooks/useWebSocket';
 import type { WsMessage } from '../../hooks/useWebSocket';
 import {
@@ -8,6 +9,7 @@ import {
   Typography,
   Grid,
   Card,
+  CardActionArea,
   CardContent,
   CardActions,
   Button,
@@ -28,6 +30,11 @@ import {
   CircularProgress,
   Tooltip,
 } from '@mui/material';
+import AutorenewIcon from '@mui/icons-material/Autorenew';
+import CancelIcon from '@mui/icons-material/Cancel';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import HelpOutlineIcon from '@mui/icons-material/HelpOutlineOutlined';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import SearchIcon from '@mui/icons-material/Search';
 import AddIcon from '@mui/icons-material/Add';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
@@ -86,30 +93,28 @@ const getPrimaryUrl = (status: NamespaceStatus): string | null => {
 
 type K8sHealthStatus = NamespaceStatus['status'];
 
-const PodHealthDot = ({ status }: { status?: K8sHealthStatus }) => {
+/**
+ * A shape for each pod health, so that the state does not depend on colour:
+ * warning and error are nearly the same lightness in light mode.
+ */
+const POD_HEALTH_ICONS: Record<K8sHealthStatus, { Icon: typeof CheckCircleIcon; color: string }> = {
+  healthy: { Icon: CheckCircleIcon, color: 'success.main' },
+  progressing: { Icon: AutorenewIcon, color: 'info.main' },
+  degraded: { Icon: WarningAmberIcon, color: 'warning.main' },
+  error: { Icon: CancelIcon, color: 'error.main' },
+  not_found: { Icon: HelpOutlineIcon, color: 'text.secondary' },
+};
+
+const PodHealthIcon = ({ status }: { status?: K8sHealthStatus }) => {
   if (!status) return null;
-  const colorMap: Record<string, string> = {
-    healthy: 'success.main',
-    progressing: 'info.main',
-    degraded: 'warning.main',
-    error: 'error.main',
-    not_found: 'grey.400',
-  };
+  const { Icon, color } = POD_HEALTH_ICONS[status] ?? POD_HEALTH_ICONS.not_found;
   return (
     <Tooltip title={`Health: ${status}`} arrow>
-      <Box
-        component="span"
-        role="status"
+      <Icon
+        role="img"
+        aria-hidden={false}
         aria-label={`Pod health: ${status}`}
-        sx={{
-          width: 8,
-          height: 8,
-          borderRadius: '50%',
-          bgcolor: colorMap[status] || 'grey.400',
-          display: 'inline-block',
-          ml: 1,
-          flexShrink: 0,
-        }}
+        sx={{ fontSize: 16, color, ml: 1, flexShrink: 0 }}
       />
     </Tooltip>
   );
@@ -159,7 +164,7 @@ const InstanceCard = ({ instance, isSelected, selectable, isFavorite, clusterNam
         <Box sx={{ display: 'flex', alignItems: 'center' }}>
           <StatusBadge status={instance.status} />
           {(instance.status === 'running' || instance.status === 'partial' || instance.status === 'deploying' || instance.status === 'stabilizing') && k8sHealth && (
-            <PodHealthDot status={k8sHealth} />
+            <PodHealthIcon status={k8sHealth} />
           )}
         </Box>
       </Box>
@@ -314,6 +319,9 @@ const Dashboard = () => {
   const fetchedStatusIdsRef = useRef<Set<string>>(new Set());
   // Track currently in-flight fetches to avoid duplicate requests
   const inFlightIdsRef = useRef<Set<string>>(new Set());
+  // Per instance: raised when a deploy finishes, because a request that started before
+  // that describes the old deploy. A list reload does not raise it: its answers stay good.
+  const statusGenerationRef = useRef<Map<string, number>>(new Map());
 
   // Phase 2: fetch status/URLs for newly running/deploying instances
   useEffect(() => {
@@ -325,12 +333,13 @@ const Dashboard = () => {
     );
     if (newRunning.length === 0) return;
 
-    let cancelled = false;
-
-    // Mark as in-flight to avoid duplicate requests during async window
+    // Mark as in-flight to avoid duplicate requests during async window. A new list
+    // skips these IDs, so their answers must still be applied when the list changes
+    // (they merge by ID), or they stay in-flight and their health never shows.
     for (const inst of newRunning) {
       inFlightIdsRef.current.add(inst.id);
     }
+    const generations = newRunning.map((inst) => statusGenerationRef.current.get(inst.id) ?? 0);
 
     Promise.allSettled(
       newRunning.map(async (inst) => {
@@ -339,20 +348,20 @@ const Dashboard = () => {
         return { id: inst.id, url, health: st.status };
       }),
     ).then((settled) => {
-      if (cancelled) return;
       const newUrls: Record<string, string> = {};
       const newHealth: Record<string, K8sHealthStatus> = {};
       settled.forEach((r, idx) => {
+        const { id } = newRunning[idx];
+        // A deploy finished after this request started, and a newer request took over.
+        // Its in-flight mark belongs to that request too.
+        if ((statusGenerationRef.current.get(id) ?? 0) !== generations[idx]) return;
+        inFlightIdsRef.current.delete(id);
         if (r.status === 'fulfilled') {
-          inFlightIdsRef.current.delete(r.value.id);
-          newHealth[r.value.id] = r.value.health;
+          newHealth[id] = r.value.health;
           if (r.value.url) {
-            fetchedStatusIdsRef.current.add(r.value.id);
-            newUrls[r.value.id] = r.value.url;
+            fetchedStatusIdsRef.current.add(id);
+            newUrls[id] = r.value.url;
           }
-        } else {
-          const id = newRunning[idx]?.id;
-          if (id) inFlightIdsRef.current.delete(id);
         }
       });
       if (Object.keys(newUrls).length > 0) {
@@ -362,8 +371,6 @@ const Dashboard = () => {
         setInstanceHealth((prev) => ({ ...prev, ...newHealth }));
       }
     });
-
-    return () => { cancelled = true; };
   }, [instances]);
 
   // Live-update instance statuses via WebSocket.
@@ -383,8 +390,14 @@ const Dashboard = () => {
         return;
       }
       if (payload.status === 'running') {
-        // Fetch the URL again and reload the list for the new deploy time.
-        fetchedStatusIdsRef.current.delete(payload.instance_id);
+        // Fetch the URL again and reload the list for the new deploy time. A request
+        // that is running now describes the old deploy, so it no longer counts: the
+        // setInstances below runs the status effect, which asks again at once. That
+        // does not depend on the reload, which may run before the old answer arrives.
+        const id = payload.instance_id;
+        statusGenerationRef.current.set(id, (statusGenerationRef.current.get(id) ?? 0) + 1);
+        inFlightIdsRef.current.delete(id);
+        fetchedStatusIdsRef.current.delete(id);
         scheduleFinishedReload();
       }
       setInstances((prev) =>
@@ -691,10 +704,13 @@ const Dashboard = () => {
             p: 1.5,
             mb: 3,
             display: 'flex',
+            flexWrap: 'wrap',
             alignItems: 'center',
             gap: 2,
-            bgcolor: 'primary.light',
+            bgcolor: 'primary.dark',
             color: 'primary.contrastText',
+            // The theme's primary focus ring does not show on this background.
+            '& .MuiButtonBase-root.Mui-focusVisible': { outlineColor: 'primary.contrastText' },
           }}
           role="toolbar"
           aria-label="Bulk actions"
@@ -770,18 +786,22 @@ const Dashboard = () => {
               <Card
                 key={inst.id}
                 variant="outlined"
-                sx={{ minWidth: 200, maxWidth: 250, flexShrink: 0, cursor: 'pointer' }}
-                onClick={() => navigate(`/stack-instances/${inst.id}`)}
+                sx={{ minWidth: 200, maxWidth: 250, flexShrink: 0, position: 'relative' }}
               >
-                <CardContent sx={{ py: 1.5, px: 2, '&:last-child': { pb: 1.5 } }}>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <Typography variant="subtitle2" component="div" noWrap sx={{ flex: 1 }}>
-                      {inst.name}
-                    </Typography>
-                    <FavoriteButton entityType="instance" entityId={inst.id} size="small" initialFavorited={true} />
-                  </Box>
-                  <StatusBadge status={inst.status} />
-                </CardContent>
+                <CardActionArea component={RouterLink} to={`/stack-instances/${inst.id}`} onFocus={scrollFocusIntoView}>
+                  <CardContent sx={{ py: 1.5, px: 2, '&:last-child': { pb: 1.5 } }}>
+                    {/* The room for the star, which is outside the link: a link cannot hold a button. */}
+                    <Box sx={{ display: 'flex', alignItems: 'center', minHeight: 30, pr: 4 }}>
+                      <Typography variant="subtitle2" component="div" noWrap sx={{ flex: 1 }}>
+                        {inst.name}
+                      </Typography>
+                    </Box>
+                    <StatusBadge status={inst.status} />
+                  </CardContent>
+                </CardActionArea>
+                <Box sx={{ position: 'absolute', top: 12, right: 16 }}>
+                  <FavoriteButton entityType="instance" entityId={inst.id} size="small" initialFavorited={true} />
+                </Box>
               </Card>
             ))}
           </Box>
@@ -799,27 +819,28 @@ const Dashboard = () => {
               <Card
                 key={inst.id}
                 variant="outlined"
-                sx={{ minWidth: 220, maxWidth: 280, flexShrink: 0, cursor: 'pointer' }}
-                onClick={() => navigate(`/stack-instances/${inst.id}`)}
+                sx={{ minWidth: 220, maxWidth: 280, flexShrink: 0 }}
               >
-                <CardContent sx={{ py: 1.5, px: 2, '&:last-child': { pb: 1.5 } }}>
-                  <Typography variant="subtitle2" component="div" noWrap>
-                    {inst.name}
-                  </Typography>
-                  {inst.definition_name && (
-                    <Typography variant="caption" color="text.secondary" noWrap component="div">
-                      {inst.definition_name}
+                <CardActionArea component={RouterLink} to={`/stack-instances/${inst.id}`} onFocus={scrollFocusIntoView}>
+                  <CardContent sx={{ py: 1.5, px: 2, '&:last-child': { pb: 1.5 } }}>
+                    <Typography variant="subtitle2" component="div" noWrap>
+                      {inst.name}
                     </Typography>
-                  )}
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
-                    <StatusBadge status={inst.status} />
-                    <Tooltip title={new Date(inst.updated_at).toLocaleString()} arrow>
-                      <Typography variant="caption" color="text.secondary">
-                        {timeAgo(inst.updated_at)}
+                    {inst.definition_name && (
+                      <Typography variant="caption" color="text.secondary" noWrap component="div">
+                        {inst.definition_name}
                       </Typography>
-                    </Tooltip>
-                  </Box>
-                </CardContent>
+                    )}
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
+                      <StatusBadge status={inst.status} />
+                      <Tooltip title={new Date(inst.updated_at).toLocaleString()} arrow>
+                        <Typography variant="caption" color="text.secondary">
+                          {timeAgo(inst.updated_at)}
+                        </Typography>
+                      </Tooltip>
+                    </Box>
+                  </CardContent>
+                </CardActionArea>
               </Card>
             ))}
           </Box>

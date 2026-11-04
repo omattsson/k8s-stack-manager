@@ -25,9 +25,11 @@ import { useAuth } from '../../context/AuthContext';
 import { notificationIcon, entityRoute } from '../../utils/notificationHelpers';
 import type { Notification } from '../../types';
 import NotificationMeta from './NotificationMeta';
+import NotificationTitle from './NotificationTitle';
 
 const POLL_INTERVAL_MS = 30_000;
 const POPOVER_LIMIT = 10;
+const MAX_BADGE = 99;
 
 const NotificationCenter = () => {
   const navigate = useNavigate();
@@ -160,7 +162,7 @@ const NotificationCenter = () => {
                 {notificationIcon(notification.type)}
               </ListItemIcon>
               <ListItemText
-                primary={notification.title}
+                primary={<NotificationTitle notification={notification} />}
                 secondary={
                   <Box component="span" sx={{ display: 'flex', flexDirection: 'column', gap: 0.25 }}>
                     <Typography
@@ -203,10 +205,11 @@ const NotificationCenter = () => {
         <IconButton
           color="inherit"
           onClick={handleOpen}
-          aria-label="Open notifications"
+          // The name holds the number in the badge, so that it matches what is on screen.
+          aria-label={`Open notifications, ${unreadCount > MAX_BADGE ? `${MAX_BADGE}+` : unreadCount} unread`}
           size="small"
         >
-          <Badge badgeContent={unreadCount} color="error" max={99}>
+          <Badge badgeContent={unreadCount} color="error" max={MAX_BADGE}>
             <NotificationsIcon />
           </Badge>
         </IconButton>

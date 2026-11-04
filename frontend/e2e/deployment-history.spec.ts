@@ -159,7 +159,7 @@ test.describe('Deployment History', () => {
     // The group opens to show each deploy. A row loads its output once.
     await group.click();
     const nested = list.getByRole('list', { name: /^12 deploys of branch main/ });
-    await expect(nested.getByRole('button', { name: /^deploy success/ })).toHaveCount(12);
+    await expect(nested.getByRole('button', { name: /^[^,]+, deploy success/ })).toHaveCount(12);
     const target = logs[5];
     const entryCalls: string[] = [];
     page.on('request', (r) => {
@@ -188,7 +188,7 @@ test.describe('Deployment History', () => {
     await expect(page.getByRole('heading', { name: 'Deployment History (10 matching)' })).toBeVisible();
     expect(historyRequests(requests).at(-1)?.get('status')).toBe('error');
     const list = page.getByRole('list', { name: 'Operations', exact: true });
-    await expect(list.getByRole('button', { name: /^deploy error/ })).toHaveCount(10);
+    await expect(list.getByRole('button', { name: /^[^,]+, deploy error/ })).toHaveCount(10);
     // The pinned rows stay: the highlights ignore the filters.
     await expect(page.getByRole('list', { name: 'Pinned operations' }).getByText('Current', { exact: true })).toBeVisible();
 

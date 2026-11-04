@@ -1,403 +1,105 @@
-import { test, expect, type Locator, type Page } from '@playwright/test';
-import AxeBuilder from '@axe-core/playwright';
-import { API_BASE, apiAddChart, apiCreateDefinition, apiLogin, loginAsAdmin, uniqueName } from './helpers';
+import { test, expect, type Locator, type Page, type WebSocketRoute } from '@playwright/test';
+import {
+  MODES,
+  checkPage,
+  createSeed,
+  deleteSeed,
+  forceInstanceFields,
+  focusAndCheck,
+  hoverAndCheck,
+  pageList,
+  type Mode,
+  type PageSetup,
+  type RunAxe,
+  type Seed,
+} from './a11y';
 import { mockDeployLog, type MockDeployLog } from './deployLogMock';
+import type { APIKey, NamespaceStatus, Notification, NotificationChannelSaveResult, StackInstance } from '../src/types';
 
-// Colour contrast and list structure (#740). Runs the axe rules `color-contrast`
-// and `listitem` (and no other rule) on the 21 pages of the issue, in the light
-// and the dark colour mode, at 1400x1000. A second block forces the status
-// colours of the instance page that a run without a cluster never shows
-// (status running, error, partial, ...; page.route edits the instance answer).
+// Colour contrast and list structure (#740, #758), in the light and the dark
+// colour mode, at 1400x1000. See a11y.ts for the rules and the explicit checks.
+//
+// - All pages in their resting state.
+// - FORCED: the status colours of the instance page that a run without a cluster
+//   never shows (page.route edits the instance answer).
+// - STATE: a selected row, menus on hover and on keyboard focus, toasts, expiry
+//   and API-key chips, and buttons on the page background on hover. Each run is
+//   limited to the surface and must have measured a named element.
+//
+// Other specs: accessibility-dialogs (all dialogs, menus, popovers),
+// accessibility-signals (focus rings, tooltips, bars, colour as the only signal),
+// accessibility-phone (the phone layout).
 //
 // A page that did not load must not pass: before axe runs, each test checks the
-// heading, the URL, the sidebar, the colour mode, that no spinner is left and
-// that no API call answered 5xx. After axe, the rule must have checked a
-// minimum of nodes, and every node that axe could not decide ("incomplete") must
-// have a known harmless reason.
-//
-// Not covered: focus rings, dialogs, menus, tooltips, snackbars (toasts), charts,
-// and colour as the only signal. The pages are checked in their resting state:
-// the app WebSocket is blocked (answered by the test, it never sends), so that
-// no pushed message reloads a list or shows a toast while axe runs. A page that
-// renders after the gradients are flattened would reach axe with its gradient.
-// DB-backed, no cluster required.
-
-type Mode = 'light' | 'dark';
-const MODES: Mode[] = ['light', 'dark'];
-
-/** Computed background of `body` per mode (theme/palette.ts, CssBaseline). */
-const BODY_BACKGROUND: Record<Mode, string> = {
-  dark: 'rgb(18, 18, 18)',
-  light: 'rgb(245, 245, 245)',
-};
+// heading, the URL, the sidebar, the colour mode, that no spinner is left and that
+// no API call answered 5xx. The app WebSocket is blocked (answered by the test,
+// which sends only for the info toast), so that no pushed message reloads a list
+// or shows a toast while axe runs. A page that renders after the gradients are
+// flattened would reach axe with its gradient. DB-backed, no cluster required.
 
 /**
- * Fewest `color-contrast` nodes that must pass inside <main> (on the login page,
- * which has no <main>: on the whole page). The sidebar alone has more nodes than
- * a small minimum, so only the page content counts. A page with a heading and
- * an empty <main> fails.
+ * A text or outlined button in a status colour with no Paper behind it tints itself
+ * on the page background, where it has the least contrast. Hover each one that the
+ * page shows, so that a new one is measured without a new test.
  */
-const MIN_CONTRAST_PASSES = 3;
-
-/**
- * Reasons for which axe may leave a `color-contrast` node undecided:
- * shortTextContent (one character, for example an icon letter), emptyValue (an
- * empty input) and bgOverlap (an element covers the text). Any other reason,
- * above all `bgGradient`, fails the test, so a new surface cannot escape the
- * check unseen.
- */
-const HARMLESS_INCOMPLETE = new Set(['shortTextContent', 'emptyValue', 'bgOverlap']);
-
-type AxeResults = Awaited<ReturnType<AxeBuilder['analyze']>>;
-type AxeNode = AxeResults['violations'][number]['nodes'][number];
-
-interface Seed {
-  definitionId: string;
-  instanceId: string;
-  instanceName: string;
-  templateId: string;
-  templateName: string;
-}
-const seed = {} as Seed;
-let adminToken = '';
-
-/** What a test checks before axe runs. */
-interface PageCheck {
-  /** Path the test opens. The final URL must have this path. */
-  path: string;
-  /** Text of the h1 (exact). */
-  heading: string;
-  /** False for the login page: no sidebar. */
-  sidebar?: boolean;
-  /** Spinners (indeterminate progress bars) that the page legitimately keeps. Default 0. */
-  progressbars?: number;
-  /**
-   * API calls that may answer 5xx on this page, matched against
-   * `METHOD /path` (no query). Each entry needs a comment that says why the
-   * call fails without a cluster.
-   */
-  allowed5xx?: RegExp[];
-  /** Runs before the page opens (route mocks). */
-  before?: (page: Page) => Promise<void>;
-  /**
-   * Replaces the plain axe run: checks that an element is visible first, then
-   * calls `runAxe` (once or more, for example after a hover).
-   */
-  ready?: (page: Page, runAxe: () => Promise<void>) => Promise<void>;
-}
-
-/**
- * MUI draws every dark Paper with `background-image: linear-gradient(c, c)`
- * (two equal stops: the elevation overlay). Axe cannot read the colour behind
- * text on such an element and returns the text as `incomplete` (messageKey
- * `bgGradient`) instead of checking it. In the dark mode that left hundreds of
- * nodes unchecked, among them real failures. Draw the same pixels without the
- * gradient: composite the overlay colour over the element's own background
- * colour and set it inline with `background-image: none`.
- */
-async function flattenGradients(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    const parse = (c: string): [number, number, number, number] => {
-      const m = c.match(/rgba?\(([^)]+)\)/);
-      if (!m) return [0, 0, 0, 0];
-      const p = m[1].split(/[, /]+/).filter(Boolean).map(Number);
-      return [p[0], p[1], p[2], p[3] ?? 1];
-    };
-    for (const el of Array.from(document.querySelectorAll<HTMLElement>('*'))) {
-      const cs = getComputedStyle(el);
-      const m = cs.backgroundImage.match(/^linear-gradient\((rgba?\([^)]+\)), (rgba?\([^)]+\))\)$/);
-      if (!m || m[1] !== m[2]) continue;
-      const [r, g, b, a] = parse(m[1]);
-      const [br, bg, bb, ba] = parse(cs.backgroundColor);
-      const outA = a + ba * (1 - a);
-      if (outA === 0) continue;
-      const mix = (over: number, under: number) => Math.round((over * a + under * ba * (1 - a)) / outA);
-      el.style.backgroundImage = 'none';
-      el.style.backgroundColor = `rgba(${mix(r, br)}, ${mix(g, bg)}, ${mix(b, bb)}, ${outA})`;
-    }
-  });
-}
-
-/**
- * Axe cannot read text that a scroll container clips (reason
- * elmPartiallyObscured), for example the rows below the first 19 of the audit
- * log table (maxHeight 600): the number of rows depends on the data of the
- * run. Let such containers grow to their content, so that all text is on the
- * page and gets checked. The colours do not change. The sidebar list is left
- * alone: it scrolls by design and fits at this height.
- */
-async function revealClippedContent(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    for (const el of Array.from(document.querySelectorAll<HTMLElement>('*'))) {
-      if (el.closest('nav')) continue;
-      const cs = getComputedStyle(el);
-      if ((cs.overflowY === 'auto' || cs.overflowY === 'scroll') && el.scrollHeight > el.clientHeight + 1) {
-        el.style.maxHeight = 'none';
-        el.style.height = 'auto';
-        el.style.overflowY = 'visible';
-      }
-    }
-  });
-}
-
-/**
- * Wait until no CSS transition or animation with an end is running. A colour
- * in the middle of a transition (hover, theme, Collapse) gives a wrong ratio.
- * Endless animations (skeleton pulse) never end and do not change a colour
- * that axe reads, so they do not count.
- */
-async function waitForTransitions(page: Page): Promise<void> {
-  await page.waitForFunction(() =>
-    document.getAnimations().every((a) =>
-      (a.playState !== 'running' && !a.pending)
-      || a.effect?.getComputedTiming().iterations === Infinity));
-}
-
-function describeNode(rule: string, node: AxeNode): string {
-  const d = (node.any[0]?.data ?? {}) as {
-    fgColor?: string; bgColor?: string; contrastRatio?: number; expectedContrastRatio?: string;
-  };
-  const colours = d.fgColor
-    ? `fg ${d.fgColor} bg ${d.bgColor} ratio ${d.contrastRatio} (needs ${d.expectedContrastRatio}) `
-    : '';
-  return `  ${rule}: ${colours}${node.target.join(' ')}\n    ${node.html}`;
-}
-
-const messageKeyOf = (node: AxeNode): string => {
-  for (const check of [...node.any, ...node.all, ...node.none]) {
-    const key = (check.data as { messageKey?: string } | null)?.messageKey;
-    if (key) return key;
+async function hoverStatusButtonsOnPage(page: Page, runAxe: RunAxe): Promise<void> {
+  const selector = ['warning', 'info', 'error', 'success', 'secondary']
+    .flatMap((c) => [`.MuiButton-text.MuiButton-color${c[0].toUpperCase()}${c.slice(1)}`, `.MuiButton-outlined.MuiButton-color${c[0].toUpperCase()}${c.slice(1)}`])
+    .map((s) => `main ${s}:not(:disabled)`)
+    .join(', ');
+  const buttons = page.locator(selector);
+  const names: string[] = [];
+  for (let i = 0; i < await buttons.count(); i++) {
+    const button = buttons.nth(i);
+    if (await button.evaluate((el) => el.closest('.MuiPaper-root') !== null)) continue;
+    names.push((await button.textContent()) ?? '');
+    await hoverAndCheck(page, button, 'main', runAxe);
   }
-  return 'none';
-};
-
-/**
- * Run the two rules and fail on a violation, on an undecided node with an
- * unknown reason, and on a page whose content `color-contrast` checked too little.
- */
-async function expectContrastAndLists(page: Page, what: string, hasMain: boolean): Promise<void> {
-  await waitForTransitions(page);
-  await revealClippedContent(page);
-  await flattenGradients(page);
-  const results = await new AxeBuilder({ page }).withRules(['color-contrast', 'listitem']).analyze();
-
-  const violations = results.violations.flatMap((v) => v.nodes.map((n) => describeNode(v.id, n)));
-  expect(violations, `${what}: ${violations.length} axe violation(s)\n${violations.join('\n')}`).toEqual([]);
-
-  const undecided: string[] = [];
-  const reasons: Record<string, number> = {};
-  for (const n of (results.incomplete.find((i) => i.id === 'color-contrast')?.nodes ?? [])) {
-    const reason = messageKeyOf(n);
-    reasons[reason] = (reasons[reason] ?? 0) + 1;
-    if (HARMLESS_INCOMPLETE.has(reason)) continue;
-    const top = await page.evaluate((sel) => {
-      const el = document.querySelector(sel);
-      if (!el) return 'not found';
-      const r = el.getBoundingClientRect();
-      return document.elementsFromPoint(r.x + r.width / 2, r.y + r.height / 2).slice(0, 3)
-        .map((e) => `${e.tagName}.${String(e.className).slice(0, 80)}`).join(' > ');
-    }, n.target[0] as string).catch(() => 'unknown');
-    undecided.push(`  reason ${reason}: ${n.target.join(' ')}\n    ${n.html}\n    topmost at its centre: ${top}`);
-  }
-  expect(
-    undecided,
-    `${what}: axe could not check ${undecided.length} node(s) for a reason that is not one of ${[...HARMLESS_INCOMPLETE].join(', ')}\n${undecided.join('\n')}`,
-  ).toEqual([]);
-
-  const passedNodes = results.passes.find((p) => p.id === 'color-contrast')?.nodes ?? [];
-  const targets = passedNodes.map((n) => n.target[0] as string);
-  const passed = hasMain
-    ? await page.evaluate((sels) => sels.filter((sel) => {
-      try { return Boolean(document.querySelector(sel)?.closest('main')); } catch { return false; }
-    }).length, targets)
-    : passedNodes.length;
-  expect(
-    passed,
-    `${what}: only ${passed} color-contrast node(s) passed ${hasMain ? 'inside <main> (the sidebar does not count)' : 'on the page'}; is the page content empty?`,
-  ).toBeGreaterThanOrEqual(MIN_CONTRAST_PASSES);
-
-  // Shown in the HTML report; the reasons stay visible when nothing fails.
-  test.info().annotations.push({
-    type: 'axe',
-    description: `${what}: color-contrast passes ${passedNodes.length} (${passed} in the content), incomplete ${JSON.stringify(reasons)}`,
-  });
+  test.info().annotations.push({ type: 'page-background', description: `${new URL(page.url()).pathname}: ${names.length ? names.join(', ') : 'none'}` });
 }
 
-/**
- * Open a page in one colour mode, check that it really loaded, then run axe.
- * All page tests and all forced-state tests go through here.
- */
-async function checkPage(page: Page, mode: Mode, spec: PageCheck): Promise<void> {
-  const { path, heading } = spec;
-  const what = `${path} (${mode})`;
-  const sidebar = spec.sidebar ?? true;
-
-  // The colour mode comes from localStorage, as the toggle stores it.
-  await page.addInitScript((m) => localStorage.setItem('theme-mode', m), mode);
-  if (sidebar) await loginAsAdmin(page);
-
-  // The test answers the app socket; it never sends. See the top of the file.
-  await page.routeWebSocket(/\/ws(\?|$)/, () => {});
-
-  const failed: string[] = [];
-  page.on('response', (res) => {
-    if (res.status() < 500 || !res.url().includes('/api/')) return;
-    const key = `${res.request().method()} ${new URL(res.url()).pathname}`;
-    if (!spec.allowed5xx?.some((re) => re.test(key))) failed.push(`${res.status()} ${key}`);
-  });
-
-  await spec.before?.(page);
-  await page.goto(path);
-
-  const url = () => new URL(page.url()).pathname;
-  await expect.poll(url, { message: `${what}: final URL (a redirect to /login means no session)` }).toBe(path);
-  await expect(
-    page.getByRole('heading', { name: heading, level: 1, exact: true }),
-    `${what}: heading "${heading}" is not visible`,
-  ).toBeVisible({ timeout: 15_000 });
-
-  if (sidebar) {
-    await expect(page.locator('main'), `${what}: the page has no <main> element`).toBeVisible();
-    const nav = page.getByRole('navigation', { name: 'Main navigation' });
-    await expect(nav, `${what}: sidebar "Main navigation" is not visible`).toBeVisible();
-    await expect(nav, `${what}: sidebar has no "Administration" section`).toContainText('Administration');
-  }
-  await expect(page.locator('body'), `${what}: the ${mode} mode did not take effect`)
-    .toHaveCSS('background-color', BODY_BACKGROUND[mode]);
-  // Only an indeterminate bar means loading: a determinate one shows a value
-  // (the success rate on Analytics, the usage on Cluster Health) and stays.
-  await expect(page.locator('[role=progressbar]:not([aria-valuenow])'), `${what}: a spinner is still shown`)
-    .toHaveCount(spec.progressbars ?? 0, { timeout: 20_000 });
-  // Data that arrives after the spinner is gone (lists, charts, editors).
-  await page.waitForLoadState('networkidle', { timeout: 15_000 });
-  await expect.poll(url, { message: `${what}: final URL after loading` }).toBe(path);
-
-  const runAxe = () => expectContrastAndLists(page, what, sidebar);
-  await (spec.ready ? spec.ready(page, runAxe) : runAxe());
-
-  expect(failed, `${what}: API calls answered 5xx:\n${failed.join('\n')}`).toEqual([]);
-}
-
-test.describe('Accessibility: colour contrast and lists (#740)', () => {
-  // The size of the issue's measurements; the default 1280x720 hides the bottom of the sidebar and of tables.
+test.describe('Accessibility: colour contrast and lists', () => {
+  // The size of the #740 measurements; the default 1280x720 hides the bottom of the sidebar and of tables.
   test.use({ viewport: { width: 1400, height: 1000 } });
 
+  const seed = {} as Seed;
+
   test.beforeAll(async ({ request }) => {
-    adminToken = await apiLogin(request);
-    seed.definitionId = await apiCreateDefinition(request, adminToken, uniqueName('a11y-def'));
-    await apiAddChart(request, adminToken, seed.definitionId, { chart_name: 'web', default_values: 'replicaCount: 1\n' });
-    seed.instanceName = uniqueName('a11y');
-    const inst = await request.post(`${API_BASE}/api/v1/stack-instances`, {
-      headers: { Authorization: `Bearer ${adminToken}` },
-      data: { stack_definition_id: seed.definitionId, name: seed.instanceName, branch: 'main' },
-    });
-    expect(inst.ok(), await inst.text()).toBe(true);
-    seed.instanceId = (await inst.json()).id;
-    // A draft template: the gallery shows a real warning "Draft" chip.
-    seed.templateName = uniqueName('a11y-tpl');
-    const tpl = await request.post(`${API_BASE}/api/v1/templates`, {
-      headers: { Authorization: `Bearer ${adminToken}` },
-      data: {
-        name: seed.templateName,
-        description: 'Draft template for the accessibility check',
-        category: 'a11y',
-        version: '1.0.0',
-        default_branch: 'main',
-      },
-    });
-    expect(tpl.ok(), await tpl.text()).toBe(true);
-    seed.templateId = (await tpl.json()).id;
+    Object.assign(seed, await createSeed(request));
   });
 
   test.afterAll(async ({ request }) => {
-    if (!adminToken) return;
-    const headers = { Authorization: `Bearer ${adminToken}` };
-    // Best effort: a failed cleanup must not hide a test result.
-    for (const url of [
-      seed.instanceId && `/api/v1/stack-instances/${seed.instanceId}`,
-      seed.templateId && `/api/v1/templates/${seed.templateId}`,
-      seed.definitionId && `/api/v1/stack-definitions/${seed.definitionId}`,
-    ]) {
-      if (url) await request.delete(`${API_BASE}${url}`, { headers }).catch(() => undefined);
-    }
+    await deleteSeed(request, seed);
   });
 
-  // The 21 pages of the issue. `path` is a function: the IDs exist after beforeAll.
-  const PAGES: { name: string; spec: () => PageCheck }[] = [
-    { name: 'login', spec: () => ({ path: '/login', heading: 'Sign In', sidebar: false }) },
-    {
-      name: 'dashboard',
-      spec: () => ({
-        path: '/',
-        heading: 'Stack Instances',
-        // The page reads the status of each running instance, which needs a
-        // cluster. Other specs set rows to running on the same backend.
-        allowed5xx: [/^GET \/api\/v1\/stack-instances\/[^/]+\/status$/],
-      }),
-    },
-    {
-      name: 'templates',
-      spec: () => ({
-        path: '/templates',
-        heading: 'Template Gallery',
-        // The seeded draft template is on the tab "My Templates" (the admin owns it)
-        // with a warning "Draft" chip: check the chip on the card of that template.
-        ready: async (page, runAxe) => {
-          await runAxe();
-          await page.getByRole('tab', { name: 'My Templates' }).click();
-          const card = page.locator('.MuiCard-root').filter({ hasText: seed.templateName });
-          await expect(card.getByText('Draft', { exact: true }), 'the Draft chip of the seeded template is not visible').toBeVisible();
-          await runAxe();
-        },
-      }),
-    },
-    { name: 'template builder', spec: () => ({ path: '/templates/new', heading: 'Create Template' }) },
-    { name: 'stack definitions', spec: () => ({ path: '/stack-definitions', heading: 'Stack Definitions' }) },
-    { name: 'new stack definition', spec: () => ({ path: '/stack-definitions/new', heading: 'Create Stack Definition' }) },
-    {
-      name: 'edit stack definition',
-      spec: () => ({ path: `/stack-definitions/${seed.definitionId}/edit`, heading: 'Edit Stack Definition' }),
-    },
-    { name: 'new stack instance', spec: () => ({ path: '/stack-instances/new', heading: 'Create Stack Instance' }) },
-    {
-      name: 'stack instance',
-      spec: () => ({ path: `/stack-instances/${seed.instanceId}`, heading: seed.instanceName }),
-    },
-    { name: 'audit log', spec: () => ({ path: '/audit-log', heading: 'Audit Log' }) },
-    { name: 'users', spec: () => ({ path: '/admin/users', heading: 'User Management' }) },
-    {
-      name: 'orphaned namespaces',
-      spec: () => ({
-        path: '/admin/orphaned-namespaces',
-        heading: 'Orphaned Namespaces',
-        // The scan lists the namespaces of the cluster: 503 without cluster access.
-        allowed5xx: [/^GET \/api\/v1\/admin\/orphaned-namespaces$/],
-      }),
-    },
-    { name: 'clusters', spec: () => ({ path: '/admin/clusters', heading: 'Cluster Management' }) },
-    {
-      name: 'cluster health',
-      spec: () => ({
-        path: '/admin/cluster-health',
-        heading: 'Cluster Health',
-        // The e2e backend has no cluster access: the live health (summary,
-        // nodes), namespace and utilization reads of the default cluster answer 500.
-        allowed5xx: [/^GET \/api\/v1\/clusters\/[^/]+\/(health\/(summary|nodes)|namespaces|utilization)$/],
-      }),
-    },
-    { name: 'analytics', spec: () => ({ path: '/admin/analytics', heading: 'Analytics' }) },
-    { name: 'shared values', spec: () => ({ path: '/admin/shared-values', heading: 'Shared Values' }) },
-    { name: 'cleanup policies', spec: () => ({ path: '/admin/cleanup-policies', heading: 'Cleanup Policies' }) },
-    { name: 'notification channels', spec: () => ({ path: '/admin/notification-channels', heading: 'Notification Channels' }) },
-    { name: 'profile', spec: () => ({ path: '/profile', heading: 'My Profile' }) },
-    { name: 'notifications', spec: () => ({ path: '/notifications', heading: 'Notifications' }) },
-    { name: 'not found', spec: () => ({ path: '/does-not-exist', heading: '404' }) },
-  ];
+  // The names must exist before the seed: Playwright lists the tests first.
+  const PAGE_NAMES = pageList({
+    token: '', definitionId: '', definition2Id: '', instanceId: '', instanceName: '', instance2Id: '', instance2Name: '',
+    templateId: '', templateName: '', publishedTemplateId: '', publishedTemplateName: '',
+  }).map((p) => p.name);
 
   for (const mode of MODES) {
-    for (const { name, spec } of PAGES) {
+    for (const name of PAGE_NAMES) {
       test(`${name} (${mode})`, async ({ page }) => {
-        await checkPage(page, mode, spec());
+        const spec = pageList(seed).find((p) => p.name === name)?.spec as PageSetup;
+        await checkPage(page, mode, {
+          ...spec,
+          ready: async (p, runAxe) => {
+            if (name === 'compare, with a difference') {
+              await expect(p.locator('[class*="line-number"]').filter({ hasText: /\d/ }).first(), 'the diff viewer did not render').toBeVisible();
+            }
+            await runAxe();
+            if (name === 'templates') {
+              // The seeded draft template is on the tab "My Templates" (the admin owns it)
+              // with a warning "Draft" chip: check the chip on the card of that template.
+              await p.getByRole('tab', { name: 'My Templates' }).click();
+              const card = p.locator('.MuiCard-root').filter({ hasText: seed.templateName });
+              await expect(card.getByText('Draft', { exact: true }), 'the Draft chip of the seeded template is not visible').toBeVisible();
+              await runAxe();
+            }
+            if (spec.sidebar !== false) await hoverStatusButtonsOnPage(p, runAxe);
+          },
+        });
       });
     }
   }
@@ -427,6 +129,12 @@ test.describe('Accessibility: colour contrast and lists (#740)', () => {
     page.locator('[aria-live=polite]').getByText(label, { exact: true });
 
   const FORCED: ForcedState[] = [
+    {
+      name: 'draft: Deploy button (contained success)',
+      status: 'draft',
+      visible: (page) => page.getByRole('button', { name: 'Deploy', exact: true }),
+      hover: true,
+    },
     {
       name: 'running: Stop button (contained warning)',
       status: 'running',
@@ -462,25 +170,23 @@ test.describe('Accessibility: colour contrast and lists (#740)', () => {
       started_at: '2026-10-19T09:00:00Z', completed_at: '2026-10-19T09:00:45Z' },
   ];
 
+  /** The instance page in a forced status: a status other than draft reads the pods, 502 without a cluster. */
+  const instancePage = (status: string, errorMessage?: string, withHistory = false): PageSetup => ({
+    path: `/stack-instances/${seed.instanceId}`,
+    heading: seed.instanceName,
+    allowed5xx: [new RegExp(`^GET /api/v1/stack-instances/${seed.instanceId}/pods$`)],
+    before: async (p) => {
+      await forceInstanceFields(p, seed.instanceId, { status, error_message: errorMessage });
+      if (withHistory) await mockDeployLog(p, seed.instanceId, deployHistory);
+    },
+  });
+
   for (const mode of MODES) {
     for (const forced of FORCED) {
       test(`FORCED instance ${forced.name} (${mode})`, async ({ page }) => {
-        const { instanceId, instanceName } = seed;
         await checkPage(page, mode, {
-          path: `/stack-instances/${instanceId}`,
-          heading: instanceName,
+          ...instancePage(forced.status, forced.errorMessage, forced.deployHistory),
           progressbars: forced.progressbars,
-          // A status other than draft makes the page read the pods: 502 without cluster access.
-          allowed5xx: [new RegExp(`^GET /api/v1/stack-instances/${instanceId}/pods$`)],
-          before: async (p) => {
-            await p.route(new RegExp(`/api/v1/stack-instances/${instanceId}(\\?.*)?$`), async (route) => {
-              if (route.request().method() !== 'GET') return route.continue();
-              const res = await route.fetch();
-              const body = { ...(await res.json()), status: forced.status, error_message: forced.errorMessage };
-              return route.fulfill({ response: res, json: body });
-            });
-            if (forced.deployHistory) await mockDeployLog(p, instanceId, deployHistory);
-          },
           ready: async (p, runAxe) => {
             await expect(forced.visible(p), `forced ${forced.name}: the element is not visible`).toBeVisible();
             await runAxe();
@@ -495,9 +201,284 @@ test.describe('Accessibility: colour contrast and lists (#740)', () => {
                 .not.toBe(before);
               await runAxe();
             }
+            await hoverStatusButtonsOnPage(p, runAxe);
           },
         });
       });
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // INTERACTIVE states (#758). These surfaces are a small part of the page, so each
+  // axe run is limited to the surface and must have measured the named element. A
+  // node that axe left undecided does not count.
+
+  interface ToastState {
+    severity: 'Success' | 'Info' | 'Warning' | 'Error';
+    /** The text of the toast: the mocked answer really reached it. */
+    text: string | RegExp;
+    setup: () => PageSetup;
+    trigger: (page: Page, socket: () => WebSocketRoute | undefined) => Promise<void>;
+  }
+
+  /** The Profile page answers a saved preference with a toast: success, or error on a refusal. */
+  const preferencesSaveAnswers = (status: number): PageSetup => ({
+    path: '/profile',
+    heading: 'My Profile',
+    before: (p) => p.route(/\/api\/v1\/notifications\/preferences$/, (route) => (
+      route.request().method() === 'PUT' ? route.fulfill({ status, json: {} }) : route.continue()
+    )),
+  });
+  const savePreferences = (page: Page) => page.getByRole('button', { name: 'Save', exact: true }).click();
+
+  const TOASTS: ToastState[] = [
+    { severity: 'Success', text: 'Notification preferences saved', setup: () => preferencesSaveAnswers(200), trigger: savePreferences },
+    { severity: 'Error', text: 'Failed to save notification preferences', setup: () => preferencesSaveAnswers(400), trigger: savePreferences },
+    {
+      severity: 'Warning',
+      text: /forced warning/,
+      setup: () => ({
+        path: '/admin/notification-channels',
+        heading: 'Notification Channels',
+        before: (p) => p.route(/\/api\/v1\/admin\/notification-channels$/, (route) => (
+          route.request().method() === 'POST'
+            ? route.fulfill({ status: 201, json: {
+                id: 'a11y-channel',
+                name: 'a11y',
+                webhook_url: 'https://example.com/hook',
+                enabled: true,
+                created_at: '2026-10-19T09:00:00Z',
+                updated_at: '2026-10-19T09:00:00Z',
+                warnings: ['forced warning'],
+              } satisfies NotificationChannelSaveResult })
+            : route.continue()
+        )),
+      }),
+      trigger: async (page) => {
+        await page.getByRole('button', { name: 'Create Channel' }).click();
+        const dialog = page.getByRole('dialog');
+        await dialog.getByRole('textbox', { name: 'Name' }).fill('a11y');
+        await dialog.getByRole('textbox', { name: 'Webhook URL' }).fill('https://example.com/hook');
+        await dialog.getByRole('button', { name: 'Create', exact: true }).click();
+      },
+    },
+    {
+      severity: 'Info',
+      text: 'Forced info toast',
+      setup: () => ({ path: '/profile', heading: 'My Profile' }),
+      // NotificationCenter shows a pushed notification as an info toast.
+      trigger: async (_page, socket) => {
+        await expect.poll(socket, { message: 'the app did not open its socket' }).toBeTruthy();
+        socket()?.send(JSON.stringify({
+          type: 'notification.new',
+          payload: {
+            id: 'a11y-note',
+            user_id: 'a11y-user',
+            type: 'deployment.success',
+            title: 'Forced info toast',
+            message: 'Forced by the accessibility check',
+            is_read: false,
+            created_at: '2026-10-19T10:00:00Z',
+          } satisfies Notification,
+        }));
+      },
+    },
+  ];
+
+  /** A dashboard row. The expiry chip reads only these fields. */
+  const row = (id: string, name: string, fields: Partial<StackInstance>): StackInstance => ({
+    id,
+    name,
+    namespace: `stack-${name}`,
+    branch: 'main',
+    status: 'running',
+    stack_definition_id: seed.definitionId,
+    owner_id: 'a11y-owner',
+    created_at: '2026-10-19T09:00:00Z',
+    updated_at: '2026-10-19T09:00:00Z',
+    ...fields,
+  });
+
+  const minutesFromNow = (minutes: number) => new Date(Date.now() + minutes * 60_000).toISOString();
+
+  /** The expiry chips: the three colours of the countdown, for a TTL and for a fixed stop time. */
+  const expiryRows = () => [
+    row('a11y-ttl-ok', 'ttl-ok', { ttl_minutes: 600, expires_at: minutesFromNow(300) }),
+    row('a11y-ttl-warn', 'ttl-warn', { ttl_minutes: 600, expires_at: minutesFromNow(45) }),
+    row('a11y-ttl-crit', 'ttl-crit', { ttl_minutes: 600, expires_at: minutesFromNow(10) }),
+    row('a11y-stop-ok', 'stop-ok', { expires_at: minutesFromNow(300) }),
+    row('a11y-stop-warn', 'stop-warn', { expires_at: minutesFromNow(45) }),
+    row('a11y-stop-crit', 'stop-crit', { expires_at: minutesFromNow(10) }),
+    row('a11y-stop-draft', 'stop-draft', { status: 'draft', expires_at: minutesFromNow(300) }),
+    row('a11y-expired', 'expired', { status: 'stopped', error_message: 'Expired (TTL)' }),
+  ];
+
+  const mockDashboardRows = async (page: Page, rows: () => StackInstance[]) => {
+    await page.route(/\/api\/v1\/stack-instances(\?.*)?$/, (route) => (
+      route.request().method() !== 'GET'
+        ? route.continue()
+        : route.fulfill({ json: { data: rows(), page: 1, pageSize: 25, total: rows().length } })
+    ));
+    await page.route(/\/api\/v1\/stack-instances\/a11y-[^/]+\/status$/, (route) => route.fulfill({
+      json: { namespace: 'a11y', status: 'healthy', charts: [], last_checked: '2026-10-19T09:00:00Z' } satisfies NamespaceStatus,
+    }));
+  };
+
+  const openActionsMenu = async (page: Page): Promise<Locator> => {
+    await page.getByRole('button', { name: 'Actions', exact: true }).click();
+    const menu = page.getByRole('menu');
+    await expect(menu, 'the Actions menu did not open').toBeVisible();
+    return menu;
+  };
+
+  for (const mode of MODES as Mode[]) {
+    test(`STATE selection toolbar on the dashboard (${mode})`, async ({ page }) => {
+      await checkPage(page, mode, {
+        path: '/',
+        heading: 'Stack Instances',
+        allowed5xx: [/^GET \/api\/v1\/stack-instances\/[^/]+\/status$/],
+        ready: async (p, runAxe) => {
+          await p.getByRole('checkbox', { name: 'Select all instances' }).check();
+          const toolbar = p.getByRole('toolbar', { name: 'Bulk actions' });
+          await expect(toolbar, 'the selection toolbar did not open').toBeVisible();
+          await runAxe({ selector: '[role=toolbar]', checked: toolbar.getByText(/\d+ selected/) });
+          for (const name of ['Deploy', 'Stop', 'Clean', 'Delete', 'Clear Selection']) {
+            await hoverAndCheck(p, toolbar.getByRole('button', { name, exact: true }), '[role=toolbar]', runAxe);
+          }
+        },
+      });
+    });
+
+    // The tab decides the action: Unpublish on My Templates, Publish on All Drafts.
+    for (const [tab, action] of [['My Templates', 'Unpublish'], ['All Drafts', 'Publish']]) {
+      test(`STATE selection toolbar in the template gallery, ${tab} (${mode})`, async ({ page }) => {
+        await checkPage(page, mode, {
+          path: '/templates',
+          heading: 'Template Gallery',
+          ready: async (p, runAxe) => {
+            await p.getByRole('tab', { name: tab }).click();
+            await p.getByRole('checkbox', { name: `Select ${seed.templateName}` }).check();
+            const toolbar = p.getByRole('toolbar', { name: 'Bulk actions' });
+            await expect(toolbar, 'the selection toolbar did not open').toBeVisible();
+            await runAxe({ selector: '[role=toolbar]', checked: toolbar.getByText(/\d+ selected/) });
+            for (const name of [new RegExp(`^${action} \\(`), /^Delete \(/, /^Clear Selection$/]) {
+              await hoverAndCheck(p, toolbar.getByRole('button', { name }), '[role=toolbar]', runAxe);
+            }
+          },
+        });
+      });
+    }
+
+    test(`STATE instance Actions menu on hover and focus (${mode})`, async ({ page }) => {
+      await checkPage(page, mode, {
+        // The page offers Clean namespace only from some states, among them running.
+        ...instancePage('running'),
+        ready: async (p, runAxe) => {
+          const menu = await openActionsMenu(p);
+          const scope = '[role=menu]';
+          const clean = menu.getByRole('menuitem', { name: 'Clean namespace' });
+          const del = menu.getByRole('menuitem', { name: 'Delete' });
+          await runAxe({ selector: scope, checked: del });
+          await hoverAndCheck(p, clean, scope, runAxe);
+          await hoverAndCheck(p, del, scope, runAxe);
+          // Delete is the last item, Clean namespace the one above it.
+          await focusAndCheck(p, del, 'End', scope, runAxe);
+          await focusAndCheck(p, clean, 'ArrowUp', scope, runAxe);
+        },
+      });
+    });
+
+    for (const { severity, text, setup, trigger } of TOASTS) {
+      test(`STATE toast ${severity} (${mode})`, async ({ page }) => {
+        let socket: WebSocketRoute | undefined;
+        await checkPage(page, mode, {
+          ...setup(),
+          onSocket: (ws) => { socket = ws; },
+          ready: async (p, runAxe) => {
+            await trigger(p, () => socket);
+            const toast = p.locator(`[data-testid=toast-stack] .MuiAlert-color${severity}`);
+            await expect(toast, `the ${severity} toast did not appear`).toBeVisible();
+            await expect(toast.locator('.MuiAlert-message')).toHaveText(text);
+            // The pointer on a toast pauses its timer while axe runs.
+            await toast.hover();
+            await runAxe({ selector: '[data-testid=toast-stack]', checked: toast.locator('.MuiAlert-message') });
+          },
+        });
+      });
+    }
+
+    // Button tints are translucent: on the page background (no Paper) a light
+    // mode outlined button gets its darkest hover colour.
+    test(`STATE outlined warning button on the page background, on hover (${mode})`, async ({ page }) => {
+      await checkPage(page, mode, {
+        path: `/templates/${seed.publishedTemplateId}`,
+        heading: seed.publishedTemplateName,
+        ready: async (p, runAxe) => {
+          const button = p.getByRole('button', { name: 'Unpublish', exact: true });
+          await expect(button, 'the Unpublish button is not visible').toBeVisible();
+          const onPage = await button.evaluate((el) => el.closest('.MuiPaper-root') === null);
+          expect(onPage, 'the button must sit directly on the page background').toBe(true);
+          await hoverAndCheck(p, button, 'main', runAxe);
+        },
+      });
+    });
+
+    // The boxes of the preview page have their own background.
+    test(`STATE default and locked values of a template chart (${mode})`, async ({ page }) => {
+      await checkPage(page, mode, {
+        path: `/templates/${seed.publishedTemplateId}`,
+        heading: seed.publishedTemplateName,
+        ready: async (p, runAxe) => {
+          const defaults = p.locator('pre').filter({ hasText: 'replicaCount: 1' });
+          const locked = p.locator('pre').filter({ hasText: 'pullPolicy: Always' });
+          await expect(defaults, 'the Default Values box is not visible').toBeVisible();
+          await expect(locked, 'the Locked Values box is not visible').toBeVisible();
+          await runAxe({ selector: 'main', checked: defaults });
+          await runAxe({ selector: 'main', checked: locked });
+        },
+      });
+    });
+
+    test(`STATE Expires in and Stops at chips, all colours (${mode})`, async ({ page }) => {
+      await checkPage(page, mode, {
+        path: '/',
+        heading: 'Stack Instances',
+        before: (p) => mockDashboardRows(p, expiryRows),
+        ready: async (p, runAxe) => {
+          const chips = p.locator('main .MuiChip-root').filter({ hasText: /^(Expires in|Stops at|Expired)/ });
+          await expect(chips, 'the 8 rows show 8 expiry chips').toHaveCount(8);
+          // Each colour of the countdown is on screen, so that each is measured.
+          for (const colour of ['Success', 'Warning', 'Error', 'Default']) {
+            await expect(chips.and(p.locator(`.MuiChip-color${colour}`)).first(), `no ${colour} expiry chip`).toBeVisible();
+          }
+          for (let i = 0; i < 8; i++) {
+            await runAxe({ selector: 'main', checked: chips.nth(i) });
+          }
+        },
+      });
+    });
+
+    test(`STATE API-key expiry chips on the profile (${mode})`, async ({ page }) => {
+      await checkPage(page, mode, {
+        path: '/profile',
+        heading: 'My Profile',
+        before: (p) => p.route(/\/api\/v1\/users\/[^/]+\/api-keys$/, (route) => (
+          route.request().method() !== 'GET' ? route.continue() : route.fulfill({
+            json: [
+              { id: 'k-exp', user_id: 'u', name: 'expired-key', prefix: 'aa', created_at: '2026-01-01T00:00:00Z', expires_at: minutesFromNow(-1440) },
+              { id: 'k-soon', user_id: 'u', name: 'soon-key', prefix: 'bb', created_at: '2026-01-01T00:00:00Z', expires_at: minutesFromNow(1440) },
+            ] satisfies APIKey[],
+          })
+        )),
+        ready: async (p, runAxe) => {
+          const expired = p.locator('main .MuiChip-root').filter({ hasText: /^Expired / });
+          const soon = p.locator('main .MuiChip-root').filter({ hasText: /^Expires soon / });
+          await expect(expired, 'the expired chip').toBeVisible();
+          await expect(soon, 'the expiring-soon chip says so in words').toBeVisible();
+          await runAxe({ selector: 'main', checked: expired });
+          await runAxe({ selector: 'main', checked: soon });
+        },
+      });
+    });
   }
 });

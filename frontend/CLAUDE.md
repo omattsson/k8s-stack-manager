@@ -2,7 +2,7 @@
 
 ## Project Setup
 - The frontend uses Vite 8, React 19 and TypeScript 6 (strict mode). It uses `@vitejs/plugin-react` (Vite 8 transforms JSX with Oxc).
-- Unit tests run on Vitest 5 with Testing Library. End-to-end tests run on Playwright (`e2e/`, 46 specs). `e2e/global-setup.ts` starts the test stub (`e2e/stub/`).
+- Unit tests run on Vitest 5 with Testing Library. End-to-end tests run on Playwright (`e2e/`, 52 specs). `e2e/global-setup.ts` starts the test stub (`e2e/stub/`).
 - Node 22 or later is required. The Dockerfile uses `node:26-alpine`.
 
 ## Architecture
@@ -20,7 +20,7 @@
   - `NotificationContext.tsx`: toasts and snackbars.
   - `ThemeContext.tsx`: light and dark toggle.
 - **Hooks** (`src/hooks/`): `useCountdown.ts` (countdown timer), `useUnsavedChanges.ts` (unsaved changes warning), `useDeployHistory.ts` (Deployment History paging, filters and highlights; `useRollbackTargets`), `useWebSocket.ts` (real-time updates).
-- **Theme** (`src/theme/`): `index.ts` (MUI theme export), `palette.ts`, `typography.ts`, `components.ts` (default props and style overrides).
+- **Theme** (`src/theme/`): `index.ts` (MUI theme export), `palette.ts`, `typography.ts`, `components.ts` (default props and style overrides, focus rings). `__tests__/contrast.test.ts` checks the palette ratios.
 - **Types:** `src/types/index.ts` has the shared TypeScript types.
 - **Utils** (`src/utils/`):
   - `roles.ts`: role ranking (`hasAtLeastRole`) and `canModifyInstance`.
@@ -52,10 +52,11 @@
 - Shared components are in `src/components/`:
   - Layout, AccessUrls, BranchSelector, BrandLogo, ConfirmDialog, EmptyState, EntityLink, ErrorBoundary, LoadingState, ProtectedRoute, StatusBadge, StopTimePicker, TtlSelector, YamlEditor.
   - ChartDiffList and TemplateFieldDiffList (template version diff).
+  - ThemedDiffViewer (the diff viewer in the app colour mode, with readable line numbers). Use it instead of `react-diff-viewer-continued` directly.
   - DeployPreviewDialog (merged values before deploy, `GET /stack-instances/:id/deploy-preview`).
   - DeploymentHistory (pinned rows, filters, compact rows, folded deploy runs, "Show more", output loaded on open), PodStatusDisplay, QuickDeployDialog, QuotaConfigDialog (`quotaFields.ts`: field list and validation).
   - InstanceQuota (Resource quota section of the instance page: effective values, source chips, override dialog).
-  - ExtendTtlMenu, FavoriteButton, FollowButton, NotificationCenter.
+  - ExtendTtlMenu, FavoriteButton, FollowButton, NotificationCenter (`NotificationTitle.tsx`: row title that also says "unread" to a screen reader).
   - InstanceActionsMenu (custom actions of the instance "Actions" menu; `useJobLog`, `JobLogPanel`, `JobLogDialog`), JsonResultView.
   - ActionRunHistory (Action runs of the instance page: result chips, parameters, "Show more", "Show log").
   - SetupWizard (first-run checklist: cluster, template, instance).
@@ -92,6 +93,21 @@ Use checkboxes for multi-select and a toolbar for the bulk actions.
 Hide or disable controls that the backend refuses, for example Create Definition and Add/Remove Chart for the role `user` (`hasAtLeastRole(user?.role, 'devops')`). The backend stays the authority.
 
 - Register new pages in `src/routes.tsx`. Add navigation in `src/components/Layout/index.tsx`.
+
+## Accessibility
+The specs run in both colour modes. `e2e/a11y.ts` holds the shared axe run, measurements and seed data.
+- `accessibility.spec.ts`: pages (`pageList` in `a11y.ts`) and their states: selected row, menus on hover and focus, toasts.
+- `accessibility-dialogs.spec.ts`: dialogs.
+- `accessibility-phone.spec.ts`: the phone layout.
+- `accessibility-signals.spec.ts`: what axe does not judge: focus rings, tooltips, bars, colour as the only signal.
+
+Rules:
+- Add a new page to `pageList`, and open a new dialog in `accessibility-dialogs.spec.ts`.
+- A node that axe leaves undecided fails. Add it to `KNOWN_UNDECIDED` only with a selector and a reason.
+- Behind text, use a theme token such as `action.hover`, not a fixed `grey.*`: dark mode keeps its white text on the fixed grey (1.09:1).
+- Never show a state by colour alone. Add a shape, a weight or text, as `PodHealthIcon` does in `StackInstances/Dashboard.tsx`.
+- An accessible name must contain the visible text, in the same order (`label-content-name-mismatch`).
+- In `sx`, a `width` or `height` of 1 means 100%. Write `'1px'` for one pixel.
 
 ## Page Pattern
 - Show a loading state: a centered `CircularProgress` in a `Box`.

@@ -1,7 +1,8 @@
+import { StrictMode } from 'react';
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, waitFor, within, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import Dashboard from '../Dashboard';
 import { NotificationProvider } from '../../../context/NotificationContext';
 import type { WsMessage } from '../../../hooks/useWebSocket';
@@ -478,6 +479,70 @@ describe('Dashboard', () => {
       expect(screen.getByText('My Favorites')).toBeInTheDocument();
       // Instance should appear in the favorites section (and also in the main list)
       expect(screen.getAllByText('Fav Instance').length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  describe('favorite and recent cards are keyboard links', () => {
+    const LocationProbe = () => <div data-testid="location">{useLocation().pathname}</div>;
+
+    const renderDashboard = () => render(
+      <MemoryRouter>
+        <NotificationProvider>
+          <Dashboard />
+          <LocationProbe />
+        </NotificationProvider>
+      </MemoryRouter>
+    );
+
+    const mockFavorite = () => {
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
+        mockInstance({ id: 'fav-inst', name: 'Fav Instance', namespace: 'stack-fav' }),
+      ]);
+      (favoriteService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+        { id: 'fav-1', user_id: '1', entity_type: 'instance', entity_id: 'fav-inst', created_at: '' },
+      ]);
+    };
+
+    it('opens a favorite with the Enter key', async () => {
+      const user = userEvent.setup();
+      mockFavorite();
+      renderDashboard();
+      const link = await screen.findByRole('link', { name: /Fav Instance/ });
+      expect(link).toHaveAttribute('href', '/stack-instances/fav-inst');
+      link.focus();
+      await user.keyboard('{Enter}');
+      expect(screen.getByTestId('location')).toHaveTextContent('/stack-instances/fav-inst');
+    });
+
+    it('keeps the star of a favorite outside the link, and the star does not navigate', async () => {
+      const user = userEvent.setup();
+      mockFavorite();
+      renderDashboard();
+      const link = await screen.findByRole('link', { name: /Fav Instance/ });
+      const card = link.closest('.MuiCard-root') as HTMLElement;
+      const star = within(card).getByRole('button', { name: /favorites/i });
+      // A link cannot hold a button.
+      expect(link).not.toContainElement(star);
+      expect(link.querySelector('button')).toBeNull();
+
+      await user.click(star);
+      await waitFor(() => expect(favoriteService.remove).toHaveBeenCalledWith('instance', 'fav-inst'));
+      expect(screen.getByTestId('location')).toHaveTextContent('/');
+      expect(screen.getByTestId('location')).not.toHaveTextContent('stack-instances');
+    });
+
+    it('opens a recent stack with the Enter key', async () => {
+      const user = userEvent.setup();
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (instanceService.recent as ReturnType<typeof vi.fn>).mockResolvedValue([
+        mockInstance({ id: 'r-1', name: 'Recent Stack', status: 'draft', namespace: 'stack-rec', updated_at: '2026-01-01T00:00:00Z' }),
+      ]);
+      renderDashboard();
+      const link = await screen.findByRole('link', { name: /Recent Stack/ });
+      expect(link).toHaveAttribute('href', '/stack-instances/r-1');
+      link.focus();
+      await user.keyboard('{Enter}');
+      expect(screen.getByTestId('location')).toHaveTextContent('/stack-instances/r-1');
     });
   });
 
@@ -1398,7 +1463,127 @@ describe('Dashboard', () => {
       }, { timeout: 3000 });
     });
 
-    it('shows pod health dot when status is fetched for running instance', async () => {
+    it.each([
+      ['healthy', 'CheckCircleIcon'],
+      ['progressing', 'AutorenewIcon'],
+      ['degraded', 'WarningAmberIcon'],
+      ['error', 'CancelIcon'],
+      ['not_found', 'HelpOutlineOutlinedIcon'],
+    ])('shows pod health %s with its own shape and a name', async (status, iconTestId) => {
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
+        mockInstance({ id: 'inst-h', name: 'Health App', status: 'running', namespace: 'stack-h' }),
+      ]);
+      (instanceService.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+        namespace: 'stack-h',
+        status,
+        charts: [],
+        last_checked: '2026-01-01T00:00:00Z',
+      });
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      const icon = await screen.findByRole('img', { name: `Pod health: ${status}` });
+      // Colour alone must not tell the states apart: each has its own icon.
+      expect(icon).toHaveAttribute('data-testid', iconTestId);
+    });
+
+    // The list loads twice under StrictMode, and a WebSocket event can reload it at
+    // any time. A new list while a status request runs must not lose its answer.
+    it('keeps the pod health when the list changes while the status is loading', async () => {
+      const list = () => [mockInstance({ id: 'inst-h', name: 'Health App', status: 'running', namespace: 'stack-h' })];
+      const answers: Array<(value: unknown) => void> = [];
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockImplementation(
+        () => new Promise((resolve) => { answers.push(resolve); }),
+      );
+      let answerStatus: (value: unknown) => void = () => undefined;
+      (instanceService.getStatus as ReturnType<typeof vi.fn>).mockReturnValue(new Promise((resolve) => { answerStatus = resolve; }));
+      render(
+        <StrictMode>
+          <MemoryRouter>
+            <NotificationProvider>
+              <Dashboard />
+            </NotificationProvider>
+          </MemoryRouter>
+        </StrictMode>
+      );
+      await waitFor(() => expect(answers).toHaveLength(2));
+      // The first list starts the status request.
+      await act(async () => { answers[0](list()); });
+      await waitFor(() => expect(instanceService.getStatus).toHaveBeenCalledTimes(1));
+      // The second list arrives while that request runs.
+      await act(async () => { answers[1](list()); });
+      await screen.findAllByText('Health App');
+      await act(async () => {
+        answerStatus({ namespace: 'stack-h', status: 'degraded', charts: [], last_checked: '2026-01-01T00:00:00Z' });
+      });
+      expect(await screen.findByRole('img', { name: 'Pod health: degraded' })).toBeInTheDocument();
+    });
+
+    // A status request can start during a deploy and answer after the deploy finished.
+    // That answer describes the old deploy: it must not stick to the card.
+    describe('a status answer that spans the end of a deploy', () => {
+      const statusAnswer = (status: string) => ({ namespace: 'stack-h', status, charts: [], last_checked: '2026-01-01T00:00:00Z' });
+
+      const startDeployThatFinishes = async () => {
+        (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
+          mockInstance({ id: 'inst-h', name: 'Health App', status: 'deploying', namespace: 'stack-h' }),
+        ]);
+        const answers: Array<(value: unknown) => void> = [];
+        (instanceService.getStatus as ReturnType<typeof vi.fn>).mockImplementation(
+          () => new Promise((resolve) => { answers.push(resolve); }),
+        );
+        render(
+          <MemoryRouter>
+            <NotificationProvider>
+              <Dashboard />
+            </NotificationProvider>
+          </MemoryRouter>
+        );
+        await waitFor(() => expect(answers).toHaveLength(1));
+        act(() => broadcastWs({ type: 'deployment.status', payload: { instance_id: 'inst-h', status: 'running' } }));
+        return answers;
+      };
+
+      it('discards the old answer and asks again', async () => {
+        const answers = await startDeployThatFinishes();
+        await waitFor(() => expect(answers).toHaveLength(2));
+
+        await act(async () => { answers[0](statusAnswer('degraded')); });
+        expect(screen.queryByRole('img', { name: 'Pod health: degraded' })).not.toBeInTheDocument();
+
+        await act(async () => { answers[1](statusAnswer('healthy')); });
+        expect(await screen.findByRole('img', { name: 'Pod health: healthy' })).toBeInTheDocument();
+      });
+
+      it('keeps the new answer when the old one comes last', async () => {
+        const answers = await startDeployThatFinishes();
+        await waitFor(() => expect(answers).toHaveLength(2));
+
+        await act(async () => { answers[1](statusAnswer('healthy')); });
+        expect(await screen.findByRole('img', { name: 'Pod health: healthy' })).toBeInTheDocument();
+        await act(async () => { answers[0](statusAnswer('degraded')); });
+        expect(screen.getByRole('img', { name: 'Pod health: healthy' })).toBeInTheDocument();
+        expect(screen.queryByRole('img', { name: 'Pod health: degraded' })).not.toBeInTheDocument();
+      });
+
+      it('has the new answer even when the scheduled reload ran before the old answer', async () => {
+        const answers = await startDeployThatFinishes();
+        // The reload after the deploy finds the ID in flight and asks nothing itself.
+        await waitFor(() => expect(instanceService.listAll).toHaveBeenCalledTimes(2), { timeout: 3000 });
+
+        await act(async () => { answers[0](statusAnswer('degraded')); });
+        await waitFor(() => expect(answers).toHaveLength(2));
+        await act(async () => { answers[1](statusAnswer('healthy')); });
+        expect(await screen.findByRole('img', { name: 'Pod health: healthy' })).toBeInTheDocument();
+        expect(screen.queryByRole('img', { name: 'Pod health: degraded' })).not.toBeInTheDocument();
+      });
+    });
+
+    it('shows pod health when status is fetched for running instance', async () => {
       (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
         mockInstance({ id: 'inst-h', name: 'Healthy App', status: 'running', namespace: 'stack-h' }),
       ]);
@@ -1419,7 +1604,7 @@ describe('Dashboard', () => {
         expect(screen.getByText('Healthy App')).toBeInTheDocument();
       });
       await waitFor(() => {
-        expect(screen.getByRole('status', { name: /pod health: healthy/i })).toBeInTheDocument();
+        expect(screen.getByRole('img', { name: /pod health: healthy/i })).toBeInTheDocument();
       });
     });
 

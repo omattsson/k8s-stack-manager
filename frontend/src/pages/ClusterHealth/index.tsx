@@ -36,10 +36,10 @@ import { formatCpuCores, formatMemoryQuantity, quantityPercent } from '../../uti
 
 const AUTO_REFRESH_INTERVAL = 30000;
 
-const ResourceBar = ({ percent, used, limit, minLabelWidth }: { percent: number; used: string; limit: string; minLabelWidth: number }) => (
+const ResourceBar = ({ label, percent, used, limit, minLabelWidth }: { label: string; percent: number; used: string; limit: string; minLabelWidth: number }) => (
   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
     <Box sx={{ flexGrow: 1, minWidth: 80 }}>
-      <LinearProgress variant="determinate" value={Math.min(percent, 100)} color={getUsageColor(percent)} />
+      <LinearProgress variant="determinate" value={Math.min(percent, 100)} color={getUsageColor(percent)} aria-label={`${label} ${percent}% used`} />
     </Box>
     <Typography variant="body2" sx={{ minWidth: minLabelWidth, textAlign: 'right' }}>
       {used} / {limit} ({percent}%)
@@ -104,12 +104,12 @@ const NamespaceUsageRow = ({ ns }: { ns: NamespaceResourceUsage }) => {
       </TableCell>
       <TableCell>
         {hasCpuQuota
-          ? <ResourceBar percent={cpuPercent} used={formatCpuCores(ns.cpu_used || '0')} limit={ns.cpu_limit ? `${formatCpuCores(ns.cpu_limit)} cores` : 'no limit'} minLabelWidth={140} />
+          ? <ResourceBar label={`${ns.namespace} CPU`} percent={cpuPercent} used={formatCpuCores(ns.cpu_used || '0')} limit={ns.cpu_limit ? `${formatCpuCores(ns.cpu_limit)} cores` : 'no limit'} minLabelWidth={140} />
           : <Typography variant="body2" color="text.secondary">No quota</Typography>}
       </TableCell>
       <TableCell>
         {hasMemQuota
-          ? <ResourceBar percent={memPercent} used={formatMemoryQuantity(ns.memory_used || '0')} limit={ns.memory_limit ? formatMemoryQuantity(ns.memory_limit) : 'no limit'} minLabelWidth={160} />
+          ? <ResourceBar label={`${ns.namespace} memory`} percent={memPercent} used={formatMemoryQuantity(ns.memory_used || '0')} limit={ns.memory_limit ? formatMemoryQuantity(ns.memory_limit) : 'no limit'} minLabelWidth={160} />
           : <Typography variant="body2" color="text.secondary">No quota</Typography>}
       </TableCell>
       <TableCell>
@@ -117,7 +117,7 @@ const NamespaceUsageRow = ({ ns }: { ns: NamespaceResourceUsage }) => {
           {ns.pod_limit > 0 ? (
             <>
               <Box sx={{ flexGrow: 1, minWidth: 60 }}>
-                <LinearProgress variant="determinate" value={Math.min(podPercent, 100)} color={getUsageColor(podPercent)} />
+                <LinearProgress variant="determinate" value={Math.min(podPercent, 100)} color={getUsageColor(podPercent)} aria-label={`${ns.namespace} pods ${podPercent}% used`} />
               </Box>
               <Typography variant="body2" sx={{ minWidth: 70, textAlign: 'right' }}>
                 {ns.pod_count} / {ns.pod_limit}

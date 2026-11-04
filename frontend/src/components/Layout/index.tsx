@@ -154,6 +154,9 @@ const Layout = ({ children }: LayoutProps) => {
             component={RouterLink}
             to={item.path}
             selected={active}
+            // "page" only on the page itself. On a child route, the link is the current
+            // section, for example Definitions on /stack-definitions/:id/edit.
+            aria-current={location.pathname === item.path ? 'page' : active ? 'true' : undefined}
             sx={{
               minHeight: 44,
               px: 2.5,
@@ -274,6 +277,7 @@ const Layout = ({ children }: LayoutProps) => {
           component={RouterLink}
           to="/profile"
           selected={location.pathname === '/profile'}
+          aria-current={location.pathname === '/profile' ? 'page' : undefined}
           sx={{ borderRadius: 1, py: 0.5, flex: 1, justifyContent: 'center' }}
         >
           <ListItemText
