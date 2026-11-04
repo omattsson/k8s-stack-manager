@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"backend/internal/helm"
 	"backend/internal/models"
 	"backend/pkg/dberrors"
 
@@ -55,7 +56,7 @@ func (h *InstanceHandler) GetOverrides(c *gin.Context) {
 
 // SetOverride godoc
 // @Summary     Set or update override for a chart
-// @Description Upsert value overrides for a specific chart in a stack instance. chartId must be a chart config of the instance's stack definition. Empty or whitespace-only values remove the override and return 204 No Content (also when no override existed).
+// @Description Upsert value overrides for a specific chart in a stack instance. chartId must be a chart config of the instance's stack definition. Empty or whitespace-only values remove the override and return 204 No Content (also when no override existed). Values that the deploy cannot parse return 400 with the parse error: broken YAML, duplicate keys, a root that is not a map, or an unquoted template value (write tag: "{{.Branch}}", not tag: {{.Branch}}). A stored value is never checked on read.
 // @Tags        value-overrides
 // @Accept      json
 // @Produce     json
@@ -64,7 +65,7 @@ func (h *InstanceHandler) GetOverrides(c *gin.Context) {
 // @Param       body    body     models.ValueOverride true "Override values"
 // @Success     200     {object} models.ValueOverride
 // @Success     204     "Override removed (empty values)"
-// @Failure     400     {object} map[string]string
+// @Failure     400     {object} map[string]string "Invalid request, invalid YAML, or a conflict with locked values"
 // @Failure     401     {object} map[string]string
 // @Failure     403     {object} map[string]string
 // @Failure     404     {object} map[string]string "Instance not found, or chart not found in this stack definition"
@@ -112,6 +113,15 @@ func (h *InstanceHandler) SetOverride(c *gin.Context) {
 			return
 		}
 		c.Status(http.StatusNoContent)
+		return
+	}
+
+	// Refuse a value that the deploy cannot parse. Only this route checks: a
+	// clone copies stored values as they are, so an old invalid value can still
+	// be read and fixed. The message comes from helm.ValidateValues, which
+	// holds no Go type names and no scalar value of the input.
+	if err := helm.ValidateValues(input.Values); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid YAML: " + err.Error()})
 		return
 	}
 

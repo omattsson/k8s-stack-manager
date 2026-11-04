@@ -4,7 +4,9 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"text/template"
 
@@ -212,6 +214,71 @@ func (g *ValuesGenerator) ExportAsZip(ctx context.Context, params GenerateAllPar
 	}
 
 	return buf.Bytes(), nil
+}
+
+// ValidateValues reports whether s can be used as a values layer. It runs the
+// parser of GenerateValues, so a value that passes here also passes that parse
+// step at deploy time. It does not run the template substitution. Empty input,
+// a comment and null are valid (no values). A scalar or a list is not a map.
+//
+// The error text is safe to show to the user: it has no Go type names and holds
+// no scalar value or anchor name of the input. It can hold a map key
+// (`mapping key "a" already defined`).
+func ValidateValues(s string) error {
+	_, err := parseYAML(s)
+	if err == nil {
+		return nil
+	}
+	msg := describeYAMLError(err)
+	if unquotedTemplate.MatchString(yamlQuotedOrComment.ReplaceAllString(s, "")) {
+		msg += `. Put a template value in quotes, for example tag: "{{.Branch}}"`
+	}
+	return errors.New(msg)
+}
+
+var (
+	// unquotedTemplate finds a template at the start of a plain value or key,
+	// where YAML reads the braces as a flow map. frontend/src/utils/yamlValidation.ts has the same rule.
+	unquotedTemplate = regexp.MustCompile(`(?m)(^\s*|:\s+|-\s+|[\[{,]\s*)\{\{`)
+	// yamlQuotedOrComment is the text that holds no template to quote: quoted strings and comments.
+	yamlQuotedOrComment = regexp.MustCompile(`(?m)"(?:[^"\\\n]|\\.)*"|'(?:[^'\n]|'')*'|(?:^|\s)#.*`)
+	// yamlBacktickValue is a scalar that a yaml.v3 message quotes, in full for "cannot decode".
+	// It is greedy, because the scalar can hold backticks itself.
+	yamlBacktickValue = regexp.MustCompile("(?s)\\s*`.*`")
+	// yamlAnchorName is the anchor name of "unknown anchor 'x' referenced": `password: *Abc123` would repeat it.
+	yamlAnchorName = regexp.MustCompile(`anchor '[^']*'`)
+)
+
+// describeYAMLError returns the text of a parseYAML error for the user. yaml.v3
+// messages can quote a value and name the Go target type, and "invalid map key"
+// prints the key as a Go value.
+func describeYAMLError(err error) string {
+	var typeErr *yaml.TypeError
+	if errors.As(err, &typeErr) {
+		lines := make([]string, 0, len(typeErr.Errors))
+		for _, line := range typeErr.Errors {
+			if strings.Contains(line, "into map[string]interface") {
+				return "the values must be a map of keys and values, not a scalar or a list"
+			}
+			if strings.HasSuffix(line, "into string") {
+				// The line number stays, the rest is Go wording: a key that is not a plain value.
+				line, _, _ = strings.Cut(line, "cannot unmarshal")
+				line += "a map key must be a plain value"
+			}
+			lines = append(lines, cleanYAMLMessage(line))
+		}
+		return strings.Join(lines, "; ")
+	}
+	msg := strings.TrimPrefix(err.Error(), "yaml: ")
+	if strings.HasPrefix(msg, "invalid map key") {
+		return "invalid map key"
+	}
+	return cleanYAMLMessage(msg)
+}
+
+func cleanYAMLMessage(msg string) string {
+	msg = yamlBacktickValue.ReplaceAllString(msg, "")
+	return yamlAnchorName.ReplaceAllString(msg, "anchor")
 }
 
 // parseYAML parses a YAML string into a map. Returns empty map for empty input.

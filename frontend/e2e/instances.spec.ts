@@ -216,7 +216,7 @@ test.describe('Stack Instance Management', () => {
     }).toPass({ timeout: 30_000 });
 
     await page.getByPlaceholder('Search instances...').fill('nonexistent-instance-xyz');
-    await expect(page.getByText('No stack instances found')).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByText('No stacks match these filters')).toBeVisible({ timeout: 5_000 });
   });
 
   test('navigate to instance detail from dashboard', async ({ page }) => {

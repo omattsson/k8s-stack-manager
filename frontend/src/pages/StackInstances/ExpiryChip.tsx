@@ -1,4 +1,5 @@
 import { Chip } from '@mui/material';
+import AccessTimeIcon from '@mui/icons-material/AccessTime';
 import useCountdown from '../../hooks/useCountdown';
 import { formatStopTimeWhen, hasFixedStopTime } from '../../utils/stopTime';
 import type { StackInstance } from '../../types';
@@ -22,26 +23,31 @@ const ExpiryChip = ({ instance }: ExpiryChipProps) => {
   if (!countdown || countdown.isExpired) return null;
 
   const color = countdown.isCritical ? 'error' : countdown.isWarning ? 'warning' : 'success';
+  // The same statuses as the countdown of the stack page: the releases run, so
+  // the expiry stops them.
+  const isDeployed = instance.status === 'running' || instance.status === 'partial';
 
   // A fixed stop time is exact also before the deploy, so show it for every
   // status except stopped.
   if (hasFixedStopTime(instance) && instance.status !== 'stopped') {
     return (
       <Chip
-        label={`⏱ Stops at ${formatStopTimeWhen(new Date(instance.expires_at as string))}`}
+        label={`Stops at ${formatStopTimeWhen(new Date(instance.expires_at as string))}`}
+        icon={<AccessTimeIcon />}
         title={`Stops in ${countdown.remaining}`}
         size="small"
-        color={instance.status === 'running' ? color : 'default'}
+        color={isDeployed ? color : 'default'}
         sx={{ mt: 0.5 }}
       />
     );
   }
 
-  if (instance.status !== 'running') return null;
+  if (!isDeployed) return null;
 
   return (
     <Chip
-      label={`⏱ ${countdown.remaining}`}
+      label={`Expires in ${countdown.remaining}`}
+      icon={<AccessTimeIcon />}
       size="small"
       color={color}
       sx={{ mt: 0.5 }}

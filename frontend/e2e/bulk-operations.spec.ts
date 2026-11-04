@@ -186,6 +186,83 @@ test.describe('Bulk Operations', () => {
     await expect(toolbar.getByText('3 selected')).toBeVisible();
   });
 
+  // #753: the selection stays across filters, and the page says so.
+  test('toolbar counts stacks that the filter hides', async ({ page }) => {
+    await page.getByRole('button', { name: 'running' }).click();
+    await page.getByRole('checkbox', { name: 'Select all instances' }).click();
+    const toolbar = page.getByRole('toolbar', { name: 'Bulk actions' });
+    await expect(toolbar.getByText('1 selected', { exact: true })).toBeVisible({ timeout: 5_000 });
+
+    await page.getByRole('button', { name: 'draft' }).click();
+
+    await expect(toolbar.getByText('1 selected (1 not shown)', { exact: true })).toBeVisible();
+    await expect(page.getByRole('checkbox', { name: /Select bulk-test-gamma/ })).not.toBeChecked();
+    await expect(toolbar.getByRole('button', { name: 'Delete' })).toBeEnabled();
+
+    await page.getByRole('button', { name: 'All Statuses' }).click();
+    await expect(toolbar.getByText('1 selected', { exact: true })).toBeVisible();
+    await expect(page.getByRole('checkbox', { name: /Select bulk-test-beta/ })).toBeChecked();
+  });
+
+  test('header checkbox follows the visible stacks, not the counts', async ({ page }) => {
+    const header = page.getByRole('checkbox', { name: 'Select all instances' });
+
+    // One stack selected under `running`; `draft` also shows one stack, another one.
+    await page.getByRole('checkbox', { name: /Select bulk-test-beta/ }).click();
+    await page.getByRole('button', { name: 'draft' }).click();
+    await expect(header).not.toBeChecked();
+    await expect(page.getByText('Select all (1)')).toBeVisible();
+    await expect(page.getByText(/Deselect all/)).toHaveCount(0);
+
+    // Select all adds to the hidden selection, and deselect all keeps it.
+    const toolbar = page.getByRole('toolbar', { name: 'Bulk actions' });
+    await header.click();
+    await expect(header).toBeChecked();
+    await expect(toolbar.getByText('2 selected (1 not shown)', { exact: true })).toBeVisible();
+    await header.click();
+    await expect(toolbar.getByText('1 selected (1 not shown)', { exact: true })).toBeVisible();
+  });
+
+  test('bulk action reaches a hidden stack and the dialog lists it', async ({ page }) => {
+    let body: { instance_ids?: string[] } = {};
+    await page.route('**/api/v1/stack-instances/bulk/stop', (route) => {
+      body = route.request().postDataJSON();
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          total: 1,
+          succeeded: 1,
+          failed: 0,
+          results: [{ instance_id: 'bulk-inst-002', instance_name: 'bulk-test-beta', status: 'ok' }],
+        }),
+      });
+    });
+
+    await page.getByRole('checkbox', { name: /Select bulk-test-beta/ }).click();
+    await page.getByRole('button', { name: 'draft' }).click();
+    const toolbar = page.getByRole('toolbar', { name: 'Bulk actions' });
+    await toolbar.getByRole('button', { name: 'Stop' }).click();
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText('bulk-test-beta')).toBeVisible({ timeout: 5_000 });
+    await dialog.getByRole('button', { name: 'Stop' }).click();
+
+    await expect(page.getByText('Bulk Operation Results')).toBeVisible({ timeout: 5_000 });
+    expect(body.instance_ids).toEqual(['bulk-inst-002']);
+  });
+
+  test('a filter without a match offers Clear filters', async ({ page }) => {
+    await page.getByPlaceholder('Search instances...').fill('nothing-matches-this');
+
+    await expect(page.getByText('No stacks match these filters')).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByRole('button', { name: 'Create your first instance' })).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Clear filters' }).click();
+    await expect(page.getByRole('checkbox', { name: /Select bulk-test-alpha/ })).toBeVisible();
+    await expect(page.getByPlaceholder('Search instances...')).toHaveValue('');
+  });
+
   test('bulk action buttons are present in toolbar', async ({ page }) => {
     // Select an instance to trigger toolbar
     await page.getByRole('checkbox', { name: /Select bulk-test-alpha/ }).click();

@@ -18,6 +18,7 @@ import { useBranding } from '../../context/BrandingContext';
 import { stopTimeBounds, stopTimeError } from '../../utils/stopTime';
 import LoadingState from '../../components/LoadingState';
 import { INSTANCE_NAME_MAX_LENGTH, INSTANCE_NAME_RULE, validateInstanceName } from '../../utils/instanceName';
+import { describeApiError } from '../../utils/apiError';
 
 interface ConflictResponse {
   error: string;
@@ -112,7 +113,7 @@ const Form = () => {
           setError(data.message || data.error || 'You have reached the instance limit for this cluster');
         }
       } else {
-        setError('Failed to create instance');
+        setError(await describeApiError(err, 'Failed to create instance'));
       }
     } finally {
       setSaving(false);

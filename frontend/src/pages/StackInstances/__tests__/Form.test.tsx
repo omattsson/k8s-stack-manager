@@ -237,6 +237,30 @@ describe('StackInstances Form', () => {
     });
   });
 
+  it.each([
+    [400, 'Branch is required', 'Failed to create instance (HTTP 400: Branch is required)'],
+    [403, 'Access denied', 'Failed to create instance (HTTP 403: Access denied)'],
+    [500, 'dial tcp 10.0.0.1:3306: refused', 'Failed to create instance (HTTP 500: Internal server error)'],
+  ])('shows the API message of a %i, and no raw error for a 500', async (status, message, shown) => {
+    const user = userEvent.setup();
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+    (instanceService.create as ReturnType<typeof vi.fn>).mockRejectedValue({ response: { status, data: { error: message } } });
+
+    render(
+      <MemoryRouter>
+        <Form />
+      </MemoryRouter>
+    );
+    await screen.findByText('Create Stack Instance');
+    await user.click(screen.getByRole('combobox', { name: /stack definition/i }));
+    await user.click(screen.getByText(/Web Stack/));
+    await user.type(screen.getByRole('textbox', { name: /instance name/i }), 'my-app');
+    await user.click(screen.getByRole('button', { name: /create instance/i }));
+
+    expect(await screen.findByText(shown)).toBeInTheDocument();
+    expect(screen.queryByText(/dial tcp/)).not.toBeInTheDocument();
+  });
+
   it('shows name conflict error with suggestions on 409 response', async () => {
     const user = userEvent.setup();
     (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);

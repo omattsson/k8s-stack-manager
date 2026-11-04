@@ -18,6 +18,7 @@ import {
   StepLabel,
   Grid,
   Chip,
+  CircularProgress,
   Tooltip,
   Menu,
   MenuItem,
@@ -28,6 +29,7 @@ import {
   DialogContentText,
   DialogActions,
 } from '@mui/material';
+import AccessTimeIcon from '@mui/icons-material/AccessTime';
 import CloseIcon from '@mui/icons-material/Close';
 import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
 import StatusBadge from '../../components/StatusBadge';
@@ -52,7 +54,7 @@ import LoadingState from '../../components/LoadingState';
 import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
 import { useAuth } from '../../context/AuthContext';
 import { canModifyInstance, hasAtLeastRole } from '../../utils/roles';
-import { describeApiError } from '../../utils/apiError';
+import { describeApiError, getApiErrorInfo } from '../../utils/apiError';
 import { downloadBlob } from '../../utils/download';
 import ExtendTtlMenu from '../../components/ExtendTtlMenu';
 import { useBranding } from '../../context/BrandingContext';
@@ -192,6 +194,36 @@ const Detail = () => {
   );
 
   useUnsavedChanges(isDirty);
+
+  // Errors that the YAML editors report, per chart. A stored invalid value also
+  // reports one, but it blocks a save only after an edit: an unchanged value is
+  // not sent, so it must not stop other changes, and the user must be able to fix it.
+  const [overrideErrors, setOverrideErrors] = useState<Record<string, string>>({});
+  const handleOverrideValidation = useCallback((chartId: string, message: string | null) => {
+    setOverrideErrors((prev) => {
+      if ((prev[chartId] ?? null) === message) return prev;
+      const next = { ...prev };
+      if (message) next[chartId] = message;
+      else delete next[chartId];
+      return next;
+    });
+  }, []);
+  const invalidOverrideMessage = useMemo(() => {
+    const names = charts
+      .filter((c) => overrideErrors[c.id] && (editedOverrides[c.id] ?? '') !== (initialOverridesRef.current[c.id] ?? ''))
+      .map((c) => `"${c.chart_name}"`);
+    if (names.length === 0) return null;
+    return names.length === 1
+      ? `Invalid YAML in chart ${names[0]}. Fix it before you save.`
+      : `Invalid YAML in charts ${names.join(', ')}. Fix them before you save.`;
+    // saveCount: the saved state is in a ref; a save changes it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [charts, overrideErrors, editedOverrides, saveCount]);
+  // "Save and deploy" was refused. The top message ends when the value is fixed.
+  const [saveRefused, setSaveRefused] = useState(false);
+  useEffect(() => {
+    if (!invalidOverrideMessage) setSaveRefused(false);
+  }, [invalidOverrideMessage]);
 
   useEffect(() => {
     if (!id) return;
@@ -440,9 +472,18 @@ const Detail = () => {
    */
   const handleSave = async (): Promise<boolean> => {
     if (!id || !instance) return false;
+    // "Save and deploy" also comes here, while the Save button is disabled.
+    // The button is at the top of the page, so the message shows there too.
+    if (invalidOverrideMessage) {
+      setError(null);
+      setSaveRefused(true);
+      return false;
+    }
     setSaving(true);
     setError(null);
     const hadChanges = isDirty;
+    // The chart of the override request that runs, for the error message.
+    let savingChartId: string | undefined;
     try {
       // Update branch if changed
       if (branch !== instance.branch) {
@@ -473,7 +514,9 @@ const Detail = () => {
           continue;
         }
         if (values !== initial) {
+          savingChartId = chartConfigId;
           await instanceService.setOverride(id, chartConfigId, { values });
+          savingChartId = undefined;
           saved[chartConfigId] = values;
           initialOverridesRef.current = { ...saved };
         }
@@ -524,7 +567,14 @@ const Detail = () => {
       if (hadChanges && DEPLOYED_STATUSES.has(instance.status)) setSavedPendingRedeploy(true);
       return true;
     } catch (err) {
-      setError(await describeApiError(err, 'Failed to save changes'));
+      // A 400 of an override is about its values (the API is the authority on
+      // the YAML), so name the chart: the editor can be on another tab.
+      const refusedChart = getApiErrorInfo(err).status === 400
+        ? charts.find((c) => c.id === savingChartId)
+        : undefined;
+      setError(await describeApiError(err, refusedChart
+        ? `Failed to save the overrides of chart "${refusedChart.chart_name}"`
+        : 'Failed to save changes'));
       return false;
     } finally {
       setSaving(false);
@@ -559,8 +609,8 @@ const Detail = () => {
     try {
       await instanceService.delete(id);
       navigate('/');
-    } catch {
-      setError('Failed to delete instance');
+    } catch (err) {
+      setError(await describeApiError(err, 'Failed to delete instance'));
     }
     setDeleteOpen(false);
   };
@@ -588,8 +638,8 @@ const Detail = () => {
     try {
       await instanceService.deploy(id);
       showSuccess('Deployment started');
-    } catch {
-      setError('Failed to start deployment');
+    } catch (err) {
+      setError(await describeApiError(err, 'Failed to start deployment'));
       return;
     } finally {
       setDeploying(false);
@@ -609,8 +659,8 @@ const Detail = () => {
     try {
       await instanceService.stop(id);
       showSuccess('Stop initiated');
-    } catch {
-      setError('Failed to stop instance');
+    } catch (err) {
+      setError(await describeApiError(err, 'Failed to stop instance'));
       setStopping(false);
       return;
     }
@@ -629,8 +679,8 @@ const Detail = () => {
     try {
       await instanceService.clean(id);
       showSuccess('Namespace cleanup initiated');
-    } catch {
-      setError('Failed to clean namespace');
+    } catch (err) {
+      setError(await describeApiError(err, 'Failed to clean namespace'));
       setCleaning(false);
       return;
     }
@@ -733,9 +783,9 @@ const Detail = () => {
       // Keep the follow state if the response does not have it.
       setInstance((prev) => mergeInstanceUpdate(prev, updated));
       showSuccess('TTL updated');
-    } catch {
-      setError('Failed to update TTL');
+    } catch (err) {
       setStopDraft(savedStopTime);
+      setError(await describeApiError(err, 'Failed to update TTL'));
     } finally {
       setSaving(false);
     }
@@ -905,14 +955,24 @@ const Detail = () => {
    */
   const renderLifecycle = (status: string, errorMessage?: string) => {
     const activeStep = status === 'partial' ? LIFECYCLE_STEPS.indexOf('running') : LIFECYCLE_STEPS.indexOf(status);
-    const isTerminal = status === 'error' || status === 'partial' || status === 'stopped' || status === 'stopping' || status === 'cleaning';
-    const showError = (status === 'error' || status === 'partial') && !!errorMessage;
+    const isInProgress = status === 'stopping' || status === 'cleaning';
+    const isProblem = status === 'error' || status === 'partial';
+    const showError = isProblem && !!errorMessage;
 
     return (
       <Box sx={{ mb: 2 }}>
         <Typography variant="subtitle2" gutterBottom>Status Lifecycle</Typography>
-        {isTerminal ? (
-          <Alert severity={status === 'error' ? 'error' : 'warning'} sx={{ py: 0.5 }}>
+        {status === 'stopped' ? (
+          // A normal state that the user chose or the TTL caused, not a problem.
+          <Typography variant="body2" color="text.secondary" data-testid="instance-stopped-note">
+            Instance is stopped
+          </Typography>
+        ) : isProblem || isInProgress ? (
+          <Alert
+            severity={status === 'error' ? 'error' : isInProgress ? 'info' : 'warning'}
+            icon={isInProgress ? <CircularProgress size={20} color="inherit" /> : undefined}
+            sx={{ py: 0.5 }}
+          >
             Instance is {status}
             {showError && (
               <Typography
@@ -962,6 +1022,9 @@ const Detail = () => {
   return (
     <Box>
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+      {saveRefused && invalidOverrideMessage && (
+        <Alert severity="error" sx={{ mb: 2 }} data-testid="save-refused-message">{invalidOverrideMessage}</Alert>
+      )}
 
       <Paper sx={{ p: 3, mb: 3 }}>
         {/* Title block and buttons wrap instead of shrinking: with many
@@ -1006,7 +1069,7 @@ const Detail = () => {
                     : `Expires in ${countdown.remaining}`}
                   size="small"
                   color={countdown.isCritical ? 'error' : countdown.isWarning ? 'warning' : 'success'}
-                  icon={<span>⏱</span>}
+                  icon={<AccessTimeIcon />}
                 />
                 {canModify && (
                   <ExtendTtlMenu
@@ -1213,6 +1276,7 @@ const Detail = () => {
                         label="Your Overrides"
                         value={editedOverrides[chart.id] || ''}
                         onChange={(val) => setEditedOverrides({ ...editedOverrides, [chart.id]: val })}
+                        onValidationChange={(message) => handleOverrideValidation(chart.id, message)}
                         height="300px"
                       />
                     ) : (
@@ -1247,12 +1311,18 @@ const Detail = () => {
         actions={instanceActions.actions}
       />
 
+      {canModify && invalidOverrideMessage && (
+        <Alert severity="error" sx={{ mb: 2 }} data-testid="invalid-override-message">
+          {invalidOverrideMessage}
+        </Alert>
+      )}
+
       <Box sx={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
         <Button variant="outlined" onClick={() => navigate('/')}>
           Back to Dashboard
         </Button>
         {canModify && (
-          <Button variant="contained" onClick={handleSave} disabled={saving}>
+          <Button variant="contained" onClick={handleSave} disabled={saving || invalidOverrideMessage !== null}>
             {saving ? 'Saving...' : 'Save Changes'}
           </Button>
         )}

@@ -23,8 +23,9 @@ async function readServerMessage(data: unknown): Promise<string | null> {
     try {
       body = JSON.parse(text);
     } catch {
-      // Plain text body (not JSON). Use it only when it is short.
-      return text.length <= 200 ? text : null;
+      // Plain text body (not JSON). Use it only when it is short, and not when
+      // it is markup: the default error page of a proxy is short HTML.
+      return text.length <= 200 && !text.startsWith('<') ? text : null;
     }
   }
   if (body && typeof body === 'object') {
@@ -41,11 +42,12 @@ async function readServerMessage(data: unknown): Promise<string | null> {
  * requests) as text first.
  * @param error - The thrown error (usually an AxiosError)
  * @param fallback - Message prefix, for example "Failed to export values"
- * @returns For example "Failed to export values (HTTP 404: Instance not found)", or the fallback when there is no HTTP response
+ * @returns For example "Failed to export values (HTTP 404: Instance not found)", or the fallback when there is no HTTP response. A 500 never shows its body, so a raw error cannot reach the page.
  */
 export async function describeApiError(error: unknown, fallback: string): Promise<string> {
   const response = (error as HttpErrorLike | null)?.response;
   if (!response || typeof response.status !== 'number') return fallback;
+  if (response.status === 500) return `${fallback} (HTTP 500: Internal server error)`;
   const serverMessage = await readServerMessage(response.data);
   const reason = serverMessage ?? response.statusText;
   return reason

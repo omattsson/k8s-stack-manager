@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { render, screen, waitFor, act } from '@testing-library/react';
+import { render, screen, waitFor, within, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import Dashboard from '../Dashboard';
@@ -189,7 +189,7 @@ describe('Dashboard', () => {
       </MemoryRouter>
     );
     await waitFor(() => {
-      expect(screen.getByText(/no stack instances found/i)).toBeInTheDocument();
+      expect(screen.getByText('No stack instances found')).toBeInTheDocument();
     });
   });
 
@@ -441,7 +441,7 @@ describe('Dashboard', () => {
       expect(screen.getByText('No TTL Instance')).toBeInTheDocument();
     });
 
-    expect(screen.queryByText(/⏱/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Expires in|Stops at/)).not.toBeInTheDocument();
     expect(screen.queryByText('Expired')).not.toBeInTheDocument();
   });
 
@@ -811,6 +811,136 @@ describe('Dashboard', () => {
       });
     });
 
+    describe('selection across filters (#753)', () => {
+      const devops = { id: 'u-devops', username: 'devops1', role: 'devops', display_name: 'DevOps' };
+      const threeRunningTwoDraft = [
+        mockInstance({ id: 'r1', name: 'Run One', status: 'running' }),
+        mockInstance({ id: 'r2', name: 'Run Two', status: 'running' }),
+        mockInstance({ id: 'r3', name: 'Run Three', status: 'running' }),
+        mockInstance({ id: 'd1', name: 'Draft One', status: 'draft' }),
+        mockInstance({ id: 'd2', name: 'Draft Two', status: 'draft' }),
+      ];
+      const header = () => screen.getByRole('checkbox', { name: 'Select all instances' });
+      const toolbar = () => within(screen.getByRole('toolbar', { name: 'Bulk actions' }));
+      const filterBy = (user: ReturnType<typeof userEvent.setup>, status: string) =>
+        user.click(screen.getByRole('button', { name: status }));
+      const setup = async () => {
+        authState.user = devops;
+        (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(threeRunningTwoDraft);
+        renderDashboard();
+        await screen.findByText('Run One');
+        return userEvent.setup({ delay: null });
+      };
+
+      it('counts hidden stacks in the toolbar and keeps them selected', async () => {
+        const user = await setup();
+        await filterBy(user, 'running');
+        await user.click(header());
+        expect(toolbar().getByText('3 selected')).toBeInTheDocument();
+
+        await filterBy(user, 'draft');
+
+        expect(toolbar().getByText('3 selected (3 not shown)')).toBeInTheDocument();
+        expect(screen.getByRole('checkbox', { name: 'Select Draft One' })).not.toBeChecked();
+
+        await filterBy(user, 'All Statuses');
+        expect(toolbar().getByText('3 selected')).toBeInTheDocument();
+      });
+
+      it('shows the header as empty when no visible stack is selected', async () => {
+        const user = await setup();
+        await filterBy(user, 'running');
+        await user.click(header());
+        await filterBy(user, 'draft');
+
+        expect(header()).not.toBeChecked();
+        expect(header()).toHaveAttribute('data-indeterminate', 'false');
+        expect(screen.getByText('Select all (2)')).toBeInTheDocument();
+      });
+
+      it('does not treat equal counts of other stacks as all selected', async () => {
+        const user = await setup();
+        await user.click(screen.getByRole('checkbox', { name: 'Select Run One' }));
+        await user.click(screen.getByRole('checkbox', { name: 'Select Run Two' }));
+        await filterBy(user, 'draft'); // two visible stacks, two other stacks selected
+
+        expect(header()).not.toBeChecked();
+        expect(screen.queryByText(/Deselect all/)).not.toBeInTheDocument();
+      });
+
+      it('shows the header as partly selected from the visible stacks only', async () => {
+        const user = await setup();
+        await filterBy(user, 'draft');
+        await user.click(screen.getByRole('checkbox', { name: 'Select Draft One' }));
+
+        expect(header()).toHaveAttribute('data-indeterminate', 'true');
+      });
+
+      it('select all adds to the hidden selection, and deselect all keeps it', async () => {
+        const user = await setup();
+        await filterBy(user, 'running');
+        await user.click(header());
+        await filterBy(user, 'draft');
+
+        await user.click(header());
+        expect(toolbar().getByText('5 selected (3 not shown)')).toBeInTheDocument();
+        expect(header()).toBeChecked();
+
+        await user.click(header());
+        expect(toolbar().getByText('3 selected (3 not shown)')).toBeInTheDocument();
+        expect(header()).not.toBeChecked();
+      });
+
+      it('drops a stack that a reload no longer returns from the selection', async () => {
+        const user = await setup();
+        await user.click(screen.getByRole('checkbox', { name: 'Select Run One' }));
+        await user.click(screen.getByRole('checkbox', { name: 'Select Run Two' }));
+        await filterBy(user, 'draft');
+        expect(toolbar().getByText('2 selected (2 not shown)')).toBeInTheDocument();
+
+        // Run One was deleted without an instance.deleted message. A new stack triggers the reload.
+        (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(threeRunningTwoDraft.filter((i) => i.id !== 'r1'));
+        act(() => {
+          broadcastWs({ type: 'instance.created', payload: { instance_id: 'new-stack' } });
+        });
+
+        await waitFor(() => {
+          expect(toolbar().getByText('1 selected (1 not shown)')).toBeInTheDocument();
+        }, { timeout: 3000 });
+      });
+
+      it('sends hidden stacks to the bulk action and lists them in the dialog', async () => {
+        const user = await setup();
+        (instanceService.bulkStop as ReturnType<typeof vi.fn>).mockResolvedValue({ total: 1, succeeded: 1, failed: 0, results: [] });
+        await user.click(screen.getByRole('checkbox', { name: 'Select Run One' }));
+        await filterBy(user, 'draft');
+        await user.click(toolbar().getByRole('button', { name: 'Stop' }));
+
+        const dialog = within(await screen.findByRole('dialog'));
+        expect(dialog.getByText('Run One')).toBeInTheDocument();
+        await user.click(dialog.getByRole('button', { name: 'Stop' }));
+        await waitFor(() => expect(instanceService.bulkStop).toHaveBeenCalledWith(['r1']));
+      });
+    });
+
+    it.each([
+      [409, 'Too many instances selected', 'Bulk deploy failed (HTTP 409: Too many instances selected)'],
+      [500, 'dial tcp 10.0.0.1:3306: refused', 'Bulk deploy failed (HTTP 500: Internal server error)'],
+    ])('shows the API message of a failed bulk request: %i (#753)', async (status, message, shown) => {
+      const user = userEvent.setup({ delay: null });
+      (instanceService.bulkDeploy as ReturnType<typeof vi.fn>).mockRejectedValue({ response: { status, data: { error: message } } });
+      renderDashboard();
+      await screen.findByText('Instance A');
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Instance A' }));
+      await user.click(screen.getByRole('button', { name: 'Deploy' }));
+      const dialog = within(await screen.findByRole('dialog'));
+      await user.click(dialog.getByRole('button', { name: 'Deploy' }));
+
+      expect(await screen.findByText(shown)).toBeInTheDocument();
+      expect(screen.queryByText(/dial tcp/)).not.toBeInTheDocument();
+    });
+
     it('handles bulk operation API failure gracefully', async () => {
       const user = userEvent.setup({ delay: null });
       (instanceService.bulkDeploy as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Server error'));
@@ -1027,7 +1157,7 @@ describe('Dashboard', () => {
       expect(screen.queryByText('Beta Service')).not.toBeInTheDocument();
     });
 
-    it('shows empty state with create button when filter matches nothing', async () => {
+    it('shows the no-match state with Clear filters when a filter matches nothing', async () => {
       const user = userEvent.setup();
       (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
         mockInstance({ id: '1', name: 'Test Instance', namespace: 'stack-t' }),
@@ -1046,7 +1176,87 @@ describe('Dashboard', () => {
       const searchInput = screen.getByPlaceholderText('Search instances...');
       await user.type(searchInput, 'nonexistent');
 
-      expect(screen.getByText('No stack instances found')).toBeInTheDocument();
+      expect(screen.getByText('No stacks match these filters')).toBeInTheDocument();
+    });
+  });
+
+  describe('Empty results (#753)', () => {
+    const renderPage = () => render(
+      <MemoryRouter>
+        <NotificationProvider>
+          <Dashboard />
+        </NotificationProvider>
+      </MemoryRouter>
+    );
+
+    it('offers Clear filters, not create, when a filter matches nothing', async () => {
+      const user = userEvent.setup();
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
+        mockInstance({ id: '1', name: 'Test Instance', status: 'running' }),
+      ]);
+      renderPage();
+      await screen.findByText('Test Instance');
+
+      await user.click(screen.getByRole('button', { name: 'stopped' }));
+      await user.type(screen.getByPlaceholderText('Search instances...'), 'zzz');
+
+      expect(screen.getByText('No stacks match these filters')).toBeInTheDocument();
+      expect(screen.queryByText('No stack instances found')).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Create your first instance' })).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: 'Clear filters' }));
+
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+      expect(screen.getByPlaceholderText('Search instances...')).toHaveValue('');
+      expect(screen.queryByText('No stacks match these filters')).not.toBeInTheDocument();
+    });
+
+    it('keeps the create advice for a list that is really empty', async () => {
+      (isSetupWizardDismissed as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      renderPage();
+
+      expect(await screen.findByText('No stack instances found')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Create your first instance' })).toBeInTheDocument();
+      expect(screen.queryByText('No stacks match these filters')).not.toBeInTheDocument();
+      (isSetupWizardDismissed as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    });
+  });
+
+  describe('Definition name and expiry (#753)', () => {
+    const renderPage = () => render(
+      <MemoryRouter>
+        <NotificationProvider>
+          <Dashboard />
+        </NotificationProvider>
+      </MemoryRouter>
+    );
+
+    it('shows definition_name on cards', async () => {
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
+        mockInstance({ id: '1', definition_name: 'Hello Stack' }),
+      ]);
+      renderPage();
+
+      expect(await screen.findByText('Definition: Hello Stack')).toBeInTheDocument();
+    });
+
+    it('shows definition_name in Recent Stacks', async () => {
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([mockInstance({ id: '1' })]);
+      (instanceService.recent as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+        mockInstance({ id: '2', name: 'Recent One', definition_name: 'Recent Definition', updated_at: '2026-01-01T00:00:00Z' }),
+      ]);
+      renderPage();
+
+      expect(await screen.findByText('Recent Definition')).toBeInTheDocument();
+    });
+
+    it('omits the line when the definition no longer exists', async () => {
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([mockInstance({ id: '1' })]);
+      renderPage();
+
+      await screen.findByText('Test Instance');
+      expect(screen.queryByText(/^Definition:/)).not.toBeInTheDocument();
     });
   });
 
@@ -1343,7 +1553,7 @@ describe('Dashboard', () => {
         </MemoryRouter>
       );
       await waitFor(() => {
-        expect(screen.getByText(/no stack instances found/i)).toBeInTheDocument();
+        expect(screen.getByText('No stack instances found')).toBeInTheDocument();
       });
       expect(screen.queryByText('Welcome to K8s Stack Manager')).not.toBeInTheDocument();
     });
@@ -1363,7 +1573,7 @@ describe('Dashboard', () => {
       });
       await user.type(screen.getByPlaceholderText('Search instances...'), 'no-match-xyz');
       await waitFor(() => {
-        expect(screen.getByText(/no stack instances found/i)).toBeInTheDocument();
+        expect(screen.getByText('No stacks match these filters')).toBeInTheDocument();
       });
       expect(screen.queryByText('Welcome to K8s Stack Manager')).not.toBeInTheDocument();
     });
@@ -1383,7 +1593,7 @@ describe('Dashboard', () => {
       });
       await user.click(screen.getByRole('button', { name: 'stopped' }));
       await waitFor(() => {
-        expect(screen.getByText(/no stack instances found/i)).toBeInTheDocument();
+        expect(screen.getByText('No stacks match these filters')).toBeInTheDocument();
       });
       expect(screen.queryByText('Welcome to K8s Stack Manager')).not.toBeInTheDocument();
     });
@@ -1400,7 +1610,7 @@ describe('Dashboard', () => {
         </MemoryRouter>
       );
       await waitFor(() => {
-        expect(screen.getByText(/no stack instances found/i)).toBeInTheDocument();
+        expect(screen.getByText('No stack instances found')).toBeInTheDocument();
       });
       expect(screen.queryByText('Welcome to K8s Stack Manager')).not.toBeInTheDocument();
     });
