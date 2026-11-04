@@ -1,5 +1,19 @@
 import { test, expect, type Page } from '@playwright/test';
-import type { UserFavorite } from '../src/types';
+import type { PaginatedAuditLogs } from '../src/api/client';
+import type {
+  Cluster,
+  ClusterNamespaceInfo,
+  ClusterSummary,
+  ClusterUtilization,
+  NamespaceResourceUsage,
+  NamespaceStatus,
+  NodeStatusInfo,
+  Notification,
+  NotificationListResponse,
+  StackInstance,
+  TemplateStats,
+  UserFavorite,
+} from '../src/types';
 import {
   AA_NON_TEXT,
   MODES,
@@ -42,7 +56,7 @@ test.describe('Accessibility: focus rings, tooltips, bars and colour as the only
 
   /** A running row per pod health. */
   const mockHealthRows = async (page: Page) => {
-    const rows = HEALTH.map((status) => ({
+    const rows = HEALTH.map((status): StackInstance => ({
       id: `a11y-health-${status}`,
       name: `health-${status}`,
       namespace: `stack-${status}`,
@@ -60,11 +74,11 @@ test.describe('Accessibility: focus rings, tooltips, bars and colour as the only
     ));
     await page.route(/\/api\/v1\/stack-instances\/a11y-health-[^/]+\/status$/, (route) => {
       const status = /a11y-health-([^/]+)\/status/.exec(route.request().url())?.[1];
-      return route.fulfill({ json: { namespace: 'a11y', status, charts: [], last_checked: '2026-10-19T09:00:00Z' } });
+      return route.fulfill({ json: { namespace: 'a11y', status: status as NamespaceStatus['status'], charts: [], last_checked: '2026-10-19T09:00:00Z' } satisfies NamespaceStatus });
     });
   };
 
-  const notifications = [
+  const notifications: Notification[] = [
     { id: 'a11y-unread', user_id: 'u', type: 'deployment.error', title: 'Unread notification', message: 'Forced', is_read: false, created_at: '2026-10-19T10:00:00Z' },
     { id: 'a11y-read', user_id: 'u', type: 'deployment.success', title: 'Read notification', message: 'Forced', is_read: true, created_at: '2026-10-19T09:00:00Z' },
   ];
@@ -72,7 +86,7 @@ test.describe('Accessibility: focus rings, tooltips, bars and colour as the only
   const mockNotifications = (page: Page) => page.route(/\/api\/v1\/notifications(\?.*)?$/, (route) => (
     route.request().method() !== 'GET'
       ? route.continue()
-      : route.fulfill({ json: { notifications, total: 2, unread_count: 1 } })
+      : route.fulfill({ json: { notifications, total: 2, unread_count: 1 } satisfies NotificationListResponse })
   ));
 
   // A row differs from a read row in more than its tint.
@@ -130,7 +144,7 @@ test.describe('Accessibility: focus rings, tooltips, bars and colour as the only
     // More recent stacks than fit: the row must scroll, whatever other specs created.
     const RECENT_STACKS = 8;
     const mockRecentStacks = (p: Page) => p.route(/\/api\/v1\/stack-instances\/recent(\?.*)?$/, (route) => route.fulfill({
-      json: Array.from({ length: RECENT_STACKS }, (_, i) => ({
+      json: Array.from({ length: RECENT_STACKS }, (_, i): StackInstance => ({
         id: `a11y-recent-${i}`,
         stack_definition_id: seed.definitionId,
         name: `a11y-recent-${i}`,
@@ -236,7 +250,7 @@ test.describe('Accessibility: focus rings, tooltips, bars and colour as the only
       await checkPage(page, mode, {
         ...setup('audit log'),
         before: (p) => p.route(/\/api\/v1\/audit-logs(\?.*)?$/, (route) => route.fulfill({
-          json: { data: logs, page: 1, pageSize: 50, total: logs.length },
+          json: { data: logs, total: logs.length, limit: 50, offset: 0 } satisfies PaginatedAuditLogs,
         })),
         ready: (p) => focusRingSweep(p, `long audit log (${mode})`, { maxStops: 90 }),
       });
@@ -357,7 +371,7 @@ test.describe('Accessibility: focus rings, tooltips, bars and colour as the only
               }],
               total: 1,
               unread_count: 1,
-            },
+            } satisfies NotificationListResponse,
           })
         )),
         ready: async (p) => {
@@ -406,7 +420,7 @@ test.describe('Accessibility: focus rings, tooltips, bars and colour as the only
             { template_id: 't1', template_name: 'High rate', category: 'Web', is_published: true, definition_count: 1, instance_count: 1, deploy_count: 10, success_count: 10, error_count: 0, success_rate: 100 },
             { template_id: 't2', template_name: 'Middle rate', category: 'Web', is_published: true, definition_count: 1, instance_count: 1, deploy_count: 10, success_count: 7, error_count: 3, success_rate: 70 },
             { template_id: 't3', template_name: 'Low rate', category: 'Web', is_published: true, definition_count: 1, instance_count: 1, deploy_count: 10, success_count: 2, error_count: 8, success_rate: 20 },
-          ],
+          ] satisfies TemplateStats[],
         })),
         ready: async (p, runAxe) => {
           for (const [template, percent] of [['High rate', '100%'], ['Middle rate', '70%'], ['Low rate', '20%']]) {
@@ -423,7 +437,7 @@ test.describe('Accessibility: focus rings, tooltips, bars and colour as the only
     });
 
     test(`bars: cluster health usage, all colours (${mode})`, async ({ page }) => {
-      const usage = (name: string, used: string, pods: number) => ({
+      const usage = (name: string, used: string, pods: number): NamespaceResourceUsage => ({
         namespace: name, cpu_used: used, cpu_limit: '1000m', memory_used: '1Gi', memory_limit: '2Gi', pod_count: pods, pod_limit: 100,
       });
       await checkPage(page, mode, {
@@ -431,20 +445,29 @@ test.describe('Accessibility: focus rings, tooltips, bars and colour as the only
         heading: 'Cluster Health',
         before: async (p) => {
           const json = (path: RegExp, body: unknown) => p.route(path, (route) => route.fulfill({ json: body }));
-          await json(/\/api\/v1\/clusters$/, [{ id: 'a11y-cluster', name: 'a11y-cluster', is_default: true }]);
+          // The page reads only these fields of a cluster.
+          await json(/\/api\/v1\/clusters$/, [{ id: 'a11y-cluster', name: 'a11y-cluster', is_default: true }] satisfies Pick<Cluster, 'id' | 'name' | 'is_default'>[]);
           await json(/\/api\/v1\/clusters\/a11y-cluster\/health\/summary$/, {
             node_count: 1, ready_node_count: 1, total_cpu: '8000m', allocatable_cpu: '6000m', requested_cpu: '5700m',
             total_memory: '16Gi', allocatable_memory: '12Gi', requested_memory: '9Gi', namespace_count: 3,
-          });
-          await json(/\/api\/v1\/clusters\/a11y-cluster\/health\/nodes$/, [
-            { name: 'node-1', status: 'Ready', capacity: { cpu: '4000m', memory: '8Gi' }, pod_count: 10, conditions: [{ type: 'Ready', status: 'True' }] },
-          ]);
-          await json(/\/api\/v1\/clusters\/a11y-cluster\/namespaces$/, [{ name: 'low', phase: 'Active', created_at: '2026-01-01T00:00:00Z' }]);
+          } satisfies ClusterSummary);
+          await json(/\/api\/v1\/clusters\/a11y-cluster\/health\/nodes$/, [{
+            name: 'a11y-node',
+            status: 'Ready',
+            capacity: { cpu: '4000m', memory: '8Gi' },
+            allocatable: { cpu: '3000m', memory: '6Gi' },
+            pod_count: 10,
+            conditions: [{ type: 'Ready', status: 'True' }],
+          }] satisfies NodeStatusInfo[]);
+          await json(/\/api\/v1\/clusters\/a11y-cluster\/namespaces$/, [{ name: 'a11y-namespace', phase: 'Active', created_at: '2026-01-01T00:00:00Z' }] satisfies ClusterNamespaceInfo[]);
           await json(/\/api\/v1\/clusters\/a11y-cluster\/utilization$/, {
             namespaces: [usage('stack-low', '500m', 50), usage('stack-mid', '800m', 80), usage('stack-high', '950m', 95)],
-          });
+          } satisfies ClusterUtilization);
         },
         ready: async (p, runAxe) => {
+          // Each mock reached the page.
+          await expect(p.getByRole('progressbar', { name: /^CPU requested 95%/ }), 'the summary').toBeVisible();
+          await expect(p.getByText('a11y-node'), 'the nodes').toBeVisible();
           for (const [namespace, percent] of [['stack-low', '50%'], ['stack-mid', '80%'], ['stack-high', '95%']]) {
             const row = p.getByRole('row', { name: new RegExp(namespace) });
             // The value is in words, so the colour of the bar is not the only signal.

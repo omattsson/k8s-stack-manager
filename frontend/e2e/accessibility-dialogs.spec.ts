@@ -12,11 +12,33 @@ import {
   type Seed,
 } from './a11y';
 import { mockDeployLog, type MockDeployLog } from './deployLogMock';
+import type {
+  ActionJobLog,
+  ActionRunPage,
+  APIKey,
+  BulkOperationResponse,
+  BulkTemplateResponse,
+  CreateAPIKeyResponse,
+  InstanceQuotaOverride,
+  Notification,
+  NotificationListResponse,
+  OrphanedNamespace,
+  StackDefinition,
+  StackInstance,
+  StackTemplate,
+  TemplateChartDiff,
+  TemplateVersion,
+  UnreadNotificationCount,
+  UpgradeCheckResponse,
+  VersionDiffResponse,
+  VersionDiffSide,
+} from '../src/types';
 
 // Every dialog, every menu and the notification popover (#758), in both colour
 // modes. Axe measures the surface, limited to it, and must have measured the title
-// (or the named element). Mocks stand in where a state needs a cluster or a long
-// setup: they change what the dialog shows, not its colours.
+// or, where the dialog shows mocked content, that content, so that a test cannot
+// pass on a fallback or an empty state. Mocks stand in where a state needs a cluster
+// or a long setup. They carry their API type: `npm run lint` checks them.
 
 const seed = {} as Seed;
 
@@ -84,7 +106,7 @@ async function deleteAdminSeed(request: APIRequestContext): Promise<void> {
   }
 }
 
-const instancePage = (status: string, fields: Record<string, unknown> = {}, extra?: (p: Page) => Promise<unknown>): PageSetup => ({
+const instancePage = (status: string, fields: Partial<StackInstance> = {}, extra?: (p: Page) => Promise<unknown>): PageSetup => ({
   path: `/stack-instances/${seed.instanceId}`,
   heading: seed.instanceName,
   // A status other than draft makes the page read the pods: 502 without cluster access.
@@ -112,20 +134,37 @@ const clickButton = (name: string | RegExp) => (page: Page) => page.getByRole('b
 /** Paths of the admin pages, for the dialog table. */
 const adminPage = (path: string, heading: string, extra?: Partial<PageSetup>): PageSetup => ({ path, heading, ...extra });
 
+/** A real link needs a published template with charts; the dialogs only need the current link. */
+const linkedToTemplate = (): Partial<StackDefinition> => ({ source_template_id: seed.templateId, source_template_version: '1.0.0' });
+
 const publishedPreview = (): PageSetup => ({ path: `/templates/${seed.publishedTemplateId}`, heading: seed.publishedTemplateName });
 
-const apiKeyRows = () => [
+const apiKeyRows = (): APIKey[] => [
   { id: 'k-1', user_id: 'u', name: 'a11y-key', prefix: 'aa', created_at: '2026-01-01T00:00:00Z' },
 ];
 
 const mockGeneratedKey = (page: Page) => page.route(/\/api\/v1\/users\/[^/]+\/api-keys$/, (route) => (
   route.request().method() === 'POST'
-    ? route.fulfill({ status: 201, json: { raw_key: 'sm_a11y_generated_key', api_key: apiKeyRows()[0] } })
+    ? route.fulfill({
+      status: 201,
+      json: { id: 'k-1', name: 'a11y-key', prefix: 'aa', raw_key: 'sm_a11y_generated_key', created_at: '2026-01-01T00:00:00Z' } satisfies CreateAPIKeyResponse,
+    })
     : route.fulfill({ json: apiKeyRows() })
 ));
 
-/** One changed chart between two template versions: the diff viewer has content. */
-const versionSide = (id: string, version: string, values: string) => ({
+/** One changed chart: ChartDiffList shows the diff viewer only for `has_differences`. */
+const changedChart: TemplateChartDiff = {
+  chart_name: 'web',
+  left_values: 'replicaCount: 1\n',
+  right_values: 'replicaCount: 3\n',
+  has_differences: true,
+  change_type: 'modified',
+};
+
+/** A line number of the diff viewer: proves that the viewer rendered, and axe measures it. */
+const diffLineNumber = (dialog: Locator) => dialog.locator('[class*="line-number"]').filter({ hasText: /\d/ }).first();
+
+const versionSide = (id: string, version: string, values: string): VersionDiffSide => ({
   id,
   version,
   created_at: '2026-10-19T09:00:00Z',
@@ -137,7 +176,7 @@ const versionSide = (id: string, version: string, values: string) => ({
   },
 });
 
-const mockTemplateVersions = async (page: Page, fields: Record<string, unknown> = {}) => {
+const mockTemplateVersions = async (page: Page, fields: Partial<StackTemplate> = {}) => {
   const id = seed.publishedTemplateId;
   await page.route(new RegExp(`/api/v1/templates/${id}(\\?.*)?$`), async (route) => {
     if (route.request().method() !== 'GET') return route.continue();
@@ -148,14 +187,14 @@ const mockTemplateVersions = async (page: Page, fields: Record<string, unknown> 
     json: [
       { id: 'v2', template_id: id, version: '2.0.0', change_summary: 'Second', created_by: 'u', created_at: '2026-10-19T10:00:00Z' },
       { id: 'v1', template_id: id, version: '1.0.0', change_summary: 'First', created_by: 'u', created_at: '2026-10-19T09:00:00Z' },
-    ],
+    ] satisfies TemplateVersion[],
   }));
   await page.route(new RegExp(`/api/v1/templates/${id}/versions/diff(\\?.*)?$`), (route) => route.fulfill({
     json: {
       left: versionSide('v1', '1.0.0', 'replicaCount: 1\n'),
       right: versionSide('v2', '2.0.0', 'replicaCount: 3\n'),
-      chart_diffs: [{ chart_name: 'web', left_values: 'replicaCount: 1\n', right_values: 'replicaCount: 3\n' }],
-    },
+      chart_diffs: [changedChart],
+    } satisfies VersionDiffResponse,
   }));
 };
 
@@ -167,8 +206,6 @@ interface DialogState {
   checked?: (dialog: Locator) => Locator;
   /** Hover this element and check again. */
   hover?: (dialog: Locator) => Locator;
-  /** The dialog is a progress step and keeps a spinner. */
-  mayKeepSpinner?: boolean;
 }
 
 const DIALOGS: DialogState[] = [
@@ -218,6 +255,7 @@ const DIALOGS: DialogState[] = [
     name: 'instance: deploy preview',
     setup: () => instancePage('draft'),
     open: clickButton('Deploy'),
+    checked: diffLineNumber,
   },
   {
     name: 'instance: unsaved changes',
@@ -242,7 +280,19 @@ const DIALOGS: DialogState[] = [
         const body = await res.json();
         return route.fulfill({
           response: res,
-          json: { ...body, can_modify: true, override: { stack_instance_id: seed.instanceId, cpu_limit: '1' } },
+          json: {
+            ...body,
+            can_modify: true,
+            override: {
+              stack_instance_id: seed.instanceId,
+              cpu_request: '500m',
+              cpu_limit: '1',
+              memory_request: '256Mi',
+              memory_limit: '512Mi',
+              storage_limit: '1Gi',
+              pod_limit: 10,
+            } satisfies InstanceQuotaOverride,
+          },
         });
       },
     )),
@@ -266,14 +316,25 @@ const DIALOGS: DialogState[] = [
             started_by: 'admin', started_at: '2026-10-19T10:00:00Z', finished_at: '2026-10-19T10:00:05Z',
             parameters: {}, status_code: 200, job_id: 'a11y-job', job_status: 'succeeded', has_job_log: true,
           }],
-        },
+        } satisfies ActionRunPage,
       }));
       await p.route(/\/api\/v1\/stack-instances\/[^/]+\/actions\/[^/]+\/jobs\/[^/]+\/log/, (route) => route.fulfill({
-        json: { lines: ['Forced log line'], next_offset: 1, done: true, status: 'succeeded' },
+        json: {
+          action: 'e2e-job',
+          instance_id: seed.instanceId,
+          job_id: 'a11y-job',
+          status: 'succeeded',
+          log: 'Forced log line\n',
+          offset: 0,
+          next_offset: 16,
+          done: true,
+          truncated: false,
+        } satisfies ActionJobLog,
       }));
     }),
     open: (page) => page.getByRole('button', { name: /^Show log of E2E job/ }).click(),
-    mayKeepSpinner: true,
+    // The real log text, not the "Waiting for log output" placeholder of the same box.
+    checked: (d) => d.getByTestId('job-log').filter({ hasText: 'Forced log line' }),
   },
   // Definitions
   {
@@ -285,7 +346,7 @@ const DIALOGS: DialogState[] = [
       before: (p) => p.route(new RegExp(`/api/v1/stack-definitions/${seed.definitionId}(\\?.*)?$`), async (route) => {
         if (route.request().method() !== 'GET') return route.continue();
         const res = await route.fetch();
-        return route.fulfill({ response: res, json: { ...(await res.json()), source_template_id: seed.templateId, source_template_version: '1.0.0' } });
+        return route.fulfill({ response: res, json: { ...(await res.json()), ...linkedToTemplate() } });
       }),
     }),
     open: clickButton('Change Link'),
@@ -301,19 +362,21 @@ const DIALOGS: DialogState[] = [
         await p.route(new RegExp(`/api/v1/stack-definitions/${seed.definitionId}(\\?.*)?$`), async (route) => {
           if (route.request().method() !== 'GET') return route.continue();
           const res = await route.fetch();
-          return route.fulfill({ response: res, json: { ...(await res.json()), source_template_id: seed.templateId, source_template_version: '1.0.0' } });
+          return route.fulfill({ response: res, json: { ...(await res.json()), ...linkedToTemplate() } });
         });
         await p.route(new RegExp(`/api/v1/stack-definitions/${seed.definitionId}/check-upgrade$`), (route) => route.fulfill({
           json: {
             upgrade_available: true,
             current_version: '1.0.0',
             latest_version: '2.0.0',
-            changes: { charts_added: ['added'], charts_removed: ['removed'], charts_modified: [], charts_unchanged: ['web'] },
-          },
+            changes: { charts_added: ['added'], charts_removed: ['removed'], charts_modified: ['web'], charts_unchanged: [] },
+            chart_diffs: [changedChart],
+          } satisfies UpgradeCheckResponse,
         }));
       },
     }),
     open: clickButton('Check for Upgrades'),
+    checked: diffLineNumber,
   },
   {
     name: 'definitions: import',
@@ -331,6 +394,7 @@ const DIALOGS: DialogState[] = [
       before: (p) => mockTemplateVersions(p, { has_unpublished_changes: true, published_version: '1.0.0' }),
     }),
     open: clickButton('Show changes'),
+    checked: diffLineNumber,
   },
   {
     name: 'template: version comparison',
@@ -341,6 +405,7 @@ const DIALOGS: DialogState[] = [
       await page.getByRole('checkbox', { name: /version 2\.0\.0/ }).check();
       await page.getByRole('button', { name: 'Compare Selected Versions' }).click();
     },
+    checked: diffLineNumber,
   },
   {
     name: 'gallery: quick deploy',
@@ -365,7 +430,7 @@ const DIALOGS: DialogState[] = [
         json: { total: 2, succeeded: 1, failed: 1, results: [
           { template_id: seed.templateId, template_name: 'Worked', status: 'success' },
           { template_id: 'other', template_name: 'Refused', status: 'error', error: 'Forced error' },
-        ] },
+        ] } satisfies BulkTemplateResponse,
       })),
     }),
     open: async (page, dialog) => {
@@ -394,7 +459,7 @@ const DIALOGS: DialogState[] = [
         json: { total: 2, succeeded: 1, failed: 1, results: [
           { instance_id: seed.instanceId, instance_name: 'Worked', status: 'success' },
           { instance_id: 'other', instance_name: 'Refused', status: 'error', error: 'Forced error' },
-        ] },
+        ] } satisfies BulkOperationResponse,
       })),
     }),
     open: async (page, dialog) => {
@@ -515,6 +580,7 @@ const DIALOGS: DialogState[] = [
       await dialog.getByRole('button', { name: /^(Generate|Create)/ }).click();
       await expect(page.getByRole('heading', { name: 'API Key Generated' })).toBeVisible();
     },
+    checked: (d) => d.getByText('sm_a11y_generated_key'),
   },
   {
     name: 'users: revoke API key',
@@ -523,16 +589,18 @@ const DIALOGS: DialogState[] = [
       await page.getByRole('row', { name: new RegExp(admin.userName) }).getByRole('button', { name: 'Expand API keys' }).click();
       await page.getByRole('button', { name: 'Revoke key a11y-key' }).click();
     },
+    checked: (d) => d.getByText('a11y-key'),
   },
   // Orphaned namespaces
   {
     name: 'orphaned namespaces: delete',
     setup: () => adminPage('/admin/orphaned-namespaces', 'Orphaned Namespaces', {
       before: (p) => p.route(/\/api\/v1\/admin\/orphaned-namespaces(\?.*)?$/, (route) => route.fulfill({
-        json: [{ name: 'stack-a11y', created_at: '2026-10-19T09:00:00Z', phase: 'Active', helm_releases: ['web'], managed: true, resource_counts: null }],
+        json: [{ name: 'stack-a11y', created_at: '2026-10-19T09:00:00Z', phase: 'Active', helm_releases: ['web'], managed: true, resource_counts: null }] satisfies OrphanedNamespace[],
       })),
     }),
     open: (page) => page.getByRole('button', { name: 'Delete namespace stack-a11y' }).click(),
+    checked: (d) => d.getByText('stack-a11y'),
     hover: (d) => d.getByRole('button', { name: 'Cancel' }),
   },
   // Profile
@@ -550,11 +618,13 @@ const DIALOGS: DialogState[] = [
       await dialog.getByRole('button', { name: /^(Generate|Create)/ }).click();
       await expect(page.getByRole('heading', { name: 'API Key Generated' })).toBeVisible();
     },
+    checked: (d) => d.getByText('sm_a11y_generated_key'),
   },
   {
     name: 'profile: revoke API key',
     setup: () => adminPage('/profile', 'My Profile', { before: mockGeneratedKey }),
     open: (page) => page.getByRole('button', { name: /^Revoke/ }).first().click(),
+    checked: (d) => d.getByText('a11y-key'),
   },
 ];
 
@@ -573,7 +643,7 @@ test.describe('Accessibility: all dialogs, menus and popovers', () => {
   });
 
   for (const mode of MODES) {
-    for (const { name, setup, open, checked, hover, mayKeepSpinner } of DIALOGS) {
+    for (const { name, setup, open, checked, hover } of DIALOGS) {
       test(`dialog ${name} (${mode})`, async ({ page }) => {
         await checkPage(page, mode, {
           ...setup(),
@@ -581,9 +651,7 @@ test.describe('Accessibility: all dialogs, menus and popovers', () => {
             const dialog = p.getByRole('dialog');
             await open(p, dialog);
             await expect(dialog, 'the dialog did not open').toBeVisible();
-            if (!mayKeepSpinner) {
-              await expect(dialog.locator('[role=progressbar]:not([aria-valuenow])'), 'the dialog is still loading').toHaveCount(0, { timeout: 15_000 });
-            }
+            await expect(dialog.locator('[role=progressbar]:not([aria-valuenow])'), 'the dialog is still loading').toHaveCount(0, { timeout: 15_000 });
             const measured = checked ? checked(dialog) : dialog.locator('h2').first();
             await expect(measured, 'the element to measure is not visible').toBeVisible();
             await runAxe({ selector: '[role=dialog]', checked: measured });
@@ -671,16 +739,16 @@ test.describe('Accessibility: all dialogs, menus and popovers', () => {
         heading: 'Stack Instances',
         allowed5xx: [/^GET \/api\/v1\/stack-instances\/[^/]+\/status$/],
         before: async (p) => {
-          const notifications = [
+          const notifications: Notification[] = [
             { id: 'n1', user_id: 'u', type: 'deployment.error', title: 'A failed deploy', message: 'The deploy failed', is_read: false, created_at: '2026-10-19T10:00:00Z' },
             { id: 'n2', user_id: 'u', type: 'deployment.success', title: 'A good deploy', message: 'The deploy worked', is_read: true, created_at: '2026-10-19T09:00:00Z' },
           ];
           await p.route(/\/api\/v1\/notifications(\?.*)?$/, (route) => (
             route.request().method() !== 'GET'
               ? route.continue()
-              : route.fulfill({ json: { notifications, total: 2, unread_count: 1 } })
+              : route.fulfill({ json: { notifications, total: 2, unread_count: 1 } satisfies NotificationListResponse })
           ));
-          await p.route(/\/api\/v1\/notifications\/(count|unread-count)$/, (route) => route.fulfill({ json: { unread_count: 1, count: 1 } }));
+          await p.route(/\/api\/v1\/notifications\/count$/, (route) => route.fulfill({ json: { unread_count: 1 } satisfies UnreadNotificationCount }));
         },
         ready: async (p, runAxe) => {
           await p.getByRole('button', { name: /^Open notifications/ }).first().click();

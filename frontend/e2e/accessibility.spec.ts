@@ -14,6 +14,7 @@ import {
   type Seed,
 } from './a11y';
 import { mockDeployLog, type MockDeployLog } from './deployLogMock';
+import type { APIKey, NamespaceStatus, Notification, NotificationChannelSaveResult, StackInstance } from '../src/types';
 
 // Colour contrast and list structure (#740, #758), in the light and the dark
 // colour mode, at 1400x1000. See a11y.ts for the rules and the explicit checks.
@@ -84,6 +85,9 @@ test.describe('Accessibility: colour contrast and lists', () => {
         await checkPage(page, mode, {
           ...spec,
           ready: async (p, runAxe) => {
+            if (name === 'compare, with a difference') {
+              await expect(p.locator('[class*="line-number"]').filter({ hasText: /\d/ }).first(), 'the diff viewer did not render').toBeVisible();
+            }
             await runAxe();
             if (name === 'templates') {
               // The seeded draft template is on the tab "My Templates" (the admin owns it)
@@ -211,6 +215,8 @@ test.describe('Accessibility: colour contrast and lists', () => {
 
   interface ToastState {
     severity: 'Success' | 'Info' | 'Warning' | 'Error';
+    /** The text of the toast: the mocked answer really reached it. */
+    text: string | RegExp;
     setup: () => PageSetup;
     trigger: (page: Page, socket: () => WebSocketRoute | undefined) => Promise<void>;
   }
@@ -226,16 +232,25 @@ test.describe('Accessibility: colour contrast and lists', () => {
   const savePreferences = (page: Page) => page.getByRole('button', { name: 'Save', exact: true }).click();
 
   const TOASTS: ToastState[] = [
-    { severity: 'Success', setup: () => preferencesSaveAnswers(200), trigger: savePreferences },
-    { severity: 'Error', setup: () => preferencesSaveAnswers(400), trigger: savePreferences },
+    { severity: 'Success', text: 'Notification preferences saved', setup: () => preferencesSaveAnswers(200), trigger: savePreferences },
+    { severity: 'Error', text: 'Failed to save notification preferences', setup: () => preferencesSaveAnswers(400), trigger: savePreferences },
     {
       severity: 'Warning',
+      text: /forced warning/,
       setup: () => ({
         path: '/admin/notification-channels',
         heading: 'Notification Channels',
         before: (p) => p.route(/\/api\/v1\/admin\/notification-channels$/, (route) => (
           route.request().method() === 'POST'
-            ? route.fulfill({ status: 201, json: { id: 'a11y-channel', name: 'a11y', warnings: ['forced warning'] } })
+            ? route.fulfill({ status: 201, json: {
+                id: 'a11y-channel',
+                name: 'a11y',
+                webhook_url: 'https://example.com/hook',
+                enabled: true,
+                created_at: '2026-10-19T09:00:00Z',
+                updated_at: '2026-10-19T09:00:00Z',
+                warnings: ['forced warning'],
+              } satisfies NotificationChannelSaveResult })
             : route.continue()
         )),
       }),
@@ -249,6 +264,7 @@ test.describe('Accessibility: colour contrast and lists', () => {
     },
     {
       severity: 'Info',
+      text: 'Forced info toast',
       setup: () => ({ path: '/profile', heading: 'My Profile' }),
       // NotificationCenter shows a pushed notification as an info toast.
       trigger: async (_page, socket) => {
@@ -263,14 +279,14 @@ test.describe('Accessibility: colour contrast and lists', () => {
             message: 'Forced by the accessibility check',
             is_read: false,
             created_at: '2026-10-19T10:00:00Z',
-          },
+          } satisfies Notification,
         }));
       },
     },
   ];
 
   /** A dashboard row. The expiry chip reads only these fields. */
-  const row = (id: string, name: string, fields: Record<string, unknown>) => ({
+  const row = (id: string, name: string, fields: Partial<StackInstance>): StackInstance => ({
     id,
     name,
     namespace: `stack-${name}`,
@@ -297,14 +313,14 @@ test.describe('Accessibility: colour contrast and lists', () => {
     row('a11y-expired', 'expired', { status: 'stopped', error_message: 'Expired (TTL)' }),
   ];
 
-  const mockDashboardRows = async (page: Page, rows: () => unknown[]) => {
+  const mockDashboardRows = async (page: Page, rows: () => StackInstance[]) => {
     await page.route(/\/api\/v1\/stack-instances(\?.*)?$/, (route) => (
       route.request().method() !== 'GET'
         ? route.continue()
         : route.fulfill({ json: { data: rows(), page: 1, pageSize: 25, total: rows().length } })
     ));
     await page.route(/\/api\/v1\/stack-instances\/a11y-[^/]+\/status$/, (route) => route.fulfill({
-      json: { namespace: 'a11y', status: 'healthy', charts: [], last_checked: '2026-10-19T09:00:00Z' },
+      json: { namespace: 'a11y', status: 'healthy', charts: [], last_checked: '2026-10-19T09:00:00Z' } satisfies NamespaceStatus,
     }));
   };
 
@@ -372,7 +388,7 @@ test.describe('Accessibility: colour contrast and lists', () => {
       });
     });
 
-    for (const { severity, setup, trigger } of TOASTS) {
+    for (const { severity, text, setup, trigger } of TOASTS) {
       test(`STATE toast ${severity} (${mode})`, async ({ page }) => {
         let socket: WebSocketRoute | undefined;
         await checkPage(page, mode, {
@@ -382,6 +398,7 @@ test.describe('Accessibility: colour contrast and lists', () => {
             await trigger(p, () => socket);
             const toast = p.locator(`[data-testid=toast-stack] .MuiAlert-color${severity}`);
             await expect(toast, `the ${severity} toast did not appear`).toBeVisible();
+            await expect(toast.locator('.MuiAlert-message')).toHaveText(text);
             // The pointer on a toast pauses its timer while axe runs.
             await toast.hover();
             await runAxe({ selector: '[data-testid=toast-stack]', checked: toast.locator('.MuiAlert-message') });
@@ -450,7 +467,7 @@ test.describe('Accessibility: colour contrast and lists', () => {
             json: [
               { id: 'k-exp', user_id: 'u', name: 'expired-key', prefix: 'aa', created_at: '2026-01-01T00:00:00Z', expires_at: minutesFromNow(-1440) },
               { id: 'k-soon', user_id: 'u', name: 'soon-key', prefix: 'bb', created_at: '2026-01-01T00:00:00Z', expires_at: minutesFromNow(1440) },
-            ],
+            ] satisfies APIKey[],
           })
         )),
         ready: async (p, runAxe) => {

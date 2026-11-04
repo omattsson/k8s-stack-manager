@@ -1,6 +1,7 @@
 import { test, expect, type APIRequestContext, type JSHandle, type Locator, type Page, type WebSocketRoute } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { API_BASE, apiAddChart, apiCreateDefinition, apiLogin, loginAsAdmin, uniqueName } from './helpers';
+import type { StackInstance } from '../src/types';
 
 // The shared part of the accessibility specs (#740, #758): opening a page, the
 // axe run, the explicit measurements, and the seed data.
@@ -829,7 +830,7 @@ export async function deleteSeed(request: APIRequestContext, seed: Partial<Seed>
 }
 
 /** Answer the instance with this status, for as long as the page lives. */
-export const forceInstanceFields = (page: Page, instanceId: string, fields: Record<string, unknown>) =>
+export const forceInstanceFields = (page: Page, instanceId: string, fields: Partial<StackInstance>) =>
   page.route(new RegExp(`/api/v1/stack-instances/${instanceId}(\\?.*)?$`), async (route) => {
     if (route.request().method() !== 'GET') return route.continue();
     const res = await route.fetch();

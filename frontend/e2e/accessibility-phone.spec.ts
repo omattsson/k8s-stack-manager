@@ -1,5 +1,6 @@
 import { test, expect, devices, type Page } from '@playwright/test';
 import { MODES, checkPage, createSeed, deleteSeed, focusRingSweep, pageList, type PageSetup, type Seed } from './a11y';
+import type { NotificationListResponse } from '../src/types';
 
 // The phone layout (#758): all pages, the open navigation, a dialog and a toast
 // at the iPhone 13 viewport with touch, in both colour modes. A page reflows on a
@@ -96,6 +97,9 @@ test.describe('Accessibility: phone layout', () => {
             await p.getByRole('button', { name: 'Save', exact: true }).tap();
             const toast = p.locator(`[data-testid=toast-stack] .MuiAlert-color${severity}`);
             await expect(toast, `the ${severity} toast did not appear`).toBeVisible();
+            await expect(toast.locator('.MuiAlert-message')).toHaveText(
+              status === 200 ? 'Notification preferences saved' : 'Failed to save notification preferences',
+            );
             // The pointer on a toast pauses its timer while axe runs.
             await toast.hover();
             await runAxe({ selector: '[data-testid=toast-stack]', checked: toast.locator('.MuiAlert-message') });
@@ -140,7 +144,7 @@ test.describe('Accessibility: phone layout', () => {
                 }],
                 total: 1,
                 unread_count: unread,
-              },
+              } satisfies NotificationListResponse,
             })
           )),
           ready: async (p, runAxe) => {
