@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import type { UserFavorite } from '../src/types';
 import {
   AA_NON_TEXT,
   MODES,
@@ -116,6 +117,92 @@ test.describe('Accessibility: focus rings, tooltips, bars and colour as the only
         await checkPage(page, mode, { ...setup(name), ready: (p) => focusRingSweep(p, `${name} (${mode})`, options) });
       });
     }
+
+    // The cards of My Favorites and Recent Stacks are links, in rows that scroll sideways.
+    const favorite = (): UserFavorite => ({
+      id: 'a11y-favorite', user_id: 'u', entity_type: 'instance', entity_id: seed.instanceId, created_at: '2026-10-19T09:00:00Z',
+    });
+    const mockFavorites = (p: Page) => p.route(/\/api\/v1\/favorites(\?.*)?$/, (route) => (
+      route.request().method() === 'GET' ? route.fulfill({ json: [favorite()] }) : route.continue()
+    ));
+    const favoriteLink = (p: Page) => p.getByRole('link', { name: new RegExp(seed.instanceName) }).first();
+
+    // More recent stacks than fit: the row must scroll, whatever other specs created.
+    const RECENT_STACKS = 8;
+    const mockRecentStacks = (p: Page) => p.route(/\/api\/v1\/stack-instances\/recent(\?.*)?$/, (route) => route.fulfill({
+      json: Array.from({ length: RECENT_STACKS }, (_, i) => ({
+        id: `a11y-recent-${i}`,
+        stack_definition_id: seed.definitionId,
+        name: `a11y-recent-${i}`,
+        definition_name: 'a11y-definition',
+        namespace: `stack-recent-${i}`,
+        owner_id: 'a11y-owner',
+        branch: 'main',
+        status: 'draft',
+        created_at: '2026-10-19T09:00:00Z',
+        updated_at: '2026-10-19T09:00:00Z',
+      })),
+    }));
+
+    test(`focus rings: favorite and recent cards, in a row that scrolls (${mode})`, async ({ page }) => {
+      test.setTimeout(120_000);
+      await checkPage(page, mode, {
+        ...setup('dashboard'),
+        before: async (p) => {
+          await mockFavorites(p);
+          await mockRecentStacks(p);
+        },
+        ready: async (p) => {
+          await expect(p.getByText('My Favorites')).toBeVisible();
+          await expect(favoriteLink(p), 'the favorite card is a link').toBeVisible();
+          const recent = p.getByRole('link', { name: /^a11y-recent-/ });
+          await expect(recent, 'the recent stacks are links').toHaveCount(RECENT_STACKS);
+          const row = p.locator('.MuiBox-root').filter({ has: recent.first() }).last();
+          expect(await row.evaluate((el) => el.scrollWidth > el.clientWidth), 'the row of recent stacks must scroll').toBe(true);
+          await focusRingSweep(p, `favorite and recent cards (${mode})`, { maxStops: 800 });
+        },
+      });
+    });
+
+    test(`focus rings: recently used template cards (${mode})`, async ({ page }) => {
+      test.setTimeout(120_000);
+      await checkPage(page, mode, {
+        ...setup('templates'),
+        before: (p) => p.addInitScript(({ id, name }) => {
+          localStorage.setItem('recentTemplates', JSON.stringify([{ id, name, usedAt: new Date().toISOString() }]));
+        }, { id: seed.publishedTemplateId, name: seed.publishedTemplateName }),
+        ready: async (p) => {
+          await expect(p.getByText('Recently Used')).toBeVisible();
+          await expect(p.getByRole('button', { name: `Open template ${seed.publishedTemplateName}` })).toBeVisible();
+          await focusRingSweep(p, `recently used templates (${mode})`, { maxStops: 800 });
+        },
+      });
+    });
+
+    test(`favorite card: opens with the keyboard, and the star does not navigate (${mode})`, async ({ page }) => {
+      await checkPage(page, mode, {
+        ...setup('dashboard'),
+        before: async (p) => {
+          await mockFavorites(p);
+          await p.route(/\/api\/v1\/favorites\/instance\/[^/]+$/, (route) => route.fulfill({ status: 204 }));
+        },
+        ready: async (p) => {
+          const link = favoriteLink(p);
+          await expect(link).toBeVisible();
+          const card = p.locator('.MuiCard-root').filter({ has: link }).first();
+          const star = card.getByRole('button', { name: /favorites/i });
+          expect(await link.locator('button').count(), 'a link cannot hold a button').toBe(0);
+
+          await star.click();
+          await expect(card.getByRole('button', { name: /favorites/i }), 'the star changed').toBeVisible();
+          expect(new URL(p.url()).pathname, 'the star does not navigate').toBe('/');
+
+          await link.focus();
+          await p.keyboard.press('Enter');
+          await expect.poll(() => new URL(p.url()).pathname).toBe(`/stack-instances/${seed.instanceId}`);
+        },
+      });
+    });
 
     test(`focus rings: selection toolbar (${mode})`, async ({ page }) => {
       await checkPage(page, mode, {

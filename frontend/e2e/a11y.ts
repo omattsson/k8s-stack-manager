@@ -559,6 +559,8 @@ export interface FocusStop {
   detail: string;
   /** The side of the ring that an `overflow` parent cuts off, if any. */
   clipped?: string;
+  /** `outline: auto`: the colour is up to the browser and the platform. */
+  browserDefault?: boolean;
 }
 
 /** How far a focus ring sweep goes. */
@@ -595,16 +597,18 @@ async function measureFocus(page: Page): Promise<FocusStop | null> {
         const o = getComputedStyle(p);
         if (o.overflowX === 'visible' && o.overflowY === 'visible') continue;
         const c = p.getBoundingClientRect();
-        if (o.overflowX !== 'visible' && r.left - reach < c.left - 0.5) sides.push('left');
-        if (o.overflowX !== 'visible' && r.right + reach > c.right + 0.5) sides.push('right');
-        if (o.overflowY !== 'visible' && r.top - reach < c.top - 0.5) sides.push('top');
-        if (o.overflowY !== 'visible' && r.bottom + reach > c.bottom + 0.5) sides.push('bottom');
+        const by = (side: string, px: number) => sides.push(`${side} by ${Math.round(px)}px at ${p.tagName.toLowerCase()}.${String(p.getAttribute('class')).replace(/css-\S+/g, '').trim().slice(0, 40)} (overflow ${o.overflowX}, scrolled ${Math.round(p.scrollLeft)} of ${p.scrollWidth - p.clientWidth}, focus link ${Math.round(r.left)} to ${Math.round(r.right)}, box ${Math.round(c.left)} to ${Math.round(c.right)})`);
+        if (o.overflowX !== 'visible' && r.left - reach < c.left - 0.5) by('left', c.left - r.left + reach);
+        if (o.overflowX !== 'visible' && r.right + reach > c.right + 0.5) by('right', r.right + reach - c.right);
+        if (o.overflowY !== 'visible' && r.top - reach < c.top - 0.5) by('top', c.top - r.top + reach);
+        if (o.overflowY !== 'visible' && r.bottom + reach > c.bottom + 0.5) by('bottom', r.bottom + reach - c.bottom);
       }
       return {
         element,
         kind: `outline ${cs.outlineStyle}`,
         ratio: ratio(cs.outlineColor, behind),
-        detail: `${cs.outlineColor} on ${behind}`,
+        detail: `${cs.outlineColor} on ${behind}, overflow-x ${cs.overflowX}`,
+        browserDefault: cs.outlineStyle === 'auto',
         clipped: sides.length ? [...new Set(sides)].join(', ') : undefined,
       };
     }
@@ -665,6 +669,10 @@ export async function focusRingSweep(page: Page, what: string, options: SweepOpt
       pressKey = false;
       continue;
     }
+    // Focus scrolls the element into view, which can take effect on a later frame.
+    await page.evaluate(() => new Promise((done) => {
+      requestAnimationFrame(() => requestAnimationFrame(done));
+    }));
     const stop = await measureFocus(page);
     if (!stop) {
       // Out of the document, past the last control: the whole page has been seen.
@@ -691,6 +699,12 @@ export async function focusRingSweep(page: Page, what: string, options: SweepOpt
   const bad = stops.filter((s) => s.ratio < AA_NON_TEXT);
   const lines = bad.map((s) => `  ${s.element}: ${s.kind}, ${s.ratio.toFixed(2)}:1 (${s.detail})`);
   expect(lines, `${what}: ${bad.length} of ${stops.length} Tab stops have no focus ring with ${AA_NON_TEXT}:1\n${lines.join('\n')}`).toEqual([]);
+  // Whatever its ratio here: the same ring measured 3.13:1 on macOS and 1.02:1 on Linux.
+  const browserRings = stops.filter((s) => s.browserDefault).map((s) => `${s.element}: ${s.ratio.toFixed(2)}:1 on this platform (${s.detail})`);
+  expect(
+    browserRings,
+    `${what}: ${browserRings.length} of ${stops.length} stops rely on the browser's default ring, which differs by platform\n  ${browserRings.join('\n  ')}`,
+  ).toEqual([]);
   const clipped = stops.filter((s) => s.clipped).map((s) => `${s.element}: ${s.clipped}`);
   expect(clipped, `${what}: a parent cuts off the focus ring of ${clipped.length} of ${stops.length} stops\n  ${clipped.join('\n  ')}`).toEqual([]);
   const lowest = stops.reduce((a, b) => (b.ratio < a.ratio ? b : a));

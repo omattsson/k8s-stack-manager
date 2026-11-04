@@ -155,6 +155,20 @@ test.describe('Accessibility: phone layout', () => {
       });
     }
 
+    // On a phone, more content scrolls sideways. A scroll container with nothing to
+    // focus inside it is a Tab stop in Chromium, and needs a ring like any other.
+    for (const name of ['compare, with a difference', 'audit log', 'users']) {
+      test(`focus rings: ${name} (${mode}, phone)`, async ({ page }) => {
+        test.setTimeout(120_000);
+        const spec = pageList(seed).find((p) => p.name === name)?.spec as PageSetup;
+        await checkPage(page, mode, {
+          ...spec,
+          phone: true,
+          ready: (p) => focusRingSweep(p, `${name} (${mode}, phone)`, { maxStops: 300 }),
+        });
+      });
+    }
+
     test(`focus rings on the app bar and the page (${mode}, phone)`, async ({ page }) => {
       await checkPage(page, mode, {
         ...dashboard(),
