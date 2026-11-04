@@ -7,9 +7,9 @@ const statusColors: Record<StackStatus, 'default' | 'info' | 'success' | 'warnin
   stabilizing: 'info',
   running: 'success',
   partial: 'warning',
-  stopped: 'warning',
-  stopping: 'warning',
-  cleaning: 'warning',
+  stopped: 'default',
+  stopping: 'info',
+  cleaning: 'info',
   error: 'error',
 };
 

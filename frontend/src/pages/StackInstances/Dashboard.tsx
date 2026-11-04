@@ -48,6 +48,7 @@ import { useNotification } from '../../context/NotificationContext';
 import { useAuth } from '../../context/AuthContext';
 import { canModifyInstance, hasAtLeastRole } from '../../utils/roles';
 import { isSetupWizardDismissed, dismissSetupWizard } from '../../utils/setupWizard';
+import { describeApiError } from '../../utils/apiError';
 
 
 // Delay before the list reloads for an instance that is not in it yet.
@@ -164,8 +165,8 @@ const InstanceCard = ({ instance, isSelected, selectable, isFavorite, clusterNam
       </Box>
       <Typography variant="body2" color="text.secondary">Branch: {instance.branch}</Typography>
       <Typography variant="body2" color="text.secondary">Namespace: {instance.namespace}</Typography>
-      {instance.definition && (
-        <Typography variant="body2" color="text.secondary">Definition: {instance.definition.name}</Typography>
+      {instance.definition_name && (
+        <Typography variant="body2" color="text.secondary">Definition: {instance.definition_name}</Typography>
       )}
       {clusterName && (
         <Typography variant="body2" color="text.secondary">Cluster: {clusterName}</Typography>
@@ -235,6 +236,13 @@ const Dashboard = () => {
       ]);
       setInstances(instData || []);
       setRecentInstances(recentData || []);
+      // A stack can be gone without an instance.deleted message (for example
+      // while the socket was down). It must not stay in the bulk selection.
+      const existing = new Set((instData || []).map((inst) => inst.id));
+      setSelectedIds((prev) => {
+        const next = new Set([...prev].filter((selectedId) => existing.has(selectedId)));
+        return next.size === prev.size ? prev : next;
+      });
     } catch {
       // Silently fail on refresh - data is already loaded
     }
@@ -496,14 +504,27 @@ const Dashboard = () => {
     });
   }, []);
 
+  // The header acts on the visible stacks only. A selection under another
+  // filter stays, and the toolbar counts it as "not shown".
   const toggleSelectAll = useCallback(() => {
     setSelectedIds((prev) => {
-      if (prev.size === selectableFiltered.length && selectableFiltered.length > 0) {
-        return new Set();
+      const next = new Set(prev);
+      const allVisibleSelected = selectableFiltered.every((inst) => prev.has(inst.id));
+      for (const inst of selectableFiltered) {
+        if (allVisibleSelected) {
+          next.delete(inst.id);
+        } else {
+          next.add(inst.id);
+        }
       }
-      return new Set(selectableFiltered.map((inst) => inst.id));
+      return next;
     });
   }, [selectableFiltered]);
+
+  const handleClearFilters = useCallback(() => {
+    setSearch('');
+    setStatusFilter('All');
+  }, []);
 
   const selectedInstances = useMemo(() => {
     return instances.filter((inst) => selectedIds.has(inst.id));
@@ -549,8 +570,8 @@ const Dashboard = () => {
 
       // Refresh instances to reflect new statuses
       await refreshInstances();
-    } catch {
-      showError(`Bulk ${bulkAction} failed`);
+    } catch (err) {
+      showError(await describeApiError(err, `Bulk ${bulkAction} failed`));
     } finally {
       setBulkLoading(false);
     }
@@ -599,8 +620,13 @@ const Dashboard = () => {
     );
   }
 
-  const allFilteredSelected = selectableFiltered.length > 0 && selectedIds.size === selectableFiltered.length;
-  const someFilteredSelected = selectedIds.size > 0 && selectedIds.size < selectableFiltered.length;
+  // The header compares the visible IDs, not the counts: a selection under
+  // another filter says nothing about the stacks on the page.
+  const visibleSelectedCount = selectableFiltered.filter((inst) => selectedIds.has(inst.id)).length;
+  const allFilteredSelected = selectableFiltered.length > 0 && visibleSelectedCount === selectableFiltered.length;
+  const someFilteredSelected = visibleSelectedCount > 0 && !allFilteredSelected;
+  const visibleIds = new Set(filtered.map((inst) => inst.id));
+  const hiddenSelectedCount = [...selectedIds].filter((selectedId) => !visibleIds.has(selectedId)).length;
 
   return (
     <Box>
@@ -674,7 +700,7 @@ const Dashboard = () => {
           aria-label="Bulk actions"
         >
           <Typography variant="body2" sx={{ fontWeight: 'bold', mr: 1 }}>
-            {selectedIds.size} selected
+            {selectedIds.size} selected{hiddenSelectedCount > 0 && ` (${hiddenSelectedCount} not shown)`}
           </Typography>
           <Button
             size="small"
@@ -780,9 +806,9 @@ const Dashboard = () => {
                   <Typography variant="subtitle2" component="div" noWrap>
                     {inst.name}
                   </Typography>
-                  {inst.definition && (
+                  {inst.definition_name && (
                     <Typography variant="caption" color="text.secondary" noWrap component="div">
-                      {inst.definition.name}
+                      {inst.definition_name}
                     </Typography>
                   )}
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
@@ -808,7 +834,16 @@ const Dashboard = () => {
         </Typography>
       )}
 
-      {filtered.length === 0 ? (
+      {filtered.length === 0 && instances.length > 0 ? (
+        <EmptyState
+          title="No stacks match these filters"
+          action={
+            <Button variant="outlined" onClick={handleClearFilters}>
+              Clear filters
+            </Button>
+          }
+        />
+      ) : filtered.length === 0 ? (
         <EmptyState
           title="No stack instances found"
           description="Create a new instance to get started."

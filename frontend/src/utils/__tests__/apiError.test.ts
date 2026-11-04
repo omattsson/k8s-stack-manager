@@ -28,9 +28,24 @@ describe('describeApiError', () => {
     expect(await describeApiError(err, 'Failed')).toBe('Failed (HTTP 502: Bad gateway)');
   });
 
+  it('does not show the HTML error page of a proxy', async () => {
+    const err = { response: { status: 502, statusText: 'Bad Gateway', data: '<html><head><title>502 Bad Gateway</title></head></html>' } };
+    expect(await describeApiError(err, 'Failed')).toBe('Failed (HTTP 502: Bad Gateway)');
+  });
+
   it('falls back to the status text when the body has no message', async () => {
-    const err = { response: { status: 500, statusText: 'Internal Server Error', data: new Blob(['']) } };
-    expect(await describeApiError(err, 'Failed')).toBe('Failed (HTTP 500: Internal Server Error)');
+    const err = { response: { status: 503, statusText: 'Service Unavailable', data: new Blob(['']) } };
+    expect(await describeApiError(err, 'Failed')).toBe('Failed (HTTP 503: Service Unavailable)');
+  });
+
+  it.each([
+    ['JSON body', { error: 'dial tcp 10.0.0.1:3306: connect: connection refused' }],
+    ['message field', { message: 'pq: password authentication failed' }],
+    ['plain text body', 'panic: runtime error: index out of range'],
+    ['empty body', new Blob([''])],
+  ])('never shows the body of a 500: %s', async (_name, data) => {
+    const err = { response: { status: 500, statusText: 'Internal Server Error', data } };
+    expect(await describeApiError(err, 'Failed')).toBe('Failed (HTTP 500: Internal server error)');
   });
 
   it('shows only the status when nothing else is known', async () => {

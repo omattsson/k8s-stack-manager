@@ -52,7 +52,7 @@ describe('ExpiryChip', () => {
       <ExpiryChip instance={{ ...baseInstance, status: 'running', expires_at: '2026-01-01T12:00:00Z' }} />
     );
 
-    expect(screen.getByText('⏱ 2h 30m')).toBeInTheDocument();
+    expect(screen.getByText('Expires in 2h 30m')).toBeInTheDocument();
   });
 
   it('uses warning color when isWarning is true', () => {
@@ -67,7 +67,7 @@ describe('ExpiryChip', () => {
       <ExpiryChip instance={{ ...baseInstance, status: 'running', expires_at: '2026-01-01T12:00:00Z' }} />
     );
 
-    const chip = screen.getByText('⏱ 45m');
+    const chip = screen.getByText('Expires in 45m');
     expect(chip).toBeInTheDocument();
     expect(chip.closest('.MuiChip-root')).toHaveClass('MuiChip-colorWarning');
   });
@@ -84,7 +84,7 @@ describe('ExpiryChip', () => {
       <ExpiryChip instance={{ ...baseInstance, status: 'running', expires_at: '2026-01-01T12:00:00Z' }} />
     );
 
-    const chip = screen.getByText('⏱ 10m');
+    const chip = screen.getByText('Expires in 10m');
     expect(chip).toBeInTheDocument();
     expect(chip.closest('.MuiChip-root')).toHaveClass('MuiChip-colorError');
   });
@@ -101,8 +101,54 @@ describe('ExpiryChip', () => {
       <ExpiryChip instance={{ ...baseInstance, status: 'running', expires_at: '2026-01-01T12:00:00Z' }} />
     );
 
-    const chip = screen.getByText('⏱ 5h 0m');
+    const chip = screen.getByText('Expires in 5h 0m');
     expect(chip.closest('.MuiChip-root')).toHaveClass('MuiChip-colorSuccess');
+  });
+
+  it('shows the expiry of a partial stack (#753)', () => {
+    (useCountdown as unknown as MockFn).mockReturnValue({
+      remaining: '39m',
+      isWarning: true,
+      isCritical: false,
+      isExpired: false,
+    });
+
+    render(
+      <ExpiryChip instance={{ ...baseInstance, status: 'partial', expires_at: '2026-01-01T12:00:00Z' }} />
+    );
+
+    const chip = screen.getByText('Expires in 39m');
+    expect(chip.closest('.MuiChip-root')).toHaveClass('MuiChip-colorWarning');
+  });
+
+  it('uses the countdown color for the fixed stop time of a partial stack', () => {
+    (useCountdown as unknown as MockFn).mockReturnValue({
+      remaining: '10m',
+      isWarning: true,
+      isCritical: true,
+      isExpired: false,
+    });
+
+    render(
+      <ExpiryChip instance={{ ...baseInstance, status: 'partial', ttl_minutes: 0, expires_at: '2026-10-17T16:00:00Z' }} />
+    );
+
+    expect(screen.getByText(/^Stops at /).closest('.MuiChip-root')).toHaveClass('MuiChip-colorError');
+  });
+
+  it.each(['stopped', 'stopping', 'cleaning', 'error', 'deploying'])('shows no expiry label for a %s stack with a TTL', (status) => {
+    (useCountdown as unknown as MockFn).mockReturnValue({
+      remaining: '39m',
+      isWarning: false,
+      isCritical: false,
+      isExpired: false,
+    });
+
+    render(
+      <ExpiryChip instance={{ ...baseInstance, status, expires_at: '2099-01-01T12:00:00Z' }} />
+    );
+
+    expect(screen.queryByText(/Expires in/)).not.toBeInTheDocument();
   });
 
   it('returns null when countdown is null (no expiry)', () => {
@@ -167,7 +213,7 @@ describe('ExpiryChip', () => {
     it.each(['running', 'draft'] as const)('shows "Stops at" for a %s instance', (status) => {
       (useCountdown as unknown as MockFn).mockReturnValue(counting);
       render(<ExpiryChip instance={{ ...baseInstance, status, ttl_minutes: 0, expires_at: stop }} />);
-      const chip = screen.getByText(/^⏱ Stops at /);
+      const chip = screen.getByText(/^Stops at /);
       expect(chip.textContent).toContain(formatStopTimeWhen(new Date(stop)));
     });
 

@@ -8102,10 +8102,12 @@ paths:
     put:
       consumes:
       - application/json
-      description: Upsert value overrides for a specific chart in a stack instance.
-        chartId must be a chart config of the instance's stack definition. Empty or
-        whitespace-only values remove the override and return 204 No Content (also
-        when no override existed).
+      description: 'Upsert value overrides for a specific chart in a stack instance.
+        chartId must be a chart config of the instance''s stack definition. Empty
+        or whitespace-only values remove the override and return 204 No Content (also
+        when no override existed). Values that the deploy cannot parse return 400
+        with the parse error: broken YAML, duplicate keys, a root that is not a map,
+        or a template value without quotes. A stored value is never checked on read.'
       parameters:
       - description: Instance ID
         in: path
@@ -8133,7 +8135,7 @@ paths:
         "204":
           description: Override removed (empty values)
         "400":
-          description: Bad Request
+          description: Invalid request, invalid YAML, or a conflict with locked values
           schema:
             additionalProperties:
               type: string

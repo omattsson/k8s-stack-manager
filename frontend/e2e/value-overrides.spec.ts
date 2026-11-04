@@ -108,22 +108,34 @@ test.describe('Per-chart value overrides (API)', () => {
     expect(merged).toContain('replicaCount');
   });
 
-  test('server stores syntactically invalid YAML (validation is client-side only)', async ({
-    request,
-  }) => {
-    // For a chart with no locked template values the backend stores the raw
-    // string; the YAML validation lives in the frontend YamlEditor, which shows
-    // a hint but does not block the save. This documents that the API accepts
-    // the payload rather than rejecting it.
+  // #753: the API refuses what the parser of the deploy refuses, and stores nothing.
+  for (const [name, invalid, message] of [
+    ['broken YAML', 'foo: [unclosed\n  bar: : :', 'Invalid YAML: line 1'],
+    ['an unquoted template value', 'tag: {{.Branch}}', 'Put a template value in quotes'],
+    ['a plain scalar', 'just-a-string', 'must be a map'],
+    ['duplicate keys', 'a: 1\na: 2', 'already defined'],
+  ]) {
+    test(`server refuses ${name} with 400`, async ({ request }) => {
+      const instId = await apiCreateInstance(request, token, defId, uniqueName('vo-inst'));
+
+      const putRes = await setOverride(request, token, instId, chartId, invalid);
+      expect(putRes.status(), await putRes.text()).toBe(400);
+      expect((await putRes.json()).error).toContain(message);
+
+      expect(await listOverrides(request, token, instId)).toEqual([]);
+    });
+  }
+
+  test('server stores a quoted template value', async ({ request }) => {
     const instId = await apiCreateInstance(request, token, defId, uniqueName('vo-inst'));
 
-    const invalid = 'foo: [unclosed\n  bar: : :';
-    const putRes = await setOverride(request, token, instId, chartId, invalid);
+    const values = 'tag: "{{.Branch}}"\n';
+    const putRes = await setOverride(request, token, instId, chartId, values);
     expect(putRes.status(), await putRes.text()).toBe(200);
 
     const list = await listOverrides(request, token, instId);
     expect(list).toHaveLength(1);
-    expect(list[0].values).toBe(invalid);
+    expect(list[0].values).toBe(values);
   });
 });
 

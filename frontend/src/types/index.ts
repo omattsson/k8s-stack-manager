@@ -162,7 +162,6 @@ export interface StackInstance {
   follower_count?: number;
   created_at: string;
   updated_at: string;
-  definition?: StackDefinition;
 }
 
 /** Response of `POST` and `DELETE /stack-instances/:id/follow`. */

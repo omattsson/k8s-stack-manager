@@ -133,6 +133,142 @@ func TestGetOverrides(t *testing.T) {
 
 // ---- SetOverride ----
 
+// TestSetOverrideValidatesYAML covers the check with the parser of the deploy
+// (#753): a refused value changes nothing, also when an override exists.
+func TestSetOverrideValidatesYAML(t *testing.T) {
+	t.Parallel()
+
+	const stored = "replicaCount: 1"
+	tests := []struct {
+		name       string
+		values     string
+		wantStatus int
+		wantError  string
+		wantStored string // the row after the request; "" means no row
+	}{
+		{"broken YAML", "foo: [unclosed\n  bar: : baz", http.StatusBadRequest, "Invalid YAML: line 1", stored},
+		{"plain scalar", "just-a-string", http.StatusBadRequest, "must be a map", stored},
+		{"list", "- a\n- b", http.StatusBadRequest, "must be a map", stored},
+		{"duplicate keys", "a: 1\na: 2", http.StatusBadRequest, `mapping key \"a\" already defined`, stored},
+		{"unquoted template", "tag: {{.Branch}}", http.StatusBadRequest, "Put a template value in quotes", stored},
+		{"quoted template", `tag: "{{.Branch}}"`, http.StatusOK, "", `tag: "{{.Branch}}"`},
+		{"template inside a plain scalar", "image: repo:{{.Branch}}", http.StatusOK, "", "image: repo:{{.Branch}}"},
+		{"comment only", "# nothing yet", http.StatusOK, "", "# nothing yet"},
+		{"empty removes the override", "", http.StatusNoContent, "", ""},
+		{"whitespace removes the override", "  \n", http.StatusNoContent, "", ""},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			instRepo := NewMockStackInstanceRepository()
+			seedInstance(t, instRepo, "inst-1", "my-stack", "def-1", "uid-1", models.StackStatusDraft)
+			overrideRepo := NewMockValueOverrideRepository()
+			seedValueOverride(t, overrideRepo, "or-1", "inst-1", "chart-1", stored)
+
+			router := setupValueOverrideRouter(
+				instRepo, overrideRepo,
+				NewMockStackDefinitionRepository(), newOverrideTestChartRepo(t),
+				NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
+				"uid-1", "user",
+			)
+			body, err := json.Marshal(map[string]string{"values": tt.values})
+			require.NoError(t, err)
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(http.MethodPut, "/api/v1/stack-instances/inst-1/overrides/chart-1", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.wantStatus, w.Code, w.Body.String())
+			if tt.wantError != "" {
+				assert.Contains(t, w.Body.String(), tt.wantError)
+				assert.NotContains(t, w.Body.String(), "interface {}")
+			}
+			got, findErr := overrideRepo.FindByInstanceAndChart(context.Background(), "inst-1", "chart-1")
+			if tt.wantStored == "" {
+				assert.Error(t, findErr)
+				return
+			}
+			require.NoError(t, findErr)
+			assert.Equal(t, tt.wantStored, got.Values)
+		})
+	}
+}
+
+// TestSetOverrideInvalidYAMLAfterAccessChecks: the YAML check must not tell a
+// caller without access, or for a chart outside the definition, anything about
+// the request: authorization and the chart lookup come first (#753).
+func TestSetOverrideInvalidYAMLAfterAccessChecks(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		userID     string
+		chartID    string
+		wantStatus int
+	}{
+		{"not the owner", "uid-other", "chart-1", http.StatusForbidden},
+		{"chart outside the definition", "uid-1", "chart-unknown", http.StatusNotFound},
+		{"owner and chart of the definition", "uid-1", "chart-1", http.StatusBadRequest},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			instRepo := NewMockStackInstanceRepository()
+			seedInstance(t, instRepo, "inst-1", "my-stack", "def-1", "uid-1", models.StackStatusDraft)
+			router := setupValueOverrideRouter(
+				instRepo, NewMockValueOverrideRepository(),
+				NewMockStackDefinitionRepository(), newOverrideTestChartRepo(t),
+				NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
+				tt.userID, "user",
+			)
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(http.MethodPut, "/api/v1/stack-instances/inst-1/overrides/"+tt.chartID, bytes.NewBufferString(`{"values":"a: b: c"}`))
+			req.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.wantStatus, w.Code, w.Body.String())
+		})
+	}
+}
+
+// TestGetOverridesLoadsStoredInvalidValue: a value stored before the check
+// existed must still load, so the user can fix it (#753).
+func TestGetOverridesLoadsStoredInvalidValue(t *testing.T) {
+	t.Parallel()
+
+	const invalid = "foo: [unclosed\n  bar: : baz"
+	instRepo := NewMockStackInstanceRepository()
+	seedInstance(t, instRepo, "inst-1", "my-stack", "def-1", "uid-1", models.StackStatusDraft)
+	overrideRepo := NewMockValueOverrideRepository()
+	seedValueOverride(t, overrideRepo, "or-1", "inst-1", "chart-1", invalid)
+	router := setupValueOverrideRouter(
+		instRepo, overrideRepo,
+		NewMockStackDefinitionRepository(), newOverrideTestChartRepo(t),
+		NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
+		"uid-1", "user",
+	)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-instances/inst-1/overrides", nil)
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var listed []models.ValueOverride
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &listed))
+	require.Len(t, listed, 1)
+	assert.Equal(t, invalid, listed[0].Values)
+
+	// The fix goes through the normal save.
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest(http.MethodPut, "/api/v1/stack-instances/inst-1/overrides/chart-1", bytes.NewBufferString(`{"values":"foo: bar"}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
+}
+
 func TestSetOverride(t *testing.T) {
 	t.Parallel()
 

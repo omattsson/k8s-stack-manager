@@ -81,6 +81,66 @@ describe('YamlEditor', () => {
     expect(screen.getByText('YAML is required')).toBeInTheDocument();
   });
 
+  describe('validation (#753)', () => {
+    it('reports a blocking error for a value that the parent loaded', () => {
+      const onValidationChange = vi.fn();
+      render(<YamlEditor value="tag: {{.Branch}}" onChange={vi.fn()} onValidationChange={onValidationChange} />);
+
+      expect(onValidationChange).toHaveBeenCalledTimes(1);
+      expect(onValidationChange.mock.calls[0][0]).toMatch(/complex keys/);
+      expect(screen.getByText(/complex keys/)).toBeInTheDocument();
+    });
+
+    it('reports null for a valid value', () => {
+      const onValidationChange = vi.fn();
+      render(<YamlEditor value={'tag: "{{.Branch}}"'} onChange={vi.fn()} onValidationChange={onValidationChange} />);
+
+      expect(onValidationChange).toHaveBeenCalledWith(null);
+    });
+
+    it('reports the change when the value becomes valid', () => {
+      const onValidationChange = vi.fn();
+      const { rerender } = render(<YamlEditor value="a: b: c" onChange={vi.fn()} onValidationChange={onValidationChange} />);
+      expect(onValidationChange).toHaveBeenLastCalledWith(expect.stringMatching(/bad indentation/));
+
+      rerender(<YamlEditor value="a: b" onChange={vi.fn()} onValidationChange={onValidationChange} />);
+      expect(onValidationChange).toHaveBeenLastCalledWith(null);
+    });
+
+    it('does not report again on a render without a change, also with a new callback', () => {
+      const first = vi.fn();
+      const second = vi.fn();
+      const { rerender } = render(<YamlEditor value="a: b" onChange={vi.fn()} onValidationChange={first} />);
+      rerender(<YamlEditor value="a: b" onChange={vi.fn()} onValidationChange={second} />);
+
+      expect(first).toHaveBeenCalledTimes(1);
+      expect(second).not.toHaveBeenCalled();
+    });
+
+    it('shows a hint and reports null for a value that only js-yaml refuses', () => {
+      const onValidationChange = vi.fn();
+      render(<YamlEditor value={'a: 1\na: 2'} onChange={vi.fn()} onValidationChange={onValidationChange} />);
+
+      expect(onValidationChange).toHaveBeenCalledWith(null);
+      expect(screen.getByTestId('yaml-hint')).toHaveTextContent(/^Possible problem: /);
+    });
+
+    it('does not check or report a read-only value', () => {
+      const onValidationChange = vi.fn();
+      render(<YamlEditor value="tag: {{.Branch}}" onChange={vi.fn()} readOnly onValidationChange={onValidationChange} />);
+
+      expect(onValidationChange).not.toHaveBeenCalled();
+      expect(screen.queryByText(/complex keys/)).not.toBeInTheDocument();
+    });
+
+    it('prefers an external error to the hint', () => {
+      render(<YamlEditor value={'a: 1\na: 2'} onChange={vi.fn()} error="YAML is required" />);
+
+      expect(screen.getByText('YAML is required')).toBeInTheDocument();
+      expect(screen.queryByTestId('yaml-hint')).not.toBeInTheDocument();
+    });
+  });
+
   it('renders the editor container', () => {
     render(<YamlEditor {...defaultProps} />);
     expect(screen.getByTestId('monaco-editor')).toBeInTheDocument();

@@ -51,6 +51,9 @@ jobs:
               - 'backend/**'
             frontend:
               - 'frontend/**'
+              # The browser YAML check is tested against the deploy parser's cases.
+              - 'backend/internal/helm/testdata/**'
+              - 'backend/internal/helm/values_generator.go'
             helm:
               - 'helm/**'
             docs:

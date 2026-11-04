@@ -116,21 +116,43 @@ vi.mock('../../../api/client', () => ({
   },
 }));
 
-vi.mock('../../../components/YamlEditor', () => ({
-  default: (props: { label?: string; value: string; readOnly?: boolean; onChange?: (v: string) => void }) => (
-    <div data-testid="yaml-editor">
-      <span>{props.label}</span>
-      <pre>{props.value}</pre>
-      {!props.readOnly && (
-        <>
-          <button onClick={() => props.onChange?.('')}>clear {props.label}</button>
-          <button onClick={() => props.onChange?.('replicaCount: 5')}>edit {props.label}</button>
-          <button onClick={() => props.onChange?.('replicaCount: 7')}>edit again {props.label}</button>
-        </>
-      )}
-    </div>
-  ),
-}));
+vi.mock('../../../components/YamlEditor', async () => {
+  const { useEffect } = await import('react');
+  const { checkYamlValues } = await import('../../../utils/yamlValidation');
+  const MockYamlEditor = (props: {
+    label?: string;
+    value: string;
+    readOnly?: boolean;
+    onChange?: (v: string) => void;
+    onValidationChange?: (error: string | null) => void;
+  }) => {
+    // The real validator and the report of the real editor.
+    const problem = props.readOnly ? null : checkYamlValues(props.value);
+    const blocking = problem?.blocking ? problem.message : null;
+    useEffect(() => {
+      if (!props.readOnly) props.onValidationChange?.(blocking);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [blocking]);
+    return (
+      <div data-testid="yaml-editor">
+        <span>{props.label}</span>
+        <pre>{props.value}</pre>
+        {!props.readOnly && (
+          <>
+            <button onClick={() => props.onChange?.('')}>clear {props.label}</button>
+            <button onClick={() => props.onChange?.('replicaCount: 5')}>edit {props.label}</button>
+            <button onClick={() => props.onChange?.('replicaCount: 7')}>edit again {props.label}</button>
+            <button onClick={() => props.onChange?.('a: b: c')}>invalid {props.label}</button>
+            <button onClick={() => props.onChange?.('a: b: d')}>invalid again {props.label}</button>
+            <button onClick={() => props.onChange?.('tag: "{{.Branch}}"')}>templated {props.label}</button>
+            <button onClick={() => props.onChange?.('a: 1\na: 2')}>duplicate {props.label}</button>
+          </>
+        )}
+      </div>
+    );
+  };
+  return { default: MockYamlEditor };
+});
 
 vi.mock('../../../utils/download', () => ({
   downloadBlob: vi.fn(),
@@ -869,7 +891,7 @@ describe('StackInstances Detail', () => {
     });
   });
 
-  it('shows warning alert in lifecycle for stopped status', async () => {
+  it('shows the lifecycle note for stopped status', async () => {
     setupMocks({ status: 'stopped' }, { deployLogReject: true });
 
     renderDetail();
@@ -2325,6 +2347,269 @@ describe('StackInstances Detail', () => {
       expect(screen.getByTestId('deployment-history')).toBeInTheDocument();
     });
     expect(screen.getByText('2 log entries')).toBeInTheDocument();
+  });
+
+  describe('API errors (#753)', () => {
+    type User = ReturnType<typeof userEvent.setup>;
+    const flows: { name: string; status: string; fallback: string; mock: () => MockFn; act: (user: User) => Promise<void> }[] = [
+      {
+        name: 'delete',
+        status: 'deploying',
+        fallback: 'Failed to delete instance',
+        mock: () => instanceService.delete as MockFn,
+        act: async (user) => {
+          await clickMenuAction(user, 'Delete');
+          await user.click(within(await screen.findByTestId('confirm-dialog')).getByRole('button', { name: /^delete$/i }));
+        },
+      },
+      {
+        name: 'deploy',
+        status: 'draft',
+        fallback: 'Failed to start deployment',
+        mock: () => instanceService.deploy as MockFn,
+        act: async (user) => {
+          await user.click(screen.getByRole('button', { name: /deploy/i }));
+          await user.click(within(screen.getByTestId('deploy-preview-dialog')).getByRole('button', { name: /deploy/i }));
+        },
+      },
+      {
+        name: 'stop',
+        status: 'running',
+        fallback: 'Failed to stop instance',
+        mock: () => instanceService.stop as MockFn,
+        act: async (user) => {
+          await user.click(screen.getByRole('button', { name: /stop/i }));
+          const dialog = await screen.findByRole('dialog', { name: /stop instance/i });
+          await user.click(within(dialog).getByRole('button', { name: /^stop$/i }));
+        },
+      },
+      {
+        name: 'clean',
+        status: 'running',
+        fallback: 'Failed to clean namespace',
+        mock: () => instanceService.clean as MockFn,
+        act: async (user) => {
+          await clickMenuAction(user, 'Clean namespace');
+          await screen.findByText('Clean Namespace?');
+          await user.click(screen.getByRole('button', { name: /^clean$/i }));
+        },
+      },
+      {
+        name: 'TTL',
+        status: 'draft',
+        fallback: 'Failed to update TTL',
+        mock: () => instanceService.update as MockFn,
+        act: async (user) => {
+          await user.click(screen.getByTestId('ttl-change'));
+        },
+      },
+    ];
+
+    it.each(flows)('$name shows the API message of a 409', async ({ status, fallback, mock, act }) => {
+      const user = userEvent.setup();
+      setupMocks({ status, ttl_minutes: 60 }, { deployLogReject: true });
+      mock().mockRejectedValue({ response: { status: 409, data: { error: 'The stop time has passed. Set a new stop time or a TTL.' } } });
+      renderDetail();
+      await screen.findByText('Test Instance');
+
+      await act(user);
+
+      expect(await screen.findByText(`${fallback} (HTTP 409: The stop time has passed. Set a new stop time or a TTL.)`)).toBeInTheDocument();
+    });
+
+    it.each(flows)('$name never shows the raw body of a 500', async ({ status, fallback, mock, act }) => {
+      const user = userEvent.setup();
+      setupMocks({ status, ttl_minutes: 60 }, { deployLogReject: true });
+      mock().mockRejectedValue({ response: { status: 500, data: { error: 'dial tcp 10.0.0.1:3306: connect: refused' } } });
+      renderDetail();
+      await screen.findByText('Test Instance');
+
+      await act(user);
+
+      expect(await screen.findByText(`${fallback} (HTTP 500: Internal server error)`)).toBeInTheDocument();
+      expect(screen.queryByText(/dial tcp/)).not.toBeInTheDocument();
+    });
+  });
+
+  describe('invalid YAML overrides (#753)', () => {
+    const twoCharts = {
+      ...mockDefinition,
+      charts: [
+        mockDefinition.charts[0],
+        { ...mockDefinition.charts[0], id: 'chart2', chart_name: 'backend', deploy_order: 2 },
+      ],
+    };
+    const saveButton = () => screen.getByRole('button', { name: /save changes/i });
+
+    it('blocks the save and names the chart while a value is invalid', async () => {
+      const user = userEvent.setup();
+      setupMocks();
+      renderDetail();
+      await screen.findByText('Test Instance');
+
+      await user.click(screen.getByRole('button', { name: 'invalid Your Overrides' }));
+
+      expect(await screen.findByTestId('invalid-override-message')).toHaveTextContent('Invalid YAML in chart "frontend". Fix it before you save.');
+      expect(saveButton()).toBeDisabled();
+      expect(instanceService.setOverride).not.toHaveBeenCalled();
+    });
+
+    it('names every chart with an invalid value', async () => {
+      const user = userEvent.setup();
+      setupMocks();
+      (definitionService.get as MockFn).mockResolvedValue(twoCharts);
+      renderDetail();
+      await screen.findByText('Test Instance');
+
+      const buttons = screen.getAllByRole('button', { name: 'invalid Your Overrides', hidden: true });
+      await user.click(buttons[0]);
+      await user.click(buttons[1]);
+
+      expect(await screen.findByTestId('invalid-override-message')).toHaveTextContent('Invalid YAML in charts "frontend", "backend". Fix them before you save.');
+    });
+
+    it('allows the save again after the fix, and a quoted template value is valid', async () => {
+      const user = userEvent.setup();
+      setupMocks();
+      (instanceService.setOverride as MockFn).mockResolvedValue({});
+      renderDetail();
+      await screen.findByText('Test Instance');
+
+      await user.click(screen.getByRole('button', { name: 'invalid Your Overrides' }));
+      expect(saveButton()).toBeDisabled();
+      await user.click(screen.getByRole('button', { name: 'templated Your Overrides' }));
+
+      await waitFor(() => expect(saveButton()).toBeEnabled());
+      expect(screen.queryByTestId('invalid-override-message')).not.toBeInTheDocument();
+      await user.click(saveButton());
+      await waitFor(() => {
+        expect(instanceService.setOverride).toHaveBeenCalledWith('123', 'chart1', { values: 'tag: "{{.Branch}}"' });
+      });
+    });
+
+    it('does not block a value that only js-yaml refuses, and shows the API error with the chart', async () => {
+      const user = userEvent.setup();
+      setupMocks();
+      (instanceService.setOverride as MockFn).mockRejectedValue({ response: { status: 400, data: { error: 'Invalid YAML: mapping key "a" already defined at line 1' } } });
+      renderDetail();
+      await screen.findByText('Test Instance');
+
+      await user.click(screen.getByRole('button', { name: 'duplicate Your Overrides' }));
+      expect(saveButton()).toBeEnabled();
+      await user.click(saveButton());
+
+      expect(await screen.findByText('Failed to save the overrides of chart "frontend" (HTTP 400: Invalid YAML: mapping key "a" already defined at line 1)')).toBeInTheDocument();
+    });
+
+    it('loads a stored invalid value, does not block other changes, and lets the user fix it', async () => {
+      const user = userEvent.setup();
+      setupMocks();
+      const stored = 'tag: {{.Branch}}';
+      (instanceService.getOverrides as MockFn).mockResolvedValue([
+        { id: 'ov1', stack_instance_id: '123', chart_config_id: 'chart1', values: stored },
+      ]);
+      (instanceService.setOverride as MockFn).mockResolvedValue({});
+      renderDetail();
+
+      expect(await screen.findByText(stored)).toBeInTheDocument();
+      expect(screen.queryByTestId('invalid-override-message')).not.toBeInTheDocument();
+      expect(saveButton()).toBeEnabled();
+
+      // Save without a change: the stored value is not sent.
+      await user.click(saveButton());
+      await waitFor(() => expect(saveButton()).toBeEnabled());
+      expect(instanceService.setOverride).not.toHaveBeenCalled();
+
+      // Another invalid edit blocks; the fix saves.
+      await user.click(screen.getByRole('button', { name: 'invalid again Your Overrides' }));
+      expect(saveButton()).toBeDisabled();
+      await user.click(screen.getByRole('button', { name: 'edit Your Overrides' }));
+      await waitFor(() => expect(saveButton()).toBeEnabled());
+      await user.click(saveButton());
+      await waitFor(() => {
+        expect(instanceService.setOverride).toHaveBeenCalledWith('123', 'chart1', { values: 'replicaCount: 5' });
+      });
+    });
+
+    it('"Save and deploy" at an invalid value removes the error of an earlier save', async () => {
+      const user = userEvent.setup();
+      setupMocks();
+      vi.mocked(instanceService.setOverride).mockRejectedValueOnce(new Error('network'));
+      renderDetail();
+      await screen.findByText('Test Instance');
+
+      await user.click(screen.getByRole('button', { name: 'edit Your Overrides' }));
+      await waitFor(() => expect(saveButton()).toBeEnabled());
+      await user.click(saveButton());
+      expect(await screen.findByText('Failed to save changes')).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: 'invalid Your Overrides' }));
+      await user.click(screen.getByRole('button', { name: 'Redeploy' }));
+      await user.click(await screen.findByRole('button', { name: 'Save and deploy' }));
+
+      expect(await screen.findByTestId('save-refused-message')).toBeInTheDocument();
+      expect(screen.queryByText('Failed to save changes')).not.toBeInTheDocument();
+    });
+
+    it('"Save and deploy" stops at an invalid value', async () => {
+      const user = userEvent.setup();
+      setupMocks();
+      renderDetail();
+      await screen.findByText('Test Instance');
+
+      await user.click(screen.getByRole('button', { name: 'invalid Your Overrides' }));
+      await user.click(screen.getByRole('button', { name: 'Redeploy' }));
+      await user.click(await screen.findByRole('button', { name: 'Save and deploy' }));
+
+      expect(await screen.findByTestId('save-refused-message')).toHaveTextContent('Invalid YAML in chart "frontend". Fix it before you save.');
+      expect(instanceService.setOverride).not.toHaveBeenCalled();
+      expect(screen.queryByTestId('deploy-preview-dialog')).not.toBeInTheDocument();
+
+      // The message at the top ends with the fix, without another save.
+      await user.click(screen.getByRole('button', { name: 'edit Your Overrides', hidden: true }));
+      await waitFor(() => expect(screen.queryByTestId('save-refused-message')).not.toBeInTheDocument());
+    });
+  });
+
+  describe('status lifecycle (#753)', () => {
+    it('shows a plain note for stopped, not an alert', async () => {
+      setupMocks({ status: 'stopped' }, { deployLogReject: true });
+      renderDetail();
+      await screen.findByText('Test Instance');
+
+      expect(screen.getByTestId('instance-stopped-note')).toHaveTextContent('Instance is stopped');
+      expect(screen.getByTestId('instance-stopped-note').closest('.MuiAlert-root')).toBeNull();
+    });
+
+    it('keeps the Expired chip of an expired stack', async () => {
+      setupMocks({ status: 'stopped', error_message: 'Expired (TTL)' }, { deployLogReject: true });
+      renderDetail();
+      await screen.findByText('Test Instance');
+
+      expect(screen.getByText('Expired').closest('.MuiChip-root')).toHaveClass('MuiChip-colorError');
+      expect(screen.getByTestId('instance-stopped-note')).toBeInTheDocument();
+    });
+
+    it.each(['stopping', 'cleaning'])('shows %s as in progress', async (status) => {
+      setupMocks({ status });
+      renderDetail();
+      await screen.findByText('Test Instance');
+
+      const alert = screen.getByText(`Instance is ${status}`).closest('.MuiAlert-root');
+      expect(alert).toHaveClass('MuiAlert-colorInfo');
+      expect(within(alert as HTMLElement).getByRole('progressbar')).toBeInTheDocument();
+    });
+
+    it.each([
+      ['partial', 'MuiAlert-colorWarning'],
+      ['error', 'MuiAlert-colorError'],
+    ])('keeps the alert for %s', async (status, colorClass) => {
+      setupMocks({ status });
+      renderDetail();
+      await screen.findByText('Test Instance');
+
+      expect(screen.getByText(`Instance is ${status}`, { exact: false }).closest('.MuiAlert-root')).toHaveClass(colorClass);
+    });
   });
 });
 

@@ -1173,7 +1173,7 @@ export const instanceService = {
    * @param id - Instance ID
    * @param chartConfigId - Chart config ID to override
    * @param data - YAML values string
-   * @returns The created or updated override
+   * @returns The created or updated override. The API answers 400 for values that the deploy cannot parse.
    * @see PUT /api/v1/stack-instances/:id/overrides/:chartConfigId
    */
   setOverride: async (id: string, chartConfigId: string, data: { values: string }): Promise<ValueOverride> => {

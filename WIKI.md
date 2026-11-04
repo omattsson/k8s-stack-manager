@@ -428,6 +428,8 @@ Exec runs one command in a container of a stack, through the backend, and stream
 
 A value override is a per-chart configuration override on a stack instance. The application deep-merges it with the chart defaults when it exports the Helm values. It substitutes the template variables (`{{.Branch}}`, `{{.Namespace}}`, `{{.InstanceName}}`, `{{.StackName}}`, `{{.Owner}}`) at export time.
 
+The value must be a YAML map that the deploy can parse. The API returns 400 otherwise, and the stack page does not save it. Put a template variable at the start of a value in quotes: write `tag: "{{.Branch}}"`, not `tag: {{.Branch}}`. `image: repo:{{.Branch}}` needs no quotes. A value that was stored before this check still loads, so you can fix it.
+
 ### Audit Log
 
 The application records every mutating API call (POST, PUT, DELETE) with the user, action, entity type, entity ID, and time.
