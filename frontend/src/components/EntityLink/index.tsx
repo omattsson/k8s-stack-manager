@@ -1,5 +1,5 @@
-import { Link } from 'react-router-dom';
-import { Typography } from '@mui/material';
+import { Link as RouterLink } from 'react-router-dom';
+import { Link, Typography } from '@mui/material';
 
 interface EntityLinkProps {
   entityType: string;
@@ -22,7 +22,7 @@ const EntityLink = ({ entityType, entityId }: EntityLinkProps) => {
     );
   }
   return (
-    <Link to={routeFn(entityId)} style={{ fontFamily: 'monospace', fontSize: 12 }}>
+    <Link component={RouterLink} to={routeFn(entityId)} sx={{ fontFamily: 'monospace', fontSize: 12 }}>
       {entityId}
     </Link>
   );

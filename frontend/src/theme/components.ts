@@ -87,6 +87,14 @@ export function getComponentOverrides(mode: 'light' | 'dark'): ThemeOptions['com
         }),
       },
     },
+    MuiToggleButton: {
+      styleOverrides: {
+        // The default action.active renders as #717171 on #f5f5f5 (4.47:1).
+        root: ({ theme }) => ({
+          color: theme.palette.text.secondary,
+        }),
+      },
+    },
     MuiTooltip: {
       styleOverrides: {
         tooltip: {

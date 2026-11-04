@@ -12,13 +12,16 @@ export const lightPalette: PaletteOptions = {
     main: '#2e7d32',
   },
   warning: {
-    main: '#ed6c02',
+    // Darker than MUI's #ed6c02 (3.11:1 as text on white): 4.95:1 as text on
+    // white and as the background of white button text.
+    main: '#b85200',
   },
   error: {
     main: '#d32f2f',
   },
   info: {
-    main: '#0288d1',
+    // Darker than MUI's #0288d1: 5.01:1 with white text, 4.59:1 as text on #f5f5f5.
+    main: '#0274b8',
   },
   background: {
     default: '#f5f5f5',
@@ -41,7 +44,11 @@ export const darkPalette: PaletteOptions = {
     main: '#ffa726',
   },
   error: {
-    main: '#f44336',
+    // Lighter main: #f44336 as text is 3.18:1 on menus (#383838); this is 4.61:1
+    // on #393939. `dark` is the hover and filled Alert background; the auto
+    // shade is too dark for black text.
+    main: '#ff7d66',
+    dark: '#f44336',
   },
   info: {
     main: '#29b6f6',

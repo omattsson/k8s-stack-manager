@@ -47,6 +47,27 @@ describe('EntityLink', () => {
     expect(screen.getByText('xyz-1')).toBeInTheDocument();
   });
 
+  it('renders the link as an MUI Link', () => {
+    render(
+      <MemoryRouter>
+        <EntityLink entityType="stack_instance" entityId="inst-2" />
+      </MemoryRouter>,
+    );
+    const link = screen.getByRole('link', { name: 'inst-2' });
+    expect(link).toHaveClass('MuiLink-root');
+    expect(link).toHaveAttribute('href', '/stack-instances/inst-2');
+    expect(link).toHaveTextContent('inst-2');
+  });
+
+  it('does not render an MUI Link for an unknown entity type', () => {
+    const { container } = render(
+      <MemoryRouter>
+        <EntityLink entityType="unknown_type" entityId="xyz-2" />
+      </MemoryRouter>,
+    );
+    expect(container.querySelector('.MuiLink-root')).toBeNull();
+  });
+
   it('displays the entity ID as text', () => {
     render(
       <MemoryRouter>
