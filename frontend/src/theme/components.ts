@@ -90,7 +90,12 @@ export function getComponentOverrides(mode: 'light' | 'dark'): ThemeOptions['com
         a: {
           scrollMargin: 4,
         },
-        'a:focus-visible': {
+        // Whatever else takes focus without a ring of its own: a link, an element with
+        // a tabindex, or a scroll container, which Chromium makes a Tab stop when nothing
+        // inside it can take focus. :where has no specificity, so a component that sets
+        // its own outline still wins. The browser default depends on the platform:
+        // 3.13:1 on macOS, 1.02:1 on Linux, on the same dark page.
+        ':where(:focus-visible)': {
           outline: '2px solid',
           outlineColor: theme.palette.primary.main,
           outlineOffset: 2,
@@ -108,7 +113,16 @@ export function getComponentOverrides(mode: 'light' | 'dark'): ThemeOptions['com
         }),
       },
     },
-    // Inside the element: the menu list and the tab scroller clip what is outside.
+    // Inside the element: the menu list, the tab scroller and the card clip what is outside.
+    MuiCardActionArea: {
+      styleOverrides: {
+        root: {
+          '&.Mui-focusVisible, &:focus-visible': {
+            outlineOffset: -2,
+          },
+        },
+      },
+    },
     MuiMenuItem: {
       styleOverrides: {
         root: {
@@ -149,6 +163,12 @@ export function getComponentOverrides(mode: 'light' | 'dark'): ThemeOptions['com
     // This select has no border, so focus had no visible indicator.
     MuiTablePagination: {
       styleOverrides: {
+        // Wider than a phone: the next-page button and its ring would be cut off.
+        toolbar: ({ theme }) => ({
+          [theme.breakpoints.down('sm')]: {
+            flexWrap: 'wrap',
+          },
+        }),
         // At the edge of a container that scrolls, which clips what is outside.
         actions: {
           '& .MuiButtonBase-root.Mui-focusVisible': {

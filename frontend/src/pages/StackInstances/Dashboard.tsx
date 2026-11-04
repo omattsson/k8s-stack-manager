@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { timeAgo } from '../../utils/timeAgo';
-import { useNavigate } from 'react-router-dom';
+import { Link as RouterLink, useNavigate } from 'react-router-dom';
+import { scrollFocusIntoView } from '../../utils/scrollFocusIntoView';
 import { useWebSocket } from '../../hooks/useWebSocket';
 import type { WsMessage } from '../../hooks/useWebSocket';
 import {
@@ -8,6 +9,7 @@ import {
   Typography,
   Grid,
   Card,
+  CardActionArea,
   CardContent,
   CardActions,
   Button,
@@ -773,18 +775,22 @@ const Dashboard = () => {
               <Card
                 key={inst.id}
                 variant="outlined"
-                sx={{ minWidth: 200, maxWidth: 250, flexShrink: 0, cursor: 'pointer' }}
-                onClick={() => navigate(`/stack-instances/${inst.id}`)}
+                sx={{ minWidth: 200, maxWidth: 250, flexShrink: 0, position: 'relative' }}
               >
-                <CardContent sx={{ py: 1.5, px: 2, '&:last-child': { pb: 1.5 } }}>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <Typography variant="subtitle2" component="div" noWrap sx={{ flex: 1 }}>
-                      {inst.name}
-                    </Typography>
-                    <FavoriteButton entityType="instance" entityId={inst.id} size="small" initialFavorited={true} />
-                  </Box>
-                  <StatusBadge status={inst.status} />
-                </CardContent>
+                <CardActionArea component={RouterLink} to={`/stack-instances/${inst.id}`} onFocus={scrollFocusIntoView}>
+                  <CardContent sx={{ py: 1.5, px: 2, '&:last-child': { pb: 1.5 } }}>
+                    {/* The room for the star, which is outside the link: a link cannot hold a button. */}
+                    <Box sx={{ display: 'flex', alignItems: 'center', minHeight: 30, pr: 4 }}>
+                      <Typography variant="subtitle2" component="div" noWrap sx={{ flex: 1 }}>
+                        {inst.name}
+                      </Typography>
+                    </Box>
+                    <StatusBadge status={inst.status} />
+                  </CardContent>
+                </CardActionArea>
+                <Box sx={{ position: 'absolute', top: 12, right: 16 }}>
+                  <FavoriteButton entityType="instance" entityId={inst.id} size="small" initialFavorited={true} />
+                </Box>
               </Card>
             ))}
           </Box>
@@ -802,27 +808,28 @@ const Dashboard = () => {
               <Card
                 key={inst.id}
                 variant="outlined"
-                sx={{ minWidth: 220, maxWidth: 280, flexShrink: 0, cursor: 'pointer' }}
-                onClick={() => navigate(`/stack-instances/${inst.id}`)}
+                sx={{ minWidth: 220, maxWidth: 280, flexShrink: 0 }}
               >
-                <CardContent sx={{ py: 1.5, px: 2, '&:last-child': { pb: 1.5 } }}>
-                  <Typography variant="subtitle2" component="div" noWrap>
-                    {inst.name}
-                  </Typography>
-                  {inst.definition_name && (
-                    <Typography variant="caption" color="text.secondary" noWrap component="div">
-                      {inst.definition_name}
+                <CardActionArea component={RouterLink} to={`/stack-instances/${inst.id}`} onFocus={scrollFocusIntoView}>
+                  <CardContent sx={{ py: 1.5, px: 2, '&:last-child': { pb: 1.5 } }}>
+                    <Typography variant="subtitle2" component="div" noWrap>
+                      {inst.name}
                     </Typography>
-                  )}
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
-                    <StatusBadge status={inst.status} />
-                    <Tooltip title={new Date(inst.updated_at).toLocaleString()} arrow>
-                      <Typography variant="caption" color="text.secondary">
-                        {timeAgo(inst.updated_at)}
+                    {inst.definition_name && (
+                      <Typography variant="caption" color="text.secondary" noWrap component="div">
+                        {inst.definition_name}
                       </Typography>
-                    </Tooltip>
-                  </Box>
-                </CardContent>
+                    )}
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
+                      <StatusBadge status={inst.status} />
+                      <Tooltip title={new Date(inst.updated_at).toLocaleString()} arrow>
+                        <Typography variant="caption" color="text.secondary">
+                          {timeAgo(inst.updated_at)}
+                        </Typography>
+                      </Tooltip>
+                    </Box>
+                  </CardContent>
+                </CardActionArea>
               </Card>
             ))}
           </Box>

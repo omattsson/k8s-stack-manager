@@ -2,7 +2,7 @@ import { StrictMode } from 'react';
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, waitFor, within, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import Dashboard from '../Dashboard';
 import { NotificationProvider } from '../../../context/NotificationContext';
 import type { WsMessage } from '../../../hooks/useWebSocket';
@@ -479,6 +479,70 @@ describe('Dashboard', () => {
       expect(screen.getByText('My Favorites')).toBeInTheDocument();
       // Instance should appear in the favorites section (and also in the main list)
       expect(screen.getAllByText('Fav Instance').length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  describe('favorite and recent cards are keyboard links', () => {
+    const LocationProbe = () => <div data-testid="location">{useLocation().pathname}</div>;
+
+    const renderDashboard = () => render(
+      <MemoryRouter>
+        <NotificationProvider>
+          <Dashboard />
+          <LocationProbe />
+        </NotificationProvider>
+      </MemoryRouter>
+    );
+
+    const mockFavorite = () => {
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
+        mockInstance({ id: 'fav-inst', name: 'Fav Instance', namespace: 'stack-fav' }),
+      ]);
+      (favoriteService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+        { id: 'fav-1', user_id: '1', entity_type: 'instance', entity_id: 'fav-inst', created_at: '' },
+      ]);
+    };
+
+    it('opens a favorite with the Enter key', async () => {
+      const user = userEvent.setup();
+      mockFavorite();
+      renderDashboard();
+      const link = await screen.findByRole('link', { name: /Fav Instance/ });
+      expect(link).toHaveAttribute('href', '/stack-instances/fav-inst');
+      link.focus();
+      await user.keyboard('{Enter}');
+      expect(screen.getByTestId('location')).toHaveTextContent('/stack-instances/fav-inst');
+    });
+
+    it('keeps the star of a favorite outside the link, and the star does not navigate', async () => {
+      const user = userEvent.setup();
+      mockFavorite();
+      renderDashboard();
+      const link = await screen.findByRole('link', { name: /Fav Instance/ });
+      const card = link.closest('.MuiCard-root') as HTMLElement;
+      const star = within(card).getByRole('button', { name: /favorites/i });
+      // A link cannot hold a button.
+      expect(link).not.toContainElement(star);
+      expect(link.querySelector('button')).toBeNull();
+
+      await user.click(star);
+      await waitFor(() => expect(favoriteService.remove).toHaveBeenCalledWith('instance', 'fav-inst'));
+      expect(screen.getByTestId('location')).toHaveTextContent('/');
+      expect(screen.getByTestId('location')).not.toHaveTextContent('stack-instances');
+    });
+
+    it('opens a recent stack with the Enter key', async () => {
+      const user = userEvent.setup();
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (instanceService.recent as ReturnType<typeof vi.fn>).mockResolvedValue([
+        mockInstance({ id: 'r-1', name: 'Recent Stack', status: 'draft', namespace: 'stack-rec', updated_at: '2026-01-01T00:00:00Z' }),
+      ]);
+      renderDashboard();
+      const link = await screen.findByRole('link', { name: /Recent Stack/ });
+      expect(link).toHaveAttribute('href', '/stack-instances/r-1');
+      link.focus();
+      await user.keyboard('{Enter}');
+      expect(screen.getByTestId('location')).toHaveTextContent('/stack-instances/r-1');
     });
   });
 

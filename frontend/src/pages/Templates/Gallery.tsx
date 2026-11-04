@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { scrollFocusIntoView } from '../../utils/scrollFocusIntoView';
 import {
   Box,
   Typography,
@@ -490,8 +491,10 @@ const Gallery = () => {
               <Card
                 key={template.id}
                 variant="outlined"
-                sx={{ minWidth: 200, maxWidth: 250, flexShrink: 0, cursor: 'pointer' }}
+                // The ring inside the card: the row that scrolls clips what is outside.
+                sx={{ minWidth: 200, maxWidth: 250, flexShrink: 0, cursor: 'pointer', '&:focus-visible': { outlineOffset: -2 } }}
                 onClick={() => navigate(`/templates/${template.id}`)}
+                onFocus={scrollFocusIntoView}
                 tabIndex={0}
                 role="button"
                 aria-label={`Open template ${template.name}`}
