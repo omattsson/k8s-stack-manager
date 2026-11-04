@@ -57,10 +57,24 @@ export function getComponentOverrides(mode: 'light' | 'dark'): ThemeOptions['com
         },
       },
     },
+    // Dark mode lightens a Paper by its elevation, up to #434343 on a dialog and
+    // #393939 on a menu. Status colours as text then fall below 4.5:1 (the error
+    // text of a dialog 3.94:1, a hovered Delete menu item 3.59:1). Dialogs and
+    // menus stay on background.paper: a hovered or focused menu item is then at
+    // most #393939. The backdrop or the border sets them apart.
     MuiDialog: {
       styleOverrides: {
         paper: {
           borderRadius: 12,
+          backgroundImage: 'none',
+        },
+      },
+    },
+    MuiMenu: {
+      styleOverrides: {
+        paper: {
+          backgroundImage: 'none',
+          ...(mode === 'dark' && { border: `1px solid ${dividerColor}` }),
         },
       },
     },

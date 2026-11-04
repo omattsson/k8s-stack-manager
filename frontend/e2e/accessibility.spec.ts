@@ -1,4 +1,4 @@
-import { test, expect, type Locator, type Page } from '@playwright/test';
+import { test, expect, type Locator, type Page, type WebSocketRoute } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { API_BASE, apiAddChart, apiCreateDefinition, apiLogin, loginAsAdmin, uniqueName } from './helpers';
 import { mockDeployLog, type MockDeployLog } from './deployLogMock';
@@ -15,12 +15,16 @@ import { mockDeployLog, type MockDeployLog } from './deployLogMock';
 // minimum of nodes, and every node that axe could not decide ("incomplete") must
 // have a known harmless reason.
 //
-// Not covered: focus rings, dialogs, menus, tooltips, snackbars (toasts), charts,
-// and colour as the only signal. The pages are checked in their resting state:
-// the app WebSocket is blocked (answered by the test, it never sends), so that
-// no pushed message reloads a list or shows a toast while axe runs. A page that
-// renders after the gradients are flattened would reach axe with its gradient.
-// DB-backed, no cluster required.
+// A third block (#758) opens the states that a resting page does not show: a
+// selected row, menus on hover and on keyboard focus, dialogs, toasts, and a
+// button on the page background on hover. Each of its axe runs is limited to the
+// surface and must have measured a named element.
+//
+// Not covered: focus rings, tooltips, charts, and colour as the only signal. The
+// app WebSocket is blocked (answered by the test, which sends only for the info
+// toast), so that no pushed message reloads a list or shows a toast while axe
+// runs. A page that renders after the gradients are flattened would reach axe
+// with its gradient. DB-backed, no cluster required.
 
 type Mode = 'light' | 'dark';
 const MODES: Mode[] = ['light', 'dark'];
@@ -78,12 +82,22 @@ interface PageCheck {
    */
   allowed5xx?: RegExp[];
   /** Runs before the page opens (route mocks). */
-  before?: (page: Page) => Promise<void>;
+  before?: (page: Page) => Promise<unknown>;
+  /** Gets the socket of the app, for a test that pushes a message. */
+  onSocket?: (socket: WebSocketRoute) => void;
   /**
    * Replaces the plain axe run: checks that an element is visible first, then
    * calls `runAxe` (once or more, for example after a hover).
    */
-  ready?: (page: Page, runAxe: () => Promise<void>) => Promise<void>;
+  ready?: (page: Page, runAxe: (scope?: AxeScope) => Promise<void>) => Promise<void>;
+}
+
+/** Limits an axe run to one surface (a menu, a dialog, the toasts, ...). */
+interface AxeScope {
+  /** CSS selector of the surface. */
+  selector: string;
+  /** Axe must have measured this element or an element inside it, and passed it. */
+  checked: Locator;
 }
 
 /**
@@ -147,10 +161,43 @@ async function revealClippedContent(page: Page): Promise<void> {
  * that axe reads, so they do not count.
  */
 async function waitForTransitions(page: Page): Promise<void> {
+  // A transition that an open or a hover just asked for starts on a later frame.
+  await page.evaluate(() => new Promise((done) => {
+    requestAnimationFrame(() => requestAnimationFrame(done));
+  }));
   await page.waitForFunction(() =>
     document.getAnimations().every((a) =>
       (a.playState !== 'running' && !a.pending)
       || a.effect?.getComputedTiming().iterations === Infinity));
+}
+
+/**
+ * Axe compares the elements under each line of a text. The page under a modal
+ * differs from line to line, so multi-line text in a dialog comes back undecided
+ * (elmPartiallyObscuring). Dialogs and menus are opaque, so hiding the app behind
+ * them changes no colour. Returns the function that shows it again.
+ */
+async function hideAppBehindModal(page: Page, selector: string): Promise<() => Promise<void>> {
+  const hid = await page.evaluate((sel) => {
+    const root = document.getElementById('root');
+    if (!root || !document.querySelector(sel)?.closest('.MuiModal-root')) return false;
+    root.style.visibility = 'hidden';
+    return true;
+  }, selector);
+  return async () => {
+    if (hid) await page.evaluate(() => { document.getElementById('root')?.style.removeProperty('visibility'); });
+  };
+}
+
+/**
+ * MUI mounts the ripple element of a button or menu item at its first hover or
+ * focus. It is transparent and takes no pointer events, but axe sees it on top of
+ * the text: `bgOverlap`, so a control that the test just touched goes unmeasured.
+ * Hide it while it is empty (nothing to paint). A running ripple has a child, so
+ * it still counts.
+ */
+async function hideEmptyRipples(page: Page): Promise<void> {
+  await page.addStyleTag({ content: '.MuiTouchRipple-root:empty { display: none; }' });
 }
 
 function describeNode(rule: string, node: AxeNode): string {
@@ -174,12 +221,17 @@ const messageKeyOf = (node: AxeNode): string => {
 /**
  * Run the two rules and fail on a violation, on an undecided node with an
  * unknown reason, and on a page whose content `color-contrast` checked too little.
+ * With a scope: only that surface, which must include a measured `checked` element.
  */
-async function expectContrastAndLists(page: Page, what: string, hasMain: boolean): Promise<void> {
+async function expectContrastAndLists(page: Page, what: string, hasMain: boolean, scope?: AxeScope): Promise<void> {
   await waitForTransitions(page);
   await revealClippedContent(page);
   await flattenGradients(page);
-  const results = await new AxeBuilder({ page }).withRules(['color-contrast', 'listitem']).analyze();
+  await hideEmptyRipples(page);
+  const builder = new AxeBuilder({ page }).withRules(['color-contrast', 'listitem']);
+  const showApp = scope ? await hideAppBehindModal(page, scope.selector) : async () => undefined;
+  const results = await (scope ? builder.include(scope.selector) : builder).analyze();
+  await showApp();
 
   const violations = results.violations.flatMap((v) => v.nodes.map((n) => describeNode(v.id, n)));
   expect(violations, `${what}: ${violations.length} axe violation(s)\n${violations.join('\n')}`).toEqual([]);
@@ -206,6 +258,27 @@ async function expectContrastAndLists(page: Page, what: string, hasMain: boolean
 
   const passedNodes = results.passes.find((p) => p.id === 'color-contrast')?.nodes ?? [];
   const targets = passedNodes.map((n) => n.target[0] as string);
+
+  if (scope) {
+    const { index, top } = await scope.checked.first().evaluate((el, sels) => {
+      const r = el.getBoundingClientRect();
+      return {
+        index: sels.findIndex((sel) => {
+          const node = document.querySelector(sel);
+          return node !== null && el.contains(node);
+        }),
+        top: document.elementsFromPoint(r.x + r.width / 2, r.y + r.height / 2).slice(0, 3)
+          .map((e) => `${e.tagName}.${String(e.className).slice(0, 80)}`).join(' > '),
+      };
+    }, targets);
+    expect(
+      index,
+      `${what}: axe did not measure ${scope.checked} in ${scope.selector}: it passed ${targets.length} other node(s), and left ${JSON.stringify(reasons)} undecided. Topmost at its centre: ${top}`,
+    ).toBeGreaterThanOrEqual(0);
+    test.info().annotations.push({ type: 'axe', description: `${what}: ${describeNode('measured', passedNodes[index])}` });
+    return;
+  }
+
   const passed = hasMain
     ? await page.evaluate((sels) => sels.filter((sel) => {
       try { return Boolean(document.querySelector(sel)?.closest('main')); } catch { return false; }
@@ -223,6 +296,58 @@ async function expectContrastAndLists(page: Page, what: string, hasMain: boolean
   });
 }
 
+const backgroundOf = (target: Locator) => target.evaluate((el) => getComputedStyle(el).backgroundColor);
+
+/**
+ * Run axe with `target` in a state that changed its background. The state must
+ * still hold after axe, or the run measured the wrong colours.
+ */
+async function checkInState(
+  page: Page,
+  target: Locator,
+  selector: string,
+  runAxe: (scope?: AxeScope) => Promise<void>,
+  state: string,
+  rest: string,
+): Promise<void> {
+  await expect.poll(() => backgroundOf(target), { message: `${state}: the background did not change (${rest})` }).not.toBe(rest);
+  await waitForTransitions(page);
+  const held = await backgroundOf(target);
+  await runAxe({ selector, checked: target });
+  expect(await backgroundOf(target), `${state}: the state did not hold while axe ran`).toBe(held);
+}
+
+/** Point at `target` and check the surface. The hover must change its background. */
+async function hoverAndCheck(
+  page: Page,
+  target: Locator,
+  selector: string,
+  runAxe: (scope?: AxeScope) => Promise<void>,
+): Promise<void> {
+  await page.mouse.move(0, 0);
+  await waitForTransitions(page);
+  const rest = await backgroundOf(target);
+  await target.hover();
+  await checkInState(page, target, selector, runAxe, `hover on ${target}`, rest);
+}
+
+/** Move the keyboard focus to `target` with `key` and check the surface. */
+async function focusAndCheck(
+  page: Page,
+  target: Locator,
+  key: string,
+  selector: string,
+  runAxe: (scope?: AxeScope) => Promise<void>,
+): Promise<void> {
+  await page.mouse.move(0, 0);
+  await waitForTransitions(page);
+  const rest = await backgroundOf(target);
+  await page.keyboard.press(key);
+  await expect(target, `${key} did not move the focus to ${target}`).toBeFocused();
+  await expect(target, `focus on ${target}: no focus-visible state`).toHaveClass(/Mui-focusVisible/);
+  await checkInState(page, target, selector, runAxe, `focus on ${target}`, rest);
+}
+
 /**
  * Open a page in one colour mode, check that it really loaded, then run axe.
  * All page tests and all forced-state tests go through here.
@@ -236,8 +361,8 @@ async function checkPage(page: Page, mode: Mode, spec: PageCheck): Promise<void>
   await page.addInitScript((m) => localStorage.setItem('theme-mode', m), mode);
   if (sidebar) await loginAsAdmin(page);
 
-  // The test answers the app socket; it never sends. See the top of the file.
-  await page.routeWebSocket(/\/ws(\?|$)/, () => {});
+  // The test answers the app socket, and sends only through onSocket. See the top of the file.
+  await page.routeWebSocket(/\/ws(\?|$)/, (socket) => spec.onSocket?.(socket));
 
   const failed: string[] = [];
   page.on('response', (res) => {
@@ -272,7 +397,7 @@ async function checkPage(page: Page, mode: Mode, spec: PageCheck): Promise<void>
   await page.waitForLoadState('networkidle', { timeout: 15_000 });
   await expect.poll(url, { message: `${what}: final URL after loading` }).toBe(path);
 
-  const runAxe = () => expectContrastAndLists(page, what, sidebar);
+  const runAxe = (scope?: AxeScope) => expectContrastAndLists(page, what, sidebar, scope);
   await (spec.ready ? spec.ready(page, runAxe) : runAxe());
 
   expect(failed, `${what}: API calls answered 5xx:\n${failed.join('\n')}`).toEqual([]);
@@ -426,7 +551,22 @@ test.describe('Accessibility: colour contrast and lists (#740)', () => {
   const statusChip = (label: string) => (page: Page) =>
     page.locator('[aria-live=polite]').getByText(label, { exact: true });
 
+  /** Answer the instance with this status, for as long as the page lives. */
+  const forceInstanceStatus = (page: Page, instanceId: string, status: string, errorMessage?: string) =>
+    page.route(new RegExp(`/api/v1/stack-instances/${instanceId}(\\?.*)?$`), async (route) => {
+      if (route.request().method() !== 'GET') return route.continue();
+      const res = await route.fetch();
+      const body = { ...(await res.json()), status, error_message: errorMessage };
+      return route.fulfill({ response: res, json: body });
+    });
+
   const FORCED: ForcedState[] = [
+    {
+      name: 'draft: Deploy button (contained success)',
+      status: 'draft',
+      visible: (page) => page.getByRole('button', { name: 'Deploy', exact: true }),
+      hover: true,
+    },
     {
       name: 'running: Stop button (contained warning)',
       status: 'running',
@@ -473,12 +613,7 @@ test.describe('Accessibility: colour contrast and lists (#740)', () => {
           // A status other than draft makes the page read the pods: 502 without cluster access.
           allowed5xx: [new RegExp(`^GET /api/v1/stack-instances/${instanceId}/pods$`)],
           before: async (p) => {
-            await p.route(new RegExp(`/api/v1/stack-instances/${instanceId}(\\?.*)?$`), async (route) => {
-              if (route.request().method() !== 'GET') return route.continue();
-              const res = await route.fetch();
-              const body = { ...(await res.json()), status: forced.status, error_message: forced.errorMessage };
-              return route.fulfill({ response: res, json: body });
-            });
+            await forceInstanceStatus(p, instanceId, forced.status, forced.errorMessage);
             if (forced.deployHistory) await mockDeployLog(p, instanceId, deployHistory);
           },
           ready: async (p, runAxe) => {
@@ -499,5 +634,270 @@ test.describe('Accessibility: colour contrast and lists (#740)', () => {
         });
       });
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // INTERACTIVE states (#758): a selected row, menus on hover and on keyboard
+  // focus, dialogs, toasts, and a button directly on the page background. These
+  // surfaces sit outside <main>, or are a small part of it, so each axe run is
+  // limited to the surface and must have measured the named element. A node that
+  // axe left undecided does not count.
+
+  type PageSetup = Pick<PageCheck, 'path' | 'heading' | 'allowed5xx' | 'before'>;
+
+  const instancePage = (status: string, withDeployHistory = false): PageSetup => {
+    const { instanceId, instanceName } = seed;
+    return {
+      path: `/stack-instances/${instanceId}`,
+      heading: instanceName,
+      // A status other than draft makes the page read the pods: 502 without cluster access.
+      allowed5xx: [new RegExp(`^GET /api/v1/stack-instances/${instanceId}/pods$`)],
+      before: async (p) => {
+        await forceInstanceStatus(p, instanceId, status);
+        if (withDeployHistory) await mockDeployLog(p, instanceId, deployHistory);
+      },
+    };
+  };
+
+  const openActionsMenu = async (page: Page): Promise<Locator> => {
+    await page.getByRole('button', { name: 'Actions', exact: true }).click();
+    const menu = page.getByRole('menu');
+    await expect(menu, 'the Actions menu did not open').toBeVisible();
+    return menu;
+  };
+
+  interface DialogState {
+    name: string;
+    setup: () => PageSetup;
+    open: (page: Page, dialog: Locator) => Promise<void>;
+    /** The element that axe must measure in the dialog. */
+    checked: (dialog: Locator) => Locator;
+    /** Hover this element and check again. */
+    hover?: (dialog: Locator) => Locator;
+  }
+
+  const DIALOGS: DialogState[] = [
+    {
+      // A text button in the error colour: it failed first at the top elevation.
+      name: 'template link: Remove link',
+      setup: () => ({
+        path: `/stack-definitions/${seed.definitionId}/edit`,
+        heading: 'Edit Stack Definition',
+        // A real link needs a published template with charts; the dialog only needs the current link.
+        before: (p) => p.route(new RegExp(`/api/v1/stack-definitions/${seed.definitionId}(\\?.*)?$`), async (route) => {
+          if (route.request().method() !== 'GET') return route.continue();
+          const res = await route.fetch();
+          const body = { ...(await res.json()), source_template_id: seed.templateId, source_template_version: '1.0.0' };
+          return route.fulfill({ response: res, json: body });
+        }),
+      }),
+      open: (page) => page.getByRole('button', { name: 'Change Link' }).click(),
+      checked: (dialog) => dialog.getByRole('button', { name: 'Remove link' }),
+      hover: (dialog) => dialog.getByRole('button', { name: 'Remove link' }),
+    },
+    {
+      name: 'clone: error text of a field',
+      setup: () => instancePage('running'),
+      open: async (page, dialog) => {
+        await (await openActionsMenu(page)).getByRole('menuitem', { name: 'Clone' }).click();
+        await dialog.getByRole('textbox', { name: 'Name' }).fill('NOT_VALID');
+      },
+      checked: (dialog) => dialog.locator('.MuiFormHelperText-root.Mui-error'),
+    },
+    {
+      name: 'delete: contained error button',
+      setup: () => instancePage('running'),
+      open: async (page) => { await (await openActionsMenu(page)).getByRole('menuitem', { name: 'Delete' }).click(); },
+      checked: (dialog) => dialog.getByRole('button', { name: 'Delete' }),
+      hover: (dialog) => dialog.getByRole('button', { name: 'Delete' }),
+    },
+    {
+      name: 'stop: confirm button',
+      setup: () => instancePage('running'),
+      open: (page) => page.getByRole('button', { name: 'Stop', exact: true }).click(),
+      checked: (dialog) => dialog.getByRole('button', { name: 'Stop' }),
+      hover: (dialog) => dialog.getByRole('button', { name: 'Stop' }),
+    },
+    {
+      name: 'rollback: warning button and alerts',
+      setup: () => instancePage('running', true),
+      open: (page) => page.getByRole('button', { name: 'Rollback', exact: true }).click(),
+      checked: (dialog) => dialog.locator('.MuiAlert-message').first(),
+      hover: (dialog) => dialog.getByRole('button', { name: 'Roll Back' }),
+    },
+  ];
+
+  interface ToastState {
+    severity: 'Success' | 'Info' | 'Warning' | 'Error';
+    setup: () => PageSetup;
+    trigger: (page: Page, socket: () => WebSocketRoute | undefined) => Promise<void>;
+  }
+
+  /** The Profile page answers a saved preference with a toast: success, or error on a refusal. */
+  const preferencesSaveAnswers = (status: number): PageSetup => ({
+    path: '/profile',
+    heading: 'My Profile',
+    before: (p) => p.route(/\/api\/v1\/notifications\/preferences$/, (route) => (
+      route.request().method() === 'PUT' ? route.fulfill({ status, json: {} }) : route.continue()
+    )),
+  });
+  const savePreferences = (page: Page) => page.getByRole('button', { name: 'Save', exact: true }).click();
+
+  const TOASTS: ToastState[] = [
+    { severity: 'Success', setup: () => preferencesSaveAnswers(200), trigger: savePreferences },
+    { severity: 'Error', setup: () => preferencesSaveAnswers(400), trigger: savePreferences },
+    {
+      severity: 'Warning',
+      setup: () => ({
+        path: '/admin/notification-channels',
+        heading: 'Notification Channels',
+        before: (p) => p.route(/\/api\/v1\/admin\/notification-channels$/, (route) => (
+          route.request().method() === 'POST'
+            ? route.fulfill({ status: 201, json: { id: 'a11y-channel', name: 'a11y', warnings: ['forced warning'] } })
+            : route.continue()
+        )),
+      }),
+      trigger: async (page) => {
+        await page.getByRole('button', { name: 'Create Channel' }).click();
+        const dialog = page.getByRole('dialog');
+        await dialog.getByRole('textbox', { name: 'Name' }).fill('a11y');
+        await dialog.getByRole('textbox', { name: 'Webhook URL' }).fill('https://example.com/hook');
+        await dialog.getByRole('button', { name: 'Create', exact: true }).click();
+      },
+    },
+    {
+      severity: 'Info',
+      setup: () => ({ path: '/profile', heading: 'My Profile' }),
+      // NotificationCenter shows a pushed notification as an info toast.
+      trigger: async (_page, socket) => {
+        await expect.poll(socket, { message: 'the app did not open its socket' }).toBeTruthy();
+        socket()?.send(JSON.stringify({
+          type: 'notification.new',
+          payload: {
+            id: 'a11y-note',
+            user_id: 'a11y-user',
+            type: 'deployment.success',
+            title: 'Forced info toast',
+            message: 'Forced by the accessibility check',
+            is_read: false,
+            created_at: '2026-10-19T10:00:00Z',
+          },
+        }));
+      },
+    },
+  ];
+
+  for (const mode of MODES) {
+    test(`STATE selection toolbar on the dashboard (${mode})`, async ({ page }) => {
+      await checkPage(page, mode, {
+        path: '/',
+        heading: 'Stack Instances',
+        allowed5xx: [/^GET \/api\/v1\/stack-instances\/[^/]+\/status$/],
+        ready: async (p, runAxe) => {
+          await p.getByRole('checkbox', { name: 'Select all instances' }).check();
+          const toolbar = p.getByRole('toolbar', { name: 'Bulk actions' });
+          await expect(toolbar, 'the selection toolbar did not open').toBeVisible();
+          await runAxe({ selector: '[role=toolbar]', checked: toolbar.getByText(/\d+ selected/) });
+          for (const name of ['Deploy', 'Stop', 'Clean', 'Delete', 'Clear Selection']) {
+            await hoverAndCheck(p, toolbar.getByRole('button', { name, exact: true }), '[role=toolbar]', runAxe);
+          }
+        },
+      });
+    });
+
+    // The tab decides the action: Unpublish on My Templates, Publish on All Drafts.
+    for (const [tab, action] of [['My Templates', 'Unpublish'], ['All Drafts', 'Publish']]) {
+      test(`STATE selection toolbar in the template gallery, ${tab} (${mode})`, async ({ page }) => {
+        await checkPage(page, mode, {
+          path: '/templates',
+          heading: 'Template Gallery',
+          ready: async (p, runAxe) => {
+            await p.getByRole('tab', { name: tab }).click();
+            await p.getByRole('checkbox', { name: `Select ${seed.templateName}` }).check();
+            const toolbar = p.getByRole('toolbar', { name: 'Bulk actions' });
+            await expect(toolbar, 'the selection toolbar did not open').toBeVisible();
+            await runAxe({ selector: '[role=toolbar]', checked: toolbar.getByText(/\d+ selected/) });
+            for (const name of [new RegExp(`^${action} \\(`), /^Delete \(/, /^Clear Selection$/]) {
+              await hoverAndCheck(p, toolbar.getByRole('button', { name }), '[role=toolbar]', runAxe);
+            }
+          },
+        });
+      });
+    }
+
+    test(`STATE instance Actions menu on hover and focus (${mode})`, async ({ page }) => {
+      await checkPage(page, mode, {
+        // The page offers Clean namespace only from some states, among them running.
+        ...instancePage('running'),
+        ready: async (p, runAxe) => {
+          const menu = await openActionsMenu(p);
+          const scope = '[role=menu]';
+          const clean = menu.getByRole('menuitem', { name: 'Clean namespace' });
+          const del = menu.getByRole('menuitem', { name: 'Delete' });
+          await runAxe({ selector: scope, checked: del });
+          await hoverAndCheck(p, clean, scope, runAxe);
+          await hoverAndCheck(p, del, scope, runAxe);
+          // Delete is the last item, Clean namespace the one above it.
+          await focusAndCheck(p, del, 'End', scope, runAxe);
+          await focusAndCheck(p, clean, 'ArrowUp', scope, runAxe);
+        },
+      });
+    });
+
+    for (const { name, setup, open, checked, hover } of DIALOGS) {
+      test(`STATE dialog ${name} (${mode})`, async ({ page }) => {
+        await checkPage(page, mode, {
+          ...setup(),
+          ready: async (p, runAxe) => {
+            const dialog = p.getByRole('dialog');
+            await open(p, dialog);
+            await expect(dialog, 'the dialog did not open').toBeVisible();
+            await expect(dialog.locator('[role=progressbar]:not([aria-valuenow])'), 'the dialog is still loading').toHaveCount(0);
+            await expect(checked(dialog), 'the element to measure is not visible').toBeVisible();
+            await runAxe({ selector: '[role=dialog]', checked: checked(dialog) });
+            if (hover) await hoverAndCheck(p, hover(dialog), '[role=dialog]', runAxe);
+          },
+        });
+      });
+    }
+
+    for (const { severity, setup, trigger } of TOASTS) {
+      test(`STATE toast ${severity} (${mode})`, async ({ page }) => {
+        let socket: WebSocketRoute | undefined;
+        await checkPage(page, mode, {
+          ...setup(),
+          onSocket: (ws) => { socket = ws; },
+          ready: async (p, runAxe) => {
+            await trigger(p, () => socket);
+            const toast = p.locator(`[data-testid=toast-stack] .MuiAlert-color${severity}`);
+            await expect(toast, `the ${severity} toast did not appear`).toBeVisible();
+            // The pointer on a toast pauses its timer while axe runs.
+            await toast.hover();
+            await runAxe({ selector: '[data-testid=toast-stack]', checked: toast.locator('.MuiAlert-message') });
+          },
+        });
+      });
+    }
+
+    // Button tints are translucent: on the page background (no Paper) a light
+    // mode outlined button gets its darkest hover colour.
+    test(`STATE outlined warning button on the page background, on hover (${mode})`, async ({ page }) => {
+      await checkPage(page, mode, {
+        path: `/templates/${seed.templateId}`,
+        heading: seed.templateName,
+        before: (p) => p.route(new RegExp(`/api/v1/templates/${seed.templateId}(\\?.*)?$`), async (route) => {
+          if (route.request().method() !== 'GET') return route.continue();
+          const res = await route.fetch();
+          return route.fulfill({ response: res, json: { ...(await res.json()), is_published: true } });
+        }),
+        ready: async (p, runAxe) => {
+          const button = p.getByRole('button', { name: 'Unpublish', exact: true });
+          await expect(button, 'the Unpublish button is not visible').toBeVisible();
+          const onPage = await button.evaluate((el) => el.closest('.MuiPaper-root') === null);
+          expect(onPage, 'the button must sit directly on the page background').toBe(true);
+          await hoverAndCheck(p, button, 'main', runAxe);
+        },
+      });
+    });
   }
 });

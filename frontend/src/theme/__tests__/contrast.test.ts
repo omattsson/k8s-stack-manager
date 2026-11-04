@@ -50,6 +50,20 @@ function contrast(foreground: string, background: string): number {
   return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
 }
 
+/** The opaque colour of a translucent `top` over an opaque `under`. */
+function over(top: string, under: string): string {
+  const t = parseColor(top);
+  const u = parseColor(under);
+  const mix = (a: number, b: number) => a * t.a + b * (1 - t.a);
+  return `rgb(${mix(t.r, u.r)}, ${mix(t.g, u.g)}, ${mix(t.b, u.b)})`;
+}
+
+/** A palette colour at the opacity of a hover tint (text and outlined buttons). */
+function tint(color: string, opacity: number): string {
+  const { r, g, b } = parseColor(color);
+  return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+}
+
 const AA = 4.5;
 const themes: Record<Mode, Theme> = { light: createAppTheme('light'), dark: createAppTheme('dark') };
 const modes: Mode[] = ['light', 'dark'];
@@ -71,14 +85,6 @@ describe('theme contrast (WCAG AA, 4.5:1)', () => {
     expect(themes[mode].palette.contrastThreshold).toBe(4.5);
   });
 
-  // Known existing exceptions, deliberately not fixed here: dark success (4.16),
-  // info (4.28) and secondary (4.14) with black text on their `dark` shade.
-  const hoverCases: Array<[Mode, ColorName]> = [
-    ...COLORS.map((c): [Mode, ColorName] => ['light', c]),
-    ['dark', 'primary'],
-    ['dark', 'warning'],
-    ['dark', 'error'],
-  ];
   const allCases = modes.flatMap((m) => COLORS.map((c): [Mode, ColorName] => [m, c]));
 
   it.each(allCases)('%s %s: contrastText on main', (mode, color) => {
@@ -86,31 +92,53 @@ describe('theme contrast (WCAG AA, 4.5:1)', () => {
     expect(contrast(p.contrastText, p.main)).toBeGreaterThanOrEqual(AA);
   });
 
-  it.each(hoverCases)('%s %s: contrastText on dark (hover)', (mode, color) => {
+  it.each(allCases)('%s %s: contrastText on dark (contained button on hover)', (mode, color) => {
     const p = themes[mode].palette[color];
     expect(contrast(p.contrastText, p.dark)).toBeGreaterThanOrEqual(AA);
   });
 
-  it.each([
-    ['dark', 'error', 'dark'],
-    ['dark', 'warning', 'dark'],
-    ['light', 'error', 'main'],
-    ['light', 'warning', 'main'],
-    ['light', 'info', 'main'],
-    ['light', 'success', 'main'],
-  ] as Array<[Mode, ColorName, 'main' | 'dark']>)(
-    '%s %s: filled Alert text on %s',
-    (mode, color, shade) => {
-      const { palette } = themes[mode];
-      const background = palette[color][shade];
-      expect(contrast(palette.getContrastText(palette[color].main), background)).toBeGreaterThanOrEqual(AA);
-    },
-  );
+  it.each(allCases)('%s %s: the hover of a contained button changes the colour', (mode, color) => {
+    const p = themes[mode].palette[color];
+    expect(p.dark.toLowerCase()).not.toBe(p.main.toLowerCase());
+  });
+
+  // A filled Alert (a toast) has the `dark` shade in dark mode and `main` in light mode.
+  it.each(allCases)('%s %s: filled Alert text', (mode, color) => {
+    const { palette } = themes[mode];
+    const background = mode === 'dark' ? palette[color].dark : palette[color].main;
+    expect(contrast(palette.getContrastText(palette[color].main), background)).toBeGreaterThanOrEqual(AA);
+  });
 
   it.each(allCases)('%s %s: main as text on the page and paper backgrounds', (mode, color) => {
     const { palette } = themes[mode];
     expect(contrast(palette[color].main, palette.background.default)).toBeGreaterThanOrEqual(AA);
     expect(contrast(palette[color].main, palette.background.paper)).toBeGreaterThanOrEqual(AA);
+  });
+
+  // A text or outlined button tints itself on hover, which takes contrast from its
+  // own text. Dialogs use the paper background: see surfaces.test.tsx for the overlay.
+  it.each(allCases)('%s %s: text or outlined button on hover, on page and paper', (mode, color) => {
+    const { palette } = themes[mode];
+    const main = palette[color].main;
+    const hover = tint(main, palette.action.hoverOpacity);
+    expect(contrast(main, over(hover, palette.background.default))).toBeGreaterThanOrEqual(AA);
+    expect(contrast(main, over(hover, palette.background.paper))).toBeGreaterThanOrEqual(AA);
+  });
+
+  // MUI colours a menu item with the action colours, and focus is the stronger one.
+  // Menus use the paper background: see surfaces.test.tsx for the overlay.
+  it.each(modes)('%s error main: Delete and Clean menu items at rest, on hover and on focus', (mode) => {
+    const { palette } = themes[mode];
+    const surface = palette.background.paper;
+    expect(contrast(palette.error.main, surface)).toBeGreaterThanOrEqual(AA);
+    expect(contrast(palette.error.main, over(palette.action.hover, surface))).toBeGreaterThanOrEqual(AA);
+    expect(contrast(palette.error.main, over(palette.action.focus, surface))).toBeGreaterThanOrEqual(AA);
+  });
+
+  // The selection toolbars of the dashboard and the template gallery.
+  it.each(modes)('%s selection toolbar: contrastText on primary.dark', (mode) => {
+    const { primary } = themes[mode].palette;
+    expect(contrast(primary.contrastText, primary.dark)).toBeGreaterThanOrEqual(AA);
   });
 
   it.each([

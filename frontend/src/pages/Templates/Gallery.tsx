@@ -418,7 +418,7 @@ const Gallery = () => {
             display: 'flex',
             alignItems: 'center',
             gap: 2,
-            bgcolor: 'primary.light',
+            bgcolor: 'primary.dark',
             color: 'primary.contrastText',
           }}
           role="toolbar"
