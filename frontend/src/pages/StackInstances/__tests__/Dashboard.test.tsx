@@ -1525,7 +1525,8 @@ describe('Dashboard', () => {
 
     // A status request can start during a deploy and answer after the deploy finished.
     // That answer describes the old deploy: it must not stick to the card.
-    describe('a status answer that spans the end of a deploy', () => {
+    // A deploy where only some charts succeed finishes as partial.
+    describe.each(['running', 'partial'])('a status answer that spans the end of a deploy (%s)', (finalStatus) => {
       const statusAnswer = (status: string) => ({ namespace: 'stack-h', status, charts: [], last_checked: '2026-01-01T00:00:00Z' });
 
       const startDeployThatFinishes = async () => {
@@ -1544,7 +1545,7 @@ describe('Dashboard', () => {
           </MemoryRouter>
         );
         await waitFor(() => expect(answers).toHaveLength(1));
-        act(() => broadcastWs({ type: 'deployment.status', payload: { instance_id: 'inst-h', status: 'running' } }));
+        act(() => broadcastWs({ type: 'deployment.status', payload: { instance_id: 'inst-h', status: finalStatus } }));
         return answers;
       };
 

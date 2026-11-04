@@ -299,7 +299,7 @@ const Dashboard = () => {
       void refreshInstances();
     }, NEW_INSTANCE_RELOAD_DELAY_MS);
   }, [refreshInstances]);
-  // A finished deploy (status running) can change the card: the deploy time
+  // A finished deploy (status running or partial) can change the card: the deploy time
   // and the URL (a chart can add or change the primary Ingress). One list
   // reload for a burst of finished deploys.
   const finishedReloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -389,7 +389,8 @@ const Dashboard = () => {
         scheduleReload(payload.instance_id);
         return;
       }
-      if (payload.status === 'running') {
+      // A deploy where only some charts succeed finishes as partial.
+      if (payload.status === 'running' || payload.status === 'partial') {
         // Fetch the URL again and reload the list for the new deploy time. A request
         // that is running now describes the old deploy, so it no longer counts: the
         // setInstances below runs the status effect, which asks again at once. That
