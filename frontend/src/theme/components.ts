@@ -37,9 +37,14 @@ export function getComponentOverrides(mode: 'light' | 'dark'): ThemeOptions['com
       styleOverrides: {
         // iOS Safari zooms the page when a field with a font size under
         // 16px gets focus. Use 16px on phones (body1 is 14px).
+        // MUI draws a placeholder at 42% or 50% opacity: about 2.4:1 on white.
         input: ({ theme }) => ({
           [theme.breakpoints.down('sm')]: {
             fontSize: '1rem',
+          },
+          '&::placeholder': {
+            color: theme.palette.text.secondary,
+            opacity: 1,
           },
         }),
       },
@@ -78,10 +83,94 @@ export function getComponentOverrides(mode: 'light' | 'dark'): ThemeOptions['com
         },
       },
     },
-    MuiButtonBase: {
+    // The browser default ring is 2.4:1 to 2.8:1 on dark surfaces.
+    MuiCssBaseline: {
+      styleOverrides: (theme) => ({
+        // Room for the ring when focus scrolls a link into view in a scrolling table.
+        a: {
+          scrollMargin: 4,
+        },
+        'a:focus-visible': {
+          outline: '2px solid',
+          outlineColor: theme.palette.primary.main,
+          outlineOffset: 2,
+        },
+      }),
+    },
+    MuiLink: {
       styleOverrides: {
         root: ({ theme }) => ({
+          '&.Mui-focusVisible, &:focus-visible': {
+            outline: '2px solid',
+            outlineColor: theme.palette.primary.main,
+            outlineOffset: 2,
+          },
+        }),
+      },
+    },
+    // Inside the element: the menu list and the tab scroller clip what is outside.
+    MuiMenuItem: {
+      styleOverrides: {
+        root: {
+          '&.Mui-focusVisible, &:focus-visible': {
+            outlineOffset: -2,
+          },
+        },
+      },
+    },
+    MuiTab: {
+      styleOverrides: {
+        root: {
+          '&.Mui-focusVisible, &:focus-visible': {
+            outlineOffset: -2,
+          },
+        },
+      },
+    },
+    MuiSwitch: {
+      styleOverrides: {
+        switchBase: {
+          '&.Mui-focusVisible': {
+            outlineOffset: -2,
+          },
+        },
+      },
+    },
+    // The primary ring has the colour of the app bar on a phone: 1:1.
+    MuiAppBar: {
+      styleOverrides: {
+        root: {
+          '& a:focus-visible, & .MuiButtonBase-root:focus-visible, & .MuiButtonBase-root.Mui-focusVisible': {
+            outlineColor: 'currentColor',
+          },
+        },
+      },
+    },
+    // This select has no border, so focus had no visible indicator.
+    MuiTablePagination: {
+      styleOverrides: {
+        // At the edge of a container that scrolls, which clips what is outside.
+        actions: {
+          '& .MuiButtonBase-root.Mui-focusVisible': {
+            outlineOffset: -2,
+          },
+        },
+        select: ({ theme }) => ({
           '&:focus-visible': {
+            outline: '2px solid',
+            outlineColor: theme.palette.primary.main,
+            outlineOffset: 1,
+          },
+        }),
+      },
+    },
+    MuiButtonBase: {
+      styleOverrides: {
+        // Mui-focusVisible as well: a checkbox, radio or switch has its focus on an
+        // inner input, so :focus-visible never matches its root.
+        root: ({ theme }) => ({
+          scrollMargin: 4,
+          '&:focus-visible, &.Mui-focusVisible': {
             outline: '2px solid',
             outlineColor: theme.palette.primary.main,
             outlineOffset: 2,
@@ -92,8 +181,10 @@ export function getComponentOverrides(mode: 'light' | 'dark'): ThemeOptions['com
     MuiListItemButton: {
       styleOverrides: {
         root: ({ theme }) => ({
+          // The bar marks the current page by shape, not by the tint alone.
           '&.Mui-selected': {
             backgroundColor: theme.palette.primary.main + '14',
+            boxShadow: `inset 3px 0 0 ${theme.palette.primary.main}`,
             '&:hover': {
               backgroundColor: theme.palette.primary.main + '1F',
             },
@@ -104,6 +195,14 @@ export function getComponentOverrides(mode: 'light' | 'dark'): ThemeOptions['com
     MuiToggleButton: {
       styleOverrides: {
         // The default action.active renders as #717171 on #f5f5f5 (4.47:1).
+        root: ({ theme }) => ({
+          color: theme.palette.text.secondary,
+        }),
+      },
+    },
+    // An inactive step number is white on the disabled grey by default: 2.7:1.
+    MuiStepIcon: {
+      styleOverrides: {
         root: ({ theme }) => ({
           color: theme.palette.text.secondary,
         }),

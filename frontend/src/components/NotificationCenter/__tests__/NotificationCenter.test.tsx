@@ -119,6 +119,16 @@ describe('NotificationCenter', () => {
     expect(screen.getByText('3')).toBeInTheDocument();
   });
 
+  // WCAG 2.5.3: the visible badge number must be part of the name.
+  it('puts the number of the badge in the name of the button', async () => {
+    render(
+      <MemoryRouter>
+        <NotificationCenter />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByRole('button', { name: 'Open notifications, 3 unread' })).toBeInTheDocument();
+  });
+
   it('opens popover with notifications on click', async () => {
     const user = userEvent.setup();
     render(

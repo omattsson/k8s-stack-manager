@@ -333,7 +333,8 @@ const Profile = () => {
                           }
                           if (status === 'expiring-soon') {
                             return (
-                              <Chip label={dateStr} size="small" color="warning" variant="outlined" />
+                              // Says it in words: the colour alone would be the only signal.
+                              <Chip label={`Expires soon ${dateStr}`} size="small" color="warning" variant="outlined" />
                             );
                           }
                           return dateStr;

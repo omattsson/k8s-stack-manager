@@ -119,6 +119,36 @@ describe('Layout', () => {
     expect(screen.getByText('Audit Log')).toBeInTheDocument();
   });
 
+  it.each([
+    ['the page itself', '/stack-definitions', 'page'],
+    ['a child route', '/stack-definitions/abc/edit', 'true'],
+    ['another page', '/templates', null],
+    ['a path that only starts the same', '/stack-definitions-other', null],
+  ])('marks the Definitions link as current on %s', (_name, path, expected) => {
+    (useAuth as ReturnType<typeof vi.fn>).mockReturnValue({
+      user: authenticatedUser,
+      isAuthenticated: true,
+      isLoading: false,
+      login: vi.fn(),
+      logout: vi.fn(),
+    });
+
+    render(
+      <MemoryRouter initialEntries={[path]}>
+        <Layout>
+          <div>Content</div>
+        </Layout>
+      </MemoryRouter>,
+    );
+
+    const link = screen.getAllByRole('link', { name: 'Definitions' })[0];
+    if (expected === null) {
+      expect(link).not.toHaveAttribute('aria-current');
+    } else {
+      expect(link).toHaveAttribute('aria-current', expected);
+    }
+  });
+
   it('renders admin nav links for admin users', () => {
     (useAuth as ReturnType<typeof vi.fn>).mockReturnValue({
       user: authenticatedUser,

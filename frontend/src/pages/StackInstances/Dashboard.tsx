@@ -28,6 +28,11 @@ import {
   CircularProgress,
   Tooltip,
 } from '@mui/material';
+import AutorenewIcon from '@mui/icons-material/Autorenew';
+import CancelIcon from '@mui/icons-material/Cancel';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import HelpOutlineIcon from '@mui/icons-material/HelpOutlineOutlined';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import SearchIcon from '@mui/icons-material/Search';
 import AddIcon from '@mui/icons-material/Add';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
@@ -86,30 +91,28 @@ const getPrimaryUrl = (status: NamespaceStatus): string | null => {
 
 type K8sHealthStatus = NamespaceStatus['status'];
 
-const PodHealthDot = ({ status }: { status?: K8sHealthStatus }) => {
+/**
+ * A shape for each pod health, so that the state does not depend on colour:
+ * warning and error are nearly the same lightness in light mode.
+ */
+const POD_HEALTH_ICONS: Record<K8sHealthStatus, { Icon: typeof CheckCircleIcon; color: string }> = {
+  healthy: { Icon: CheckCircleIcon, color: 'success.main' },
+  progressing: { Icon: AutorenewIcon, color: 'info.main' },
+  degraded: { Icon: WarningAmberIcon, color: 'warning.main' },
+  error: { Icon: CancelIcon, color: 'error.main' },
+  not_found: { Icon: HelpOutlineIcon, color: 'text.secondary' },
+};
+
+const PodHealthIcon = ({ status }: { status?: K8sHealthStatus }) => {
   if (!status) return null;
-  const colorMap: Record<string, string> = {
-    healthy: 'success.main',
-    progressing: 'info.main',
-    degraded: 'warning.main',
-    error: 'error.main',
-    not_found: 'grey.400',
-  };
+  const { Icon, color } = POD_HEALTH_ICONS[status] ?? POD_HEALTH_ICONS.not_found;
   return (
     <Tooltip title={`Health: ${status}`} arrow>
-      <Box
-        component="span"
-        role="status"
+      <Icon
+        role="img"
+        aria-hidden={false}
         aria-label={`Pod health: ${status}`}
-        sx={{
-          width: 8,
-          height: 8,
-          borderRadius: '50%',
-          bgcolor: colorMap[status] || 'grey.400',
-          display: 'inline-block',
-          ml: 1,
-          flexShrink: 0,
-        }}
+        sx={{ fontSize: 16, color, ml: 1, flexShrink: 0 }}
       />
     </Tooltip>
   );
@@ -159,7 +162,7 @@ const InstanceCard = ({ instance, isSelected, selectable, isFavorite, clusterNam
         <Box sx={{ display: 'flex', alignItems: 'center' }}>
           <StatusBadge status={instance.status} />
           {(instance.status === 'running' || instance.status === 'partial' || instance.status === 'deploying' || instance.status === 'stabilizing') && k8sHealth && (
-            <PodHealthDot status={k8sHealth} />
+            <PodHealthIcon status={k8sHealth} />
           )}
         </Box>
       </Box>
@@ -688,10 +691,13 @@ const Dashboard = () => {
             p: 1.5,
             mb: 3,
             display: 'flex',
+            flexWrap: 'wrap',
             alignItems: 'center',
             gap: 2,
             bgcolor: 'primary.dark',
             color: 'primary.contrastText',
+            // The theme's primary focus ring does not show on this background.
+            '& .MuiButtonBase-root.Mui-focusVisible': { outlineColor: 'primary.contrastText' },
           }}
           role="toolbar"
           aria-label="Bulk actions"

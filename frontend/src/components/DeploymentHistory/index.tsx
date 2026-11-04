@@ -252,7 +252,7 @@ interface HistoryRowProps {
   onRollbackTo?: (log: DeploymentLog) => void;
 }
 
-/** One dense row: time, action, status, branch, duration, user. It opens the output. */
+/** One dense row: pin, time in an aligned column, action, status, branch, duration, user. It opens the output. */
 const HistoryRow = ({
   instanceId, log, scope, pin, open, onToggle, cache, streamed, isCurrent, currentKnown, onRollbackTo,
 }: HistoryRowProps) => {
@@ -265,36 +265,51 @@ const HistoryRow = ({
   const prefix = scope === 'pinned' ? 'pinned-log' : 'deploy-log';
   const panelId = `${prefix}-panel-${log.id}`;
 
-  // The name starts with "<action> <status>", so a row is easy to find.
+  const descriptionId = `${prefix}-description-${log.id}`;
+
+  // The name is the text of the row, in the same order, so that voice control can
+  // use what is on screen (WCAG 2.5.3). It replaces the content because the time
+  // has a tooltip, and the tooltip would put the full date in its place.
   const name = [
-    `${log.action} ${log.status}`,
     pin?.label.toLowerCase(),
+    ago,
+    `${log.action} ${log.status}`,
     showCurrent ? 'current' : undefined,
     isLive ? 'live' : undefined,
+    log.branch,
+    duration,
+    log.started_by,
+  ].filter(Boolean).join(', ');
+  // The name cannot say what each value is: words in between would break WCAG 2.5.3.
+  // A screen reader gets that here.
+  const description = [
+    `Started ${absolute}`,
     log.branch ? `branch ${log.branch}` : undefined,
-    `started ${ago}`,
     duration ? `took ${duration}` : undefined,
-    log.started_by ? `by ${log.started_by}` : undefined,
+    log.started_by ? `started by ${log.started_by}` : undefined,
   ].filter(Boolean).join(', ');
 
   return (
     <ListItem disablePadding sx={{ display: 'block' }} data-testid={`${prefix}-row-${log.id}`}>
+      <span id={descriptionId} hidden>{description}</span>
       <ListItemButton
         aria-expanded={open}
         aria-controls={panelId}
         aria-label={name}
+        aria-describedby={descriptionId}
         onClick={onToggle}
         sx={{ px: 1, py: 0.5, gap: 1, borderRadius: 1 }}
       >
         <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', columnGap: 1, rowGap: 0.5, flex: 1, minWidth: 0 }}>
-          {pin && <Chip label={pin.label} size="small" color={pinColor(pin.kind)} />}
+          {/* The spaces separate the words for assistive technology: a flex row does not show them. */}
+          {pin && <Chip label={pin.label} size="small" color={pinColor(pin.kind)} />}{' '}
           <Tooltip title={absolute}>
             <Typography variant="body2" color="text.secondary" sx={{ minWidth: { sm: 64 } }}>{ago}</Typography>
-          </Tooltip>
-          <Chip label={log.action} size="small" color={actionColor(log.action)} variant="outlined" />
-          <Chip label={log.status} size="small" color={statusColor(log.status)} />
-          {showCurrent && <Chip label="current" size="small" color="success" variant="outlined" />}
-          {isLive && <Chip label="LIVE" size="small" color="info" variant="filled" sx={liveChipSx} />}
+          </Tooltip>{' '}
+          <Chip label={log.action} size="small" color={actionColor(log.action)} variant="outlined" />{' '}
+          <Chip label={log.status} size="small" color={statusColor(log.status)} />{' '}
+          {showCurrent && <Chip label="current" size="small" color="success" variant="outlined" />}{' '}
+          {isLive && <Chip label="LIVE" size="small" color="info" variant="filled" sx={liveChipSx} />}{' '}
           {log.branch && (
             <Typography
               variant="body2"
@@ -304,9 +319,9 @@ const HistoryRow = ({
             >
               {log.branch}
             </Typography>
-          )}
+          )}{' '}
           <Box sx={{ display: 'flex', gap: 1.5, ml: 'auto', minWidth: 0 }}>
-            {duration && <Typography variant="caption" color="text.secondary">{duration}</Typography>}
+            {duration && <Typography variant="caption" color="text.secondary">{duration}</Typography>}{' '}
             {log.started_by && (
               <Typography variant="caption" color="text.secondary" noWrap sx={{ minWidth: 0 }}>
                 {log.started_by}

@@ -116,8 +116,11 @@ describe('DeploymentHistory', () => {
       const row = log('d1', 8, { started_by: 'alice' });
       render(<DeploymentHistory instanceId="inst-1" history={makeHistory({ rows: [row] })} />);
 
-      const button = rowButton(opsList(), /^deploy success, branch main, started .*, took 1m 0s, by alice$/);
+      // The name is the visible text in its visible order (WCAG 2.5.3).
+      const button = rowButton(opsList(), /^[^,]+ ago, deploy success, main, 1m 0s, alice$/);
       expect(button).toHaveAttribute('aria-expanded', 'false');
+      // The name cannot say what each value is, so the description does.
+      expect(button).toHaveAccessibleDescription(/^Started .*, branch main, took 1m 0s, started by alice$/);
       expect(within(button).getByText('deploy')).toBeInTheDocument();
       expect(within(button).getByText('success')).toBeInTheDocument();
       expect(within(button).getByText('main')).toBeInTheDocument();
@@ -150,7 +153,7 @@ describe('DeploymentHistory', () => {
           currentDeployLogId="d1"
         />,
       );
-      expect(rowButton(opsList(), /^deploy success, current,/)).toBeInTheDocument();
+      expect(rowButton(opsList(), /^[^,]+, deploy success, current,/)).toBeInTheDocument();
     });
   });
 
@@ -173,14 +176,14 @@ describe('DeploymentHistory', () => {
       const pinned = pinnedList();
       const names = within(pinned).getAllByRole('button').map((b) => b.getAttribute('aria-label'));
       expect(names).toHaveLength(3);
-      expect(names[0]).toMatch(/^deploy running, running,/);
-      expect(names[1]).toMatch(/^deploy success, current,/);
-      expect(names[2]).toMatch(/^rollback error, last failure,/);
+      expect(names[0]).toMatch(/^running, [^,]+, deploy running,/);
+      expect(names[1]).toMatch(/^current, [^,]+, deploy success,/);
+      expect(names[2]).toMatch(/^last failure, [^,]+, rollback error,/);
       expect(within(pinned).getByText('Running')).toBeInTheDocument();
       expect(within(pinned).getByText('Current')).toBeInTheDocument();
       expect(within(pinned).getByText('Last failure')).toBeInTheDocument();
       // The list keeps every row in time order.
-      expect(within(opsList()).getAllByRole('button', { name: /^(deploy|rollback) / })).toHaveLength(4);
+      expect(within(opsList()).getAllByRole('button', { name: /^[^,]+, (deploy|rollback) / })).toHaveLength(4);
     });
 
     it('shows a log once when two highlights are the same log', () => {
@@ -202,12 +205,12 @@ describe('DeploymentHistory', () => {
           currentDeployLogId="cur"
         />,
       );
-      const labels = within(pinnedList()).getAllByRole('button', { name: /^(deploy|rollback) / })
+      const labels = within(pinnedList()).getAllByRole('button', { name: /^[^,]+, [^,]+, (deploy|rollback) / })
         .map((b) => b.getAttribute('aria-label'));
       expect(labels).toHaveLength(3);
-      expect(labels[0]).toMatch(/^deploy running, running,/);
-      expect(labels[1]).toMatch(/^deploy success, current,/);
-      expect(labels[2]).toMatch(/^rollback error, last failure,/);
+      expect(labels[0]).toMatch(/^running, [^,]+, deploy running,/);
+      expect(labels[1]).toMatch(/^current, [^,]+, deploy success,/);
+      expect(labels[2]).toMatch(/^last failure, [^,]+, rollback error,/);
     });
 
     it('treats a partial current deploy like the server: no older failure is pinned', () => {
@@ -221,7 +224,7 @@ describe('DeploymentHistory', () => {
       );
       const labels = within(pinnedList()).getAllByRole('button').map((b) => b.getAttribute('aria-label'));
       expect(labels).toHaveLength(1);
-      expect(labels[0]).toMatch(/^deploy partial, current,/);
+      expect(labels[0]).toMatch(/^current, [^,]+, deploy partial,/);
     });
 
     it('shows no pinned area without highlights', () => {
@@ -237,7 +240,7 @@ describe('DeploymentHistory', () => {
       getEntry.mockReturnValue(new Promise((resolve) => { answer = resolve; }));
       render(<DeploymentHistory instanceId="inst-1" history={makeHistory({ rows: [log('d1', 8)] })} />);
 
-      const button = rowButton(opsList(), /^deploy success/);
+      const button = rowButton(opsList(), /^[^,]+, deploy success/);
       await user.click(button);
       expect(button).toHaveAttribute('aria-expanded', 'true');
       const panel = screen.getByRole('region', { name: outputName(log('d1', 8)) });
@@ -269,7 +272,7 @@ describe('DeploymentHistory', () => {
       getEntry.mockResolvedValue({ ...failed, output: 'Attempting to uninstall...' });
       render(<DeploymentHistory instanceId="inst-1" history={makeHistory({ rows: [failed] })} />);
 
-      await user.click(rowButton(opsList(), /^stop error/));
+      await user.click(rowButton(opsList(), /^[^,]+, stop error/));
       expect(await screen.findByText(/Attempting to uninstall/)).toBeInTheDocument();
       expect(screen.getByText('Error: release not found')).toBeInTheDocument();
     });
@@ -278,7 +281,7 @@ describe('DeploymentHistory', () => {
       const user = userEvent.setup();
       getEntry.mockResolvedValue({ ...log('d1', 8), output: '' });
       render(<DeploymentHistory instanceId="inst-1" history={makeHistory({ rows: [log('d1', 8)] })} />);
-      await user.click(rowButton(opsList(), /^deploy success/));
+      await user.click(rowButton(opsList(), /^[^,]+, deploy success/));
       expect(await screen.findByText('No output recorded')).toBeInTheDocument();
       expect(screen.queryByText(/^Error:/)).not.toBeInTheDocument();
     });
@@ -289,7 +292,7 @@ describe('DeploymentHistory', () => {
       const failed = log('f1', 8, { status: 'error', error_message: 'helm failed' });
       render(<DeploymentHistory instanceId="inst-1" history={makeHistory({ rows: [failed] })} />);
 
-      await user.click(rowButton(opsList(), /^deploy error/));
+      await user.click(rowButton(opsList(), /^[^,]+, deploy error/));
       expect(await screen.findByText('Could not load the log output.')).toBeInTheDocument();
       expect(screen.getByText('Error: helm failed')).toBeInTheDocument();
     });
@@ -297,7 +300,7 @@ describe('DeploymentHistory', () => {
     it('uses the output of a row from an older server without a request', async () => {
       const user = userEvent.setup();
       render(<DeploymentHistory instanceId="inst-1" history={makeHistory({ rows: [{ ...log('d1', 8), output: 'old output' }] })} />);
-      await user.click(rowButton(opsList(), /^deploy success/));
+      await user.click(rowButton(opsList(), /^[^,]+, deploy success/));
       expect(screen.getByText('old output')).toBeInTheDocument();
       expect(getEntry).not.toHaveBeenCalled();
     });
@@ -317,14 +320,14 @@ describe('DeploymentHistory', () => {
           streamingLines={{ run: ['Installing chart app-core...', 'Waiting for pods...'] }}
         />,
       );
-      const pinnedRow = rowButton(pinnedList(), /^deploy running, running, live,/);
+      const pinnedRow = rowButton(pinnedList(), /^running, [^,]+, deploy running, live,/);
       await waitFor(() => expect(pinnedRow).toHaveAttribute('aria-expanded', 'true'));
       const panel = within(pinnedList()).getByRole('region', { name: outputName(running) });
       expect(within(panel).getByText('Installing chart app-core...')).toBeInTheDocument();
       expect(within(panel).getByText('Waiting for pods...')).toBeInTheDocument();
       expect(within(pinnedList()).getByText('LIVE')).toBeInTheDocument();
       // The list row of the same log stays closed.
-      expect(rowButton(opsList(), /^deploy running/)).toHaveAttribute('aria-expanded', 'false');
+      expect(rowButton(opsList(), /^[^,]+, deploy running/)).toHaveAttribute('aria-expanded', 'false');
     });
 
     it('shows the stored output and then the streamed lines once (page reload)', async () => {
@@ -416,14 +419,14 @@ describe('DeploymentHistory', () => {
       expect(text).toMatch(/^3 deploys of branch main, /);
       const group = within(opsList()).getByRole('button', { name: text });
       expect(group).toHaveAttribute('aria-expanded', 'false');
-      expect(within(opsList()).queryByRole('button', { name: /^deploy success, branch main/ })).not.toBeInTheDocument();
+      expect(within(opsList()).queryByRole('button', { name: /^[^,]+, deploy success, main/ })).not.toBeInTheDocument();
 
       await user.click(group);
       expect(group).toHaveAttribute('aria-expanded', 'true');
       const inner = screen.getByRole('list', { name: text });
-      expect(within(inner).getAllByRole('button', { name: /^deploy success/ })).toHaveLength(3);
+      expect(within(inner).getAllByRole('button', { name: /^[^,]+, deploy success, main/ })).toHaveLength(3);
       // The current deploy is not in the group.
-      expect(rowButton(opsList(), /^deploy success, current,/)).toBeInTheDocument();
+      expect(rowButton(opsList(), /^[^,]+, deploy success, current,/)).toBeInTheDocument();
     });
   });
 
@@ -520,10 +523,10 @@ describe('DeploymentHistory', () => {
           onRollbackTo={onRollbackTo}
         />,
       );
-      await user.click(rowButton(opsList(), /^deploy success, current,/));
+      await user.click(rowButton(opsList(), /^[^,]+, deploy success, current,/));
       expect(screen.queryByRole('button', { name: 'Roll back to this deploy' })).not.toBeInTheDocument();
 
-      await user.click(rowButton(opsList(), /^deploy success, branch feature-x/));
+      await user.click(rowButton(opsList(), /^[^,]+, deploy success, feature-x/));
       await user.click(await screen.findByRole('button', { name: 'Roll back to this deploy' }));
       expect(onRollbackTo).toHaveBeenCalledWith(older);
     });
@@ -537,8 +540,8 @@ describe('DeploymentHistory', () => {
       render(
         <DeploymentHistory instanceId="inst-1" history={makeHistory({ rows: [d2, d1] })} currentDeployLogId="d2" onRollbackTo={onRollbackTo} />,
       );
-      expect(rowButton(opsList(), /^deploy partial, current,/)).toBeInTheDocument();
-      await user.click(rowButton(opsList(), /^deploy success/));
+      expect(rowButton(opsList(), /^[^,]+, deploy partial, current,/)).toBeInTheDocument();
+      await user.click(rowButton(opsList(), /^[^,]+, deploy success/));
       await user.click(await screen.findByRole('button', { name: 'Roll back to this deploy' }));
       expect(onRollbackTo).toHaveBeenCalledWith(d1);
     });
@@ -547,7 +550,7 @@ describe('DeploymentHistory', () => {
       const user = userEvent.setup();
       getEntry.mockResolvedValue({ ...older, output: 'ok' });
       render(<DeploymentHistory instanceId="inst-1" history={makeHistory({ rows: [older] })} onRollbackTo={vi.fn()} />);
-      await user.click(rowButton(opsList(), /^deploy success/));
+      await user.click(rowButton(opsList(), /^[^,]+, deploy success/));
       await user.hover(screen.getByRole('button', { name: 'Roll back to this deploy' }));
       expect(await screen.findByRole('tooltip')).toHaveTextContent(
         'The running values are unknown after a rollback without a target.',
@@ -561,13 +564,13 @@ describe('DeploymentHistory', () => {
       const { rerender } = render(
         <DeploymentHistory instanceId="inst-1" history={makeHistory({ rows })} onRollbackTo={vi.fn()} />,
       );
-      await user.click(rowButton(opsList(), /^deploy error/));
-      await user.click(rowButton(opsList(), /^stop success/));
+      await user.click(rowButton(opsList(), /^[^,]+, deploy error/));
+      await user.click(rowButton(opsList(), /^[^,]+, stop success/));
       await waitFor(() => expect(screen.getAllByText('ok')).toHaveLength(2));
       expect(screen.queryByRole('button', { name: 'Roll back to this deploy' })).not.toBeInTheDocument();
 
       rerender(<DeploymentHistory instanceId="inst-1" history={makeHistory({ rows: [older] })} />);
-      await user.click(rowButton(opsList(), /^deploy success/));
+      await user.click(rowButton(opsList(), /^[^,]+, deploy success/));
       await waitFor(() => expect(screen.getAllByText('ok').length).toBeGreaterThan(0));
       expect(screen.queryByRole('button', { name: 'Roll back to this deploy' })).not.toBeInTheDocument();
     });

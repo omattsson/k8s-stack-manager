@@ -1399,6 +1399,34 @@ describe('Dashboard', () => {
       }, { timeout: 3000 });
     });
 
+    it.each([
+      ['healthy', 'CheckCircleIcon'],
+      ['progressing', 'AutorenewIcon'],
+      ['degraded', 'WarningAmberIcon'],
+      ['error', 'CancelIcon'],
+      ['not_found', 'HelpOutlineOutlinedIcon'],
+    ])('shows pod health %s with its own shape and a name', async (status, iconTestId) => {
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
+        mockInstance({ id: 'inst-h', name: 'Health App', status: 'running', namespace: 'stack-h' }),
+      ]);
+      (instanceService.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+        namespace: 'stack-h',
+        status,
+        charts: [],
+        last_checked: '2026-01-01T00:00:00Z',
+      });
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      const icon = await screen.findByRole('img', { name: `Pod health: ${status}` });
+      // Colour alone must not tell the states apart: each has its own icon.
+      expect(icon).toHaveAttribute('data-testid', iconTestId);
+    });
+
     // The list loads twice under StrictMode, and a WebSocket event can reload it at
     // any time. A new list while a status request runs must not lose its answer.
     it('keeps the pod health when the list changes while the status is loading', async () => {
@@ -1428,10 +1456,10 @@ describe('Dashboard', () => {
       await act(async () => {
         answerStatus({ namespace: 'stack-h', status: 'degraded', charts: [], last_checked: '2026-01-01T00:00:00Z' });
       });
-      expect(await screen.findByRole('status', { name: 'Pod health: degraded' })).toBeInTheDocument();
+      expect(await screen.findByRole('img', { name: 'Pod health: degraded' })).toBeInTheDocument();
     });
 
-    it('shows pod health dot when status is fetched for running instance', async () => {
+    it('shows pod health when status is fetched for running instance', async () => {
       (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
         mockInstance({ id: 'inst-h', name: 'Healthy App', status: 'running', namespace: 'stack-h' }),
       ]);
@@ -1452,7 +1480,7 @@ describe('Dashboard', () => {
         expect(screen.getByText('Healthy App')).toBeInTheDocument();
       });
       await waitFor(() => {
-        expect(screen.getByRole('status', { name: /pod health: healthy/i })).toBeInTheDocument();
+        expect(screen.getByRole('img', { name: /pod health: healthy/i })).toBeInTheDocument();
       });
     });
 

@@ -416,10 +416,13 @@ const Gallery = () => {
             p: 1.5,
             mb: 3,
             display: 'flex',
+            flexWrap: 'wrap',
             alignItems: 'center',
             gap: 2,
             bgcolor: 'primary.dark',
             color: 'primary.contrastText',
+            // The theme's primary focus ring does not show on this background.
+            '& .MuiButtonBase-root.Mui-focusVisible': { outlineColor: 'primary.contrastText' },
           }}
           role="toolbar"
           aria-label="Bulk actions"
