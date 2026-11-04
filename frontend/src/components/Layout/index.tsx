@@ -130,6 +130,7 @@ const Layout = ({ children }: LayoutProps) => {
     <>
       {open ? (
         <ListSubheader
+          component="div"
           sx={{
             fontSize: '0.675rem',
             fontWeight: 700,

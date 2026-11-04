@@ -8,7 +8,9 @@ export const DRAWER_COLLAPSED_WIDTH = 64;
 
 export function createAppTheme(mode: 'light' | 'dark'): Theme {
   return createTheme({
-    palette: mode === 'light' ? lightPalette : darkPalette,
+    // Guard for colours added later and for getContrastText. It changes no text
+    // colour today and ignores the alpha of the black text; contrast.test.ts checks the ratios.
+    palette: { ...(mode === 'light' ? lightPalette : darkPalette), contrastThreshold: 4.5 },
     typography,
     components: getComponentOverrides(mode),
   });

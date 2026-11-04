@@ -212,6 +212,31 @@ describe('Layout', () => {
     }
   });
 
+  it('renders the section headings as divs, with no li directly under the nav', () => {
+    (useAuth as ReturnType<typeof vi.fn>).mockReturnValue({
+      user: authenticatedUser,
+      isAuthenticated: true,
+      isLoading: false,
+      login: vi.fn(),
+      logout: vi.fn(),
+    });
+
+    render(
+      <MemoryRouter>
+        <Layout>
+          <div>Content</div>
+        </Layout>
+      </MemoryRouter>,
+    );
+
+    const nav = screen.getByRole('navigation', { name: 'Main navigation' });
+    for (const heading of ['Main', 'Operations', 'Administration']) {
+      const el = screen.getByText(heading);
+      expect(el.tagName).toBe('DIV');
+    }
+    expect(nav.querySelector(':scope > li')).toBeNull();
+  });
+
   it('renders the username when authenticated', () => {
     (useAuth as ReturnType<typeof vi.fn>).mockReturnValue({
       user: authenticatedUser,
