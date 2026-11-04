@@ -7503,7 +7503,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Upsert value overrides for a specific chart in a stack instance. chartId must be a chart config of the instance's stack definition. Empty or whitespace-only values remove the override and return 204 No Content (also when no override existed). Values that the deploy cannot parse return 400 with the parse error: broken YAML, duplicate keys, a root that is not a map, or an unquoted template value (write tag: \"{{.Branch}}\", not tag: {{.Branch}}). A stored value is never checked on read.",
+                "description": "Upsert value overrides for a specific chart in a stack instance. chartId must be a chart config of the instance's stack definition. Empty or whitespace-only values remove the override and return 204 No Content (also when no override existed). Values that the deploy cannot parse return 400 with the parse error: broken YAML, duplicate keys, a root that is not a map, or a template value without quotes. A stored value is never checked on read.",
                 "consumes": [
                     "application/json"
                 ],
