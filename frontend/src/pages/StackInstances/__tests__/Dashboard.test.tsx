@@ -1523,6 +1523,66 @@ describe('Dashboard', () => {
       expect(await screen.findByRole('img', { name: 'Pod health: degraded' })).toBeInTheDocument();
     });
 
+    // A status request can start during a deploy and answer after the deploy finished.
+    // That answer describes the old deploy: it must not stick to the card.
+    describe('a status answer that spans the end of a deploy', () => {
+      const statusAnswer = (status: string) => ({ namespace: 'stack-h', status, charts: [], last_checked: '2026-01-01T00:00:00Z' });
+
+      const startDeployThatFinishes = async () => {
+        (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
+          mockInstance({ id: 'inst-h', name: 'Health App', status: 'deploying', namespace: 'stack-h' }),
+        ]);
+        const answers: Array<(value: unknown) => void> = [];
+        (instanceService.getStatus as ReturnType<typeof vi.fn>).mockImplementation(
+          () => new Promise((resolve) => { answers.push(resolve); }),
+        );
+        render(
+          <MemoryRouter>
+            <NotificationProvider>
+              <Dashboard />
+            </NotificationProvider>
+          </MemoryRouter>
+        );
+        await waitFor(() => expect(answers).toHaveLength(1));
+        act(() => broadcastWs({ type: 'deployment.status', payload: { instance_id: 'inst-h', status: 'running' } }));
+        return answers;
+      };
+
+      it('discards the old answer and asks again', async () => {
+        const answers = await startDeployThatFinishes();
+        await waitFor(() => expect(answers).toHaveLength(2));
+
+        await act(async () => { answers[0](statusAnswer('degraded')); });
+        expect(screen.queryByRole('img', { name: 'Pod health: degraded' })).not.toBeInTheDocument();
+
+        await act(async () => { answers[1](statusAnswer('healthy')); });
+        expect(await screen.findByRole('img', { name: 'Pod health: healthy' })).toBeInTheDocument();
+      });
+
+      it('keeps the new answer when the old one comes last', async () => {
+        const answers = await startDeployThatFinishes();
+        await waitFor(() => expect(answers).toHaveLength(2));
+
+        await act(async () => { answers[1](statusAnswer('healthy')); });
+        expect(await screen.findByRole('img', { name: 'Pod health: healthy' })).toBeInTheDocument();
+        await act(async () => { answers[0](statusAnswer('degraded')); });
+        expect(screen.getByRole('img', { name: 'Pod health: healthy' })).toBeInTheDocument();
+        expect(screen.queryByRole('img', { name: 'Pod health: degraded' })).not.toBeInTheDocument();
+      });
+
+      it('has the new answer even when the scheduled reload ran before the old answer', async () => {
+        const answers = await startDeployThatFinishes();
+        // The reload after the deploy finds the ID in flight and asks nothing itself.
+        await waitFor(() => expect(instanceService.listAll).toHaveBeenCalledTimes(2), { timeout: 3000 });
+
+        await act(async () => { answers[0](statusAnswer('degraded')); });
+        await waitFor(() => expect(answers).toHaveLength(2));
+        await act(async () => { answers[1](statusAnswer('healthy')); });
+        expect(await screen.findByRole('img', { name: 'Pod health: healthy' })).toBeInTheDocument();
+        expect(screen.queryByRole('img', { name: 'Pod health: degraded' })).not.toBeInTheDocument();
+      });
+    });
+
     it('shows pod health when status is fetched for running instance', async () => {
       (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
         mockInstance({ id: 'inst-h', name: 'Healthy App', status: 'running', namespace: 'stack-h' }),

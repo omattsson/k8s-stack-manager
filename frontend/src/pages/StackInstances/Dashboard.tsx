@@ -319,6 +319,9 @@ const Dashboard = () => {
   const fetchedStatusIdsRef = useRef<Set<string>>(new Set());
   // Track currently in-flight fetches to avoid duplicate requests
   const inFlightIdsRef = useRef<Set<string>>(new Set());
+  // Per instance: raised when a deploy finishes, because a request that started before
+  // that describes the old deploy. A list reload does not raise it: its answers stay good.
+  const statusGenerationRef = useRef<Map<string, number>>(new Map());
 
   // Phase 2: fetch status/URLs for newly running/deploying instances
   useEffect(() => {
@@ -336,6 +339,7 @@ const Dashboard = () => {
     for (const inst of newRunning) {
       inFlightIdsRef.current.add(inst.id);
     }
+    const generations = newRunning.map((inst) => statusGenerationRef.current.get(inst.id) ?? 0);
 
     Promise.allSettled(
       newRunning.map(async (inst) => {
@@ -347,16 +351,17 @@ const Dashboard = () => {
       const newUrls: Record<string, string> = {};
       const newHealth: Record<string, K8sHealthStatus> = {};
       settled.forEach((r, idx) => {
+        const { id } = newRunning[idx];
+        // A deploy finished after this request started, and a newer request took over.
+        // Its in-flight mark belongs to that request too.
+        if ((statusGenerationRef.current.get(id) ?? 0) !== generations[idx]) return;
+        inFlightIdsRef.current.delete(id);
         if (r.status === 'fulfilled') {
-          inFlightIdsRef.current.delete(r.value.id);
-          newHealth[r.value.id] = r.value.health;
+          newHealth[id] = r.value.health;
           if (r.value.url) {
-            fetchedStatusIdsRef.current.add(r.value.id);
-            newUrls[r.value.id] = r.value.url;
+            fetchedStatusIdsRef.current.add(id);
+            newUrls[id] = r.value.url;
           }
-        } else {
-          const id = newRunning[idx]?.id;
-          if (id) inFlightIdsRef.current.delete(id);
         }
       });
       if (Object.keys(newUrls).length > 0) {
@@ -385,8 +390,14 @@ const Dashboard = () => {
         return;
       }
       if (payload.status === 'running') {
-        // Fetch the URL again and reload the list for the new deploy time.
-        fetchedStatusIdsRef.current.delete(payload.instance_id);
+        // Fetch the URL again and reload the list for the new deploy time. A request
+        // that is running now describes the old deploy, so it no longer counts: the
+        // setInstances below runs the status effect, which asks again at once. That
+        // does not depend on the reload, which may run before the old answer arrives.
+        const id = payload.instance_id;
+        statusGenerationRef.current.set(id, (statusGenerationRef.current.get(id) ?? 0) + 1);
+        inFlightIdsRef.current.delete(id);
+        fetchedStatusIdsRef.current.delete(id);
         scheduleFinishedReload();
       }
       setInstances((prev) =>
