@@ -25,7 +25,7 @@ import type {
   CompareInstancesResponse,
   CompareChartDiff,
 } from '../../types';
-import ReactDiffViewer from 'react-diff-viewer-continued';
+import ThemedDiffViewer from '../../components/ThemedDiffViewer';
 
 const Compare = () => {
   // Side by side needs the width of a desktop; a phone gets one column.
@@ -283,7 +283,7 @@ const Compare = () => {
                         )}
                       </Box>
                       <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 1, overflow: 'auto' }}>
-                        <ReactDiffViewer
+                        <ThemedDiffViewer
                           oldValue={chart.left_values ?? ''}
                           newValue={chart.right_values ?? ''}
                           splitView={splitView}

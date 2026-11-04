@@ -1,5 +1,6 @@
 import { Box, Chip, Typography } from '@mui/material';
-import ReactDiffViewer, { DiffMethod } from 'react-diff-viewer-continued';
+import { DiffMethod } from 'react-diff-viewer-continued';
+import ThemedDiffViewer from '../ThemedDiffViewer';
 import type { TemplateChartDiff } from '../../types';
 
 interface ChartDiffListProps {
@@ -73,7 +74,7 @@ const YamlDiff = ({ heading, left, right, leftTitle, rightTitle }: YamlDiffProps
       {heading}
     </Typography>
     <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 1, overflow: 'hidden' }}>
-      <ReactDiffViewer
+      <ThemedDiffViewer
         oldValue={left}
         newValue={right}
         splitView={true}
