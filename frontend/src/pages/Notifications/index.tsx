@@ -135,6 +135,8 @@ const Notifications = () => {
                   {notificationIcon(notification.type)}
                 </ListItemIcon>
                 <ListItemText
+                  // A long stack name must wrap: it would widen the layout on a phone.
+                  sx={{ minWidth: 0, overflowWrap: 'anywhere' }}
                   primary={notification.title}
                   secondary={
                     <Box component="span" sx={{ display: 'flex', flexDirection: 'column', gap: 0.25 }}>
