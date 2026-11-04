@@ -150,13 +150,14 @@ frontend/src/
     InstanceQuota/             # Resource quota section of the instance page: effective values and their source, override edit and remove (InstanceQuotaDialog)
     PodStatusDisplay/          # Kubernetes pod status display
     ProtectedRoute/            # Auth-gated route wrapper (optional requiredRole)
-    NotificationCenter/        # Notification bell dropdown in the app bar
+    NotificationCenter/        # Notification bell dropdown in the app bar; NotificationTitle.tsx: row title that also says "unread" to a screen reader
     QuickDeployDialog/         # One-click template deploy modal
     QuotaConfigDialog/         # Resource quota configuration modal; quotaFields.ts has the field list and validation (shared with InstanceQuota)
     SetupWizard/               # First-run checklist (cluster, template, instance), can be dismissed
     StatusBadge/               # Colored status chip
     StopTimePicker/            # Stop time picker (datetime-local with min and max, time left); used by TtlSelector and ExtendTtlMenu
     TemplateFieldDiffList/     # Template field changes of a version diff
+    ThemedDiffViewer/          # Diff viewer in the app colour mode, with readable line numbers; use it instead of react-diff-viewer-continued directly
     TtlSelector/               # TTL presets and "Custom stop time" (fixed stop time, expires_at)
     YamlEditor/                # YAML text editor (Monaco)
   pages/                       # Simple pages export from index.tsx; domain pages use named files
@@ -193,4 +194,4 @@ frontend/src/
   utils/                       # roles, timeAgo, expiry, instanceName, instanceState, jwt, quantity, apiError, download, deployHistory, actionRuns, templateVersion, notificationEventTypes, notificationHelpers, recentTemplates, setupWizard, stopTime
 ```
 
-**Stack:** React 19, MUI v9, react-router-dom v7, Vite 8, TypeScript 6, Vitest 5, Playwright (44 specs in `frontend/e2e/`; the project `isolated` runs `session-lifecycle.spec.ts`, then its teardown project `isolated-last-admin` runs `last-admin.spec.ts` (it disables `admin` for a moment, so it runs last; `global-setup.ts` re-enables a left-over disabled `admin` in the database), only with `E2E_ISOLATED=1`, serially, against a restarted short-limit backend; the project `mobile` runs `mobile.spec.ts` with the iPhone 13 viewport, the project `chromium` runs the rest).
+**Stack:** React 19, MUI v9, react-router-dom v7, Vite 8, TypeScript 6, Vitest 5, Playwright (52 specs in `frontend/e2e/`; the project `isolated` runs `session-lifecycle.spec.ts`, then its teardown project `isolated-last-admin` runs `last-admin.spec.ts` (it disables `admin` for a moment, so it runs last; `global-setup.ts` re-enables a left-over disabled `admin` in the database), only with `E2E_ISOLATED=1`, serially, against a restarted short-limit backend; the project `mobile` runs `mobile.spec.ts` with the iPhone 13 viewport, the project `chromium` runs the rest).
