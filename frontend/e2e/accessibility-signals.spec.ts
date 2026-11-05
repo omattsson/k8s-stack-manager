@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page, type WebSocketRoute } from '@playwright/test';
 import type { PaginatedAuditLogs } from '../src/api/client';
 import type {
   Cluster,
@@ -109,6 +109,51 @@ test.describe('Accessibility: focus rings, tooltips, bars and colour as the only
     expect(ratio, `${what}: tooltip text over white and over black`).toBeGreaterThanOrEqual(4.5);
   };
 
+  // ---------------------------------------------------------------------
+  // Monaco keeps the Tab key until its tab-focus toggle is pressed (#760).
+
+  const EDITOR_PAGES: [string, () => PageSetup, string?, string?][] = [
+    ['new stack definition', () => setup('new stack definition'), 'Add Chart'],
+    ['edit stack definition', () => setup('edit stack definition')],
+    ['template builder', () => setup('template builder'), 'Add Chart'],
+    ['template instantiate', () => setup('template instantiate')],
+    // The first editor here is read-only, and a read-only editor does not keep Tab.
+    ['stack instance', () => setup('stack instance'), undefined, 'Your Overrides'],
+  ];
+  for (const [name, getSetup, addButton, label] of EDITOR_PAGES) {
+    test(`the code editor gives Tab back: ${name}`, async ({ page }) => {
+      await checkPage(page, 'light', {
+        ...getSetup(),
+        ready: async (p) => {
+          if (addButton) await p.getByRole('button', { name: addButton, exact: true }).click();
+          const editor = label
+            ? p.getByText(label, { exact: true }).first().locator('xpath=following-sibling::*[1]').locator('.monaco-editor')
+            : p.locator('.monaco-editor:visible').first();
+          await expect(editor, 'no code editor on the page').toBeVisible({ timeout: 15_000 });
+          // Not "any editor": the next editor on the page also holds the focus.
+          await editor.evaluate((el) => el.setAttribute('data-a11y-target', 'true'));
+          const inEditor = () => p.evaluate(() => Boolean(document.activeElement?.closest('[data-a11y-target]')));
+          await editor.locator('.view-lines').click();
+          await expect.poll(inEditor, { message: 'the click did not focus the editor' }).toBe(true);
+
+          await p.keyboard.press('Tab');
+          expect(await inEditor(), 'without the toggle, Tab stays in the editor').toBe(true);
+
+          // Monaco: Ctrl+M, and Ctrl+Shift+M on macOS. It reads the user agent, which the
+          // test browser sets apart from navigator.platform.
+          const mac = await p.evaluate(() => /Macintosh|Mac OS X/.test(navigator.userAgent));
+          await p.keyboard.press(mac ? 'Control+Shift+M' : 'Control+M');
+          await p.keyboard.press('Tab');
+          const described = await p.evaluate(() => { const a = document.activeElement; return `${a?.tagName}.${a?.className} in ${a?.closest('.monaco-editor')?.className}`; });
+          expect(await inEditor(), `with the toggle, Tab leaves the editor (focus: ${described})`).toBe(false);
+          const where = await p.evaluate(() => document.activeElement?.tagName ?? 'none');
+          expect(where, 'the focus is on an element').not.toBe('BODY');
+          test.info().annotations.push({ type: 'focus', description: `${name}: Tab after the toggle lands on <${where.toLowerCase()}>` });
+        },
+      });
+    });
+  }
+
   for (const mode of MODES) {
     // ---------------------------------------------------------------------
     // Focus rings
@@ -118,7 +163,7 @@ test.describe('Accessibility: focus rings, tooltips, bars and colour as the only
       ['login', {}],
       ['dashboard', { maxStops: 800 }],
       ['templates', { maxStops: 800 }],
-      ['stack instance', { skipEditors: 'the values editor of a chart: Ctrl+M or Ctrl+Shift+M gives Tab back, so a keyboard user can leave it' }],
+      ['stack instance', { skipEditors: 'the values editor of a chart: the Monaco tab-focus toggle gives Tab back (tested in "the code editor gives Tab back")' }],
       ['new stack definition', {}],
       ['users', { maxStops: 300 }],
       ['profile', {}],
