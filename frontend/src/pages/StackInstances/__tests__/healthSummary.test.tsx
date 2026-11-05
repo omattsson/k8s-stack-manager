@@ -109,6 +109,7 @@ describe('summarizeHealthChanges and diffHealth', () => {
 
 describe('Dashboard pod health announcement', () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.clearAllMocks();
     capturedWsHandlers.length = 0;
   });
@@ -121,25 +122,77 @@ describe('Dashboard pod health announcement', () => {
     </MemoryRouter>,
   );
 
+  const send = (id: string, health: string) => act(() => {
+    broadcastWs({ type: 'instance.status', payload: { instance_id: id, namespace_status: { status: health } } });
+  });
+  const live = () => screen.getAllByRole('status').map((el) => el.textContent).join('');
+
   it('is silent on the first load, then summarises a change in one message', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([row('a', 'alpha'), row('b', 'beta')]);
     (instanceService.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue(status('healthy'));
     renderDashboard();
 
     await waitFor(() => expect(screen.getAllByRole('img', { name: 'Pod health: healthy' })).toHaveLength(2));
-    await new Promise((resolve) => setTimeout(resolve, 1300));
-    expect(screen.getAllByRole('status').map((el) => el.textContent).join('')).not.toMatch(/changed health/);
+    await act(() => vi.advanceTimersByTimeAsync(1500));
+    expect(live()).not.toMatch(/changed health/);
 
-    act(() => {
-      broadcastWs({ type: 'instance.status', payload: { instance_id: 'a', namespace_status: { status: 'degraded' } } });
-    });
-    act(() => {
-      broadcastWs({ type: 'instance.status', payload: { instance_id: 'b', namespace_status: { status: 'error' } } });
-    });
-    await waitFor(() => {
-      expect(screen.getByText('2 stacks changed health: alpha degraded, beta error')).toBeInTheDocument();
-    }, { timeout: 3000 });
+    send('a', 'degraded');
+    send('b', 'error');
+    await act(() => vi.advanceTimersByTimeAsync(1100));
+    expect(screen.getByText('2 stacks changed health: alpha degraded, beta error')).toBeInTheDocument();
     // The cards are not a live region.
     expect(document.querySelector('.MuiGrid-container[aria-live]')).toBeNull();
+  });
+
+  it('announces within a second of the first change, even with a steady stream', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([row('a', 'alpha'), row('b', 'beta')]);
+    (instanceService.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue(status('healthy'));
+    renderDashboard();
+    await waitFor(() => expect(screen.getAllByRole('img', { name: 'Pod health: healthy' })).toHaveLength(2));
+    await act(() => vi.advanceTimersByTimeAsync(1500));
+
+    send('a', 'degraded');
+    await act(() => vi.advanceTimersByTimeAsync(600));
+    send('b', 'error');
+    await act(() => vi.advanceTimersByTimeAsync(600));
+    expect(live()).toContain('2 stacks changed health: alpha degraded, beta error');
+  });
+
+  it('drops a stack that ends the batch where it began', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([row('a', 'alpha'), row('b', 'beta')]);
+    (instanceService.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue(status('healthy'));
+    renderDashboard();
+    await waitFor(() => expect(screen.getAllByRole('img', { name: 'Pod health: healthy' })).toHaveLength(2));
+    await act(() => vi.advanceTimersByTimeAsync(1500));
+
+    send('a', 'degraded');
+    send('b', 'error');
+    send('a', 'healthy');
+    await act(() => vi.advanceTimersByTimeAsync(1100));
+    expect(live()).toContain('1 stack changed health: beta error');
+    expect(live()).not.toContain('alpha');
+  });
+
+  it('clears the text before it repeats the same text', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    // Two stacks with one name give the same sentence twice.
+    (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([row('a', 'alpha'), row('b', 'alpha')]);
+    (instanceService.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue(status('healthy'));
+    renderDashboard();
+    await waitFor(() => expect(screen.getAllByRole('img', { name: 'Pod health: healthy' })).toHaveLength(2));
+    await act(() => vi.advanceTimersByTimeAsync(1500));
+
+    send('a', 'degraded');
+    await act(() => vi.advanceTimersByTimeAsync(1100));
+    expect(live()).toBe('1 stack changed health: alpha degraded');
+    send('b', 'degraded');
+    // The batch timer fires: the text is empty for a moment, then the same text returns.
+    await act(() => vi.advanceTimersByTimeAsync(1050));
+    expect(live()).toBe('');
+    await act(() => vi.advanceTimersByTimeAsync(150));
+    expect(live()).toBe('1 stack changed health: alpha degraded');
   });
 });

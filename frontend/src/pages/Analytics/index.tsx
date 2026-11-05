@@ -26,6 +26,7 @@ import type { OverviewStats, TemplateStats, UserStats } from '../../types';
 import LoadingState from '../../components/LoadingState';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { scrollBoxFocusSx } from '../../utils/visuallyHidden';
 
 const formatRelativeTime = (dateStr: string | null): string => {
   if (!dateStr) return 'N/A';
@@ -228,7 +229,7 @@ const Analytics = () => {
           {templatesError ? (
             <Alert severity="error" sx={{ mb: 4 }}>Failed to load template statistics</Alert>
           ) : (
-            <TableContainer component={Paper} tabIndex={0} sx={{ mb: 4, '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main', outlineOffset: -2 } }}>
+            <TableContainer component={Paper} tabIndex={0} role="region" aria-label="Template usage" sx={{ mb: 4, ...scrollBoxFocusSx }}>
               <Table size="small">
                 <TableHead>
                   <TableRow>
@@ -303,7 +304,7 @@ const Analytics = () => {
               {usersError ? (
                 <Alert severity="error">Failed to load user activity</Alert>
               ) : (
-                <TableContainer component={Paper} tabIndex={0} sx={{ '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main', outlineOffset: -2 } }}>
+                <TableContainer component={Paper} tabIndex={0} role="region" aria-label="User activity" sx={scrollBoxFocusSx}>
                   <Table size="small">
                     <TableHead>
                       <TableRow>

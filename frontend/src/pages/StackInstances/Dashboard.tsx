@@ -380,24 +380,49 @@ const Dashboard = () => {
   const [healthAnnouncement, setHealthAnnouncement] = useState('');
   const knownHealthRef = useRef<Record<string, string>>({});
   const pendingHealthRef = useRef<Map<string, HealthChange>>(new Map());
-  const healthTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const instancesRef = useRef(instances);
-  instancesRef.current = instances;
+  useEffect(() => {
+    instancesRef.current = instances;
+  }, [instances]);
+  // The health before the batch: a stack that ends the batch where it began is not announced.
+  const batchStartRef = useRef<Map<string, string>>(new Map());
+  const announcedRef = useRef('');
+  const announceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const repeatTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     const names = new Map(instancesRef.current.map((i) => [i.id, i.name]));
     const changes = diffHealth(knownHealthRef.current, instanceHealth, (id) => names.get(id));
+    for (const change of changes) {
+      if (!batchStartRef.current.has(change.id)) batchStartRef.current.set(change.id, knownHealthRef.current[change.id]);
+      // A later change of the same stack replaces the earlier one in the batch.
+      pendingHealthRef.current.set(change.id, change);
+    }
     knownHealthRef.current = { ...instanceHealth };
-    if (changes.length === 0) return;
-    // A later change of the same stack replaces the earlier one in the batch.
-    for (const change of changes) pendingHealthRef.current.set(change.id, change);
-    if (healthTimerRef.current) clearTimeout(healthTimerRef.current);
-    healthTimerRef.current = setTimeout(() => {
-      setHealthAnnouncement(summarizeHealthChanges([...pendingHealthRef.current.values()]));
+    // One timer per batch: a steady stream of changes cannot delay the announcement.
+    if (changes.length === 0 || announceTimerRef.current) return;
+    announceTimerRef.current = setTimeout(() => {
+      announceTimerRef.current = null;
+      const settled = [...pendingHealthRef.current.values()].filter((c) => batchStartRef.current.get(c.id) !== c.status);
       pendingHealthRef.current.clear();
+      batchStartRef.current.clear();
+      const text = summarizeHealthChanges(settled);
+      if (!text) return;
+      const announce = () => {
+        announcedRef.current = text;
+        setHealthAnnouncement(text);
+      };
+      if (text !== announcedRef.current) {
+        announce();
+        return;
+      }
+      // The same text again: clear it first, so that a screen reader reads it again.
+      setHealthAnnouncement('');
+      repeatTimerRef.current = setTimeout(announce, 100);
     }, 1000);
   }, [instanceHealth]);
   useEffect(() => () => {
-    if (healthTimerRef.current) clearTimeout(healthTimerRef.current);
+    if (announceTimerRef.current) clearTimeout(announceTimerRef.current);
+    if (repeatTimerRef.current) clearTimeout(repeatTimerRef.current);
   }, []);
 
   // Live-update instance statuses via WebSocket.

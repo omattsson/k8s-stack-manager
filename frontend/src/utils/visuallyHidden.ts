@@ -10,3 +10,8 @@ export const visuallyHidden = {
   whiteSpace: 'nowrap',
   border: 0,
 } as const;
+
+/** Focus ring of a scroll box that is a Tab stop. Inside, because the page clips an outer ring. */
+export const scrollBoxFocusSx = {
+  '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main', outlineOffset: -2 },
+} as const;

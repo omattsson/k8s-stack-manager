@@ -36,8 +36,8 @@ import {
 // What axe does not judge (#758). Focus rings: computed outline or border colour
 // against what is behind it, 3:1, and not cut off by a parent. Colour as the only
 // signal: each state must also differ in shape, weight or text. Bars: 3:1 against
-// the track, and the value is also text next to the bar. Tooltips are translucent, so tooltipRatio measures
-// them over white and over black.
+// the track, and the value is also text next to the bar. Tooltips are translucent,
+// so tooltipRatio measures them over white and over black.
 //
 // Not covered here, inspected by hand: whether a shape reads as its meaning.
 
@@ -194,6 +194,7 @@ test.describe('Accessibility: focus rings, tooltips, bars and colour as the only
         await expect(p.getByText(/changed health/), 'the first load is silent').toHaveCount(0);
         await expect(p.locator('main .MuiGrid-container[aria-live]'), 'the card grid is not a live region').toHaveCount(0);
 
+        expect(socket, 'the app opened its WebSocket').toBeDefined();
         const push = (id: string, status: string) => socket?.send(JSON.stringify({
           type: 'instance.status',
           payload: { instance_id: id, namespace_status: { status } },

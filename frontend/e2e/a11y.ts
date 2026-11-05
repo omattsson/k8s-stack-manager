@@ -34,11 +34,15 @@ const MIN_CONTRAST_PASSES = 3;
 const AA_TEXT = 4.5;
 export const AA_NON_TEXT = 3;
 
+/** Widest viewport that gets the phone layout (MUI `sm` breakpoint is 600). */
+const PHONE_MAX_WIDTH = 599;
+
 /**
  * The only nodes that axe may leave undecided. Any other undecided node fails, so
- * a new surface or a new overlay cannot escape the check unseen.
+ * a new surface or a new overlay cannot escape the check unseen. `phoneOnly`: only
+ * at the phone width.
  */
-const KNOWN_UNDECIDED: { rule: string; reason: string; selector: string; why: string }[] = [
+const KNOWN_UNDECIDED: { rule: string; reason: string; selector: string; why: string; phoneOnly?: boolean }[] = [
   {
     rule: 'color-contrast',
     reason: 'emptyValue',
@@ -54,12 +58,14 @@ const KNOWN_UNDECIDED: { rule: string; reason: string; selector: string; why: st
   {
     rule: 'color-contrast',
     reason: 'elmPartiallyObscured',
+    phoneOnly: true,
     selector: '.MuiTableContainer-root td, .MuiTableContainer-root td *, .MuiTableContainer-root th, .MuiTableContainer-root th *',
     why: 'A table on a phone scrolls sideways; cells off screen are reachable by scroll and keyboard; checked by the "table scroll" tests in accessibility-phone.spec.ts. The same cells are measured at the desktop width.',
   },
   {
     rule: 'color-contrast',
     reason: 'bgOverlap',
+    phoneOnly: true,
     selector: '[class*="react-diff-"][class*="-line-number"], [class*="react-diff-"][class*="-word-diff"]',
     why: 'The diff viewer scrolls sideways on a phone, and its code slides under the line numbers and changed words, so axe finds no single background. The same nodes pass at the desktop width.',
   },
@@ -352,6 +358,9 @@ async function expectExplicitContrast(page: Page, what: string, selector: string
  */
 export async function expectContrastAndLists(page: Page, what: string, hasMain: boolean, scope?: AxeScope): Promise<void> {
   await waitForTransitions(page);
+  // Own pass before revealClippedContent: that removes vertical scroll, which this rule needs.
+  const early = await (scope ? new AxeBuilder({ page }).include(scope.selector) : new AxeBuilder({ page }))
+    .withRules(['scrollable-region-focusable']).analyze();
   await revealClippedContent(page);
   await flattenGradients(page);
   await expectExplicitContrast(page, what, scope?.selector ?? 'body');
@@ -360,14 +369,14 @@ export async function expectContrastAndLists(page: Page, what: string, hasMain: 
   const builder = new AxeBuilder({ page })
     // One-character text is measured too, for example a badge count.
     .options({ checks: { 'color-contrast': { options: { ignoreLength: true } } } } as unknown as Parameters<AxeBuilder['options']>[0])
-    .withRules(['color-contrast', 'listitem', 'label-content-name-mismatch', 'link-in-text-block', 'region', 'scrollable-region-focusable', 'aria-progressbar-name', 'empty-table-header']);
+    .withRules(['color-contrast', 'listitem', 'label-content-name-mismatch', 'link-in-text-block', 'region', 'aria-progressbar-name', 'empty-table-header']);
   const showApp = scope ? await hideAppBehindModal(page, scope.selector) : async () => undefined;
   const results = await (scope ? builder.include(scope.selector) : builder).analyze();
   await showApp();
   await showOverlays();
 
   const violations: string[] = [];
-  for (const v of results.violations) {
+  for (const v of [...early.violations, ...results.violations]) {
     for (const n of v.nodes) {
       // Axe cuts the HTML short: for a name mismatch, show the two strings it compared.
       const compared = v.id !== 'label-content-name-mismatch' ? '' : await page.evaluate((sel) => {
@@ -379,6 +388,7 @@ export async function expectContrastAndLists(page: Page, what: string, hasMain: 
   }
   expect(violations, `${what}: ${violations.length} axe violation(s)\n${violations.join('\n')}`).toEqual([]);
 
+  const phoneWidth = (page.viewportSize()?.width ?? Infinity) <= PHONE_MAX_WIDTH;
   const undecided: string[] = [];
   const reasons: Record<string, number> = {};
   for (const result of results.incomplete) {
@@ -386,7 +396,7 @@ export async function expectContrastAndLists(page: Page, what: string, hasMain: 
       const reason = messageKeyOf(n);
       const key = `${result.id}/${reason}`;
       reasons[key] = (reasons[key] ?? 0) + 1;
-      const selectors = KNOWN_UNDECIDED.filter((k) => k.rule === result.id && k.reason === reason).map((k) => k.selector);
+      const selectors = KNOWN_UNDECIDED.filter((k) => k.rule === result.id && k.reason === reason && (!k.phoneOnly || phoneWidth)).map((k) => k.selector);
       const { known, top } = await page.evaluate(({ sel, known: list }) => {
         const el = document.querySelector(sel);
         if (!el) return { known: false, top: 'not found' };
@@ -728,6 +738,8 @@ export interface TableScrollStats {
   scrolling: number;
   /** Controls that start (partly) outside the box of their table. */
   cutOff: number;
+  /** Per table: whether it scrolls, and how many controls it has cut off. */
+  perTable: { scrolls: boolean; cutOff: number }[];
 }
 
 /**
@@ -737,26 +749,32 @@ export interface TableScrollStats {
 export async function expectTableCellsReachable(page: Page, what: string): Promise<TableScrollStats> {
   const result = await page.evaluate(async () => {
     const frame = () => new Promise((done) => { requestAnimationFrame(() => requestAnimationFrame(done)); });
-    const stats = { tables: 0, scrolling: 0, cutOff: 0 };
+    const stats: { tables: number; scrolling: number; cutOff: number; perTable: { scrolls: boolean; cutOff: number }[] } = { tables: 0, scrolling: 0, cutOff: 0, perTable: [] };
     const problems: string[] = [];
     // A table can grow after the first paint (fonts, late rows): a scroll that ran before that stops short.
     await document.fonts.ready;
     const widths = () => Array.from(document.querySelectorAll<HTMLElement>('.MuiTableContainer-root')).map((b) => b.scrollWidth).join();
-    for (let seen = '', same = 0, tries = 0; same < 10 && tries < 120; tries++) {
+    let stable = false;
+    for (let seen = '', same = 0, tries = 0; tries < 120; tries++) {
+      if (same >= 10) { stable = true; break; }
       await frame();
       const now = widths();
       same = now === seen ? same + 1 : 0;
       seen = now;
     }
+    if (!stable) return { stats, problems: [], unstable: true };
     const outside = (r: DOMRect, c: DOMRect) => r.left < c.left - 0.5 || r.right > c.right + 0.5;
     for (const box of Array.from(document.querySelectorAll<HTMLElement>('.MuiTableContainer-root'))) {
       stats.tables++;
-      if (box.scrollWidth > box.clientWidth) stats.scrolling++;
+      const scrolls = box.scrollWidth > box.clientWidth;
+      if (scrolls) stats.scrolling++;
+      let own = 0;
       const controls = Array.from(box.querySelectorAll<HTMLElement>('td a[href], td button:not([disabled]), td input:not([disabled]), td [role=checkbox], th button:not([disabled]), th input:not([disabled])'));
       for (const el of controls) {
         // A control in a cell that a breakpoint hides has no box.
         if (el.getClientRects().length === 0 || !outside(el.getBoundingClientRect(), box.getBoundingClientRect())) continue;
         stats.cutOff++;
+        own++;
         el.focus();
         await frame();
         const r = el.getBoundingClientRect();
@@ -766,11 +784,14 @@ export async function expectTableCellsReachable(page: Page, what: string): Promi
         else if (outside(r, c)) problems.push(`${label}: ${Math.round(r.left)} to ${Math.round(r.right)} after focus, box ${Math.round(c.left)} to ${Math.round(c.right)} (scrolled ${Math.round(box.scrollLeft)} of ${box.scrollWidth - box.clientWidth})`);
         else if (r.left < 0 || r.right > window.innerWidth) problems.push(`${label}: off the screen after focus (${Math.round(r.left)} to ${Math.round(r.right)})`);
       }
+      stats.perTable.push({ scrolls, cutOff: own });
     }
-    return { stats, problems };
+    return { stats, problems, unstable: false };
   });
+  expect(result.unstable, `${what}: the table widths did not settle in 120 frames, so no scroll was measured`).toBe(false);
   expect(result.problems, `${what}: ${result.problems.length} control(s) in a cut-off cell are not fully visible after focus\n  ${result.problems.join('\n  ')}`).toEqual([]);
-  expect(result.stats.cutOff, `${what}: a cut-off control sits in a table that does not scroll`).toBeLessThanOrEqual(result.stats.scrolling ? Infinity : 0);
+  const stuck = result.stats.perTable.flatMap((t, i) => (t.cutOff > 0 && !t.scrolls ? [`table ${i + 1}: ${t.cutOff} cut-off control(s), but it does not scroll`] : []));
+  expect(stuck, `${what}: ${stuck.join('; ')}`).toEqual([]);
   test.info().annotations.push({ type: 'table', description: `${what}: ${JSON.stringify(result.stats)}` });
   return result.stats;
 }
