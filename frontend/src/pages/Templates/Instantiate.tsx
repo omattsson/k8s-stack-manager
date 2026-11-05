@@ -43,8 +43,10 @@ const Instantiate = () => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { errors: editorErrors, report: reportEditor } = useEditorErrors();
-  // A chart that is not included has no editor, so its error does not count.
-  const hasEditorError = chartOverrides.some((co, i) => co.enabled && Boolean(editorErrors[`${i}:values`]));
+  // An excluded chart or an unchanged default is not sent, so its error does not count.
+  const hasEditorError = chartOverrides.some(
+    (co, i) => co.enabled && co.values !== co.chart.default_values && Boolean(editorErrors[`${i}:values`]),
+  );
   const [touched, setTouched] = useState<Record<string, boolean>>({});
 
   useEffect(() => {

@@ -32,6 +32,8 @@ import TemplateLinkDialog from './TemplateLinkDialog';
 import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
 
 interface ChartFormData {
+  /** Stable client key: the list index shifts when a chart is removed. */
+  key: string;
   id?: string;
   chart_name: string;
   repository_url: string;
@@ -42,7 +44,11 @@ interface ChartFormData {
   deploy_order: number;
 }
 
+let chartKeySeq = 0;
+const newChartKey = () => `chart-${++chartKeySeq}`;
+
 const emptyChart = (): ChartFormData => ({
+  key: newChartKey(),
   chart_name: '',
   repository_url: '',
   source_repo_url: '',
@@ -54,6 +60,7 @@ const emptyChart = (): ChartFormData => ({
 
 /** Map an API chart config to form data. Null fields become empty strings. */
 const toChartFormData = (c: ChartConfig): ChartFormData => ({
+  key: newChartKey(),
   id: c.id,
   chart_name: c.chart_name ?? '',
   repository_url: c.repository_url ?? '',
@@ -113,6 +120,8 @@ const Form = () => {
   const [sourceTemplateName, setSourceTemplateName] = useState<string | undefined>();
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   const [charts, setCharts] = useState<ChartFormData[]>([]);
+  /** IDs of saved charts the user removed; deleted on the server at save. */
+  const [removedChartIds, setRemovedChartIds] = useState<string[]>([]);
   const [templateCharts, setTemplateCharts] = useState<TemplateChartConfig[]>([]);
   const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState(false);
@@ -216,6 +225,10 @@ const Form = () => {
   };
 
   const removeChart = (index: number) => {
+    const removedId = charts[index]?.id;
+    if (removedId) {
+      setRemovedChartIds((prev) => (prev.includes(removedId) ? prev : [...prev, removedId]));
+    }
     setCharts(charts.filter((_c, i) => i !== index));
     removeEditorErrors(index);
   };
@@ -243,8 +256,13 @@ const Form = () => {
         createdId.current = saved.id;
       }
 
+      for (const chartId of removedChartIds) {
+        await definitionService.deleteChart(saved.id, chartId);
+        setRemovedChartIds((prev) => prev.filter((cid) => cid !== chartId));
+      }
+
       // Keep the ID of an added chart at once: a retry after a failed chart updates it.
-      for (const [index, chart] of charts.entries()) {
+      for (const chart of charts) {
         const chartData = {
           chart_name: chart.chart_name,
           repository_url: chart.repository_url,
@@ -260,7 +278,7 @@ const Form = () => {
         } else {
           chartId = (await definitionService.addChart(saved.id, chartData)).id;
           const addedId = chartId;
-          setCharts((prev) => prev.map((c, i) => (i === index && !c.id ? { ...c, id: addedId } : c)));
+          setCharts((prev) => prev.map((c) => (c.key === chart.key && !c.id ? { ...c, id: addedId } : c)));
         }
         storedValues.current[chartId] = chart.default_values;
       }
@@ -420,7 +438,7 @@ const Form = () => {
           const lockedValues = matchingTemplateChart?.locked_values || '';
 
           return (
-          <Box key={chart.chart_name || `new-chart-${index}`} sx={{ mb: 3, p: 2, border: 1, borderColor: 'divider', borderRadius: 1 }}>
+          <Box key={chart.key} sx={{ mb: 3, p: 2, border: 1, borderColor: 'divider', borderRadius: 1 }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <Typography variant="subtitle1" component="h3">Chart #{index + 1}</Typography>

@@ -578,5 +578,33 @@ describe('Templates Builder', () => {
       expect(templateService.updateChart).toHaveBeenCalledWith('t1', 'n1', expect.anything());
       expect(templateService.addChart).toHaveBeenCalledTimes(3);
     });
+
+    it('gives the returned chart ID to the right chart when a chart is removed during the save', async () => {
+      const user = userEvent.setup();
+      (templateService.get as ReturnType<typeof vi.fn>).mockResolvedValue({ ...baseTemplate, charts: [] });
+      (templateService.update as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 't1', name: 'My Template' });
+      (templateService.updateChart as ReturnType<typeof vi.fn>).mockResolvedValue({});
+      let resolveA: (value: { id: string }) => void = () => {};
+      (templateService.addChart as ReturnType<typeof vi.fn>)
+        .mockReturnValueOnce(new Promise((resolve) => { resolveA = resolve; }))
+        .mockRejectedValueOnce({ response: { status: 400, data: { error: 'Invalid YAML in chart "b" locked_values: bad' } } })
+        .mockResolvedValueOnce({ id: 'n2' });
+      renderAt('/templates/t1/edit');
+      await screen.findByText('Edit Template');
+      await user.click(screen.getByRole('button', { name: /add chart/i }));
+      await user.click(screen.getByRole('button', { name: /add chart/i }));
+      const names = screen.getAllByLabelText(/chart name/i);
+      await user.type(names[0], 'a');
+      await user.type(names[1], 'b');
+      await user.click(screen.getByRole('button', { name: /save template/i }));
+      await waitFor(() => expect(templateService.addChart).toHaveBeenCalledTimes(1));
+      await user.click(screen.getByRole('button', { name: /remove chart 1/i }));
+      await act(async () => { resolveA({ id: 'n1' }); });
+      expect(await screen.findByText(/Invalid YAML in chart "b"/)).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: /save template/i }));
+      await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/templates/t1'));
+      expect(templateService.updateChart).not.toHaveBeenCalled();
+      expect(templateService.addChart).toHaveBeenLastCalledWith('t1', expect.objectContaining({ chart_name: 'b' }));
+    });
   });
 });

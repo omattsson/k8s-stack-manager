@@ -28,6 +28,8 @@ import PublishDialog from './PublishDialog';
 const CATEGORIES = ['Web', 'API', 'Data', 'Infrastructure', 'Other'];
 
 interface ChartFormData {
+  /** Stable client key: the list index shifts when a chart is removed. */
+  key: string;
   id?: string;
   chart_name: string;
   repository_url: string;
@@ -40,7 +42,11 @@ interface ChartFormData {
   required: boolean;
 }
 
+let chartKeySeq = 0;
+const newChartKey = () => `chart-${++chartKeySeq}`;
+
 const emptyChart = (): ChartFormData => ({
+  key: newChartKey(),
   chart_name: '',
   repository_url: '',
   source_repo_url: '',
@@ -105,6 +111,7 @@ const Builder = () => {
             data.charts.map((c: TemplateChartConfig) => [c.id, { default_values: c.default_values, locked_values: c.locked_values }]),
           );
           setCharts(data.charts.map((c: TemplateChartConfig) => ({
+            key: newChartKey(),
             id: c.id,
             chart_name: c.chart_name,
             repository_url: c.repository_url,
@@ -187,7 +194,7 @@ const Builder = () => {
       }
 
       // Keep the ID of an added chart at once: a retry after a failed chart updates it.
-      for (const [index, chart] of charts.entries()) {
+      for (const chart of charts) {
         const chartData = chartPayload(chart);
         let chartId = chart.id;
         if (chartId) {
@@ -195,7 +202,7 @@ const Builder = () => {
         } else {
           chartId = (await templateService.addChart(savedTemplate.id, chartData)).id;
           const addedId = chartId;
-          setCharts((prev) => prev.map((c, i) => (i === index && !c.id ? { ...c, id: addedId } : c)));
+          setCharts((prev) => prev.map((c) => (c.key === chart.key && !c.id ? { ...c, id: addedId } : c)));
         }
         storedValues.current[chartId] = { default_values: chart.default_values, locked_values: chart.locked_values };
       }
@@ -306,7 +313,7 @@ const Builder = () => {
         )}
 
         {charts.map((chart, index) => (
-          <Box key={chart.chart_name || `new-chart-${index}`} sx={{ mb: 3, p: 2, border: 1, borderColor: 'divider', borderRadius: 1 }}>
+          <Box key={chart.key} sx={{ mb: 3, p: 2, border: 1, borderColor: 'divider', borderRadius: 1 }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
               <Typography variant="subtitle1" component="h3">Chart #{index + 1}</Typography>
               <IconButton onClick={() => removeChart(index)} size="small" color="error" aria-label={`Remove chart ${index + 1}`}>

@@ -379,6 +379,30 @@ describe('Templates Instantiate', () => {
       await waitFor(() => expect(create).toBeEnabled());
     });
 
+    it('does not block the create for an unchanged stored default, and blocks a changed one', async () => {
+      const user = userEvent.setup();
+      const stored = {
+        ...mockTemplate,
+        charts: [{ ...mockTemplate.charts[0], default_values: 'tag: {{.Commit}}' }],
+      };
+      (templateService.get as ReturnType<typeof vi.fn>).mockResolvedValue(stored);
+      render(
+        <MemoryRouter initialEntries={['/templates/t1/use']}>
+          <Routes>
+            <Route path="/templates/:id/use" element={<Instantiate />} />
+          </Routes>
+        </MemoryRouter>
+      );
+      await screen.findByText(/Use Template/);
+      const create = screen.getByRole('button', { name: /create stack definition/i });
+      expect(create).toBeEnabled();
+      expect(screen.queryByTestId('yaml-error-hint')).not.toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: /break values/i }));
+      await waitFor(() => expect(create).toBeDisabled());
+      await user.click(screen.getByRole('button', { name: /fix values/i }));
+      await waitFor(() => expect(create).toBeEnabled());
+    });
+
     it('shows the API 400 message', async () => {
       const user = userEvent.setup();
       await renderUse();
