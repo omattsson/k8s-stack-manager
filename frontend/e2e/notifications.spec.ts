@@ -191,17 +191,6 @@ test.describe('Notifications', () => {
     }).toPass({ timeout: 5_000 });
   });
 
-  for (const from of ['page', 'bell menu'] as const) {
-    test(`an admin who clicks a cleanup policy notification in the ${from} opens the cleanup policies page`, async ({ page }) => {
-      await loginAsAdmin(page);
-      await mockPolicyNotification(page);
-      await openPolicyNotification(page, from);
-
-      await expect(page).toHaveURL(/\/admin\/cleanup-policies$/);
-      await expect(page.getByRole('heading', { level: 1, name: 'Cleanup Policies' })).toBeVisible({ timeout: 10_000 });
-    });
-  }
-
   test('a devops user who clicks a cleanup policy notification stays on the page', async ({ page }) => {
     await mockPolicyNotification(page);
     await openPolicyNotification(page, 'page');
@@ -209,6 +198,22 @@ test.describe('Notifications', () => {
     await expect(page).toHaveURL(/\/notifications$/);
     await expect(page.getByText('You do not have permission to access this page.')).toHaveCount(0);
   });
+});
+
+test.describe('Notifications as admin', () => {
+  test.beforeEach(async ({ page }) => {
+    await loginAsAdmin(page);
+  });
+
+  for (const from of ['page', 'bell menu'] as const) {
+    test(`an admin who clicks a cleanup policy notification in the ${from} opens the cleanup policies page`, async ({ page }) => {
+      await mockPolicyNotification(page);
+      await openPolicyNotification(page, from);
+
+      await expect(page).toHaveURL(/\/admin\/cleanup-policies$/);
+      await expect(page.getByRole('heading', { level: 1, name: 'Cleanup Policies' })).toBeVisible({ timeout: 10_000 });
+    });
+  }
 });
 
 const policyNotification = {
