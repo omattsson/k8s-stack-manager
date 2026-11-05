@@ -1,5 +1,5 @@
 import { test, expect, type APIRequestContext, type Locator, type Page, type Route } from '@playwright/test';
-import { API_BASE, apiCreateDefinition, apiLogin, ensureDefaultCluster, loginAsDevops, uniqueName } from './helpers';
+import { API_BASE, apiCreateDefinition, apiLogin, ensureDefaultCluster, loginAsAdmin, loginAsDevops, uniqueName } from './helpers';
 
 const mockNotifications = [
   {
@@ -190,7 +190,61 @@ test.describe('Notifications', () => {
       expect(markReadCalled).toBe(true);
     }).toPass({ timeout: 5_000 });
   });
+
+  test('a devops user who clicks a cleanup policy notification stays on the page', async ({ page }) => {
+    await mockPolicyNotification(page);
+    await openPolicyNotification(page, 'page');
+
+    await expect(page).toHaveURL(/\/notifications$/);
+    await expect(page.getByText('You do not have permission to access this page.')).toHaveCount(0);
+  });
 });
+
+test.describe('Notifications as admin', () => {
+  test.beforeEach(async ({ page }) => {
+    await loginAsAdmin(page);
+  });
+
+  for (const from of ['page', 'bell menu'] as const) {
+    test(`an admin who clicks a cleanup policy notification in the ${from} opens the cleanup policies page`, async ({ page }) => {
+      await mockPolicyNotification(page);
+      await openPolicyNotification(page, from);
+
+      await expect(page).toHaveURL(/\/admin\/cleanup-policies$/);
+      await expect(page.getByRole('heading', { level: 1, name: 'Cleanup Policies' })).toBeVisible({ timeout: 10_000 });
+    });
+  }
+});
+
+const policyNotification = {
+  id: 'n-policy-1',
+  title: 'Cleanup policy "nightly" ran',
+  message: 'Policy "nightly" matched 2 instance(s), action: delete',
+  type: 'cleanup.policy.executed',
+  is_read: true,
+  entity_type: 'cleanup_policy',
+  entity_id: 'dd803cd0-72a7-4eba-9eec-ee5f29e1fc37',
+  created_at: new Date().toISOString(),
+};
+
+async function mockPolicyNotification(page: Page) {
+  await page.route('**/api/v1/notifications?*', async (route) => {
+    await route.fulfill({ json: { notifications: [policyNotification], total: 1, unread_count: 0 } });
+  });
+  await page.route('**/api/v1/notifications/count', async (route) => {
+    await route.fulfill({ json: { unread_count: 0 } });
+  });
+}
+
+async function openPolicyNotification(page: Page, from: 'page' | 'bell menu') {
+  if (from === 'page') {
+    await page.goto('/notifications');
+  } else {
+    await page.goto('/');
+    await page.getByRole('button', { name: /^Open notifications/ }).click();
+  }
+  await page.getByText(policyNotification.title).click();
+}
 
 // ---------------------------------------------------------------------------
 // Who did the action (#652): "by alice", "by you", "by expiry",

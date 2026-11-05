@@ -9,6 +9,7 @@ import WarningAmberOutlined from '@mui/icons-material/WarningAmberOutlined';
 import CleaningServicesOutlined from '@mui/icons-material/CleaningServicesOutlined';
 import VpnKeyOutlined from '@mui/icons-material/VpnKeyOutlined';
 import type { Notification } from '../types';
+import { hasAtLeastRole } from './roles';
 
 /**
  * Returns a human-readable relative time string for a given ISO date.
@@ -74,19 +75,23 @@ export function formatTrigger(
 }
 
 /**
- * Maps a notification entity_type to a base route path for navigation.
+ * Maps a notification entity to the frontend route that shows it, or '' when there is none
+ * or the role cannot open it. Cluster and cleanup policy pages have no per-entity route.
  */
-export function entityRoute(entityType?: string): string {
+export function entityPath(entityType?: string, entityId?: string, role?: string): string {
+  if (!entityId) return '';
+  const id = encodeURIComponent(entityId);
   switch (entityType) {
     case 'stack_instance':
-      return '/stack-instances';
+      return `/stack-instances/${id}`;
     case 'stack_definition':
-      return '/stack-definitions';
+      return `/stack-definitions/${id}/edit`;
     case 'stack_template':
-      return '/templates';
+      return `/templates/${id}`;
     case 'cluster':
+      return hasAtLeastRole(role, 'devops') ? '/admin/cluster-health' : '';
     case 'cleanup_policy':
-      return '/settings';
+      return hasAtLeastRole(role, 'admin') ? '/admin/cleanup-policies' : '';
     default:
       return '';
   }

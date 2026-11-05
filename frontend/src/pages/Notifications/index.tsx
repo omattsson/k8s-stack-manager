@@ -21,7 +21,7 @@ import LoadingState from '../../components/LoadingState';
 import NotificationMeta from '../../components/NotificationCenter/NotificationMeta';
 import NotificationTitle from '../../components/NotificationCenter/NotificationTitle';
 import { useAuth } from '../../context/AuthContext';
-import { notificationIcon, entityRoute } from '../../utils/notificationHelpers';
+import { notificationIcon, entityPath } from '../../utils/notificationHelpers';
 import type { Notification } from '../../types';
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50];
@@ -88,9 +88,9 @@ const Notifications = () => {
       }
     }
 
-    const basePath = entityRoute(notification.entity_type);
-    if (basePath && notification.entity_id) {
-      navigate(`${basePath}/${notification.entity_id}`);
+    const path = entityPath(notification.entity_type, notification.entity_id, user?.role);
+    if (path) {
+      navigate(path);
     }
   };
 

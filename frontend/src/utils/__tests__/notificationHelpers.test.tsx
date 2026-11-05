@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { timeAgo, notificationIcon, entityRoute, formatTrigger } from '../notificationHelpers';
+import { timeAgo, notificationIcon, entityPath, formatTrigger } from '../notificationHelpers';
 
 describe('notificationHelpers', () => {
   describe('timeAgo', () => {
@@ -110,25 +110,20 @@ describe('notificationHelpers', () => {
     });
   });
 
-  describe('entityRoute', () => {
-    it('returns /stack-instances for stack_instance', () => {
-      expect(entityRoute('stack_instance')).toBe('/stack-instances');
-    });
-
-    it('returns /stack-definitions for stack_definition', () => {
-      expect(entityRoute('stack_definition')).toBe('/stack-definitions');
-    });
-
-    it('returns /templates for stack_template', () => {
-      expect(entityRoute('stack_template')).toBe('/templates');
-    });
-
-    it('returns empty string for unknown type', () => {
-      expect(entityRoute('unknown')).toBe('');
-    });
-
-    it('returns empty string for undefined', () => {
-      expect(entityRoute(undefined)).toBe('');
+  describe('entityPath', () => {
+    it.each([
+      ['stack_instance', 'i-1', 'user', '/stack-instances/i-1'],
+      ['stack_definition', 'd-1', 'user', '/stack-definitions/d-1/edit'],
+      ['stack_template', 't-1', 'user', '/templates/t-1'],
+      ['cluster', 'c-1', 'devops', '/admin/cluster-health'],
+      ['cluster', 'c-1', 'user', ''],
+      ['cleanup_policy', 'p-1', 'admin', '/admin/cleanup-policies'],
+      ['cleanup_policy', 'p-1', 'devops', ''],
+      ['unknown', 'x-1', 'admin', ''],
+      [undefined, 'x-1', 'admin', ''],
+      ['stack_instance', undefined, 'admin', ''],
+    ])('maps %s/%s for %s to "%s"', (type, id, role, want) => {
+      expect(entityPath(type, id, role)).toBe(want);
     });
   });
 
