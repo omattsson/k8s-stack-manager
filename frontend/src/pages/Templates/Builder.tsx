@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Box,
@@ -73,7 +73,15 @@ const Builder = () => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { errors: editorErrors, report: reportEditor, removeIndex: removeEditorErrors } = useEditorErrors();
-  const hasEditorError = Object.keys(editorErrors).length > 0;
+  // Values as stored on the server: the API checks only a changed value on update (#756).
+  const storedValues = useRef<Record<string, { default_values: string; locked_values: string }>>({});
+  const hasEditorError = Object.keys(editorErrors).some((key) => {
+    const [index, field] = key.split(':');
+    const chart = charts[Number(index)];
+    if (!chart) return false;
+    const stored = chart.id ? storedValues.current[chart.id] : undefined;
+    return !stored || stored[field as 'default_values' | 'locked_values'] !== chart[field as 'default_values' | 'locked_values'];
+  });
 
   useEffect(() => {
     if (!id) return;
@@ -93,6 +101,9 @@ const Builder = () => {
         setIsPublished(data.is_published);
         setPublishedVersion(data.published_version ?? null);
         if (data.charts) {
+          storedValues.current = Object.fromEntries(
+            data.charts.map((c: TemplateChartConfig) => [c.id, { default_values: c.default_values, locked_values: c.locked_values }]),
+          );
           setCharts(data.charts.map((c: TemplateChartConfig) => ({
             id: c.id,
             chart_name: c.chart_name,
@@ -150,12 +161,23 @@ const Builder = () => {
         default_branch: defaultBranch,
       };
 
-      let savedTemplate: StackTemplate;
-      if (isEdit && id) {
-        savedTemplate = await templateService.update(id, templateData);
-      } else {
-        savedTemplate = await templateService.create(templateData);
+      const chartPayload = (chart: ChartFormData) => ({
+        chart_name: chart.chart_name,
+        repository_url: chart.repository_url,
+        source_repo_url: chart.source_repo_url,
+        chart_path: chart.chart_path,
+        chart_version: chart.chart_version,
+        default_values: chart.default_values,
+        locked_values: chart.locked_values,
+        deploy_order: chart.deploy_order,
+        required: chart.required,
+      });
+
+      if (!(isEdit && id)) {
+        // One request: the API checks every chart first, so a 400 creates nothing and a retry cannot duplicate.
+        return await templateService.create({ ...templateData, charts: charts.map(chartPayload) });
       }
+      const savedTemplate = await templateService.update(id, templateData);
 
       // Delete removed charts first, so that a following publish cannot
       // release a chart the user removed.
@@ -164,24 +186,18 @@ const Builder = () => {
         setRemovedChartIds((prev) => prev.filter((cid) => cid !== chartId));
       }
 
-      // Save charts
-      for (const chart of charts) {
-        const chartData = {
-          chart_name: chart.chart_name,
-          repository_url: chart.repository_url,
-          source_repo_url: chart.source_repo_url,
-          chart_path: chart.chart_path,
-          chart_version: chart.chart_version,
-          default_values: chart.default_values,
-          locked_values: chart.locked_values,
-          deploy_order: chart.deploy_order,
-          required: chart.required,
-        };
-        if (chart.id) {
-          await templateService.updateChart(savedTemplate.id, chart.id, chartData);
+      // Keep the ID of an added chart at once: a retry after a failed chart updates it.
+      for (const [index, chart] of charts.entries()) {
+        const chartData = chartPayload(chart);
+        let chartId = chart.id;
+        if (chartId) {
+          await templateService.updateChart(savedTemplate.id, chartId, chartData);
         } else {
-          await templateService.addChart(savedTemplate.id, chartData);
+          chartId = (await templateService.addChart(savedTemplate.id, chartData)).id;
+          const addedId = chartId;
+          setCharts((prev) => prev.map((c, i) => (i === index && !c.id ? { ...c, id: addedId } : c)));
         }
+        storedValues.current[chartId] = { default_values: chart.default_values, locked_values: chart.locked_values };
       }
       return savedTemplate;
     } catch (err) {

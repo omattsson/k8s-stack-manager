@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Box,
@@ -118,7 +118,16 @@ const Form = () => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { errors: editorErrors, report: reportEditor, removeIndex: removeEditorErrors } = useEditorErrors();
-  const hasEditorError = Object.keys(editorErrors).length > 0;
+  // Values as stored on the server: the API checks only a changed value on update (#756).
+  const storedValues = useRef<Record<string, string>>({});
+  // The definition that a failed save already created: a retry updates it.
+  const createdId = useRef<string | null>(null);
+  const hasEditorError = Object.keys(editorErrors).some((key) => {
+    const chart = charts[Number(key.split(':')[0])];
+    if (!chart) return false;
+    const stored = chart.id ? storedValues.current[chart.id] : undefined;
+    return stored === undefined || stored !== chart.default_values;
+  });
   const [exporting, setExporting] = useState(false);
   const [upgradeDialogOpen, setUpgradeDialogOpen] = useState(false);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
@@ -150,6 +159,7 @@ const Form = () => {
         setDefaultBranch(data.default_branch ?? '');
         setSourceTemplateId(data.source_template_id);
         setSourceTemplateVersion(data.source_template_version);
+        storedValues.current = Object.fromEntries(loadedCharts.map((c) => [c.id, c.default_values]));
         setCharts(loadedCharts);
         setBaseline(serializeFormValues({
           name: data.name ?? '',
@@ -224,35 +234,35 @@ const Form = () => {
         default_branch: defaultBranch,
       };
 
+      const targetId = (isEdit && id) || createdId.current;
       let saved: StackDefinition;
-      if (isEdit && id) {
-        saved = await definitionService.update(id, defData);
+      if (targetId) {
+        saved = await definitionService.update(targetId, defData);
       } else {
         saved = await definitionService.create(defData);
+        createdId.current = saved.id;
       }
 
-      for (const chart of charts) {
-        if (chart.id) {
-          await definitionService.updateChart(saved.id, chart.id, {
-            chart_name: chart.chart_name,
-            repository_url: chart.repository_url,
-            source_repo_url: chart.source_repo_url,
-            chart_path: chart.chart_path,
-            chart_version: chart.chart_version,
-            default_values: chart.default_values,
-            deploy_order: chart.deploy_order,
-          });
+      // Keep the ID of an added chart at once: a retry after a failed chart updates it.
+      for (const [index, chart] of charts.entries()) {
+        const chartData = {
+          chart_name: chart.chart_name,
+          repository_url: chart.repository_url,
+          source_repo_url: chart.source_repo_url,
+          chart_path: chart.chart_path,
+          chart_version: chart.chart_version,
+          default_values: chart.default_values,
+          deploy_order: chart.deploy_order,
+        };
+        let chartId = chart.id;
+        if (chartId) {
+          await definitionService.updateChart(saved.id, chartId, chartData);
         } else {
-          await definitionService.addChart(saved.id, {
-            chart_name: chart.chart_name,
-            repository_url: chart.repository_url,
-            source_repo_url: chart.source_repo_url,
-            chart_path: chart.chart_path,
-            chart_version: chart.chart_version,
-            default_values: chart.default_values,
-            deploy_order: chart.deploy_order,
-          });
+          chartId = (await definitionService.addChart(saved.id, chartData)).id;
+          const addedId = chartId;
+          setCharts((prev) => prev.map((c, i) => (i === index && !c.id ? { ...c, id: addedId } : c)));
         }
+        storedValues.current[chartId] = chart.default_values;
       }
 
       navigate('/stack-definitions');
