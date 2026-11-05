@@ -64,6 +64,7 @@ func TestChartValuesValidation_DefinitionCharts(t *testing.T) {
 	t.Parallel()
 
 	newDef := func(t *testing.T) (*MockChartConfigRepository, *gin.Engine) {
+		t.Helper()
 		defRepo := NewMockStackDefinitionRepository()
 		require.NoError(t, defRepo.Create(context.Background(), &models.StackDefinition{ID: "def-1", Name: "d", OwnerID: "uid-1", DefaultBranch: "master"}))
 		chartRepo := NewMockChartConfigRepository()
@@ -133,6 +134,7 @@ func TestChartValuesValidation_TemplateCharts(t *testing.T) {
 	t.Parallel()
 
 	newTmpl := func(t *testing.T) (*MockTemplateChartConfigRepository, *gin.Engine) {
+		t.Helper()
 		tmplRepo := NewMockStackTemplateRepository()
 		seedTemplate(t, tmplRepo, "t1", "T", "uid-1", false)
 		chartRepo := NewMockTemplateChartConfigRepository()
@@ -240,6 +242,7 @@ func TestChartValuesValidation_InstantiateAndClone(t *testing.T) {
 	t.Parallel()
 
 	seed := func(t *testing.T, stored string) (*MockStackDefinitionRepository, *gin.Engine) {
+		t.Helper()
 		tmplRepo := NewMockStackTemplateRepository()
 		chartRepo := NewMockTemplateChartConfigRepository()
 		defRepo := NewMockStackDefinitionRepository()

@@ -1,7 +1,8 @@
 package handlers
 
 import (
-	"fmt"
+	"errors"
+	"strconv"
 
 	"backend/internal/helm"
 )
@@ -15,8 +16,9 @@ func validateChartValues(field, chartName, value string) error {
 	if err == nil {
 		return nil
 	}
-	if chartName == "" {
-		return fmt.Errorf("Invalid YAML in %s: %w", field, err)
+	prefix := "Invalid YAML in "
+	if chartName != "" {
+		prefix += "chart " + strconv.Quote(chartName) + " "
 	}
-	return fmt.Errorf("Invalid YAML in chart %q %s: %w", chartName, field, err)
+	return errors.New(prefix + field + ": " + err.Error())
 }
