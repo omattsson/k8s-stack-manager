@@ -22,7 +22,7 @@ import { notificationService } from '../../api/client';
 import { useWebSocket } from '../../hooks/useWebSocket';
 import { useNotification } from '../../context/NotificationContext';
 import { useAuth } from '../../context/AuthContext';
-import { notificationIcon, entityRoute } from '../../utils/notificationHelpers';
+import { notificationIcon, entityPath } from '../../utils/notificationHelpers';
 import type { Notification } from '../../types';
 import NotificationMeta from './NotificationMeta';
 import NotificationTitle from './NotificationTitle';
@@ -106,10 +106,10 @@ const NotificationCenter = () => {
       }
     }
 
-    const basePath = entityRoute(notification.entity_type);
-    if (basePath && notification.entity_id) {
+    const path = entityPath(notification.entity_type, notification.entity_id, user?.role);
+    if (path) {
       handleClose();
-      navigate(`${basePath}/${notification.entity_id}`);
+      navigate(path);
     }
   };
 
