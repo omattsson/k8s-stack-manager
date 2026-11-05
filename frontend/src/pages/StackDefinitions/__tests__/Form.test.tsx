@@ -48,16 +48,41 @@ vi.mock('../../../api/client', () => ({
   },
 }));
 
-vi.mock('../../../components/YamlEditor', () => ({
-  default: (props: { label?: string; value: string; readOnly?: boolean; onChange?: (val: string) => void }) => (
-    <div data-testid="yaml-editor">
-      <span>{props.label}</span>
-      <pre>{props.value}</pre>
-      {props.readOnly && <span>read-only</span>}
-      {props.onChange && <button onClick={() => props.onChange!('new: value')}>change-yaml</button>}
-    </div>
-  ),
-}));
+vi.mock('../../../components/YamlEditor', async () => {
+  const { useEffect } = await import('react');
+  const { checkYamlValues } = await import('../../../utils/yamlValidation');
+  const MockYamlEditor = (props: {
+    label?: string;
+    value: string;
+    readOnly?: boolean;
+    onChange?: (val: string) => void;
+    onValidationChange?: (error: string | null) => void;
+  }) => {
+    // The real validator and the report of the real editor.
+    const problem = props.readOnly ? null : checkYamlValues(props.value);
+    const blocking = problem?.blocking ? problem.message : null;
+    useEffect(() => {
+      if (!props.readOnly) props.onValidationChange?.(blocking);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [blocking]);
+    return (
+      <div data-testid="yaml-editor">
+        <span>{props.label}</span>
+        <pre>{props.value}</pre>
+        {props.readOnly && <span>read-only</span>}
+        {!props.readOnly && props.onChange && (
+          <>
+            <button type="button" onClick={() => props.onChange!('new: value')}>change-yaml</button>
+            <button type="button" onClick={() => props.onChange!('tag: {{.Branch}}')}>break {props.label}</button>
+            <button type="button" onClick={() => props.onChange!('tag: main')}>fix {props.label}</button>
+            <button type="button" onClick={() => props.onChange!('a: 1\na: 2')}>duplicate {props.label}</button>
+          </>
+        )}
+      </div>
+    );
+  };
+  return { default: MockYamlEditor };
+});
 
 import { definitionService, templateService } from '../../../api/client';
 import { useUnsavedChanges } from '../../../hooks/useUnsavedChanges';
@@ -612,4 +637,59 @@ describe('StackDefinitions Form', () => {
     expect(screen.getByDisplayValue('Renamed Def')).toBeInTheDocument();
   });
 
+  describe('chart values validation (#756)', () => {
+    const renderEdit = async () => {
+      (definitionService.get as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitionWithCharts);
+      render(
+        <MemoryRouter initialEntries={['/stack-definitions/123/edit']}>
+          <NotificationProvider>
+            <Routes>
+              <Route path="/stack-definitions/:id/edit" element={<Form />} />
+            </Routes>
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      await screen.findByText('Edit Stack Definition');
+    };
+
+    it('disables save while an editor reports an error and enables it after the fix', async () => {
+      const user = userEvent.setup();
+      await renderEdit();
+      const save = screen.getByRole('button', { name: /save definition/i });
+      expect(save).toBeEnabled();
+      await user.click(screen.getByRole('button', { name: /break default values/i }));
+      await waitFor(() => expect(save).toBeDisabled());
+      expect(screen.getByTestId('yaml-error-hint')).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: /fix default values/i }));
+      await waitFor(() => expect(save).toBeEnabled());
+      expect(screen.queryByTestId('yaml-error-hint')).not.toBeInTheDocument();
+    });
+
+    it('does not block the save for a warning only', async () => {
+      const user = userEvent.setup();
+      await renderEdit();
+      await user.click(screen.getByRole('button', { name: /duplicate default values/i }));
+      expect(screen.getByRole('button', { name: /save definition/i })).toBeEnabled();
+    });
+
+    it('clears the error when the chart is removed', async () => {
+      const user = userEvent.setup();
+      await renderEdit();
+      await user.click(screen.getByRole('button', { name: /break default values/i }));
+      const save = screen.getByRole('button', { name: /save definition/i });
+      await waitFor(() => expect(save).toBeDisabled());
+      await user.click(screen.getByRole('button', { name: /remove chart frontend/i }));
+      await waitFor(() => expect(save).toBeEnabled());
+    });
+
+    it('shows the API 400 message', async () => {
+      const user = userEvent.setup();
+      await renderEdit();
+      (definitionService.update as ReturnType<typeof vi.fn>).mockRejectedValue({
+        response: { status: 400, data: { error: 'Invalid YAML in chart "frontend" default_values: bad' } },
+      });
+      await user.click(screen.getByRole('button', { name: /save definition/i }));
+      expect(await screen.findByText(/Invalid YAML in chart "frontend" default_values: bad/)).toBeInTheDocument();
+    });
+  });
 });

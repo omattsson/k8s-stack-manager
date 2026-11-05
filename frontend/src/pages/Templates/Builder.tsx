@@ -19,6 +19,8 @@ import { templateService } from '../../api/client';
 import { useNotification } from '../../context/NotificationContext';
 import type { PublishTemplateResult, StackTemplate, TemplateChartConfig } from '../../types';
 import YamlEditor from '../../components/YamlEditor';
+import { useEditorErrors, EDITOR_ERROR_HINT } from '../../hooks/useEditorErrors';
+import { describeApiError } from '../../utils/apiError';
 import LoadingState from '../../components/LoadingState';
 import { SAVED_AS_DRAFT_MESSAGE } from '../../utils/templateVersion';
 import PublishDialog from './PublishDialog';
@@ -70,6 +72,8 @@ const Builder = () => {
   const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { errors: editorErrors, report: reportEditor, removeIndex: removeEditorErrors } = useEditorErrors();
+  const hasEditorError = Object.keys(editorErrors).length > 0;
 
   useEffect(() => {
     if (!id) return;
@@ -125,6 +129,7 @@ const Builder = () => {
       setRemovedChartIds((prev) => (prev.includes(removedId) ? prev : [...prev, removedId]));
     }
     setCharts(charts.filter((_c, i) => i !== index));
+    removeEditorErrors(index);
   };
 
   const updateChart = (index: number, field: keyof ChartFormData, value: string | number | boolean) => {
@@ -179,8 +184,8 @@ const Builder = () => {
         }
       }
       return savedTemplate;
-    } catch {
-      setError('Failed to save template');
+    } catch (err) {
+      setError(await describeApiError(err, 'Failed to save template'));
       return null;
     } finally {
       setSaving(false);
@@ -312,12 +317,14 @@ const Builder = () => {
                 label="Default Values (YAML)"
                 value={chart.default_values}
                 onChange={(val) => updateChart(index, 'default_values', val)}
+                onValidationChange={(message) => reportEditor(`${index}:default_values`, message)}
                 height="200px"
               />
               <YamlEditor
                 label="Locked Values (YAML)"
                 value={chart.locked_values}
                 onChange={(val) => updateChart(index, 'locked_values', val)}
+                onValidationChange={(message) => reportEditor(`${index}:locked_values`, message)}
                 height="150px"
               />
             </Box>
@@ -326,12 +333,17 @@ const Builder = () => {
       </Paper>
 
       <Box sx={{ display: 'flex', gap: 2 }}>
-        <Button variant="contained" onClick={handleSave} disabled={saving || !name}>
+        <Button variant="contained" onClick={handleSave} disabled={saving || !name || hasEditorError}>
           {saving ? 'Saving...' : 'Save Template'}
         </Button>
-        <Button variant="outlined" onClick={handleSaveAndPublish} disabled={saving || !name}>
+        <Button variant="outlined" onClick={handleSaveAndPublish} disabled={saving || !name || hasEditorError}>
           Save and Publish
         </Button>
+        {hasEditorError && (
+          <Typography variant="body2" color="error" role="alert" data-testid="yaml-error-hint" sx={{ alignSelf: 'center' }}>
+            {EDITOR_ERROR_HINT}
+          </Typography>
+        )}
         <Button variant="outlined" onClick={() => navigate('/templates')}>
           Cancel
         </Button>

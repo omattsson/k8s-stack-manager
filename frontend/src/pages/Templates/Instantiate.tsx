@@ -15,6 +15,8 @@ import {
 import { templateService } from '../../api/client';
 import type { StackTemplate, TemplateChartConfig } from '../../types';
 import YamlEditor from '../../components/YamlEditor';
+import { useEditorErrors, EDITOR_ERROR_HINT } from '../../hooks/useEditorErrors';
+import { describeApiError } from '../../utils/apiError';
 import LoadingState from '../../components/LoadingState';
 import { trackRecentTemplate } from '../../utils/recentTemplates';
 import {
@@ -40,6 +42,9 @@ const Instantiate = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { errors: editorErrors, report: reportEditor } = useEditorErrors();
+  // A chart that is not included has no editor, so its error does not count.
+  const hasEditorError = chartOverrides.some((co, i) => co.enabled && Boolean(editorErrors[`${i}:values`]));
   const [touched, setTouched] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
@@ -122,7 +127,7 @@ const Instantiate = () => {
       }
       navigate(`/stack-definitions/${definition.id}/edit`);
     } catch (err) {
-      setError(isNoPublishedVersionError(err) ? NO_PUBLISHED_VERSION_MESSAGE : 'Failed to instantiate template');
+      setError(isNoPublishedVersionError(err) ? NO_PUBLISHED_VERSION_MESSAGE : await describeApiError(err, 'Failed to instantiate template'));
     } finally {
       setSaving(false);
     }
@@ -215,6 +220,7 @@ const Instantiate = () => {
                 label="Values (YAML)"
                 value={co.values}
                 onChange={(val) => updateOverride(index, val)}
+                onValidationChange={(message) => reportEditor(`${index}:values`, message)}
                 height="250px"
               />
 
@@ -236,10 +242,15 @@ const Instantiate = () => {
       ))}
 
       <Box sx={{ display: 'flex', gap: 2, mt: 2, justifyContent: 'flex-end' }}>
+        {hasEditorError && (
+          <Typography variant="body2" color="error" role="alert" data-testid="yaml-error-hint" sx={{ alignSelf: 'center' }}>
+            {EDITOR_ERROR_HINT}
+          </Typography>
+        )}
         <Button variant="outlined" onClick={() => navigate(`/templates/${id}`)}>
           Cancel
         </Button>
-        <Button variant="contained" onClick={handleInstantiate} disabled={saving || !defName.trim() || noRelease}>
+        <Button variant="contained" onClick={handleInstantiate} disabled={saving || !defName.trim() || noRelease || hasEditorError}>
           {saving ? 'Creating...' : 'Create Stack Definition'}
         </Button>
       </Box>

@@ -24,6 +24,8 @@ import { useAuth } from '../../context/AuthContext';
 import { hasAtLeastRole } from '../../utils/roles';
 import type { StackDefinition, ChartConfig, TemplateChartConfig } from '../../types';
 import YamlEditor from '../../components/YamlEditor';
+import { useEditorErrors, EDITOR_ERROR_HINT } from '../../hooks/useEditorErrors';
+import { describeApiError } from '../../utils/apiError';
 import LoadingState from '../../components/LoadingState';
 import UpgradeDialog from './UpgradeDialog';
 import TemplateLinkDialog from './TemplateLinkDialog';
@@ -115,6 +117,8 @@ const Form = () => {
   const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { errors: editorErrors, report: reportEditor, removeIndex: removeEditorErrors } = useEditorErrors();
+  const hasEditorError = Object.keys(editorErrors).length > 0;
   const [exporting, setExporting] = useState(false);
   const [upgradeDialogOpen, setUpgradeDialogOpen] = useState(false);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
@@ -203,6 +207,7 @@ const Form = () => {
 
   const removeChart = (index: number) => {
     setCharts(charts.filter((_c, i) => i !== index));
+    removeEditorErrors(index);
   };
 
   const updateChart = (index: number, field: keyof ChartFormData, value: string | number) => {
@@ -251,8 +256,8 @@ const Form = () => {
       }
 
       navigate('/stack-definitions');
-    } catch {
-      setError('Failed to save definition');
+    } catch (err) {
+      setError(await describeApiError(err, 'Failed to save definition'));
     } finally {
       setSaving(false);
     }
@@ -437,6 +442,7 @@ const Form = () => {
                 label="Default Values (YAML)"
                 value={chart.default_values}
                 onChange={(val) => updateChart(index, 'default_values', val)}
+                onValidationChange={(message) => reportEditor(`${index}:default_values`, message)}
                 height="200px"
               />
               {lockedValues && (
@@ -470,7 +476,12 @@ const Form = () => {
         <Button variant="outlined" onClick={() => navigate('/stack-definitions')}>
           Cancel
         </Button>
-        <Button variant="contained" onClick={handleSave} disabled={saving || !name.trim()}>
+        {hasEditorError && (
+          <Typography variant="body2" color="error" role="alert" data-testid="yaml-error-hint" sx={{ alignSelf: 'center' }}>
+            {EDITOR_ERROR_HINT}
+          </Typography>
+        )}
+        <Button variant="contained" onClick={handleSave} disabled={saving || !name.trim() || hasEditorError}>
           {saving ? 'Saving...' : 'Save Definition'}
         </Button>
       </Box>
