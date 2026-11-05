@@ -148,6 +148,9 @@ E2E_DB_NAME ?= app_e2e
 # make test-e2e E2E_SPECS=e2e/custom-actions.spec.ts (default: all). With
 # E2E_SPECS, the isolated phase does not run.
 E2E_SPECS ?=
+# Run one part of the main suite, for example E2E_SHARD=2/4 (CI runs the parts
+# in parallel jobs). With E2E_SHARD, the isolated phase does not run.
+E2E_SHARD ?=
 E2E_HOME := $(CURDIR)/backend/tmp/e2e-home
 E2E_PID := $(CURDIR)/backend/tmp/e2e-backend.pid
 # Database access for the specs that change rows directly (helpers.ts, for
@@ -301,15 +304,15 @@ test-e2e: e2e-prepare
 	@echo "Starting backend..."
 	$(call e2e_start_backend,,backend.log)
 	@echo "Backend is ready, running Playwright tests..."
-	@cd frontend && $(E2E_DB_PLAYWRIGHT_ENV) $(E2E_STUB_PLAYWRIGHT_ENV) bash -o pipefail -c 'npx playwright test $(E2E_SPECS) 2>&1 | tee test-logs/playwright.log'; \
+	@cd frontend && $(E2E_DB_PLAYWRIGHT_ENV) $(E2E_STUB_PLAYWRIGHT_ENV) bash -o pipefail -c 'npx playwright test $(E2E_SPECS) $(if $(strip $(E2E_SHARD)),--shard=$(E2E_SHARD)) 2>&1 | tee test-logs/playwright.log'; \
 		echo $$? > $(E2E_MAIN_STATUS)
-ifeq ($(strip $(E2E_SPECS)),)
+ifeq ($(strip $(E2E_SPECS)$(E2E_SHARD)),)
 	@echo "Restarting backend for the isolated specs (short session limits)..."
 	$(call e2e_stop_backend_and_wait)
 	$(call e2e_start_backend,$(E2E_SESSION_BACKEND_ENV),backend-isolated.log)
 	$(call e2e_run_isolated_specs)
 else
-	@echo "E2E_SPECS is set: the isolated phase does not run."
+	@echo "E2E_SPECS or E2E_SHARD is set: the isolated phase does not run."
 endif
 	@echo "Stopping backend..."
 	@$(E2E_STOP_BACKEND) || true
