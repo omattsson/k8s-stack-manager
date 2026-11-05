@@ -97,8 +97,8 @@ Hide or disable controls that the backend refuses, for example Create Definition
 ## Accessibility
 The specs run in both colour modes. `e2e/a11y.ts` holds the shared axe run, measurements and seed data.
 - `accessibility.spec.ts`: pages (`pageList` in `a11y.ts`) and their states: selected row, menus on hover and focus, toasts.
-- `accessibility-dialogs.spec.ts`: dialogs.
-- `accessibility-phone.spec.ts`: the phone layout.
+- `accessibility-dialogs.spec.ts`: dialogs. The dialog list is in `e2e/a11yDialogs.ts`, and the phone spec runs it too.
+- `accessibility-phone.spec.ts`: the phone layout, and the sideways scroll of tables (`KNOWN_UNDECIDED` relies on it).
 - `accessibility-signals.spec.ts`: what axe does not judge: focus rings, tooltips, bars, colour as the only signal.
 
 Rules:

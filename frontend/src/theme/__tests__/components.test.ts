@@ -41,5 +41,7 @@ describe('getComponentOverrides', () => {
     expect(overrides?.MuiButtonBase).toBeDefined();
     expect(overrides?.MuiListItemButton).toBeDefined();
     expect(overrides?.MuiTooltip).toBeDefined();
+    expect(overrides?.MuiLinearProgress).toBeDefined();
+    expect(overrides?.MuiTableContainer?.styleOverrides?.root).toEqual({ scrollPaddingInline: '48px' });
   });
 });

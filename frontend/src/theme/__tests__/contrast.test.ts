@@ -149,3 +149,15 @@ describe('theme contrast (WCAG AA, 4.5:1)', () => {
     expect(contrast(themes.dark.palette.error.main, background)).toBeGreaterThanOrEqual(AA);
   });
 });
+
+// A bar and its track (WCAG 1.4.11, 3:1). The track is neutral, so no bar colour sets it (#760).
+describe('progress bars on their track (3:1)', () => {
+  const barColors = ['primary', 'success', 'warning', 'error', 'info'] as const;
+  const cases = modes.flatMap((m) => barColors.map((c): [Mode, (typeof barColors)[number]] => [m, c]));
+
+  it.each(cases)('%s %s bar against the track on a card', (mode, color) => {
+    const { palette } = themes[mode];
+    const track = over(palette.action.disabledBackground, palette.background.paper);
+    expect(contrast(palette[color].main, track)).toBeGreaterThanOrEqual(3);
+  });
+});

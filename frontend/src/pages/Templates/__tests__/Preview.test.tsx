@@ -181,6 +181,9 @@ describe('Templates Preview', () => {
     expect(screen.getByText('replicaCount: 2')).toBeInTheDocument();
     expect(screen.getByText('Locked Values')).toBeInTheDocument();
     expect(screen.getByText('image: nginx')).toBeInTheDocument();
+    // The tint comes from the palette: an unknown shade left the plain Paper background (#760).
+    const box = screen.getByText('image: nginx').closest('.MuiPaper-root') as HTMLElement;
+    expect(getComputedStyle(box).backgroundColor).toMatch(/^rgba\(\d+, \d+, \d+, 0\.08\)$/);
   });
 
   it('clones template and navigates to edit', async () => {

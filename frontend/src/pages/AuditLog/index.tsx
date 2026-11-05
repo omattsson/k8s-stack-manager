@@ -253,7 +253,7 @@ const AuditLog = () => {
       ) : (
         <Paper>
           {/* A scroll box needs a tab stop for keyboard users. */}
-          <TableContainer tabIndex={0} sx={{ maxHeight: 600, '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main', outlineOffset: -2 } }}>
+          <TableContainer tabIndex={0} sx={{ maxHeight: 600, scrollPaddingTop: '48px', '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main', outlineOffset: -2 } }}>
             <Table size="small" stickyHeader>
               <TableHead>
                 <TableRow>

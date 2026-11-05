@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Box,
+  alpha,
   Typography,
   Paper,
   Chip,
@@ -300,7 +301,7 @@ const Preview = () => {
                       Locked Values
                       <Chip label="Read-only" size="small" color="warning" sx={{ ml: 1 }} />
                     </Typography>
-                    <Paper variant="outlined" sx={{ p: 2, bgcolor: 'warning.50', borderColor: 'warning.main' }}>
+                    <Paper variant="outlined" sx={{ p: 2, bgcolor: (t) => alpha(t.palette.warning.main, 0.08), borderColor: 'warning.main' }}>
                       <Typography variant="body2" component="pre" sx={{ fontFamily: 'monospace', fontSize: 13, whiteSpace: 'pre-wrap', m: 0 }}>
                         {chart.locked_values}
                       </Typography>

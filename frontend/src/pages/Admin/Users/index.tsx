@@ -349,7 +349,7 @@ const AdminUsers = () => {
       {loading ? (
         <LoadingState label="Loading users..." />
       ) : (
-        <TableContainer component={Paper} sx={{ maxHeight: 600 }}>
+        <TableContainer component={Paper} sx={{ maxHeight: 600, scrollPaddingTop: '64px' }}>
           <Table stickyHeader>
             <TableHead>
               <TableRow>
