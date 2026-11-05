@@ -93,8 +93,8 @@ test.describe('Stack Definition Management', () => {
     await nameField.fill(updatedName);
 
     await page.getByRole('button', { name: 'Save Definition' }).click();
-    // Wait for save and navigation
-    await page.waitForURL(/\/stack-definitions/, { timeout: 10_000 });
+    // The edit URL matches /stack-definitions too: wait for the list the save navigates to.
+    await page.waitForURL((url) => url.pathname === '/stack-definitions', { timeout: 10_000 });
     await page.waitForLoadState('domcontentloaded');
 
     // Verify updated name in the list
