@@ -1,6 +1,7 @@
 import { test, expect, type Page, type WebSocketRoute } from '@playwright/test';
 import type { PaginatedAuditLogs } from '../src/api/client';
 import type {
+  AuditLog,
   Cluster,
   ClusterNamespaceInfo,
   ClusterSummary,
@@ -12,6 +13,7 @@ import type {
   NotificationListResponse,
   StackInstance,
   TemplateStats,
+  User,
   UserFavorite,
 } from '../src/types';
 import {
@@ -20,7 +22,9 @@ import {
   checkPage,
   createSeed,
   deleteSeed,
+  expectFocusClearOfStickyHeader,
   focusRingSweep,
+  hoverAndCheck,
   nonTextRatio,
   pageList,
   tooltipRatio,
@@ -31,8 +35,8 @@ import {
 
 // What axe does not judge (#758). Focus rings: computed outline or border colour
 // against what is behind it, 3:1, and not cut off by a parent. Colour as the only
-// signal: each state must also differ in shape, weight or text. Bars: the value is
-// also text next to the bar. Tooltips are translucent, so tooltipRatio measures
+// signal: each state must also differ in shape, weight or text. Bars: 3:1 against
+// the track, and the value is also text next to the bar. Tooltips are translucent, so tooltipRatio measures
 // them over white and over black.
 //
 // Not covered here, inspected by hand: whether a shape reads as its meaning.
@@ -201,6 +205,41 @@ test.describe('Accessibility: focus rings, tooltips, bars and colour as the only
           'one summary of both changes',
         ).toHaveText('2 stacks changed health: announce-alpha degraded, announce-beta error');
       },
+    });
+  });
+
+  // A sticky header covers a control that the browser scrolls to the top edge (#760).
+  // The mocks give each table enough rows to scroll inside its 600px box.
+  test('sticky header: the audit log does not cover a focused row link', async ({ page }) => {
+    await checkPage(page, 'light', {
+      path: '/audit-log',
+      heading: 'Audit Log',
+      before: (p) => p.route(/\/api\/v1\/audit-logs(\?.*)?$/, (route) => route.fulfill({
+        json: {
+          data: Array.from({ length: 40 }, (_, i): AuditLog => ({
+            id: `a11y-log-${i}`, user_id: 'u', username: 'admin', action: 'update', entity_type: 'stack_instance',
+            entity_id: `a11y-entity-${i}`, details: `Forced entry ${i}`, timestamp: '2026-10-19T10:00:00Z',
+          })),
+          total: 40,
+          limit: 50,
+          offset: 0,
+        } satisfies PaginatedAuditLogs,
+      })),
+      ready: (p) => expectFocusClearOfStickyHeader(p, p.getByRole('table'), 'audit log'),
+    });
+  });
+
+  test('sticky header: the user list does not cover a focused row button', async ({ page }) => {
+    await checkPage(page, 'light', {
+      path: '/admin/users',
+      heading: 'User Management',
+      before: (p) => p.route(/\/api\/v1\/users$/, (route) => (route.request().method() !== 'GET' ? route.continue() : route.fulfill({
+        json: Array.from({ length: 30 }, (_, i): User => ({
+          id: `a11y-user-${i}`, username: `a11y-user-${i}`, display_name: `User ${i}`, role: 'user', auth_provider: 'local',
+          disabled: false, service_account: false, created_at: '2026-10-19T10:00:00Z', updated_at: '2026-10-19T10:00:00Z',
+        })),
+      }))),
+      ready: (p) => expectFocusClearOfStickyHeader(p, p.getByRole('table'), 'users'),
     });
   });
 
@@ -489,6 +528,8 @@ test.describe('Accessibility: focus rings, tooltips, bars and colour as the only
           await expect(popover).toBeVisible();
           await expectUnreadSignal(p);
           await runAxe({ selector: '.MuiPopover-paper', checked: popover.getByRole('heading', { name: 'Notifications' }) });
+          // The resting tint of an unread row must not be its hover colour (#760); contrast is measured hovered.
+          await hoverAndCheck(p, p.getByRole('button', { name: /Unread notification\s*,\s*unread/ }), '.MuiPopover-paper', runAxe);
         },
       });
     });
@@ -525,6 +566,7 @@ test.describe('Accessibility: focus rings, tooltips, bars and colour as the only
             await expect(p.getByRole('row', { name: new RegExp(template) }), `${template}: the value is text`).toContainText(percent);
             const ratio = await nonTextRatio(bar.locator('.MuiLinearProgress-bar').first(), 'backgroundColor', bar);
             test.info().annotations.push({ type: 'explicit', description: `analytics bar ${template} (${mode}): bar against track ${ratio.toFixed(2)}` });
+            expect(ratio, `analytics bar ${template}: bar against its track`).toBeGreaterThanOrEqual(AA_NON_TEXT);
           }
           await runAxe({ selector: 'main', checked: p.getByRole('row', { name: /Low rate/ }) });
         },
@@ -574,6 +616,7 @@ test.describe('Accessibility: focus rings, tooltips, bars and colour as the only
             await expect(bar, `${namespace}: the bar has a name`).toBeVisible();
             const ratio = await nonTextRatio(bar.locator('.MuiLinearProgress-bar').first(), 'backgroundColor', bar);
             test.info().annotations.push({ type: 'explicit', description: `cluster health bar ${percent} (${mode}): bar against track ${ratio.toFixed(2)}` });
+            expect(ratio, `cluster health bar ${percent}: bar against its track`).toBeGreaterThanOrEqual(AA_NON_TEXT);
           }
           await runAxe({ selector: 'main', checked: p.getByRole('row', { name: /stack-high/ }) });
         },

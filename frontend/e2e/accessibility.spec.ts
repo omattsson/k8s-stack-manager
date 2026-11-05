@@ -433,6 +433,12 @@ test.describe('Accessibility: colour contrast and lists', () => {
           const locked = p.locator('pre').filter({ hasText: 'pullPolicy: Always' });
           await expect(defaults, 'the Default Values box is not visible').toBeVisible();
           await expect(locked, 'the Locked Values box is not visible').toBeVisible();
+          // The tint comes from the palette: an unknown shade leaves the plain Paper colour (#760).
+          const [tint, card] = await locked.evaluate((el) => {
+            const box = el.closest('.MuiPaper-root') as Element;
+            return [box, box.parentElement?.closest('.MuiPaper-root') as Element].map((e) => getComputedStyle(e).backgroundColor);
+          });
+          expect(tint, 'the Locked Values box has its own tint').not.toBe(card);
           await runAxe({ selector: 'main', checked: defaults });
           await runAxe({ selector: 'main', checked: locked });
         },
