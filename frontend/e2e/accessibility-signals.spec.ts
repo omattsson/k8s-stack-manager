@@ -154,6 +154,56 @@ test.describe('Accessibility: focus rings, tooltips, bars and colour as the only
     });
   }
 
+  // ---------------------------------------------------------------------
+  // Pod health: one summary for a screen reader, not a live region per card (#760).
+
+  test('pod health changes are announced in one summary', async ({ page }) => {
+    let socket: WebSocketRoute | undefined;
+    const rows = ['alpha', 'beta'].map((n): StackInstance => ({
+      id: `a11y-announce-${n}`,
+      name: `announce-${n}`,
+      namespace: `stack-${n}`,
+      branch: 'main',
+      status: 'running',
+      stack_definition_id: seed.definitionId,
+      owner_id: 'a11y-owner',
+      created_at: '2026-10-19T09:00:00Z',
+      updated_at: '2026-10-19T09:00:00Z',
+    }));
+    await checkPage(page, 'light', {
+      path: '/',
+      heading: 'Stack Instances',
+      onSocket: (ws) => { socket = ws; },
+      before: async (p) => {
+        await p.route(/\/api\/v1\/stack-instances(\?.*)?$/, (route) => (
+          route.request().method() !== 'GET'
+            ? route.continue()
+            : route.fulfill({ json: { data: rows, page: 1, pageSize: 25, total: rows.length } })
+        ));
+        await p.route(/\/api\/v1\/stack-instances\/a11y-announce-[^/]+\/status$/, (route) => route.fulfill({
+          json: { namespace: 'a11y', status: 'healthy', charts: [], last_checked: '2026-10-19T09:00:00Z' } satisfies NamespaceStatus,
+        }));
+      },
+      ready: async (p) => {
+        await expect(p.getByRole('img', { name: 'Pod health: healthy' }), 'the first health').toHaveCount(2);
+        await p.waitForTimeout(1500);
+        await expect(p.getByText(/changed health/), 'the first load is silent').toHaveCount(0);
+        await expect(p.locator('main .MuiGrid-container[aria-live]'), 'the card grid is not a live region').toHaveCount(0);
+
+        const push = (id: string, status: string) => socket?.send(JSON.stringify({
+          type: 'instance.status',
+          payload: { instance_id: id, namespace_status: { status } },
+        }));
+        push('a11y-announce-alpha', 'degraded');
+        push('a11y-announce-beta', 'error');
+        await expect(
+          p.getByRole('status').filter({ hasText: 'changed health' }),
+          'one summary of both changes',
+        ).toHaveText('2 stacks changed health: announce-alpha degraded, announce-beta error');
+      },
+    });
+  });
+
   for (const mode of MODES) {
     // ---------------------------------------------------------------------
     // Focus rings

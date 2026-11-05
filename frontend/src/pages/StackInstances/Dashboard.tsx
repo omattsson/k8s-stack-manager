@@ -3,6 +3,8 @@ import { timeAgo } from '../../utils/timeAgo';
 import { Link as RouterLink, useNavigate } from 'react-router-dom';
 import { scrollFocusIntoView } from '../../utils/scrollFocusIntoView';
 import { useWebSocket } from '../../hooks/useWebSocket';
+import { visuallyHidden } from '../../utils/visuallyHidden';
+import { diffHealth, summarizeHealthChanges, type HealthChange } from './healthSummary';
 import type { WsMessage } from '../../hooks/useWebSocket';
 import {
   Box,
@@ -372,6 +374,31 @@ const Dashboard = () => {
       }
     });
   }, [instances]);
+
+  // One announcement for the health changes of a moment. A stack seen for the first
+  // time is silent, and a filter or page change does not touch instanceHealth.
+  const [healthAnnouncement, setHealthAnnouncement] = useState('');
+  const knownHealthRef = useRef<Record<string, string>>({});
+  const pendingHealthRef = useRef<Map<string, HealthChange>>(new Map());
+  const healthTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const instancesRef = useRef(instances);
+  instancesRef.current = instances;
+  useEffect(() => {
+    const names = new Map(instancesRef.current.map((i) => [i.id, i.name]));
+    const changes = diffHealth(knownHealthRef.current, instanceHealth, (id) => names.get(id));
+    knownHealthRef.current = { ...instanceHealth };
+    if (changes.length === 0) return;
+    // A later change of the same stack replaces the earlier one in the batch.
+    for (const change of changes) pendingHealthRef.current.set(change.id, change);
+    if (healthTimerRef.current) clearTimeout(healthTimerRef.current);
+    healthTimerRef.current = setTimeout(() => {
+      setHealthAnnouncement(summarizeHealthChanges([...pendingHealthRef.current.values()]));
+      pendingHealthRef.current.clear();
+    }, 1000);
+  }, [instanceHealth]);
+  useEffect(() => () => {
+    if (healthTimerRef.current) clearTimeout(healthTimerRef.current);
+  }, []);
 
   // Live-update instance statuses via WebSocket.
   const handleWsMessage = useCallback((msg: WsMessage) => {
@@ -848,6 +875,8 @@ const Dashboard = () => {
         </Box>
       )}
 
+      <Box role="status" sx={visuallyHidden}>{healthAnnouncement}</Box>
+
       {instances.length > 0 && (
         <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }} aria-live="polite">
           {filtered.length === instances.length
@@ -892,7 +921,7 @@ const Dashboard = () => {
               </Typography>
             </Box>
           )}
-          <Grid container spacing={3} aria-live="polite">
+          <Grid container spacing={3}>
             {filtered.map((instance) => (
               <Grid key={instance.id} size={{ xs: 12, sm: 6, md: 4 }}>
                 <InstanceCard
