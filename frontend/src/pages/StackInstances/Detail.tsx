@@ -970,7 +970,7 @@ const Detail = () => {
         ) : isProblem || isInProgress ? (
           <Alert
             severity={status === 'error' ? 'error' : isInProgress ? 'info' : 'warning'}
-            icon={isInProgress ? <CircularProgress size={20} color="inherit" /> : undefined}
+            icon={isInProgress ? <CircularProgress size={20} color="inherit" aria-hidden="true" /> : undefined}
             sx={{ py: 0.5 }}
           >
             Instance is {status}

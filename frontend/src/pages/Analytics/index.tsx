@@ -228,7 +228,7 @@ const Analytics = () => {
           {templatesError ? (
             <Alert severity="error" sx={{ mb: 4 }}>Failed to load template statistics</Alert>
           ) : (
-            <TableContainer component={Paper} sx={{ mb: 4 }}>
+            <TableContainer component={Paper} tabIndex={0} sx={{ mb: 4, '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main', outlineOffset: -2 } }}>
               <Table size="small">
                 <TableHead>
                   <TableRow>
@@ -303,7 +303,7 @@ const Analytics = () => {
               {usersError ? (
                 <Alert severity="error">Failed to load user activity</Alert>
               ) : (
-                <TableContainer component={Paper}>
+                <TableContainer component={Paper} tabIndex={0} sx={{ '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main', outlineOffset: -2 } }}>
                   <Table size="small">
                     <TableHead>
                       <TableRow>

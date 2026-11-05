@@ -94,6 +94,7 @@ describe('Layout', () => {
     );
 
     expect(screen.getByRole('navigation', { name: 'Main navigation' })).toBeInTheDocument();
+    expect(screen.getByRole('complementary', { name: 'Sidebar' })).toBeInTheDocument();
   });
 
   it('renders main nav links when authenticated', () => {

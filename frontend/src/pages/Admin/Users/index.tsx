@@ -44,6 +44,7 @@ import { useAuth } from '../../../context/AuthContext';
 import type { User, UserRole, APIKey, CreateUserRequest, CreateAPIKeyRequest, CreateAPIKeyResponse } from '../../../types';
 import LoadingState from '../../../components/LoadingState';
 import { Link } from 'react-router-dom';
+import { visuallyHidden } from '../../../utils/visuallyHidden';
 
 const defaultKeyForm = (): CreateAPIKeyRequest => ({ name: '', expires_in_days: 90 });
 
@@ -352,7 +353,9 @@ const AdminUsers = () => {
           <Table stickyHeader>
             <TableHead>
               <TableRow>
-                <TableCell width={48} />
+                <TableCell width={48}>
+                  <Box component="span" sx={visuallyHidden}>API keys</Box>
+                </TableCell>
                 <TableCell>Username</TableCell>
                 <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>Display Name</TableCell>
                 <TableCell>Role</TableCell>

@@ -354,7 +354,7 @@ export async function expectContrastAndLists(page: Page, what: string, hasMain: 
   const builder = new AxeBuilder({ page })
     // One-character text is measured too, for example a badge count.
     .options({ checks: { 'color-contrast': { options: { ignoreLength: true } } } } as unknown as Parameters<AxeBuilder['options']>[0])
-    .withRules(['color-contrast', 'listitem', 'label-content-name-mismatch', 'link-in-text-block']);
+    .withRules(['color-contrast', 'listitem', 'label-content-name-mismatch', 'link-in-text-block', 'region', 'scrollable-region-focusable', 'aria-progressbar-name', 'empty-table-header']);
   const showApp = scope ? await hideAppBehindModal(page, scope.selector) : async () => undefined;
   const results = await (scope ? builder.include(scope.selector) : builder).analyze();
   await showApp();

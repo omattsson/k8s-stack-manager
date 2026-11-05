@@ -59,6 +59,7 @@ import type {
 import LoadingState from '../../../components/LoadingState';
 import { useNotification } from '../../../context/NotificationContext';
 import { useAuth } from '../../../context/AuthContext';
+import { visuallyHidden } from '../../../utils/visuallyHidden';
 import ChannelFiltersEditor from './ChannelFiltersEditor';
 import { filtersEmpty, filtersSummary, type FilterOption, type FilterOptions } from './channelFilters';
 
@@ -532,7 +533,9 @@ const NotificationChannels = () => {
           <Table>
             <TableHead>
               <TableRow>
-                <TableCell padding="checkbox" />
+                <TableCell padding="checkbox">
+                  <Box component="span" sx={visuallyHidden}>Delivery logs</Box>
+                </TableCell>
                 <TableCell>Name</TableCell>
                 <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>Webhook URL</TableCell>
                 <TableCell>Enabled</TableCell>

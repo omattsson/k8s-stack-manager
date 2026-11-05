@@ -320,7 +320,7 @@ const Layout = ({ children }: LayoutProps) => {
   );
 
   const drawerContent = (open: boolean) => (
-    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+    <Box component="aside" aria-label="Sidebar" sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {renderDrawerHeader(open)}
       <Divider />
 

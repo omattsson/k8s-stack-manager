@@ -252,7 +252,8 @@ const AuditLog = () => {
         <LoadingState label="Loading audit logs..." />
       ) : (
         <Paper>
-          <TableContainer sx={{ maxHeight: 600 }}>
+          {/* A scroll box needs a tab stop for keyboard users. */}
+          <TableContainer tabIndex={0} sx={{ maxHeight: 600, '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main', outlineOffset: -2 } }}>
             <Table size="small" stickyHeader>
               <TableHead>
                 <TableRow>
