@@ -1,10 +1,10 @@
 name: E2E Tests
 
 # Runs the Playwright end-to-end tests (frontend/e2e) against a real backend and
-# MySQL through `make test-e2e`. The runner has no cluster, so the specs that
-# need one are skipped (see E2E_KUBECONFIG in the Makefile). After the main
-# suite, `make test-e2e` restarts the backend with short session limits and
-# runs the Playwright project `isolated` (report in playwright-report-isolated/).
+# MySQL. The runner has no cluster, so the specs that need one are skipped (see
+# E2E_KUBECONFIG in the Makefile). The main suite runs in 4 parallel jobs
+# (`make test-e2e E2E_SHARD=n/4`), each with its own backend and MySQL. The job
+# `isolated` runs the Playwright project `isolated` (`make test-e2e-isolated`).
 
 on:
   pull_request:
@@ -30,8 +30,13 @@ permissions:
 
 jobs:
   playwright:
+    name: playwright (${{ matrix.shard }})
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ['main 1/4', 'main 2/4', 'main 3/4', 'main 4/4', 'isolated']
     steps:
       - uses: actions/checkout@v7
 
@@ -65,13 +70,25 @@ jobs:
       - name: Run e2e tests
         env:
           PW_WORKERS: '2'
-        run: make test-e2e
+          SHARD: ${{ matrix.shard }}
+        run: |
+          if [ "$SHARD" = isolated ]; then
+            make test-e2e-isolated
+          else
+            make test-e2e E2E_SHARD="${SHARD#main }"
+          fi
+
+      - name: Name the artifact
+        if: ${{ !cancelled() }}
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: echo "ARTIFACT=playwright-report-$(echo "$SHARD" | tr ' /' '--')" >> "$GITHUB_ENV"
 
       - name: Upload Playwright report and logs
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
-          name: playwright-report
+          name: ${{ env.ARTIFACT }}
           path: |
             frontend/playwright-report/
             frontend/test-results/
