@@ -8,6 +8,11 @@ import {
   API_BASE,
   setYamlEditorText,
   tokenFromPage,
+  apiCreateDefinition,
+  apiAddChart,
+  runE2eSql,
+  e2eDbConfigured,
+  E2E_DB_SKIP_REASON,
 } from './helpers';
 
 test.describe('Stack Definition Management', () => {
@@ -205,5 +210,71 @@ test.describe('Definition form: chart values validation (#756)', () => {
     await save.click();
     await expect(page.getByRole('alert').filter({ hasText: /HTTP 400: Invalid YAML in/ })).toBeVisible({ timeout: 10_000 });
     await expect(page).toHaveURL(/\/stack-definitions\/new/);
+  });
+
+  test('a retry after a chart 400 creates no second definition and no duplicate chart', async ({ page }) => {
+    const name = uniqueName('def-yaml-retry');
+    created.push(name);
+    await openForm(page, name);
+    await setYamlEditorText(page, 'Default Values (YAML)', 'replicaCount: 1');
+    await page.getByRole('button', { name: 'Add Chart' }).click();
+    await page.getByLabel('Chart Name').nth(1).fill('wchart');
+    await page.getByLabel('Repository URL').nth(1).fill('https://charts.example.com');
+    await setYamlEditorText(page, 'Default Values (YAML)', 'a: 1\na: 2', 1);
+
+    const save = page.getByRole('button', { name: 'Save Definition' });
+    await save.click();
+    await expect(page.getByRole('alert').filter({ hasText: /HTTP 400: Invalid YAML in/ })).toBeVisible({ timeout: 10_000 });
+
+    await setYamlEditorText(page, 'Default Values (YAML)', 'a: 1', 1);
+    await save.click();
+    await page.waitForURL(/\/stack-definitions$/, { timeout: 10_000 });
+
+    const headers = { Authorization: `Bearer ${await tokenFromPage(page)}` };
+    const list = await (await page.request.get(
+      `${API_BASE}/api/v1/stack-definitions?name=${encodeURIComponent(name)}&pageSize=100`, { headers },
+    )).json();
+    const matches = (list.data ?? []).filter((d: { name: string }) => d.name === name);
+    expect(matches).toHaveLength(1);
+    const def = await (await page.request.get(`${API_BASE}/api/v1/stack-definitions/${matches[0].id}`, { headers })).json();
+    expect(def.charts.map((c: { chart_name: string }) => c.chart_name).sort()).toEqual(['vchart', 'wchart']);
+  });
+
+  // The API refuses such a value now, so the row is seeded in the e2e database.
+  test('a definition with a stored invalid value can be renamed; a changed invalid value blocks', async ({ page }) => {
+    test.skip(!e2eDbConfigured(), E2E_DB_SKIP_REASON);
+    await loginAsDevops(page);
+    await page.goto('/');
+    const token = await tokenFromPage(page);
+    const name = uniqueName('def-stored-bad');
+    const renamed = `${name}-renamed`;
+    created.push(name, renamed);
+    const defId = await apiCreateDefinition(page.request, token, name);
+    const chartId = await apiAddChart(page.request, token, defId, { chart_name: 'vchart', default_values: 'tag: x\n' });
+    expect(chartId).toMatch(/^[0-9a-f-]{36}$/);
+    await runE2eSql(`UPDATE chart_configs SET default_values='tag: {{.Branch}}' WHERE id='${chartId}'`);
+
+    await page.goto(`/stack-definitions/${defId}/edit`);
+    const nameField = page.getByRole('textbox', { name: 'Name', exact: true });
+    await expect(nameField).toHaveValue(name, { timeout: 10_000 });
+    const save = page.getByRole('button', { name: 'Save Definition' });
+    await expect(save).toBeEnabled({ timeout: 10_000 });
+    await expect(page.getByTestId('yaml-error-hint')).toHaveCount(0);
+
+    await setYamlEditorText(page, 'Default Values (YAML)', 'tag: {{.Commit}}');
+    await expect(save).toBeDisabled({ timeout: 10_000 });
+    await expect(page.getByTestId('yaml-error-hint')).toBeVisible();
+    await setYamlEditorText(page, 'Default Values (YAML)', 'tag: {{.Branch}}');
+    await expect(save).toBeEnabled({ timeout: 10_000 });
+
+    await nameField.fill(renamed);
+    await save.click();
+    await page.waitForURL(/\/stack-definitions$/, { timeout: 10_000 });
+
+    const def = await (await page.request.get(`${API_BASE}/api/v1/stack-definitions/${defId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })).json();
+    expect(def.name).toBe(renamed);
+    expect(def.charts[0].default_values).toBe('tag: {{.Branch}}');
   });
 });

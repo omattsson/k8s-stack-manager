@@ -468,10 +468,35 @@ test.describe('Template chart values validation (#756)', () => {
     await expect(page).toHaveURL(/\/use$/);
   });
 
+  test('Builder: a retry after a chart 400 creates no second template and no duplicate chart', async ({ page }) => {
+    const name = uniqueName('tpl-yaml-retry');
+    templateNames.push(name);
+    await openBuilder(page, name);
+    await page.getByRole('button', { name: 'Add Chart' }).click();
+    await page.getByLabel('Chart Name').nth(1).fill('wchart');
+    await page.getByLabel('Repository URL').nth(1).fill('https://charts.example.com');
+    await setYamlEditorText(page, 'Locked Values (YAML)', 'a: 1\na: 2', 1);
+
+    const save = page.getByRole('button', { name: 'Save Template' });
+    await save.click();
+    await expect(page.getByRole('alert').filter({ hasText: /HTTP 400: Invalid YAML in chart "wchart"/ })).toBeVisible({ timeout: 10_000 });
+
+    await setYamlEditorText(page, 'Locked Values (YAML)', 'a: 1', 1);
+    await save.click();
+    await page.waitForURL(/\/templates\/[0-9a-f-]{36}$/, { timeout: 10_000 });
+
+    const headers = { Authorization: `Bearer ${await tokenFromPage(page)}` };
+    const list = await (await page.request.get(
+      `${API_BASE}/api/v1/templates?name=${encodeURIComponent(name)}&pageSize=100`, { headers },
+    )).json();
+    const matches = (list.data ?? []).filter((t: { name: string }) => t.name === name);
+    expect(matches).toHaveLength(1);
+    const tpl = await (await page.request.get(`${API_BASE}/api/v1/templates/${matches[0].id}`, { headers })).json();
+    expect(tpl.charts.map((c: { chart_name: string }) => c.chart_name).sort()).toEqual(['vchart', 'wchart']);
+  });
+
   // The API refuses such a value now, so the row is seeded in the e2e database.
-  // A duplicate key is used because the Builder does not block it (js-yaml only
-  // warns); an unquoted template in a stored value blocks the Builder save.
-  test('Builder: a template with a stored value the API refuses can still be renamed', async ({ page }) => {
+  test('Builder: a template with a stored invalid value can be renamed; a changed invalid value blocks', async ({ page }) => {
     test.skip(!e2eDbConfigured(), E2E_DB_SKIP_REASON);
     await loginAsDevops(page);
     await page.goto('/');
@@ -482,21 +507,31 @@ test.describe('Template chart values validation (#756)', () => {
     const templateId = await apiCreateTemplate(page.request, token, name);
     const chartId = await apiAddTemplateChart(page.request, token, templateId, {
       chart_name: 'vchart',
-      locked_values: 'a: 1\n',
+      locked_values: 'tag: x\n',
     });
     expect(chartId).toMatch(/^[0-9a-f-]{36}$/);
-    await runE2eSql(
-      `UPDATE template_chart_configs SET locked_values=CONCAT('a: 1', CHAR(10), 'a: 2') WHERE id='${chartId}'`,
-    );
+    await runE2eSql(`UPDATE template_chart_configs SET locked_values='tag: {{.Branch}}' WHERE id='${chartId}'`);
 
     await page.goto(`/templates/${templateId}/edit`);
     const nameField = page.getByRole('textbox', { name: 'Name', exact: true });
     await expect(nameField).toHaveValue(name, { timeout: 10_000 });
+    const save = page.getByRole('button', { name: 'Save Template' });
+    await expect(save).toBeEnabled({ timeout: 10_000 });
     await expect(page.getByTestId('yaml-error-hint')).toHaveCount(0);
-    await nameField.fill(renamed);
-    await page.getByRole('button', { name: 'Save Template' }).click();
 
+    await setYamlEditorText(page, 'Locked Values (YAML)', 'tag: {{.Commit}}');
+    await expect(save).toBeDisabled({ timeout: 10_000 });
+    await expect(page.getByTestId('yaml-error-hint')).toBeVisible();
+    await setYamlEditorText(page, 'Locked Values (YAML)', 'tag: {{.Branch}}');
+    await expect(save).toBeEnabled({ timeout: 10_000 });
+
+    await nameField.fill(renamed);
+    await save.click();
     await page.waitForURL(new RegExp(`/templates/${templateId}$`), { timeout: 10_000 });
     await expect(page.getByRole('heading', { level: 1, name: renamed })).toBeVisible({ timeout: 10_000 });
+    const tpl = await (await page.request.get(`${API_BASE}/api/v1/templates/${templateId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })).json();
+    expect(tpl.charts[0].locked_values).toBe('tag: {{.Branch}}');
   });
 });
