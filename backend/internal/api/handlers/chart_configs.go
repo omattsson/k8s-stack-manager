@@ -48,6 +48,10 @@ func (h *DefinitionHandler) AddChartConfig(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if err := validateChartValues("default_values", "", chart.DefaultValues); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 
 	// The audit entry follows the commit: a client that leaves must not cancel the write (#656).
 	wctx, cancel := detachedCtx(c)
@@ -178,6 +182,14 @@ func (h *DefinitionHandler) UpdateChartConfig(c *gin.Context) {
 	if !isPrivilegedRole(c) && chartSourceChanged(existing, &update) {
 		c.JSON(http.StatusForbidden, gin.H{"error": msgChartSourceForbidden})
 		return
+	}
+
+	// Only a changed value is checked: a stored invalid value stays savable (#756).
+	if update.DefaultValues != nil && *update.DefaultValues != existing.DefaultValues {
+		if err := validateChartValues("default_values", "", *update.DefaultValues); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 	}
 
 	if update.ChartName != nil {
