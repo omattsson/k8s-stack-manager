@@ -1939,6 +1939,14 @@ definitions:
           only when that call would be accepted.
         example: web
         type: string
+      exec_pods:
+        additionalProperties:
+          type: string
+        description: |-
+          ExecPods maps each name of exec_containers to the pod that the route picks
+          for "-c <name>": the first pod by name that is Running, Ready, not
+          terminating and runs it. Set only with exec_containers.
+        type: object
       pods:
         items:
           $ref: '#/definitions/k8s.PodInfo'
@@ -8179,8 +8187,9 @@ paths:
         <stack> <chart> -c <name>" is accepted for: in STACK_EXEC_ALLOWED_CONTAINERS,
         in a Running and Ready pod of the chart, and without a service-account token
         unless STACK_EXEC_ALLOW_SERVICE_ACCOUNT_TOKEN is true; in the order the route
-        considers them) and exec_default_container (the container the route picks
-        without -c; only when that call would be accepted). A chart without exec_containers
+        considers them), exec_default_container (the container the route picks without
+        -c; only when that call would be accepted) and exec_pods (for each name of
+        exec_containers, the pod that the route picks for it). A chart without exec_containers
         has no usable container. When the hints cannot be computed (the stack is not
         deployed, the namespace is shared, a database or cluster read fails, or the
         computation takes more than 3 seconds), exec_hints is true and no chart has
@@ -8198,8 +8207,8 @@ paths:
         name: id
         required: true
         type: string
-      - description: 'true: add exec_hints, exec_containers and exec_default_container
-          for a caller who may exec (see the description)'
+      - description: 'true: add exec_hints, exec_containers, exec_default_container
+          and exec_pods for a caller who may exec (see the description)'
         in: query
         name: exec_hints
         type: boolean
@@ -8625,27 +8634,28 @@ paths:
         exec_containers (the containers that "stackctl stack exec <stack> <chart>
         -c <name>" is accepted for: in STACK_EXEC_ALLOWED_CONTAINERS, in a Running
         and Ready pod of the chart, and without a service-account token unless STACK_EXEC_ALLOW_SERVICE_ACCOUNT_TOKEN
-        is true; in the order the route considers them) and exec_default_container
-        (the container the route picks without -c; only when that call would be accepted).
-        A chart without exec_containers has no usable container. When the hints cannot
-        be computed (the stack is not deployed, the namespace is shared, a database
-        or cluster read fails, or the computation takes more than 3 seconds), exec_hints
-        is true and no chart has a list; this never fails the request. For other callers,
-        or with exec off or the cluster switch off, the response has no exec fields.
-        Without the parameter nothing changes and no extra reads run. With it, one
-        computation costs a few database reads, one namespace GET, one pod list and
-        one GET for each distinct ServiceAccount and Secret of the token check (at
-        most 64 GETs; a container beyond that is left out). A caller waits at most
-        3 seconds for the computation; after that exec_hints is true without lists.
-        A cluster lookup that fails gives no exec fields.'
+        is true; in the order the route considers them), exec_default_container (the
+        container the route picks without -c; only when that call would be accepted)
+        and exec_pods (for each name of exec_containers, the pod that the route picks
+        for it). A chart without exec_containers has no usable container. When the
+        hints cannot be computed (the stack is not deployed, the namespace is shared,
+        a database or cluster read fails, or the computation takes more than 3 seconds),
+        exec_hints is true and no chart has a list; this never fails the request.
+        For other callers, or with exec off or the cluster switch off, the response
+        has no exec fields. Without the parameter nothing changes and no extra reads
+        run. With it, one computation costs a few database reads, one namespace GET,
+        one pod list and one GET for each distinct ServiceAccount and Secret of the
+        token check (at most 64 GETs; a container beyond that is left out). A caller
+        waits at most 3 seconds for the computation; after that exec_hints is true
+        without lists. A cluster lookup that fails gives no exec fields.'
       parameters:
       - description: Instance ID
         in: path
         name: id
         required: true
         type: string
-      - description: 'true: add exec_hints, exec_containers and exec_default_container
-          for a caller who may exec (see the description)'
+      - description: 'true: add exec_hints, exec_containers, exec_default_container
+          and exec_pods for a caller who may exec (see the description)'
         in: query
         name: exec_hints
         type: boolean

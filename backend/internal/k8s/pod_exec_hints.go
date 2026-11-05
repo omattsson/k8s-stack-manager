@@ -45,6 +45,9 @@ type ReleaseExecContainers struct {
 	// Default is the container that ResolveExecTarget picks without a name. It
 	// is empty when that call would be refused.
 	Default string
+	// Pods maps each name of Containers to the pod that ResolveExecTarget picks
+	// for it (#767). The pod of Default is Pods[Default].
+	Pods map[string]string
 }
 
 // ExecContainers tells, for each release, which containers ResolveExecTarget
@@ -140,6 +143,10 @@ func (c *Client) ExecContainers(ctx context.Context, namespace string, releases 
 					}
 				}
 				res.Containers = append(res.Containers, name)
+				if res.Pods == nil {
+					res.Pods = map[string]string{}
+				}
+				res.Pods[name] = pod.Name
 				if name == defName {
 					res.Default = name
 				}

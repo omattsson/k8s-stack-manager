@@ -39,6 +39,8 @@ func TestExecContainers(t *testing.T) {
 	terminating.DeletionTimestamp = &now
 	notReady := execPod("a-notready", inst, "app")
 	notReady.Status.Conditions[0].Status = corev1.ConditionFalse
+	initApp := execPod("a-worker", inst, "worker")
+	initApp.Spec.InitContainers = []corev1.Container{{Name: "app"}}
 
 	// automount on: the container holds a token.
 	withToken := func(name string, containers ...string) *corev1.Pod {
@@ -69,32 +71,44 @@ func TestExecContainers(t *testing.T) {
 		{name: "pods by name, containers in spec order, first occurrence",
 			objs: []runtime.Object{execPod("b", inst, "worker", "app", "side"), execPod("a", helm, "app", "extra")},
 			req:  ExecContainersRequest{AllowedContainer: allowList("app", "worker", "extra")},
-			want: map[string]ReleaseExecContainers{"web": {Containers: []string{"app", "extra", "worker"}, Default: "app"}}},
+			want: map[string]ReleaseExecContainers{"web": {Containers: []string{"app", "extra", "worker"}, Default: "app", Pods: map[string]string{"app": "a", "extra": "a", "worker": "b"}}}},
 		{name: "both label keys, a pod with both is one pod",
 			objs: []runtime.Object{execPod("a", inst, "app"), execPod("b", helm, "worker"), execPod("c", both, "app")},
 			req:  ExecContainersRequest{AllowedContainer: allow},
-			want: map[string]ReleaseExecContainers{"web": {Containers: []string{"app", "worker"}, Default: "app"}}},
+			want: map[string]ReleaseExecContainers{"web": {Containers: []string{"app", "worker"}, Default: "app", Pods: map[string]string{"app": "a", "worker": "b"}}}},
 		{name: "sidecar not in the list is left out",
 			objs: []runtime.Object{execPod("a", inst, "istio-proxy", "app")},
 			req:  ExecContainersRequest{AllowedContainer: allow},
-			want: map[string]ReleaseExecContainers{"web": {Containers: []string{"app"}, Default: "app"}}},
+			want: map[string]ReleaseExecContainers{"web": {Containers: []string{"app"}, Default: "app", Pods: map[string]string{"app": "a"}}}},
 		{name: "only a sidecar: no entry",
 			objs: []runtime.Object{execPod("a", inst, "istio-proxy")},
 			req:  ExecContainersRequest{AllowedContainer: allow}, want: map[string]ReleaseExecContainers{}},
 		{name: "not ready and terminating pods are left out",
 			objs: []runtime.Object{terminating, notReady},
 			req:  ExecContainersRequest{AllowedContainer: allow}, want: map[string]ReleaseExecContainers{}},
+		{name: "replicas: each container on the first ready pod by name",
+			objs: []runtime.Object{execPod("web-2", inst, "app", "worker"), execPod("web-1", inst, "app", "worker"), execPod("aux-0", inst, "side")},
+			req:  ExecContainersRequest{AllowedContainer: allow},
+			want: map[string]ReleaseExecContainers{"web": {Containers: []string{"app", "worker"}, Default: "app", Pods: map[string]string{"app": "web-1", "worker": "web-1"}}}},
+		{name: "terminating and not ready pods are skipped for the pod",
+			objs: []runtime.Object{terminating, notReady, execPod("b-ready", inst, "app")},
+			req:  ExecContainersRequest{AllowedContainer: allow},
+			want: map[string]ReleaseExecContainers{"web": {Containers: []string{"app"}, Default: "app", Pods: map[string]string{"app": "b-ready"}}}},
+		{name: "an init container of the same name does not count",
+			objs: []runtime.Object{initApp, execPod("b-app", inst, "app")},
+			req:  ExecContainersRequest{AllowedContainer: allow},
+			want: map[string]ReleaseExecContainers{"web": {Containers: []string{"worker", "app"}, Default: "worker", Pods: map[string]string{"worker": "a-worker", "app": "b-app"}}}},
 		{name: "nil allow func allows nothing",
 			objs: []runtime.Object{execPod("a", inst, "app")},
 			req:  ExecContainersRequest{}, want: map[string]ReleaseExecContainers{}},
 		{name: "default container holds a token: no default, the other is listed",
 			objs: []runtime.Object{mixed},
 			req:  ExecContainersRequest{AllowedContainer: allow},
-			want: map[string]ReleaseExecContainers{"web": {Containers: []string{"worker"}}}},
+			want: map[string]ReleaseExecContainers{"web": {Containers: []string{"worker"}, Pods: map[string]string{"worker": "m"}}}},
 		{name: "allow switch lists the token container",
 			objs: []runtime.Object{mixed},
 			req:  ExecContainersRequest{AllowedContainer: allow, AllowServiceAccountToken: true},
-			want: map[string]ReleaseExecContainers{"web": {Containers: []string{"app", "worker"}, Default: "app"}}},
+			want: map[string]ReleaseExecContainers{"web": {Containers: []string{"app", "worker"}, Default: "app", Pods: map[string]string{"app": "m", "worker": "m"}}}},
 		{name: "pod automounts through its service account",
 			objs: []runtime.Object{withToken("a", "app")},
 			req:  ExecContainersRequest{AllowedContainer: allow}, want: map[string]ReleaseExecContainers{}},
@@ -207,7 +221,7 @@ func TestExecContainers_ForbiddenLeavesOut(t *testing.T) {
 				return
 			}
 			// Only "app" reads the Secret; "worker" has none and is listed.
-			assert.Equal(t, ReleaseExecContainers{Containers: []string{"worker"}}, got["web"])
+			assert.Equal(t, ReleaseExecContainers{Containers: []string{"worker"}, Pods: map[string]string{"worker": "a"}}, got["web"])
 		})
 	}
 }
@@ -360,7 +374,8 @@ func TestExecContainers_AgreesWithResolveExecTarget(t *testing.T) {
 		tgt, err := c.ResolveExecTarget(context.Background(), "ns", ExecTargetRequest{Release: "web", Container: n, AllowedContainer: allow})
 		assert.Equal(t, listed[n], err == nil, "container %s", n)
 		if err == nil {
-			assert.NotNil(t, tgt)
+			require.NotNil(t, tgt)
+			assert.Equal(t, got["web"].Pods[n], tgt.Pod, "pod of container %s", n)
 		}
 	}
 	tgt, err := c.ResolveExecTarget(context.Background(), "ns", ExecTargetRequest{Release: "web", AllowedContainer: allow})
@@ -371,5 +386,29 @@ func TestExecContainers_AgreesWithResolveExecTarget(t *testing.T) {
 		assert.Equal(t, got["web"].Default, tgt.Container)
 	}
 	// "app" (token) is the default and is refused; the others are listed.
-	assert.Equal(t, ReleaseExecContainers{Containers: []string{"worker", "web"}}, got["web"])
+	assert.Equal(t, ReleaseExecContainers{Containers: []string{"worker", "web"}, Pods: map[string]string{"worker": "b", "web": "b"}}, got["web"])
+}
+
+// The pods of the hints are the pods that ResolveExecTarget picks, also for
+// the default container, when the containers sit on different pods.
+func TestExecContainers_PodsAgreeWithResolveExecTarget(t *testing.T) {
+	t.Parallel()
+	inst := map[string]string{releaseLabelInstance: "web"}
+	cs := fake.NewSimpleClientset(execPod("c", inst, "web"), execPod("a", inst, "worker"), execPod("b", inst, "app", "worker"))
+	c := NewClientFromInterface(cs)
+	allow := allowList("app", "worker", "web")
+
+	got, _, err := c.ExecContainers(context.Background(), "ns", []string{"web"}, ExecContainersRequest{AllowedContainer: allow})
+	require.NoError(t, err)
+	hint := got["web"]
+	assert.Equal(t, map[string]string{"worker": "a", "app": "b", "web": "c"}, hint.Pods)
+	for _, n := range hint.Containers {
+		tgt, err := c.ResolveExecTarget(context.Background(), "ns", ExecTargetRequest{Release: "web", Container: n, AllowedContainer: allow})
+		require.NoError(t, err, n)
+		assert.Equal(t, hint.Pods[n], tgt.Pod, n)
+	}
+	tgt, err := c.ResolveExecTarget(context.Background(), "ns", ExecTargetRequest{Release: "web", AllowedContainer: allow})
+	require.NoError(t, err)
+	assert.Equal(t, hint.Default, tgt.Container)
+	assert.Equal(t, hint.Pods[hint.Default], tgt.Pod)
 }

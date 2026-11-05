@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"slices"
 	"strconv"
@@ -236,6 +237,7 @@ func (h *InstanceHandler) withExecHints(c *gin.Context, inst *models.StackInstan
 		}
 		out.Charts[i].ExecContainers = slices.Clone(hint.Containers)
 		out.Charts[i].ExecDefaultContainer = hint.Default
+		out.Charts[i].ExecPods = maps.Clone(hint.Pods)
 	}
 	return &out, true
 }

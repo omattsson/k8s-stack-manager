@@ -155,6 +155,10 @@ type ChartStatus struct {
 	// ExecDefaultContainer is the container the route picks without -c. Set
 	// only when that call would be accepted.
 	ExecDefaultContainer string `json:"exec_default_container,omitempty" example:"web"`
+	// ExecPods maps each name of exec_containers to the pod that the route picks
+	// for "-c <name>": the first pod by name that is Running, Ready, not
+	// terminating and runs it. Set only with exec_containers.
+	ExecPods map[string]string `json:"exec_pods,omitempty"`
 }
 
 // DeploymentInfo summarizes a Kubernetes Deployment.
