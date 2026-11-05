@@ -3,6 +3,8 @@ import { timeAgo } from '../../utils/timeAgo';
 import { Link as RouterLink, useNavigate } from 'react-router-dom';
 import { scrollFocusIntoView } from '../../utils/scrollFocusIntoView';
 import { useWebSocket } from '../../hooks/useWebSocket';
+import { visuallyHidden } from '../../utils/visuallyHidden';
+import { diffHealth, summarizeHealthChanges, type HealthChange } from './healthSummary';
 import type { WsMessage } from '../../hooks/useWebSocket';
 import {
   Box,
@@ -372,6 +374,65 @@ const Dashboard = () => {
       }
     });
   }, [instances]);
+
+  // One announcement for the health and lifecycle changes of a moment. A stack seen for
+  // the first time is silent, so a filter or page change announces nothing.
+  const [healthAnnouncement, setHealthAnnouncement] = useState('');
+  const knownHealthRef = useRef<Record<string, string>>({});
+  const knownStatusRef = useRef<Record<string, string>>({});
+  const lifecycle = useMemo(() => Object.fromEntries(instances.map((i) => [i.id, i.status])), [instances]);
+  const pendingHealthRef = useRef<Map<string, HealthChange>>(new Map());
+  const instancesRef = useRef(instances);
+  useEffect(() => {
+    instancesRef.current = instances;
+  }, [instances]);
+  // The health before the batch: a stack that ends the batch where it began is not announced.
+  const batchStartRef = useRef<Map<string, string>>(new Map());
+  const announcedRef = useRef('');
+  const announceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const repeatTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    const names = new Map(instancesRef.current.map((i) => [i.id, i.name]));
+    const nameOf = (id: string) => names.get(id);
+    const changes = [
+      ...diffHealth(knownHealthRef.current, instanceHealth, nameOf, 'health'),
+      ...diffHealth(knownStatusRef.current, lifecycle, nameOf, 'status'),
+    ];
+    for (const change of changes) {
+      const key = `${change.kind}:${change.id}`;
+      const known = change.kind === 'health' ? knownHealthRef.current : knownStatusRef.current;
+      if (!batchStartRef.current.has(key)) batchStartRef.current.set(key, known[change.id]);
+      // A later change of the same stack replaces the earlier one in the batch.
+      pendingHealthRef.current.set(key, change);
+    }
+    knownHealthRef.current = { ...instanceHealth };
+    knownStatusRef.current = { ...lifecycle };
+    // One timer per batch: a steady stream of changes cannot delay the announcement.
+    if (changes.length === 0 || announceTimerRef.current) return;
+    announceTimerRef.current = setTimeout(() => {
+      announceTimerRef.current = null;
+      const settled = [...pendingHealthRef.current.values()].filter((c) => batchStartRef.current.get(`${c.kind}:${c.id}`) !== c.status);
+      pendingHealthRef.current.clear();
+      batchStartRef.current.clear();
+      const text = summarizeHealthChanges(settled);
+      if (!text) return;
+      const announce = () => {
+        announcedRef.current = text;
+        setHealthAnnouncement(text);
+      };
+      if (text !== announcedRef.current) {
+        announce();
+        return;
+      }
+      // The same text again: clear it first, so that a screen reader reads it again.
+      setHealthAnnouncement('');
+      repeatTimerRef.current = setTimeout(announce, 100);
+    }, 1000);
+  }, [instanceHealth, lifecycle]);
+  useEffect(() => () => {
+    if (announceTimerRef.current) clearTimeout(announceTimerRef.current);
+    if (repeatTimerRef.current) clearTimeout(repeatTimerRef.current);
+  }, []);
 
   // Live-update instance statuses via WebSocket.
   const handleWsMessage = useCallback((msg: WsMessage) => {
@@ -774,7 +835,7 @@ const Dashboard = () => {
 
       {/* My Favorites section */}
       <Box sx={{ mb: 3 }}>
-        <Typography variant="h6" gutterBottom>
+        <Typography variant="h6" component="h2" gutterBottom>
           My Favorites
         </Typography>
         {favoritedInstances.length === 0 ? (
@@ -812,7 +873,7 @@ const Dashboard = () => {
       {/* Recent Stacks section */}
       {recentInstances.length > 0 && (
         <Box sx={{ mb: 3 }}>
-          <Typography variant="h6" gutterBottom>
+          <Typography variant="h6" component="h2" gutterBottom>
             Recent Stacks
           </Typography>
           <Box sx={{ display: 'flex', overflowX: 'auto', gap: 2, pb: 1 }}>
@@ -847,6 +908,8 @@ const Dashboard = () => {
           </Box>
         </Box>
       )}
+
+      <Box role="status" sx={visuallyHidden}>{healthAnnouncement}</Box>
 
       {instances.length > 0 && (
         <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }} aria-live="polite">
@@ -892,7 +955,7 @@ const Dashboard = () => {
               </Typography>
             </Box>
           )}
-          <Grid container spacing={3} aria-live="polite">
+          <Grid container spacing={3}>
             {filtered.map((instance) => (
               <Grid key={instance.id} size={{ xs: 12, sm: 6, md: 4 }}>
                 <InstanceCard

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Box,
+  alpha,
   Typography,
   Paper,
   Chip,
@@ -266,7 +267,7 @@ const Preview = () => {
             displayedCharts.map((chart) => (
               <Paper key={chart.id || chart.chart_name} sx={{ p: 3, mb: 2 }}>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                  <Typography variant="h6">{chart.chart_name}</Typography>
+                  <Typography variant="h6" component="h2">{chart.chart_name}</Typography>
                   <Box sx={{ display: 'flex', gap: 1 }}>
                     {chart.required && <Chip label="Required" color="primary" size="small" />}
                     <Chip label={`Order: ${chart.deploy_order}`} variant="outlined" size="small" />
@@ -285,7 +286,7 @@ const Preview = () => {
                 {chart.default_values && (
                   <>
                     <Divider sx={{ my: 2 }} />
-                    <Typography variant="subtitle2" gutterBottom>Default Values</Typography>
+                    <Typography variant="subtitle2" component="h3" gutterBottom>Default Values</Typography>
                     <Paper variant="outlined" sx={{ p: 2, bgcolor: 'action.hover' }}>
                       <Typography variant="body2" component="pre" sx={{ fontFamily: 'monospace', fontSize: 13, whiteSpace: 'pre-wrap', m: 0 }}>
                         {chart.default_values}
@@ -296,11 +297,11 @@ const Preview = () => {
                 {chart.locked_values && (
                   <>
                     <Divider sx={{ my: 2 }} />
-                    <Typography variant="subtitle2" gutterBottom>
+                    <Typography variant="subtitle2" component="h3" gutterBottom>
                       Locked Values
                       <Chip label="Read-only" size="small" color="warning" sx={{ ml: 1 }} />
                     </Typography>
-                    <Paper variant="outlined" sx={{ p: 2, bgcolor: 'warning.50', borderColor: 'warning.main' }}>
+                    <Paper variant="outlined" sx={{ p: 2, bgcolor: (t) => alpha(t.palette.warning.main, 0.08), borderColor: 'warning.main' }}>
                       <Typography variant="body2" component="pre" sx={{ fontFamily: 'monospace', fontSize: 13, whiteSpace: 'pre-wrap', m: 0 }}>
                         {chart.locked_values}
                       </Typography>
@@ -368,7 +369,7 @@ const Preview = () => {
                 leftTitle={diffSideTitle(changes.left)}
                 rightTitle="Working copy"
               />
-              <Typography variant="subtitle1" sx={{ mb: 1 }}>Charts</Typography>
+              <Typography variant="subtitle1" component="h3" sx={{ mb: 1 }}>Charts</Typography>
               <ChartDiffList
                 chartDiffs={changes.chart_diffs}
                 leftTitle={diffSideTitle(changes.left)}

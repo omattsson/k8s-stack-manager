@@ -24,6 +24,7 @@ import type { AuditLog as AuditLogType } from '../../types';
 import EntityLink from '../../components/EntityLink';
 import { useAuth } from '../../context/AuthContext';
 import LoadingState from '../../components/LoadingState';
+import { scrollBoxFocusSx } from '../../utils/visuallyHidden';
 
 /**
  * Filter options. They mirror KnownAuditEntityTypes and KnownAuditActions in
@@ -252,7 +253,7 @@ const AuditLog = () => {
         <LoadingState label="Loading audit logs..." />
       ) : (
         <Paper>
-          <TableContainer sx={{ maxHeight: 600 }}>
+          <TableContainer tabIndex={0} role="region" aria-label="Audit log entries" sx={{ maxHeight: 600, scrollPaddingTop: '48px', ...scrollBoxFocusSx }}>
             <Table size="small" stickyHeader>
               <TableHead>
                 <TableRow>

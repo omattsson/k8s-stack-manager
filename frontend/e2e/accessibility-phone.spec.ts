@@ -1,5 +1,6 @@
 import { test, expect, devices, type Page } from '@playwright/test';
-import { MODES, checkPage, createSeed, deleteSeed, focusRingSweep, pageList, type PageSetup, type Seed } from './a11y';
+import { MODES, checkPage, createSeed, deleteSeed, expectTableCellsReachable, focusRingSweep, pageList, type PageSetup } from './a11y';
+import { DIALOGS, admin, checkDialog, createAdminSeed, deleteAdminSeed, seed } from './a11yDialogs';
 import type { NotificationListResponse } from '../src/types';
 
 // The phone layout (#758): all pages, the open navigation, a dialog and a toast
@@ -13,13 +14,13 @@ test.describe('Accessibility: phone layout', () => {
   // the bottom of the screen cuts off. The width decides the layout, not the height.
   test.use({ ...iPhone, viewport: { width: iPhone.viewport.width, height: 2400 } });
 
-  const seed = {} as Seed;
-
   test.beforeAll(async ({ request }) => {
     Object.assign(seed, await createSeed(request));
+    Object.assign(admin, await createAdminSeed(request));
   });
 
   test.afterAll(async ({ request }) => {
+    await deleteAdminSeed(request);
     await deleteSeed(request, seed);
   });
 
@@ -36,6 +37,25 @@ test.describe('Accessibility: phone layout', () => {
     await expect(nav, 'the navigation did not open').toBeVisible();
     return nav;
   };
+
+  // KNOWN_UNDECIDED accepts the table cells that a sideways scroll cuts off, because
+  // these tests prove that each one is reachable by scroll and keyboard (#760).
+  for (const name of PAGE_NAMES) {
+    test(`table scroll: ${name} (phone)`, async ({ page }) => {
+      const spec = pageList(seed).find((p) => p.name === name)?.spec as PageSetup;
+      let stats = { tables: 0, scrolling: 0, cutOff: 0 };
+      await checkPage(page, 'light', {
+        ...spec,
+        phone: spec.sidebar !== false,
+        ready: async (p) => { stats = await expectTableCellsReachable(p, `${name} (phone)`); },
+      });
+      // These tables are wider than the phone, so they must scroll sideways.
+      if (['users', 'audit log'].includes(name)) {
+        expect(stats.scrolling, `${name}: the table scrolls sideways on a phone`).toBeGreaterThan(0);
+      }
+      if (name === 'users') expect(stats.cutOff, 'users: a cell is cut off, so that the check has something to focus').toBeGreaterThan(0);
+    });
+  }
 
   for (const mode of MODES) {
     for (const name of PAGE_NAMES) {
@@ -68,6 +88,11 @@ test.describe('Accessibility: phone layout', () => {
         },
       });
     });
+
+    // The list of dialogs of the desktop spec: a dialog on a phone has its own width and margins.
+    for (const state of DIALOGS) {
+      test(`dialog ${state.name} (${mode}, phone)`, ({ page }) => checkDialog(page, mode, state, true));
+    }
 
     test(`dialog (${mode}, phone)`, async ({ page }) => {
       await checkPage(page, mode, {

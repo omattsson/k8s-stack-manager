@@ -68,7 +68,7 @@ const SummaryResourceCard = ({ title, requested, allocatable, capacity, format }
         <Typography color="text.secondary" gutterBottom>
           {title}
         </Typography>
-        <Typography variant="h5">
+        <Typography variant="h5" component="div">
           {requested ? `${format(requested)} / ${format(allocatable)}` : format(allocatable)}
         </Typography>
         {requested && (
@@ -312,7 +312,7 @@ const ClusterHealth = () => {
                     Nodes
                   </Typography>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <Typography variant="h5">
+                    <Typography variant="h5" component="div">
                       {summary.ready_node_count} / {summary.node_count}
                     </Typography>
                     <Chip
@@ -348,7 +348,7 @@ const ClusterHealth = () => {
                   <Typography color="text.secondary" gutterBottom>
                     Namespaces
                   </Typography>
-                  <Typography variant="h5">
+                  <Typography variant="h5" component="div">
                     {summary.namespace_count}
                   </Typography>
                 </CardContent>
@@ -357,7 +357,7 @@ const ClusterHealth = () => {
           </Grid>
 
           {/* Nodes Table */}
-          <Typography variant="h6" sx={{ mb: 1 }}>
+          <Typography variant="h6" component="h2" sx={{ mb: 1 }}>
             Nodes
           </Typography>
           <TableContainer component={Paper} sx={{ mb: 3 }}>
@@ -401,7 +401,7 @@ const ClusterHealth = () => {
           </TableContainer>
 
           {/* Namespaces Table */}
-          <Typography variant="h6" sx={{ mb: 1 }}>
+          <Typography variant="h6" component="h2" sx={{ mb: 1 }}>
             Namespaces
           </Typography>
           <TableContainer component={Paper}>
@@ -442,7 +442,7 @@ const ClusterHealth = () => {
           {/* Namespace Resource Usage */}
           {utilization.length > 0 && (
             <>
-              <Typography variant="h6" sx={{ mb: 1, mt: 3 }}>
+              <Typography variant="h6" component="h2" sx={{ mb: 1, mt: 3 }}>
                 Namespace Resource Usage
               </Typography>
               <TableContainer component={Paper}>

@@ -69,7 +69,7 @@ const TemplateFieldDiffList = ({ diffs, leftTitle, rightTitle }: TemplateFieldDi
   if (diffs.length === 0) return null;
   return (
     <Box component="section" aria-labelledby={titleId} sx={{ mb: 3 }}>
-      <Typography id={titleId} variant="subtitle1" sx={{ mb: 1 }}>
+      <Typography id={titleId} variant="subtitle1" component="h3" sx={{ mb: 1 }}>
         Template details
       </Typography>
       <Table size="small" aria-labelledby={titleId}>

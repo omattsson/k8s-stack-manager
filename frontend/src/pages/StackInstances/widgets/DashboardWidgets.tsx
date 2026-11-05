@@ -183,12 +183,14 @@ const DashboardWidgets = () => {
           onChange={() => toggle(key)}
           disableGutters
           variant="outlined"
+          slots={{ heading: 'h2' }}
+          slotProps={{ region: { 'aria-label': label } }}
           sx={{ '&:before': { display: 'none' }, mb: 1 }}
         >
           <AccordionSummary expandIcon={<ExpandMoreIcon />}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               {icon}
-              <Typography variant="subtitle2">{label}</Typography>
+              <Typography variant="subtitle2" component="span">{label}</Typography>
               {count != null && count > 0 && (
                 <Chip
                   label={count}

@@ -240,6 +240,25 @@ describe('NotificationCenter', () => {
     });
   });
 
+  // The resting tint of an unread row is action.hover, so its hover colour must be another one (#760).
+  it('gives an unread row a hover colour that differs from its resting tint', async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <NotificationCenter />
+      </MemoryRouter>,
+    );
+    await user.click(screen.getByRole('button', { name: /open notifications/i }));
+    const row = (await screen.findByText('Deploy succeeded')).closest('[role=button]') as HTMLElement;
+    const rules = Array.from(document.styleSheets).flatMap((sheet) => Array.from(sheet.cssRules)).map((r) => r.cssText);
+    const classes = Array.from(row.classList).filter((c) => c.startsWith('css-'));
+    const color = (suffix: string) => rules.filter((r) => classes.some((c) => r.startsWith(`.${c}${suffix}`))).join(' ');
+    const hover = color(':hover');
+    expect(hover, 'the unread row has a hover rule').toMatch(/background-color/);
+    expect(hover).toContain('rgba(0, 0, 0, 0.12)');
+    expect(getComputedStyle(row).backgroundColor).toBe('rgba(0, 0, 0, 0.04)');
+  });
+
   it('navigates to entity URL when notification is clicked', async () => {
     const user = userEvent.setup();
     render(

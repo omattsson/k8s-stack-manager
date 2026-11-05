@@ -154,6 +154,8 @@ const NotificationCenter = () => {
               onClick={() => handleClickNotification(notification)}
               sx={{
                 bgcolor: notification.is_read ? 'transparent' : 'action.hover',
+                // The resting tint of an unread row is the hover colour: use another step (action.focus).
+                '&:hover': notification.is_read ? undefined : { bgcolor: 'action.focus' },
                 py: 1.5,
                 px: 2,
               }}

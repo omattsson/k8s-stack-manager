@@ -49,7 +49,7 @@ const YamlEditor = ({ value, onChange, label, height = '300px', readOnly = false
   return (
     <Box>
       {label && (
-        <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
+        <Typography variant="subtitle2" component="div" sx={{ mb: 0.5 }}>
           {label}
         </Typography>
       )}

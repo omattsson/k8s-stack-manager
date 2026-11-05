@@ -103,6 +103,7 @@ describe('AdminUsers Page', () => {
     expect(screen.getByText('ops')).toBeInTheDocument();
     expect(screen.getByText('Dev User')).toBeInTheDocument();
     expect(screen.getByText('Ops User')).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'API keys' })).toBeInTheDocument();
   });
 
   it('on a phone, shows the display name and a Disabled chip in the username cell', async () => {

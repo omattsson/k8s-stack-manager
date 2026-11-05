@@ -2597,7 +2597,8 @@ describe('StackInstances Detail', () => {
 
       const alert = screen.getByText(`Instance is ${status}`).closest('.MuiAlert-root');
       expect(alert).toHaveClass('MuiAlert-colorInfo');
-      expect(within(alert as HTMLElement).getByRole('progressbar')).toBeInTheDocument();
+      // The text names the state, so the spinner is hidden from a screen reader.
+      expect(within(alert as HTMLElement).getByRole('progressbar', { hidden: true })).toHaveAttribute('aria-hidden', 'true');
     });
 
     it.each([

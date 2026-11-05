@@ -118,7 +118,7 @@ test.describe('Cluster Health', () => {
 
   test('nodes table renders with correct column headers', async ({ page }) => {
     // Wait for loading to finish and the Nodes heading to appear.
-    await expect(page.getByRole('heading', { level: 6, name: 'Nodes' })).toBeVisible({
+    await expect(page.getByRole('heading', { level: 2, name: 'Nodes' })).toBeVisible({
       timeout: 10_000,
     });
 
@@ -132,7 +132,7 @@ test.describe('Cluster Health', () => {
 
   test('namespaces table renders with correct column headers', async ({ page }) => {
     // Wait for loading to finish and the Namespaces heading to appear.
-    await expect(page.getByRole('heading', { level: 6, name: 'Namespaces' })).toBeVisible({
+    await expect(page.getByRole('heading', { level: 2, name: 'Namespaces' })).toBeVisible({
       timeout: 10_000,
     });
 

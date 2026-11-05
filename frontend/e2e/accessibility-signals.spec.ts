@@ -1,6 +1,7 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page, type WebSocketRoute } from '@playwright/test';
 import type { PaginatedAuditLogs } from '../src/api/client';
 import type {
+  AuditLog,
   Cluster,
   ClusterNamespaceInfo,
   ClusterSummary,
@@ -12,6 +13,7 @@ import type {
   NotificationListResponse,
   StackInstance,
   TemplateStats,
+  User,
   UserFavorite,
 } from '../src/types';
 import {
@@ -20,7 +22,9 @@ import {
   checkPage,
   createSeed,
   deleteSeed,
+  expectFocusClearOfStickyHeader,
   focusRingSweep,
+  hoverAndCheck,
   nonTextRatio,
   pageList,
   tooltipRatio,
@@ -31,9 +35,9 @@ import {
 
 // What axe does not judge (#758). Focus rings: computed outline or border colour
 // against what is behind it, 3:1, and not cut off by a parent. Colour as the only
-// signal: each state must also differ in shape, weight or text. Bars: the value is
-// also text next to the bar. Tooltips are translucent, so tooltipRatio measures
-// them over white and over black.
+// signal: each state must also differ in shape, weight or text. Bars: 3:1 against
+// the track, and the value is also text next to the bar. Tooltips are translucent,
+// so tooltipRatio measures them over white and over black.
 //
 // Not covered here, inspected by hand: whether a shape reads as its meaning.
 
@@ -109,6 +113,137 @@ test.describe('Accessibility: focus rings, tooltips, bars and colour as the only
     expect(ratio, `${what}: tooltip text over white and over black`).toBeGreaterThanOrEqual(4.5);
   };
 
+  // ---------------------------------------------------------------------
+  // Monaco keeps the Tab key until its tab-focus toggle is pressed (#760).
+
+  const EDITOR_PAGES: [string, () => PageSetup, string?, string?][] = [
+    ['new stack definition', () => setup('new stack definition'), 'Add Chart'],
+    ['edit stack definition', () => setup('edit stack definition')],
+    ['template builder', () => setup('template builder'), 'Add Chart'],
+    ['template instantiate', () => setup('template instantiate')],
+    // The first editor here is read-only, and a read-only editor does not keep Tab.
+    ['stack instance', () => setup('stack instance'), undefined, 'Your Overrides'],
+  ];
+  for (const [name, getSetup, addButton, label] of EDITOR_PAGES) {
+    test(`the code editor gives Tab back: ${name}`, async ({ page }) => {
+      await checkPage(page, 'light', {
+        ...getSetup(),
+        ready: async (p) => {
+          if (addButton) await p.getByRole('button', { name: addButton, exact: true }).click();
+          const editor = label
+            ? p.getByText(label, { exact: true }).first().locator('xpath=following-sibling::*[1]').locator('.monaco-editor')
+            : p.locator('.monaco-editor:visible').first();
+          await expect(editor, 'no code editor on the page').toBeVisible({ timeout: 15_000 });
+          // Not "any editor": the next editor on the page also holds the focus.
+          await editor.evaluate((el) => el.setAttribute('data-a11y-target', 'true'));
+          const inEditor = () => p.evaluate(() => Boolean(document.activeElement?.closest('[data-a11y-target]')));
+          await editor.locator('.view-lines').click();
+          await expect.poll(inEditor, { message: 'the click did not focus the editor' }).toBe(true);
+
+          await p.keyboard.press('Tab');
+          expect(await inEditor(), 'without the toggle, Tab stays in the editor').toBe(true);
+
+          // Monaco: Ctrl+M, and Ctrl+Shift+M on macOS. It reads the user agent, which the
+          // test browser sets apart from navigator.platform.
+          const mac = await p.evaluate(() => /Macintosh|Mac OS X/.test(navigator.userAgent));
+          await p.keyboard.press(mac ? 'Control+Shift+M' : 'Control+M');
+          await p.keyboard.press('Tab');
+          const described = await p.evaluate(() => { const a = document.activeElement; return `${a?.tagName}.${a?.className} in ${a?.closest('.monaco-editor')?.className}`; });
+          expect(await inEditor(), `with the toggle, Tab leaves the editor (focus: ${described})`).toBe(false);
+          const where = await p.evaluate(() => document.activeElement?.tagName ?? 'none');
+          expect(where, 'the focus is on an element').not.toBe('BODY');
+          test.info().annotations.push({ type: 'focus', description: `${name}: Tab after the toggle lands on <${where.toLowerCase()}>` });
+        },
+      });
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // Pod health: one summary for a screen reader, not a live region per card (#760).
+
+  test('pod health changes are announced in one summary', async ({ page }) => {
+    let socket: WebSocketRoute | undefined;
+    const rows = ['alpha', 'beta'].map((n): StackInstance => ({
+      id: `a11y-announce-${n}`,
+      name: `announce-${n}`,
+      namespace: `stack-${n}`,
+      branch: 'main',
+      status: 'running',
+      stack_definition_id: seed.definitionId,
+      owner_id: 'a11y-owner',
+      created_at: '2026-10-19T09:00:00Z',
+      updated_at: '2026-10-19T09:00:00Z',
+    }));
+    await checkPage(page, 'light', {
+      path: '/',
+      heading: 'Stack Instances',
+      onSocket: (ws) => { socket = ws; },
+      before: async (p) => {
+        await p.route(/\/api\/v1\/stack-instances(\?.*)?$/, (route) => (
+          route.request().method() !== 'GET'
+            ? route.continue()
+            : route.fulfill({ json: { data: rows, page: 1, pageSize: 25, total: rows.length } })
+        ));
+        await p.route(/\/api\/v1\/stack-instances\/a11y-announce-[^/]+\/status$/, (route) => route.fulfill({
+          json: { namespace: 'a11y', status: 'healthy', charts: [], last_checked: '2026-10-19T09:00:00Z' } satisfies NamespaceStatus,
+        }));
+      },
+      ready: async (p) => {
+        await expect(p.getByRole('img', { name: 'Pod health: healthy' }), 'the first health').toHaveCount(2);
+        await p.waitForTimeout(1500);
+        await expect(p.getByText(/stack update/), 'the first load is silent').toHaveCount(0);
+        await expect(p.locator('main .MuiGrid-container[aria-live]'), 'the card grid is not a live region').toHaveCount(0);
+
+        expect(socket, 'the app opened its WebSocket').toBeDefined();
+        const push = (id: string, status: string) => socket?.send(JSON.stringify({
+          type: 'instance.status',
+          payload: { instance_id: id, namespace_status: { status } },
+        }));
+        push('a11y-announce-alpha', 'degraded');
+        push('a11y-announce-beta', 'error');
+        await expect(
+          p.getByRole('status').filter({ hasText: 'stack update' }),
+          'one summary of both changes',
+        ).toHaveText('2 stack updates: announce-alpha health degraded, announce-beta health error');
+      },
+    });
+  });
+
+  // A sticky header covers a control that the browser scrolls to the top edge (#760).
+  // The mocks give each table enough rows to scroll inside its 600px box.
+  test('sticky header: the audit log does not cover a focused row link', async ({ page }) => {
+    await checkPage(page, 'light', {
+      path: '/audit-log',
+      heading: 'Audit Log',
+      before: (p) => p.route(/\/api\/v1\/audit-logs(\?.*)?$/, (route) => route.fulfill({
+        json: {
+          data: Array.from({ length: 40 }, (_, i): AuditLog => ({
+            id: `a11y-log-${i}`, user_id: 'u', username: 'admin', action: 'update', entity_type: 'stack_instance',
+            entity_id: `a11y-entity-${i}`, details: `Forced entry ${i}`, timestamp: '2026-10-19T10:00:00Z',
+          })),
+          total: 40,
+          limit: 50,
+          offset: 0,
+        } satisfies PaginatedAuditLogs,
+      })),
+      ready: (p) => expectFocusClearOfStickyHeader(p, p.getByRole('table'), 'audit log'),
+    });
+  });
+
+  test('sticky header: the user list does not cover a focused row button', async ({ page }) => {
+    await checkPage(page, 'light', {
+      path: '/admin/users',
+      heading: 'User Management',
+      before: (p) => p.route(/\/api\/v1\/users$/, (route) => (route.request().method() !== 'GET' ? route.continue() : route.fulfill({
+        json: Array.from({ length: 30 }, (_, i): User => ({
+          id: `a11y-user-${i}`, username: `a11y-user-${i}`, display_name: `User ${i}`, role: 'user', auth_provider: 'local',
+          disabled: false, service_account: false, created_at: '2026-10-19T10:00:00Z', updated_at: '2026-10-19T10:00:00Z',
+        })),
+      }))),
+      ready: (p) => expectFocusClearOfStickyHeader(p, p.getByRole('table'), 'users'),
+    });
+  });
+
   for (const mode of MODES) {
     // ---------------------------------------------------------------------
     // Focus rings
@@ -118,7 +253,7 @@ test.describe('Accessibility: focus rings, tooltips, bars and colour as the only
       ['login', {}],
       ['dashboard', { maxStops: 800 }],
       ['templates', { maxStops: 800 }],
-      ['stack instance', { skipEditors: 'the values editor of a chart: Ctrl+M or Ctrl+Shift+M gives Tab back, so a keyboard user can leave it' }],
+      ['stack instance', { skipEditors: 'the values editor of a chart: the Monaco tab-focus toggle gives Tab back (tested in "the code editor gives Tab back")' }],
       ['new stack definition', {}],
       ['users', { maxStops: 300 }],
       ['profile', {}],
@@ -394,6 +529,8 @@ test.describe('Accessibility: focus rings, tooltips, bars and colour as the only
           await expect(popover).toBeVisible();
           await expectUnreadSignal(p);
           await runAxe({ selector: '.MuiPopover-paper', checked: popover.getByRole('heading', { name: 'Notifications' }) });
+          // The resting tint of an unread row must not be its hover colour (#760); contrast is measured hovered.
+          await hoverAndCheck(p, p.getByRole('button', { name: /Unread notification\s*,\s*unread/ }), '.MuiPopover-paper', runAxe);
         },
       });
     });
@@ -430,6 +567,7 @@ test.describe('Accessibility: focus rings, tooltips, bars and colour as the only
             await expect(p.getByRole('row', { name: new RegExp(template) }), `${template}: the value is text`).toContainText(percent);
             const ratio = await nonTextRatio(bar.locator('.MuiLinearProgress-bar').first(), 'backgroundColor', bar);
             test.info().annotations.push({ type: 'explicit', description: `analytics bar ${template} (${mode}): bar against track ${ratio.toFixed(2)}` });
+            expect(ratio, `analytics bar ${template}: bar against its track`).toBeGreaterThanOrEqual(AA_NON_TEXT);
           }
           await runAxe({ selector: 'main', checked: p.getByRole('row', { name: /Low rate/ }) });
         },
@@ -479,6 +617,7 @@ test.describe('Accessibility: focus rings, tooltips, bars and colour as the only
             await expect(bar, `${namespace}: the bar has a name`).toBeVisible();
             const ratio = await nonTextRatio(bar.locator('.MuiLinearProgress-bar').first(), 'backgroundColor', bar);
             test.info().annotations.push({ type: 'explicit', description: `cluster health bar ${percent} (${mode}): bar against track ${ratio.toFixed(2)}` });
+            expect(ratio, `cluster health bar ${percent}: bar against its track`).toBeGreaterThanOrEqual(AA_NON_TEXT);
           }
           await runAxe({ selector: 'main', checked: p.getByRole('row', { name: /stack-high/ }) });
         },

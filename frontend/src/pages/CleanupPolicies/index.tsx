@@ -615,7 +615,8 @@ const CleanupPolicies = () => {
               />
             )}
 
-            <Alert severity="info" sx={{ py: 0.5 }}>
+            {/* A long unbroken condition would scroll the message sideways on a phone (#760). */}
+            <Alert severity="info" sx={{ py: 0.5, '& .MuiAlert-message': { overflowWrap: 'anywhere' } }}>
               <Typography variant="body2" sx={{ mb: 0.5 }}>
                 Conditions (combine with commas; all must match):
               </Typography>

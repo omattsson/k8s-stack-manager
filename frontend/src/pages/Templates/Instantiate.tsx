@@ -164,7 +164,7 @@ const Instantiate = () => {
       )}
 
       <Paper sx={{ p: 3, mb: 3 }}>
-        <Typography variant="h6" gutterBottom>Stack Definition Details</Typography>
+        <Typography variant="h6" component="h2" gutterBottom>Stack Definition Details</Typography>
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           <TextField
             label="Definition Name"
@@ -190,7 +190,7 @@ const Instantiate = () => {
         </Box>
       </Paper>
 
-      <Typography variant="h5" gutterBottom>
+      <Typography variant="h5" component="h2" gutterBottom>
         Charts
       </Typography>
 
@@ -198,7 +198,7 @@ const Instantiate = () => {
         <Paper key={co.chart.id || co.chart.chart_name} sx={{ p: 3, mb: 2, opacity: co.enabled ? 1 : 0.5 }}>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <Typography variant="h6">{co.chart.chart_name}</Typography>
+              <Typography variant="h6" component="h3">{co.chart.chart_name}</Typography>
               {co.chart.required && <Chip label="Required" color="primary" size="small" />}
             </Box>
             {!co.chart.required && (

@@ -224,7 +224,7 @@ const Profile = () => {
 
       {currentUser && (
         <Paper sx={{ p: 3, mb: 4 }}>
-          <Typography variant="h6" gutterBottom>
+          <Typography variant="h6" component="h2" gutterBottom>
             Account Details
           </Typography>
           <Box sx={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 1, alignItems: 'center' }}>
@@ -267,7 +267,7 @@ const Profile = () => {
       )}
 
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-        <Typography variant="h5">API Keys</Typography>
+        <Typography variant="h5" component="h2">API Keys</Typography>
         <Button
           variant="outlined"
           startIcon={<KeyIcon />}
@@ -363,7 +363,7 @@ const Profile = () => {
 
       {/* ── Notification Preferences ──────────────────────────────── */}
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, mt: 4 }}>
-        <Typography variant="h5">Notification Preferences</Typography>
+        <Typography variant="h5" component="h2">Notification Preferences</Typography>
         <Button
           variant="outlined"
           startIcon={notifPrefsSaving ? <CircularProgress size={16} /> : <SaveIcon />}

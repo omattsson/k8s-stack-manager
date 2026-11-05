@@ -129,7 +129,7 @@ const UpgradeDialog = ({ definitionId, open, onClose, onUpgraded }: UpgradeDialo
 
             {changes && (
               <Box>
-                <Typography variant="subtitle2" gutterBottom>
+                <Typography variant="subtitle2" component="h3" gutterBottom>
                   Changes Summary
                 </Typography>
 

@@ -320,7 +320,7 @@ const Layout = ({ children }: LayoutProps) => {
   );
 
   const drawerContent = (open: boolean) => (
-    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+    <Box component="aside" aria-label="Sidebar" sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {renderDrawerHeader(open)}
       <Divider />
 
@@ -399,7 +399,7 @@ const Layout = ({ children }: LayoutProps) => {
             </IconButton>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexGrow: 1, minWidth: 0 }}>
               <BrandLogo size={24} />
-              <Typography variant="h6" noWrap sx={{ fontWeight: 700 }}>
+              <Typography variant="h6" component="span" noWrap sx={{ fontWeight: 700 }}>
                 {appTitle}
               </Typography>
             </Box>

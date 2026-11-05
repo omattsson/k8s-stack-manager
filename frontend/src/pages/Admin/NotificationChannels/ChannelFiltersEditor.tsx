@@ -41,7 +41,7 @@ const ChannelFiltersEditor = ({ value, onChange, options, ownerHelperText, disab
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
       <Box>
-        <Typography variant="subtitle1">Filters</Typography>
+        <Typography variant="subtitle1" component="h3">Filters</Typography>
         <Typography variant="body2" color="text.secondary">
           Leave all filters empty to get the events of all instances. Each set filter must match; one value of a filter is enough.
           Events without an instance (for example quota warnings) go only to channels without filters.

@@ -15,6 +15,11 @@ export function getComponentOverrides(mode: 'light' | 'dark'): ThemeOptions['com
         disableElevation: true,
       },
     },
+    MuiCircularProgress: {
+      defaultProps: {
+        'aria-label': 'Loading',
+      },
+    },
     MuiCard: {
       styleOverrides: {
         root: {
@@ -53,6 +58,24 @@ export function getComponentOverrides(mode: 'light' | 'dark'): ThemeOptions['com
       defaultProps: {
         variant: 'outlined' as const,
         size: 'small' as const,
+      },
+    },
+    // MUI tints the track from the bar colour: the light warning bar is 2.99:1 on it.
+    // A neutral track keeps every bar colour at 3:1 or more in both modes (#760).
+    MuiLinearProgress: {
+      styleOverrides: {
+        root: ({ theme }) => ({
+          backgroundColor: theme.palette.action.disabledBackground,
+        }),
+      },
+    },
+    // A control in a cell that a sideways scroll cuts off: focus must scroll it fully
+    // into view, with room for its focus ring (#760). Chromium leaves a part-visible control as it is.
+    MuiTableContainer: {
+      styleOverrides: {
+        root: {
+          scrollPaddingInline: '48px',
+        },
       },
     },
     MuiChip: {

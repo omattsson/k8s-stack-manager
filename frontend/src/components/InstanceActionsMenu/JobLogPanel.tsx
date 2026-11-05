@@ -21,7 +21,7 @@ const JobLogPanel = ({ jobId, job }: JobLogPanelProps) => {
   return (
     <Box>
       <Stack direction="row" spacing={1} useFlexGap sx={{ alignItems: 'center', flexWrap: 'wrap', mb: 1 }}>
-        <Typography variant="subtitle2" sx={{ overflowWrap: 'anywhere', minWidth: 0 }}>Job {jobId}</Typography>
+        <Typography variant="subtitle2" component="h3" sx={{ overflowWrap: 'anywhere', minWidth: 0 }}>Job {jobId}</Typography>
         <Chip size="small" label={job.status} color={statusColor(job.status)} data-testid="job-status" />
         {job.following && <CircularProgress size={14} aria-label="Job running" />}
         {job.following && job.waiting && (

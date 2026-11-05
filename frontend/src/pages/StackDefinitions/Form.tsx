@@ -355,7 +355,7 @@ const Form = () => {
       )}
 
       <Paper sx={{ p: 3, mb: 3 }}>
-        <Typography variant="h6" gutterBottom>Definition Details</Typography>
+        <Typography variant="h6" component="h2" gutterBottom>Definition Details</Typography>
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           <TextField
             label="Name"
@@ -384,7 +384,7 @@ const Form = () => {
 
       <Paper sx={{ p: 3, mb: 3 }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-          <Typography variant="h6">Charts</Typography>
+          <Typography variant="h6" component="h2">Charts</Typography>
           {canManageCharts && <Button startIcon={<AddIcon />} onClick={addChart}>Add Chart</Button>}
         </Box>
         {!canManageCharts && (
@@ -408,7 +408,7 @@ const Form = () => {
           <Box key={chart.chart_name || `new-chart-${index}`} sx={{ mb: 3, p: 2, border: 1, borderColor: 'divider', borderRadius: 1 }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <Typography variant="subtitle1">Chart #{index + 1}</Typography>
+                <Typography variant="subtitle1" component="h3">Chart #{index + 1}</Typography>
                 {isRequired && (
                   <Tooltip title="Required by template — cannot be removed">
                     <Chip icon={<LockIcon />} label="Required by template" size="small" color="info" variant="outlined" />

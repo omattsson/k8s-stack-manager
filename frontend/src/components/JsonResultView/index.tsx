@@ -91,7 +91,7 @@ const Section = ({ title, landmark, children }: { title: string; landmark: boole
     aria-label={landmark ? title : undefined}
     sx={{ mt: 1 }}
   >
-    <Typography variant="subtitle2" sx={{ mb: 0.5 }}>{title}</Typography>
+    <Typography variant="subtitle2" component="h3" sx={{ mb: 0.5 }}>{title}</Typography>
     <Box sx={{ pl: 1.5, borderLeft: 2, borderColor: 'divider' }}>{children}</Box>
   </Box>
 );

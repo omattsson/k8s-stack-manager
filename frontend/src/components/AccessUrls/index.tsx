@@ -224,7 +224,7 @@ const AccessUrls = ({ status, showPortForward = false, portForwardEnabled = fals
     <Box sx={{ mb: 2 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
         <LanguageIcon fontSize="small" color="primary" />
-        <Typography variant="subtitle2">Access URLs</Typography>
+        <Typography variant="subtitle2" component="h2">Access URLs</Typography>
       </Box>
       <Paper variant="outlined">
         <List dense disablePadding>

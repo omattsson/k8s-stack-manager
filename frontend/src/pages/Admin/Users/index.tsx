@@ -44,6 +44,7 @@ import { useAuth } from '../../../context/AuthContext';
 import type { User, UserRole, APIKey, CreateUserRequest, CreateAPIKeyRequest, CreateAPIKeyResponse } from '../../../types';
 import LoadingState from '../../../components/LoadingState';
 import { Link } from 'react-router-dom';
+import { visuallyHidden } from '../../../utils/visuallyHidden';
 
 const defaultKeyForm = (): CreateAPIKeyRequest => ({ name: '', expires_in_days: 90 });
 
@@ -348,11 +349,13 @@ const AdminUsers = () => {
       {loading ? (
         <LoadingState label="Loading users..." />
       ) : (
-        <TableContainer component={Paper} sx={{ maxHeight: 600 }}>
+        <TableContainer component={Paper} sx={{ maxHeight: 600, scrollPaddingTop: '64px' }}>
           <Table stickyHeader>
             <TableHead>
               <TableRow>
-                <TableCell width={48} />
+                <TableCell width={48}>
+                  <Box component="span" sx={visuallyHidden}>API keys</Box>
+                </TableCell>
                 <TableCell>Username</TableCell>
                 <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>Display Name</TableCell>
                 <TableCell>Role</TableCell>
@@ -490,7 +493,7 @@ const AdminUsers = () => {
                         <Collapse in={expandedUsers.has(u.id)} timeout="auto" unmountOnExit>
                           <Box sx={{ px: 4, py: 2 }}>
                             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                              <Typography variant="subtitle2">API Keys</Typography>
+                              <Typography variant="subtitle2" component="h2">API Keys</Typography>
                               <Button
                                 size="small"
                                 variant="outlined"
