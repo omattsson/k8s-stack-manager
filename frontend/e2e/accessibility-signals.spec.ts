@@ -191,7 +191,7 @@ test.describe('Accessibility: focus rings, tooltips, bars and colour as the only
       ready: async (p) => {
         await expect(p.getByRole('img', { name: 'Pod health: healthy' }), 'the first health').toHaveCount(2);
         await p.waitForTimeout(1500);
-        await expect(p.getByText(/changed health/), 'the first load is silent').toHaveCount(0);
+        await expect(p.getByText(/stack update/), 'the first load is silent').toHaveCount(0);
         await expect(p.locator('main .MuiGrid-container[aria-live]'), 'the card grid is not a live region').toHaveCount(0);
 
         expect(socket, 'the app opened its WebSocket').toBeDefined();
@@ -202,9 +202,9 @@ test.describe('Accessibility: focus rings, tooltips, bars and colour as the only
         push('a11y-announce-alpha', 'degraded');
         push('a11y-announce-beta', 'error');
         await expect(
-          p.getByRole('status').filter({ hasText: 'changed health' }),
+          p.getByRole('status').filter({ hasText: 'stack update' }),
           'one summary of both changes',
-        ).toHaveText('2 stacks changed health: announce-alpha degraded, announce-beta error');
+        ).toHaveText('2 stack updates: announce-alpha health degraded, announce-beta health error');
       },
     });
   });

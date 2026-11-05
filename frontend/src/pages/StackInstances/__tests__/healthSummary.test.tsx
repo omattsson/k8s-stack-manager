@@ -93,24 +93,24 @@ describe('summarizeHealthChanges and diffHealth', () => {
   });
 
   it('names one stack and several stacks', () => {
-    expect(summarizeHealthChanges([{ id: '1', name: 'alpha', status: 'degraded' }])).toBe('1 stack changed health: alpha degraded');
+    expect(summarizeHealthChanges([{ id: '1', name: 'alpha', status: 'degraded', kind: 'health' as const }])).toBe('1 stack update: alpha health degraded');
     expect(summarizeHealthChanges([
-      { id: '1', name: 'alpha', status: 'degraded' },
-      { id: '2', name: 'beta', status: 'not_found' },
-    ])).toBe('2 stacks changed health: alpha degraded, beta not found');
+      { id: '1', name: 'alpha', status: 'degraded', kind: 'health' as const },
+      { id: '2', name: 'beta', status: 'not_found', kind: 'health' as const },
+    ])).toBe('2 stack updates: alpha health degraded, beta health not found');
   });
 
   it('names at most five stacks', () => {
-    const changes = Array.from({ length: 7 }, (_, i) => ({ id: `${i}`, name: `s${i}`, status: 'healthy' }));
+    const changes = Array.from({ length: 7 }, (_, i) => ({ id: `${i}`, name: `s${i}`, status: 'healthy', kind: 'health' as const }));
     expect(summarizeHealthChanges(changes)).toBe(
-      '7 stacks changed health: s0 healthy, s1 healthy, s2 healthy, s3 healthy, s4 healthy, and 2 more',
+      '7 stack updates: s0 health healthy, s1 health healthy, s2 health healthy, s3 health healthy, s4 health healthy, and 2 more',
     );
   });
 
   it('ignores a first value and an unchanged value', () => {
     const names = (id: string) => ({ a: 'alpha', b: 'beta', c: 'gamma' } as Record<string, string>)[id];
     expect(diffHealth({ a: 'healthy', b: 'healthy' }, { a: 'degraded', b: 'healthy', c: 'healthy' }, names))
-      .toEqual([{ id: 'a', name: 'alpha', status: 'degraded' }]);
+      .toEqual([{ id: 'a', name: 'alpha', status: 'degraded', kind: 'health' }]);
   });
 });
 
@@ -142,12 +142,12 @@ describe('Dashboard pod health announcement', () => {
 
     await waitFor(() => expect(screen.getAllByRole('img', { name: 'Pod health: healthy' })).toHaveLength(2));
     await act(() => vi.advanceTimersByTimeAsync(1500));
-    expect(live()).not.toMatch(/changed health/);
+    expect(live()).not.toMatch(/stack update/);
 
     send('a', 'degraded');
     send('b', 'error');
     await act(() => vi.advanceTimersByTimeAsync(1100));
-    expect(screen.getByText('2 stacks changed health: alpha degraded, beta error')).toBeInTheDocument();
+    expect(screen.getByText('2 stack updates: alpha health degraded, beta health error')).toBeInTheDocument();
     // The cards are not a live region.
     expect(document.querySelector('.MuiGrid-container[aria-live]')).toBeNull();
   });
@@ -164,7 +164,7 @@ describe('Dashboard pod health announcement', () => {
     await act(() => vi.advanceTimersByTimeAsync(600));
     send('b', 'error');
     await act(() => vi.advanceTimersByTimeAsync(600));
-    expect(live()).toContain('2 stacks changed health: alpha degraded, beta error');
+    expect(live()).toContain('2 stack updates: alpha health degraded, beta health error');
   });
 
   it('drops a stack that ends the batch where it began', async () => {
@@ -179,8 +179,23 @@ describe('Dashboard pod health announcement', () => {
     send('b', 'error');
     send('a', 'healthy');
     await act(() => vi.advanceTimersByTimeAsync(1100));
-    expect(live()).toContain('1 stack changed health: beta error');
+    expect(live()).toContain('1 stack update: beta health error');
     expect(live()).not.toContain('alpha');
+  });
+
+  it('announces a lifecycle change from a deployment status message', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([row('a', 'alpha'), row('b', 'beta')]);
+    (instanceService.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue(status('healthy'));
+    renderDashboard();
+    await waitFor(() => expect(screen.getAllByRole('img', { name: 'Pod health: healthy' })).toHaveLength(2));
+    await act(() => vi.advanceTimersByTimeAsync(1500));
+
+    act(() => {
+      broadcastWs({ type: 'deployment.status', payload: { instance_id: 'a', status: 'stopped' } });
+    });
+    await act(() => vi.advanceTimersByTimeAsync(1100));
+    expect(live()).toBe('1 stack update: alpha stopped');
   });
 
   it('clears the text before it repeats the same text', async () => {
@@ -194,12 +209,12 @@ describe('Dashboard pod health announcement', () => {
 
     send('a', 'degraded');
     await act(() => vi.advanceTimersByTimeAsync(1100));
-    expect(live()).toBe('1 stack changed health: alpha degraded');
+    expect(live()).toBe('1 stack update: alpha health degraded');
     send('b', 'degraded');
     // The batch timer fires: the text is empty for a moment, then the same text returns.
     await act(() => vi.advanceTimersByTimeAsync(1050));
     expect(live()).toBe('');
     await act(() => vi.advanceTimersByTimeAsync(150));
-    expect(live()).toBe('1 stack changed health: alpha degraded');
+    expect(live()).toBe('1 stack update: alpha health degraded');
   });
 });

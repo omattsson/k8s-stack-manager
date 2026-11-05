@@ -816,7 +816,8 @@ export async function expectFocusClearOfStickyHeader(page: Page, table: Locator,
       const el = document.activeElement as HTMLElement | null;
       if (!el || !el.closest('tbody')) return done({ inTable: false });
       const r = el.getBoundingClientRect();
-      const head = el.closest('table')?.querySelector('thead')?.getBoundingClientRect();
+      // stickyHeader makes the th cells sticky, not the thead, which scrolls away.
+      const head = el.closest('table')?.querySelector('thead th')?.getBoundingClientRect();
       const top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
       const label = `${el.tagName.toLowerCase()} "${(el.getAttribute('aria-label') || el.textContent || '').trim().slice(0, 40)}"`;
       if (head && r.top < head.bottom - 0.5) return done({ inTable: true, problem: `${label}: top edge ${Math.round(r.top)}, header bottom ${Math.round(head.bottom)}` });
