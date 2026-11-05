@@ -559,6 +559,10 @@ func (h *DefinitionHandler) ImportDefinition(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "chart_name is required for all charts"})
 			return
 		}
+		if err := validateChartValues("default_values", ch.ChartName, ch.DefaultValues); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 	}
 
 	// Build new definition with fresh IDs.

@@ -48,16 +48,42 @@ vi.mock('../../../api/client', () => ({
   },
 }));
 
-vi.mock('../../../components/YamlEditor', () => ({
-  default: (props: { label?: string; value: string; readOnly?: boolean; onChange?: (val: string) => void }) => (
-    <div data-testid="yaml-editor">
-      <span>{props.label}</span>
-      <pre>{props.value}</pre>
-      {props.readOnly && <span>read-only</span>}
-      {props.onChange && <button onClick={() => props.onChange!('new: value')}>change-yaml</button>}
-    </div>
-  ),
-}));
+vi.mock('../../../components/YamlEditor', async () => {
+  const { useEffect } = await import('react');
+  const { checkYamlValues } = await import('../../../utils/yamlValidation');
+  const MockYamlEditor = (props: {
+    label?: string;
+    value: string;
+    readOnly?: boolean;
+    onChange?: (val: string) => void;
+    onValidationChange?: (error: string | null) => void;
+  }) => {
+    // The real validator and the report of the real editor.
+    const problem = props.readOnly ? null : checkYamlValues(props.value);
+    const blocking = problem?.blocking ? problem.message : null;
+    useEffect(() => {
+      if (!props.readOnly) props.onValidationChange?.(blocking);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [blocking]);
+    return (
+      <div data-testid="yaml-editor">
+        <span>{props.label}</span>
+        <pre>{props.value}</pre>
+        {props.readOnly && <span>read-only</span>}
+        {!props.readOnly && props.onChange && (
+          <>
+            <button type="button" onClick={() => props.onChange!('new: value')}>change-yaml</button>
+            <button type="button" onClick={() => props.onChange!('tag: {{.Branch}}')}>break {props.label}</button>
+            <button type="button" onClick={() => props.onChange!('tag: main')}>fix {props.label}</button>
+            <button type="button" onClick={() => props.onChange!('tag: {{.Other}}')}>other {props.label}</button>
+            <button type="button" onClick={() => props.onChange!('a: 1\na: 2')}>duplicate {props.label}</button>
+          </>
+        )}
+      </div>
+    );
+  };
+  return { default: MockYamlEditor };
+});
 
 import { definitionService, templateService } from '../../../api/client';
 import { useUnsavedChanges } from '../../../hooks/useUnsavedChanges';
@@ -612,4 +638,172 @@ describe('StackDefinitions Form', () => {
     expect(screen.getByDisplayValue('Renamed Def')).toBeInTheDocument();
   });
 
+  describe('chart values validation (#756)', () => {
+    const renderEdit = async () => {
+      (definitionService.get as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitionWithCharts);
+      render(
+        <MemoryRouter initialEntries={['/stack-definitions/123/edit']}>
+          <NotificationProvider>
+            <Routes>
+              <Route path="/stack-definitions/:id/edit" element={<Form />} />
+            </Routes>
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      await screen.findByText('Edit Stack Definition');
+    };
+
+    it('disables save while an editor reports an error and enables it after the fix', async () => {
+      const user = userEvent.setup();
+      await renderEdit();
+      const save = screen.getByRole('button', { name: /save definition/i });
+      expect(save).toBeEnabled();
+      await user.click(screen.getByRole('button', { name: /break default values/i }));
+      await waitFor(() => expect(save).toBeDisabled());
+      expect(screen.getByTestId('yaml-error-hint')).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: /fix default values/i }));
+      await waitFor(() => expect(save).toBeEnabled());
+      expect(screen.queryByTestId('yaml-error-hint')).not.toBeInTheDocument();
+    });
+
+    it('does not block the save for a warning only', async () => {
+      const user = userEvent.setup();
+      await renderEdit();
+      await user.click(screen.getByRole('button', { name: /duplicate default values/i }));
+      expect(screen.getByRole('button', { name: /save definition/i })).toBeEnabled();
+    });
+
+    it('clears the error when the chart is removed', async () => {
+      const user = userEvent.setup();
+      await renderEdit();
+      await user.click(screen.getByRole('button', { name: /break default values/i }));
+      const save = screen.getByRole('button', { name: /save definition/i });
+      await waitFor(() => expect(save).toBeDisabled());
+      await user.click(screen.getByRole('button', { name: /remove chart frontend/i }));
+      await waitFor(() => expect(save).toBeEnabled());
+    });
+
+    it('shows the API 400 message', async () => {
+      const user = userEvent.setup();
+      await renderEdit();
+      (definitionService.update as ReturnType<typeof vi.fn>).mockRejectedValue({
+        response: { status: 400, data: { error: 'Invalid YAML in chart "frontend" default_values: bad' } },
+      });
+      await user.click(screen.getByRole('button', { name: /save definition/i }));
+      expect(await screen.findByText(/Invalid YAML in chart "frontend" default_values: bad/)).toBeInTheDocument();
+    });
+  });
+
+  describe('stored values and partial saves (#756)', () => {
+    const renderAt = (path: string) =>
+      render(
+        <MemoryRouter initialEntries={[path]}>
+          <NotificationProvider>
+            <Routes>
+              <Route path="/stack-definitions/new" element={<Form />} />
+              <Route path="/stack-definitions/:id/edit" element={<Form />} />
+            </Routes>
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+
+    it('does not block a rename while the stored value is unchanged, and blocks another invalid value', async () => {
+      const user = userEvent.setup();
+      const stored = { ...mockDefinitionWithCharts.charts[0], default_values: 'tag: {{.Branch}}' };
+      (definitionService.get as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockDefinitionWithCharts, charts: [stored] });
+      (definitionService.update as ReturnType<typeof vi.fn>).mockResolvedValue({ id: '123' });
+      (definitionService.updateChart as ReturnType<typeof vi.fn>).mockResolvedValue({});
+      renderAt('/stack-definitions/123/edit');
+      await screen.findByText('Edit Stack Definition');
+      const save = screen.getByRole('button', { name: /save definition/i });
+      await user.type(screen.getByLabelText(/^name/i), ' 2');
+      expect(save).toBeEnabled();
+      await user.click(screen.getByRole('button', { name: /other default values/i }));
+      await waitFor(() => expect(save).toBeDisabled());
+      await user.click(screen.getByRole('button', { name: /fix default values/i }));
+      await waitFor(() => expect(save).toBeEnabled());
+    });
+
+    it('updates on a retry after a chart 400: no second definition, no duplicate chart', async () => {
+      const user = userEvent.setup();
+      (definitionService.create as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'new-def' });
+      (definitionService.update as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'new-def' });
+      (definitionService.updateChart as ReturnType<typeof vi.fn>).mockResolvedValue({});
+      (definitionService.addChart as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ id: 'c1' })
+        .mockRejectedValueOnce({ response: { status: 400, data: { error: 'Invalid YAML in chart "b" default_values: bad' } } })
+        .mockResolvedValueOnce({ id: 'c2' });
+      renderAt('/stack-definitions/new');
+      await user.type(screen.getByLabelText(/^name/i), 'Def');
+      await user.click(screen.getByRole('button', { name: /add chart/i }));
+      await user.click(screen.getByRole('button', { name: /add chart/i }));
+      const names = screen.getAllByLabelText(/chart name/i);
+      await user.type(names[0], 'a');
+      await user.type(names[1], 'b');
+      await user.click(screen.getByRole('button', { name: /save definition/i }));
+      expect(await screen.findByText(/Invalid YAML in chart "b"/)).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: /save definition/i }));
+      await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/stack-definitions'));
+      expect(definitionService.create).toHaveBeenCalledTimes(1);
+      expect(definitionService.update).toHaveBeenCalledWith('new-def', expect.anything());
+      expect(definitionService.updateChart).toHaveBeenCalledWith('new-def', 'c1', expect.anything());
+      expect(definitionService.addChart).toHaveBeenCalledTimes(3);
+    });
+
+    it('deletes a saved chart that the user removes after a failed save', async () => {
+      const user = userEvent.setup();
+      (definitionService.create as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'new-def' });
+      (definitionService.update as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'new-def' });
+      (definitionService.deleteChart as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+      (definitionService.addChart as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ id: 'c1' })
+        .mockRejectedValueOnce({ response: { status: 400, data: { error: 'Invalid YAML in chart "b" default_values: bad' } } })
+        .mockResolvedValueOnce({ id: 'c2' });
+      renderAt('/stack-definitions/new');
+      await user.type(screen.getByLabelText(/^name/i), 'Def');
+      await user.click(screen.getByRole('button', { name: /add chart/i }));
+      await user.click(screen.getByRole('button', { name: /add chart/i }));
+      const names = screen.getAllByLabelText(/chart name/i);
+      await user.type(names[0], 'a');
+      await user.type(names[1], 'b');
+      await user.click(screen.getByRole('button', { name: /save definition/i }));
+      expect(await screen.findByText(/Invalid YAML in chart "b"/)).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: /remove chart a/i }));
+      await user.click(screen.getByRole('button', { name: /save definition/i }));
+      await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/stack-definitions'));
+      expect(definitionService.deleteChart).toHaveBeenCalledWith('new-def', 'c1');
+      expect(definitionService.updateChart).not.toHaveBeenCalled();
+    });
+
+    it('keeps remove disabled during the save, and deletes a chart removed after a failed save', async () => {
+      const user = userEvent.setup();
+      (definitionService.create as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'new-def' });
+      (definitionService.update as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'new-def' });
+      (definitionService.updateChart as ReturnType<typeof vi.fn>).mockResolvedValue({});
+      (definitionService.deleteChart as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+      let resolveA: (value: { id: string }) => void = () => {};
+      (definitionService.addChart as ReturnType<typeof vi.fn>)
+        .mockReturnValueOnce(new Promise((resolve) => { resolveA = resolve; }))
+        .mockRejectedValueOnce({ response: { status: 400, data: { error: 'Invalid YAML in chart "b" default_values: bad' } } })
+        .mockResolvedValueOnce({ id: 'c2' });
+      renderAt('/stack-definitions/new');
+      await user.type(screen.getByLabelText(/^name/i), 'Def');
+      await user.click(screen.getByRole('button', { name: /add chart/i }));
+      await user.click(screen.getByRole('button', { name: /add chart/i }));
+      const names = screen.getAllByLabelText(/chart name/i);
+      await user.type(names[0], 'a');
+      await user.type(names[1], 'b');
+      await user.click(screen.getByRole('button', { name: /save definition/i }));
+      await waitFor(() => expect(definitionService.addChart).toHaveBeenCalledTimes(1));
+      expect(screen.getByRole('button', { name: /remove chart a/i })).toBeDisabled();
+      await act(async () => { resolveA({ id: 'c1' }); });
+      expect(await screen.findByText(/Invalid YAML in chart "b"/)).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: /remove chart a/i }));
+      await user.click(screen.getByRole('button', { name: /save definition/i }));
+      await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/stack-definitions'));
+      expect(definitionService.deleteChart).toHaveBeenCalledWith('new-def', 'c1');
+      expect(definitionService.updateChart).not.toHaveBeenCalled();
+      expect(definitionService.addChart).toHaveBeenLastCalledWith('new-def', expect.objectContaining({ chart_name: 'b' }));
+    });
+  });
 });

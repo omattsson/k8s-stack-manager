@@ -472,11 +472,11 @@ export const templateService = {
   },
   /**
    * Create a new stack template.
-   * @param data - Template fields
+   * @param data - Template fields. `charts` creates the initial chart set in the same transaction; the API checks all chart values first, so a 400 creates nothing.
    * @returns The created template
    * @see POST /api/v1/templates
    */
-  create: async (data: Partial<StackTemplate>): Promise<StackTemplate> => {
+  create: async (data: Partial<Omit<StackTemplate, 'charts'>> & { charts?: CreateTemplateChartRequest[] }): Promise<StackTemplate> => {
     try {
       const response = await api.post('/api/v1/templates', data);
       return response.data;

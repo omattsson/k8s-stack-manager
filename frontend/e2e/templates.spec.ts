@@ -1,5 +1,18 @@
 import { test, expect } from '@playwright/test';
-import { loginAsDevops, uniqueName, createAndPublishTemplate, API_BASE } from './helpers';
+import type { Page } from '@playwright/test';
+import {
+  loginAsDevops,
+  uniqueName,
+  createAndPublishTemplate,
+  API_BASE,
+  setYamlEditorText,
+  tokenFromPage,
+  apiCreateTemplate,
+  apiAddTemplateChart,
+  runE2eSql,
+  e2eDbConfigured,
+  E2E_DB_SKIP_REASON,
+} from './helpers';
 
 test.describe('Template Management', () => {
   test.beforeEach(async ({ page }) => {
@@ -344,5 +357,203 @@ test.describe('Template Management', () => {
 
     // The draft template should be visible in "My Templates"
     await expect(page.getByRole('heading', { name: tplName })).toBeVisible({ timeout: 10_000 });
+  });
+});
+
+// Chart values that the deploy cannot parse (#756). The tests type into Monaco,
+// so the hint and the save buttons follow the editor as a user sees them.
+test.describe('Template chart values validation (#756)', () => {
+  const templateNames: string[] = [];
+  const definitionNames: string[] = [];
+
+  test.afterEach(async ({ page, request }) => {
+    if (templateNames.length === 0 && definitionNames.length === 0) return;
+    const token = await tokenFromPage(page);
+    const headers = { Authorization: `Bearer ${token}` };
+    for (const [kind, names] of [['templates', templateNames], ['stack-definitions', definitionNames]] as const) {
+      for (const name of names.splice(0)) {
+        const res = await request.get(`${API_BASE}/api/v1/${kind}?name=${encodeURIComponent(name)}&pageSize=100`, { headers });
+        const body = await res.json();
+        for (const item of body.data ?? []) {
+          if (item.name === name) await request.delete(`${API_BASE}/api/v1/${kind}/${item.id}`, { headers });
+        }
+      }
+    }
+  });
+
+  async function openBuilder(page: Page, name: string) {
+    await loginAsDevops(page);
+    await page.goto('/templates/new');
+    await page.getByRole('textbox', { name: 'Name' }).fill(name);
+    await page.getByLabel('Category').click();
+    await page.getByRole('option', { name: 'Web' }).click();
+    await page.getByLabel('Version', { exact: true }).fill('1.0.0');
+    await page.getByRole('button', { name: 'Add Chart' }).click();
+    await page.getByLabel('Chart Name').fill('vchart');
+    await page.getByLabel('Repository URL').fill('https://charts.example.com');
+  }
+
+  /** Create and publish a template with one chart through the API, then open Use Template. */
+  async function openInstantiate(page: Page, name: string, seedSql?: (templateId: string) => string) {
+    await loginAsDevops(page);
+    await page.goto('/');
+    const token = await tokenFromPage(page);
+    const headers = { Authorization: `Bearer ${token}` };
+    const templateId = await apiCreateTemplate(page.request, token, name);
+    templateNames.push(name);
+    await apiAddTemplateChart(page.request, token, templateId, { chart_name: 'vchart', default_values: 'replicaCount: 1\n' });
+    const res = await page.request.post(`${API_BASE}/api/v1/templates/${templateId}/publish`, { headers });
+    expect(res.ok(), `publish failed: ${res.status()}`).toBe(true);
+    if (seedSql) await runE2eSql(seedSql(templateId));
+    await page.goto(`/templates/${templateId}/use`);
+    await expect(page.getByRole('button', { name: 'Create Stack Definition' })).toBeVisible({ timeout: 10_000 });
+    definitionNames.push(`${name} - My Stack`);
+  }
+
+  for (const [label, buttons] of [
+    ['Default Values (YAML)', ['Save Template', 'Save and Publish']],
+    ['Locked Values (YAML)', ['Save Template', 'Save and Publish']],
+  ] as const) {
+    test(`Builder: an unquoted template in ${label} blocks both saves until it is quoted`, async ({ page }) => {
+      await openBuilder(page, uniqueName('tpl-yaml-block'));
+
+      await setYamlEditorText(page, label, 'tag: {{.Branch}}');
+      for (const b of buttons) await expect(page.getByRole('button', { name: b })).toBeDisabled({ timeout: 10_000 });
+      await expect(page.getByTestId('yaml-error-hint')).toHaveText('Fix the YAML errors before you save.');
+
+      await setYamlEditorText(page, label, 'tag: "{{.Branch}}"');
+      for (const b of buttons) await expect(page.getByRole('button', { name: b })).toBeEnabled({ timeout: 10_000 });
+      await expect(page.getByTestId('yaml-error-hint')).toHaveCount(0);
+    });
+  }
+
+  test('Builder: a duplicate key does not block the save and the API 400 shows on the form', async ({ page }) => {
+    const name = uniqueName('tpl-yaml-dup');
+    templateNames.push(name);
+    await openBuilder(page, name);
+
+    await setYamlEditorText(page, 'Locked Values (YAML)', 'a: 1\na: 2');
+    const save = page.getByRole('button', { name: 'Save Template' });
+    await expect(page.getByTestId('yaml-hint')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId('yaml-error-hint')).toHaveCount(0);
+    await expect(save).toBeEnabled();
+
+    await save.click();
+    await expect(page.getByRole('alert').filter({ hasText: /HTTP 400: Invalid YAML in/ })).toBeVisible({ timeout: 10_000 });
+    await expect(page).toHaveURL(/\/templates\/new/);
+  });
+
+  test('Use Template: an unquoted template blocks the save until it is quoted', async ({ page }) => {
+    await openInstantiate(page, uniqueName('tpl-use-block'));
+    const save = page.getByRole('button', { name: 'Create Stack Definition' });
+
+    await setYamlEditorText(page, 'Values (YAML)', 'tag: {{.Branch}}');
+    await expect(save).toBeDisabled({ timeout: 10_000 });
+    await expect(page.getByTestId('yaml-error-hint')).toHaveText('Fix the YAML errors before you save.');
+
+    await setYamlEditorText(page, 'Values (YAML)', 'tag: "{{.Branch}}"');
+    await expect(save).toBeEnabled({ timeout: 10_000 });
+    await expect(page.getByTestId('yaml-error-hint')).toHaveCount(0);
+  });
+
+  // The release is a stored snapshot, so the row is seeded in the e2e database.
+  test('Use Template: a stored invalid default does not block; a changed invalid value does', async ({ page }) => {
+    test.skip(!e2eDbConfigured(), E2E_DB_SKIP_REASON);
+    await openInstantiate(page, uniqueName('tpl-use-stored'), (templateId) =>
+      `UPDATE template_versions SET snapshot=REPLACE(snapshot,'replicaCount: 1\\\\n','tag: {{.Branch}}') WHERE template_id='${templateId}'`,
+    );
+    const save = page.getByRole('button', { name: 'Create Stack Definition' });
+    await expect(save).toBeEnabled({ timeout: 10_000 });
+    await expect(page.getByTestId('yaml-error-hint')).toHaveCount(0);
+
+    await setYamlEditorText(page, 'Values (YAML)', 'tag: {{.Commit}}');
+    await expect(save).toBeDisabled({ timeout: 10_000 });
+    await expect(page.getByTestId('yaml-error-hint')).toBeVisible();
+
+    await setYamlEditorText(page, 'Values (YAML)', 'tag: {{.Branch}}');
+    await expect(save).toBeEnabled({ timeout: 10_000 });
+    await save.click();
+    await page.waitForURL(/\/stack-definitions\/[0-9a-f-]{36}/, { timeout: 10_000 });
+  });
+
+  test('Use Template: a duplicate key does not block the save and the API 400 shows on the form', async ({ page }) => {
+    await openInstantiate(page, uniqueName('tpl-use-dup'));
+    const save = page.getByRole('button', { name: 'Create Stack Definition' });
+
+    await setYamlEditorText(page, 'Values (YAML)', 'a: 1\na: 2');
+    await expect(page.getByTestId('yaml-hint')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId('yaml-error-hint')).toHaveCount(0);
+    await expect(save).toBeEnabled();
+
+    await save.click();
+    await expect(page.getByRole('alert').filter({ hasText: /HTTP 400: Invalid YAML in chart "vchart"/ })).toBeVisible({ timeout: 10_000 });
+    await expect(page).toHaveURL(/\/use$/);
+  });
+
+  test('Builder: a retry after a chart 400 creates no second template and no duplicate chart', async ({ page }) => {
+    const name = uniqueName('tpl-yaml-retry');
+    templateNames.push(name);
+    await openBuilder(page, name);
+    await page.getByRole('button', { name: 'Add Chart' }).click();
+    await page.getByLabel('Chart Name').nth(1).fill('wchart');
+    await page.getByLabel('Repository URL').nth(1).fill('https://charts.example.com');
+    await setYamlEditorText(page, 'Locked Values (YAML)', 'a: 1\na: 2', 1);
+
+    const save = page.getByRole('button', { name: 'Save Template' });
+    await save.click();
+    await expect(page.getByRole('alert').filter({ hasText: /HTTP 400: Invalid YAML in chart "wchart"/ })).toBeVisible({ timeout: 10_000 });
+
+    await setYamlEditorText(page, 'Locked Values (YAML)', 'a: 1', 1);
+    await save.click();
+    await page.waitForURL(/\/templates\/[0-9a-f-]{36}$/, { timeout: 10_000 });
+
+    const headers = { Authorization: `Bearer ${await tokenFromPage(page)}` };
+    const list = await (await page.request.get(
+      `${API_BASE}/api/v1/templates?name=${encodeURIComponent(name)}&pageSize=100`, { headers },
+    )).json();
+    const matches = (list.data ?? []).filter((t: { name: string }) => t.name === name);
+    expect(matches).toHaveLength(1);
+    const tpl = await (await page.request.get(`${API_BASE}/api/v1/templates/${matches[0].id}`, { headers })).json();
+    expect(tpl.charts.map((c: { chart_name: string }) => c.chart_name).sort()).toEqual(['vchart', 'wchart']);
+  });
+
+  // The API refuses such a value now, so the row is seeded in the e2e database.
+  test('Builder: a template with a stored invalid value can be renamed; a changed invalid value blocks', async ({ page }) => {
+    test.skip(!e2eDbConfigured(), E2E_DB_SKIP_REASON);
+    await loginAsDevops(page);
+    await page.goto('/');
+    const token = await tokenFromPage(page);
+    const name = uniqueName('tpl-stored-bad');
+    const renamed = `${name}-renamed`;
+    templateNames.push(name, renamed);
+    const templateId = await apiCreateTemplate(page.request, token, name);
+    const chartId = await apiAddTemplateChart(page.request, token, templateId, {
+      chart_name: 'vchart',
+      locked_values: 'tag: x\n',
+    });
+    expect(chartId).toMatch(/^[0-9a-f-]{36}$/);
+    await runE2eSql(`UPDATE template_chart_configs SET locked_values='tag: {{.Branch}}' WHERE id='${chartId}'`);
+
+    await page.goto(`/templates/${templateId}/edit`);
+    const nameField = page.getByRole('textbox', { name: 'Name', exact: true });
+    await expect(nameField).toHaveValue(name, { timeout: 10_000 });
+    const save = page.getByRole('button', { name: 'Save Template' });
+    await expect(save).toBeEnabled({ timeout: 10_000 });
+    await expect(page.getByTestId('yaml-error-hint')).toHaveCount(0);
+
+    await setYamlEditorText(page, 'Locked Values (YAML)', 'tag: {{.Commit}}');
+    await expect(save).toBeDisabled({ timeout: 10_000 });
+    await expect(page.getByTestId('yaml-error-hint')).toBeVisible();
+    await setYamlEditorText(page, 'Locked Values (YAML)', 'tag: {{.Branch}}');
+    await expect(save).toBeEnabled({ timeout: 10_000 });
+
+    await nameField.fill(renamed);
+    await save.click();
+    await page.waitForURL(new RegExp(`/templates/${templateId}$`), { timeout: 10_000 });
+    await expect(page.getByRole('heading', { level: 1, name: renamed })).toBeVisible({ timeout: 10_000 });
+    const tpl = await (await page.request.get(`${API_BASE}/api/v1/templates/${templateId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })).json();
+    expect(tpl.charts[0].locked_values).toBe('tag: {{.Branch}}');
   });
 });

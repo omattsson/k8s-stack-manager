@@ -277,6 +277,12 @@ func (h *TemplateHandler) CreateTemplate(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("charts[%d]: %s", i, err.Error())})
 			return
 		}
+		for _, v := range []struct{ field, value string }{{"default_values", ch.DefaultValues}, {"locked_values", ch.LockedValues}} {
+			if err := validateChartValues(v.field, ch.ChartName, v.value); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+		}
 		chartModels[i] = ch
 	}
 
@@ -952,6 +958,15 @@ func (h *TemplateHandler) InstantiateTemplate(c *gin.Context) {
 		slog.Error("failed to resolve chart overrides", "template_id", tmpl.ID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
+	}
+	// Overrides are new user input: check them before any write (#756).
+	for _, rc := range release.Charts {
+		if values, ok := overrides[rc.ChartName]; ok {
+			if err := validateChartValues("default_values", rc.ChartName, values); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+		}
 	}
 	releaseCharts := make([]models.TemplateChartConfig, len(release.Charts))
 	copy(releaseCharts, release.Charts)

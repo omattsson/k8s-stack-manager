@@ -37,14 +37,42 @@ vi.mock('../../../context/NotificationContext', () => ({
   }),
 }));
 
-vi.mock('../../../components/YamlEditor', () => ({
-  default: (props: { label?: string; value: string }) => (
-    <div data-testid="yaml-editor">
-      <span>{props.label}</span>
-      <pre>{props.value}</pre>
-    </div>
-  ),
-}));
+vi.mock('../../../components/YamlEditor', async () => {
+  const { useEffect } = await import('react');
+  const { checkYamlValues } = await import('../../../utils/yamlValidation');
+  const MockYamlEditor = (props: {
+    label?: string;
+    value: string;
+    readOnly?: boolean;
+    onChange?: (val: string) => void;
+    onValidationChange?: (error: string | null) => void;
+  }) => {
+    // The real validator and the report of the real editor.
+    const problem = props.readOnly ? null : checkYamlValues(props.value);
+    const blocking = problem?.blocking ? problem.message : null;
+    useEffect(() => {
+      if (!props.readOnly) props.onValidationChange?.(blocking);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [blocking]);
+    return (
+      <div data-testid="yaml-editor">
+        <span>{props.label}</span>
+        <pre>{props.value}</pre>
+        {props.readOnly && <span>read-only</span>}
+        {!props.readOnly && props.onChange && (
+          <>
+            <button type="button" onClick={() => props.onChange!('new: value')}>change-yaml</button>
+            <button type="button" onClick={() => props.onChange!('tag: {{.Branch}}')}>break {props.label}</button>
+            <button type="button" onClick={() => props.onChange!('tag: main')}>fix {props.label}</button>
+            <button type="button" onClick={() => props.onChange!('tag: {{.Other}}')}>other {props.label}</button>
+            <button type="button" onClick={() => props.onChange!('a: 1\na: 2')}>duplicate {props.label}</button>
+          </>
+        )}
+      </div>
+    );
+  };
+  return { default: MockYamlEditor };
+});
 
 import { templateService } from '../../../api/client';
 
@@ -376,5 +404,210 @@ describe('Templates Builder', () => {
     await user.type(field, 'Renamed Template');
     await act(async () => resolveFirst({ id: 't1', name: 'My Template', description: '', category: 'Web', version: '1.0.0', default_branch: 'main', charts: [] }));
     expect(screen.getByDisplayValue('Renamed Template')).toBeInTheDocument();
+  });
+
+  describe('chart values validation (#756)', () => {
+    const templateWithChart = {
+      id: 't1',
+      name: 'My Template',
+      description: '',
+      category: '',
+      version: '1.0',
+      default_branch: 'main',
+      is_published: false,
+      charts: [
+        {
+          id: 'c1',
+          chart_name: 'web',
+          repository_url: '',
+          source_repo_url: '',
+          chart_path: '',
+          chart_version: '',
+          default_values: 'a: 1',
+          locked_values: 'b: 2',
+          deploy_order: 1,
+          required: false,
+        },
+      ],
+    };
+
+    const renderChart = async () => {
+      (templateService.get as ReturnType<typeof vi.fn>).mockResolvedValue(templateWithChart);
+      render(
+        <MemoryRouter initialEntries={['/templates/t1/edit']}>
+          <Routes>
+            <Route path="/templates/:id/edit" element={<Builder />} />
+          </Routes>
+        </MemoryRouter>
+      );
+      await screen.findByText('Edit Template');
+    };
+
+    it('blocks both save buttons for a default values error and for a locked values error', async () => {
+      const user = userEvent.setup();
+      await renderChart();
+      const save = screen.getByRole('button', { name: /save template/i });
+      const publish = screen.getByRole('button', { name: /save and publish/i });
+      await user.click(screen.getByRole('button', { name: /break default values/i }));
+      await waitFor(() => expect(save).toBeDisabled());
+      expect(publish).toBeDisabled();
+      await user.click(screen.getByRole('button', { name: /break locked values/i }));
+      await user.click(screen.getByRole('button', { name: /fix default values/i }));
+      expect(save).toBeDisabled();
+      await user.click(screen.getByRole('button', { name: /fix locked values/i }));
+      await waitFor(() => expect(save).toBeEnabled());
+      expect(publish).toBeEnabled();
+    });
+
+    it('does not block the save for a warning only', async () => {
+      const user = userEvent.setup();
+      await renderChart();
+      await user.click(screen.getByRole('button', { name: /duplicate locked values/i }));
+      expect(screen.getByRole('button', { name: /save template/i })).toBeEnabled();
+    });
+
+    it('clears the error when the chart is removed', async () => {
+      const user = userEvent.setup();
+      await renderChart();
+      await user.click(screen.getByRole('button', { name: /break locked values/i }));
+      const save = screen.getByRole('button', { name: /save template/i });
+      await waitFor(() => expect(save).toBeDisabled());
+      await user.click(screen.getByRole('button', { name: /remove chart 1/i }));
+      await waitFor(() => expect(save).toBeEnabled());
+    });
+
+    it('shows the API 400 message', async () => {
+      const user = userEvent.setup();
+      await renderChart();
+      (templateService.update as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 't1', name: 'My Template' });
+      (templateService.updateChart as ReturnType<typeof vi.fn>).mockRejectedValue({
+        response: { status: 400, data: { error: 'Invalid YAML in chart "web" locked_values: bad' } },
+      });
+      await user.click(screen.getByRole('button', { name: /save template/i }));
+      expect(await screen.findByText(/Invalid YAML in chart "web" locked_values: bad/)).toBeInTheDocument();
+    });
+  });
+
+  describe('stored values and partial saves (#756)', () => {
+    const renderAt = (path: string) =>
+      render(
+        <MemoryRouter initialEntries={[path]}>
+          <Routes>
+            <Route path="/templates/new" element={<Builder />} />
+            <Route path="/templates/:id/edit" element={<Builder />} />
+          </Routes>
+        </MemoryRouter>
+      );
+    const baseTemplate = {
+      id: 't1',
+      name: 'My Template',
+      description: '',
+      category: '',
+      version: '1.0',
+      default_branch: 'main',
+      is_published: false,
+    };
+    const chart = {
+      id: 'c1',
+      chart_name: 'web',
+      repository_url: '',
+      source_repo_url: '',
+      chart_path: '',
+      chart_version: '',
+      default_values: 'a: 1',
+      locked_values: 'tag: {{.Branch}}',
+      deploy_order: 1,
+      required: false,
+    };
+
+    it('does not block a rename while the stored value is unchanged, and blocks another invalid value', async () => {
+      const user = userEvent.setup();
+      (templateService.get as ReturnType<typeof vi.fn>).mockResolvedValue({ ...baseTemplate, charts: [chart] });
+      renderAt('/templates/t1/edit');
+      await screen.findByText('Edit Template');
+      const save = screen.getByRole('button', { name: /save template/i });
+      await user.type(screen.getByRole('textbox', { name: /^name$/i }), ' 2');
+      expect(save).toBeEnabled();
+      await user.click(screen.getByRole('button', { name: /other locked values/i }));
+      await waitFor(() => expect(save).toBeDisabled());
+      await user.click(screen.getByRole('button', { name: /fix locked values/i }));
+      await waitFor(() => expect(save).toBeEnabled());
+    });
+
+    it('creates the template with its charts in one request', async () => {
+      const user = userEvent.setup();
+      (templateService.create as ReturnType<typeof vi.fn>)
+        .mockRejectedValueOnce({ response: { status: 400, data: { error: 'Invalid YAML in chart "a" default_values: bad' } } })
+        .mockResolvedValueOnce({ id: 'new-t', name: 'T' });
+      renderAt('/templates/new');
+      await user.type(screen.getByRole('textbox', { name: /^name$/i }), 'T');
+      await user.click(screen.getByRole('button', { name: /add chart/i }));
+      await user.type(screen.getByLabelText(/chart name/i), 'a');
+      await user.click(screen.getByRole('button', { name: /save template/i }));
+      expect(await screen.findByText(/Invalid YAML in chart "a"/)).toBeInTheDocument();
+      expect(templateService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ charts: [expect.objectContaining({ chart_name: 'a' })] })
+      );
+      await user.click(screen.getByRole('button', { name: /save template/i }));
+      await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/templates/new-t'));
+      expect(templateService.addChart).not.toHaveBeenCalled();
+      expect(templateService.update).not.toHaveBeenCalled();
+    });
+
+    it('updates an added chart on a retry after a chart 400: no duplicate chart', async () => {
+      const user = userEvent.setup();
+      (templateService.get as ReturnType<typeof vi.fn>).mockResolvedValue({ ...baseTemplate, charts: [] });
+      (templateService.update as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 't1', name: 'My Template' });
+      (templateService.updateChart as ReturnType<typeof vi.fn>).mockResolvedValue({});
+      (templateService.addChart as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ id: 'n1' })
+        .mockRejectedValueOnce({ response: { status: 400, data: { error: 'Invalid YAML in chart "b" locked_values: bad' } } })
+        .mockResolvedValueOnce({ id: 'n2' });
+      renderAt('/templates/t1/edit');
+      await screen.findByText('Edit Template');
+      await user.click(screen.getByRole('button', { name: /add chart/i }));
+      await user.click(screen.getByRole('button', { name: /add chart/i }));
+      const names = screen.getAllByLabelText(/chart name/i);
+      await user.type(names[0], 'a');
+      await user.type(names[1], 'b');
+      await user.click(screen.getByRole('button', { name: /save template/i }));
+      expect(await screen.findByText(/Invalid YAML in chart "b"/)).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: /save template/i }));
+      await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/templates/t1'));
+      expect(templateService.create).not.toHaveBeenCalled();
+      expect(templateService.updateChart).toHaveBeenCalledWith('t1', 'n1', expect.anything());
+      expect(templateService.addChart).toHaveBeenCalledTimes(3);
+    });
+
+    it('keeps remove disabled during the save, and deletes a chart removed after a failed save', async () => {
+      const user = userEvent.setup();
+      (templateService.get as ReturnType<typeof vi.fn>).mockResolvedValue({ ...baseTemplate, charts: [] });
+      (templateService.update as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 't1', name: 'My Template' });
+      (templateService.updateChart as ReturnType<typeof vi.fn>).mockResolvedValue({});
+      (templateService.deleteChart as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+      let resolveA: (value: { id: string }) => void = () => {};
+      (templateService.addChart as ReturnType<typeof vi.fn>)
+        .mockReturnValueOnce(new Promise((resolve) => { resolveA = resolve; }))
+        .mockRejectedValueOnce({ response: { status: 400, data: { error: 'Invalid YAML in chart "b" locked_values: bad' } } })
+        .mockResolvedValueOnce({ id: 'n2' });
+      renderAt('/templates/t1/edit');
+      await screen.findByText('Edit Template');
+      await user.click(screen.getByRole('button', { name: /add chart/i }));
+      await user.click(screen.getByRole('button', { name: /add chart/i }));
+      const names = screen.getAllByLabelText(/chart name/i);
+      await user.type(names[0], 'a');
+      await user.type(names[1], 'b');
+      await user.click(screen.getByRole('button', { name: /save template/i }));
+      await waitFor(() => expect(templateService.addChart).toHaveBeenCalledTimes(1));
+      expect(screen.getByRole('button', { name: /remove chart 1/i })).toBeDisabled();
+      await act(async () => { resolveA({ id: 'n1' }); });
+      expect(await screen.findByText(/Invalid YAML in chart "b"/)).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: /remove chart 1/i }));
+      await user.click(screen.getByRole('button', { name: /save template/i }));
+      await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/templates/t1'));
+      expect(templateService.deleteChart).toHaveBeenCalledWith('t1', 'n1');
+      expect(templateService.updateChart).not.toHaveBeenCalled();
+      expect(templateService.addChart).toHaveBeenLastCalledWith('t1', expect.objectContaining({ chart_name: 'b' }));
+    });
   });
 });

@@ -52,6 +52,12 @@ func (h *TemplateHandler) AddTemplateChart(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	for _, v := range []struct{ field, value string }{{"default_values", chart.DefaultValues}, {"locked_values", chart.LockedValues}} {
+		if err := validateChartValues(v.field, "", v.value); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
 
 	wctx, cancel := detachedCtx(c)
 	defer cancel()
@@ -90,6 +96,20 @@ func (h *TemplateHandler) UpdateTemplateChart(c *gin.Context) {
 	if err := c.ShouldBindJSON(&update); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
+	}
+
+	// Only a changed value is checked: a stored invalid value stays savable (#756).
+	if update.DefaultValues != existing.DefaultValues {
+		if err := validateChartValues("default_values", "", update.DefaultValues); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
+	if update.LockedValues != existing.LockedValues {
+		if err := validateChartValues("locked_values", "", update.LockedValues); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 	}
 
 	existing.ChartName = update.ChartName
