@@ -140,8 +140,8 @@ func TestExecHints_Status(t *testing.T) {
 	t.Parallel()
 	pods := []runtime.Object{hintPod("web-0", "web", "web", "worker", "sidecar"), hintPod("foreign-0", "foreign", "web")}
 	cannedWeb := map[string]k8s.ReleaseExecContainers{
-		"web":     {Containers: []string{"web", "worker"}, Default: "web"},
-		"foreign": {Containers: []string{"web"}, Default: "web"}, // not a chart of the definition
+		"web":     {Containers: []string{"web", "worker"}, Default: "web", Pods: map[string]string{"web": "web-0", "worker": "web-0"}},
+		"foreign": {Containers: []string{"web"}, Default: "web", Pods: map[string]string{"web": "foreign-0"}}, // not a chart of the definition
 	}
 	execOff := execStreamCfg()
 	execOff.Exec.Enabled = false
@@ -205,14 +205,25 @@ func TestExecHints_Status(t *testing.T) {
 				if !tt.wantHints {
 					assert.NotContains(t, raw, "exec_hints")
 				}
+				if tt.wantWeb != nil {
+					assert.Contains(t, string(body), `"exec_pods":{"web":"web-0","worker":"web-0"}`)
+				} else {
+					assert.NotContains(t, string(body), "exec_pods")
+				}
 				assert.Equal(t, tt.wantCalls, f.exec.calledCount("hints"))
 				for _, ch := range st.Charts {
 					if ch.ReleaseName == "web" {
 						assert.Equal(t, tt.wantWeb, ch.ExecContainers)
 						assert.Equal(t, tt.wantDef, ch.ExecDefaultContainer)
+						if tt.wantWeb != nil {
+							assert.Equal(t, map[string]string{"web": "web-0", "worker": "web-0"}, ch.ExecPods)
+						} else {
+							assert.Empty(t, ch.ExecPods)
+						}
 					} else {
 						assert.Empty(t, ch.ExecContainers, ch.ReleaseName)
 						assert.Empty(t, ch.ExecDefaultContainer, ch.ReleaseName)
+						assert.Empty(t, ch.ExecPods, ch.ReleaseName)
 					}
 				}
 				if tt.wantCalls > 0 {
@@ -318,6 +329,10 @@ func TestExecHints_RealSelection(t *testing.T) {
 				require.NotNil(t, ch)
 				assert.Equal(t, tt.wantWeb, ch.ExecContainers)
 				assert.Equal(t, tt.wantDef, ch.ExecDefaultContainer)
+				for _, name := range tt.wantWeb {
+					assert.Equal(t, "web-0", ch.ExecPods[name], name)
+				}
+				assert.Len(t, ch.ExecPods, len(tt.wantWeb))
 				assert.Equal(t, tt.cfg.Exec.AllowServiceAccountToken, f.exec.lastHintReq.AllowServiceAccountToken)
 			})
 		}
@@ -357,7 +372,7 @@ func TestExecHints_DoNotMutateSharedStatus(t *testing.T) {
 func TestWithExecHints_CopiesTheStatus(t *testing.T) {
 	t.Parallel()
 	f := newHintFixture(t, hintFixtureOpts{})
-	f.exec.hints = map[string]k8s.ReleaseExecContainers{"web": {Containers: []string{"web"}, Default: "web"}}
+	f.exec.hints = map[string]k8s.ReleaseExecContainers{"web": {Containers: []string{"web"}, Default: "web", Pods: map[string]string{"web": "web-0"}}}
 	h := &InstanceHandler{execHints: f.handler}
 	inst, err := f.instRepo.FindByID(context.Background(), "inst-1")
 	require.NoError(t, err)
@@ -375,6 +390,13 @@ func TestWithExecHints_CopiesTheStatus(t *testing.T) {
 	assert.False(t, ns.ExecHints)
 	assert.Empty(t, ns.Charts[0].ExecContainers)
 	assert.Empty(t, ns.Charts[0].ExecDefaultContainer)
+	assert.Empty(t, ns.Charts[0].ExecPods)
+
+	// The response must not share the lists of the single-flight result.
+	out.Charts[0].ExecContainers[0] = "x"
+	out.Charts[0].ExecPods["web"] = "x"
+	assert.Equal(t, []string{"web"}, f.exec.hints["web"].Containers)
+	assert.Equal(t, map[string]string{"web": "web-0"}, f.exec.hints["web"].Pods)
 }
 
 func TestExecHints_CancelledRequest(t *testing.T) {
