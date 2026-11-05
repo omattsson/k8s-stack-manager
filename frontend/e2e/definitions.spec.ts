@@ -158,6 +158,7 @@ test.describe('Definition form: chart values validation (#756)', () => {
   const created: string[] = [];
 
   test.afterEach(async ({ page, request }) => {
+    if (created.length === 0) return;
     const token = await tokenFromPage(page);
     for (const name of created.splice(0)) {
       const res = await request.get(`${API_BASE}/api/v1/stack-definitions?name=${encodeURIComponent(name)}&pageSize=100`, {

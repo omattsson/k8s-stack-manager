@@ -367,6 +367,7 @@ test.describe('Template chart values validation (#756)', () => {
   const definitionNames: string[] = [];
 
   test.afterEach(async ({ page, request }) => {
+    if (templateNames.length === 0 && definitionNames.length === 0) return;
     const token = await tokenFromPage(page);
     const headers = { Authorization: `Bearer ${token}` };
     for (const [kind, names] of [['templates', templateNames], ['stack-definitions', definitionNames]] as const) {
@@ -393,7 +394,7 @@ test.describe('Template chart values validation (#756)', () => {
   }
 
   /** Create and publish a template with one chart through the API, then open Use Template. */
-  async function openInstantiate(page: Page, name: string) {
+  async function openInstantiate(page: Page, name: string, seedSql?: (templateId: string) => string) {
     await loginAsDevops(page);
     await page.goto('/');
     const token = await tokenFromPage(page);
@@ -403,6 +404,7 @@ test.describe('Template chart values validation (#756)', () => {
     await apiAddTemplateChart(page.request, token, templateId, { chart_name: 'vchart', default_values: 'replicaCount: 1\n' });
     const res = await page.request.post(`${API_BASE}/api/v1/templates/${templateId}/publish`, { headers });
     expect(res.ok(), `publish failed: ${res.status()}`).toBe(true);
+    if (seedSql) await runE2eSql(seedSql(templateId));
     await page.goto(`/templates/${templateId}/use`);
     await expect(page.getByRole('button', { name: 'Create Stack Definition' })).toBeVisible({ timeout: 10_000 });
     definitionNames.push(`${name} - My Stack`);
@@ -452,6 +454,26 @@ test.describe('Template chart values validation (#756)', () => {
     await setYamlEditorText(page, 'Values (YAML)', 'tag: "{{.Branch}}"');
     await expect(save).toBeEnabled({ timeout: 10_000 });
     await expect(page.getByTestId('yaml-error-hint')).toHaveCount(0);
+  });
+
+  // The release is a stored snapshot, so the row is seeded in the e2e database.
+  test('Use Template: a stored invalid default does not block; a changed invalid value does', async ({ page }) => {
+    test.skip(!e2eDbConfigured(), E2E_DB_SKIP_REASON);
+    await openInstantiate(page, uniqueName('tpl-use-stored'), (templateId) =>
+      `UPDATE template_versions SET snapshot=REPLACE(snapshot,'replicaCount: 1\\\\n','tag: {{.Branch}}') WHERE template_id='${templateId}'`,
+    );
+    const save = page.getByRole('button', { name: 'Create Stack Definition' });
+    await expect(save).toBeEnabled({ timeout: 10_000 });
+    await expect(page.getByTestId('yaml-error-hint')).toHaveCount(0);
+
+    await setYamlEditorText(page, 'Values (YAML)', 'tag: {{.Commit}}');
+    await expect(save).toBeDisabled({ timeout: 10_000 });
+    await expect(page.getByTestId('yaml-error-hint')).toBeVisible();
+
+    await setYamlEditorText(page, 'Values (YAML)', 'tag: {{.Branch}}');
+    await expect(save).toBeEnabled({ timeout: 10_000 });
+    await save.click();
+    await page.waitForURL(/\/stack-definitions\/[0-9a-f-]{36}/, { timeout: 10_000 });
   });
 
   test('Use Template: a duplicate key does not block the save and the API 400 shows on the form', async ({ page }) => {
