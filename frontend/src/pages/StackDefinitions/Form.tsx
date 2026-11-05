@@ -449,7 +449,7 @@ const Form = () => {
                 )}
               </Box>
               {!isRequired && canManageCharts && (
-              <IconButton onClick={() => removeChart(index)} size="small" color="error" aria-label={`Remove chart ${charts[index]?.chart_name || index + 1}`}>
+              <IconButton onClick={() => removeChart(index)} disabled={saving} size="small" color="error" aria-label={`Remove chart ${charts[index]?.chart_name || index + 1}`}>
                 <DeleteIcon />
               </IconButton>
               )}

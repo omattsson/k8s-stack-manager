@@ -316,7 +316,7 @@ const Builder = () => {
           <Box key={chart.key} sx={{ mb: 3, p: 2, border: 1, borderColor: 'divider', borderRadius: 1 }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
               <Typography variant="subtitle1" component="h3">Chart #{index + 1}</Typography>
-              <IconButton onClick={() => removeChart(index)} size="small" color="error" aria-label={`Remove chart ${index + 1}`}>
+              <IconButton onClick={() => removeChart(index)} disabled={saving} size="small" color="error" aria-label={`Remove chart ${index + 1}`}>
                 <DeleteIcon />
               </IconButton>
             </Box>

@@ -775,11 +775,12 @@ describe('StackDefinitions Form', () => {
       expect(definitionService.updateChart).not.toHaveBeenCalled();
     });
 
-    it('gives the returned chart ID to the right chart when a chart is removed during the save', async () => {
+    it('keeps remove disabled during the save, and deletes a chart removed after a failed save', async () => {
       const user = userEvent.setup();
       (definitionService.create as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'new-def' });
       (definitionService.update as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'new-def' });
       (definitionService.updateChart as ReturnType<typeof vi.fn>).mockResolvedValue({});
+      (definitionService.deleteChart as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
       let resolveA: (value: { id: string }) => void = () => {};
       (definitionService.addChart as ReturnType<typeof vi.fn>)
         .mockReturnValueOnce(new Promise((resolve) => { resolveA = resolve; }))
@@ -794,11 +795,13 @@ describe('StackDefinitions Form', () => {
       await user.type(names[1], 'b');
       await user.click(screen.getByRole('button', { name: /save definition/i }));
       await waitFor(() => expect(definitionService.addChart).toHaveBeenCalledTimes(1));
-      await user.click(screen.getByRole('button', { name: /remove chart a/i }));
+      expect(screen.getByRole('button', { name: /remove chart a/i })).toBeDisabled();
       await act(async () => { resolveA({ id: 'c1' }); });
       expect(await screen.findByText(/Invalid YAML in chart "b"/)).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: /remove chart a/i }));
       await user.click(screen.getByRole('button', { name: /save definition/i }));
       await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/stack-definitions'));
+      expect(definitionService.deleteChart).toHaveBeenCalledWith('new-def', 'c1');
       expect(definitionService.updateChart).not.toHaveBeenCalled();
       expect(definitionService.addChart).toHaveBeenLastCalledWith('new-def', expect.objectContaining({ chart_name: 'b' }));
     });

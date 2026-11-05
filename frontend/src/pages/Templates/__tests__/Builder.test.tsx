@@ -579,11 +579,12 @@ describe('Templates Builder', () => {
       expect(templateService.addChart).toHaveBeenCalledTimes(3);
     });
 
-    it('gives the returned chart ID to the right chart when a chart is removed during the save', async () => {
+    it('keeps remove disabled during the save, and deletes a chart removed after a failed save', async () => {
       const user = userEvent.setup();
       (templateService.get as ReturnType<typeof vi.fn>).mockResolvedValue({ ...baseTemplate, charts: [] });
       (templateService.update as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 't1', name: 'My Template' });
       (templateService.updateChart as ReturnType<typeof vi.fn>).mockResolvedValue({});
+      (templateService.deleteChart as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
       let resolveA: (value: { id: string }) => void = () => {};
       (templateService.addChart as ReturnType<typeof vi.fn>)
         .mockReturnValueOnce(new Promise((resolve) => { resolveA = resolve; }))
@@ -598,11 +599,13 @@ describe('Templates Builder', () => {
       await user.type(names[1], 'b');
       await user.click(screen.getByRole('button', { name: /save template/i }));
       await waitFor(() => expect(templateService.addChart).toHaveBeenCalledTimes(1));
-      await user.click(screen.getByRole('button', { name: /remove chart 1/i }));
+      expect(screen.getByRole('button', { name: /remove chart 1/i })).toBeDisabled();
       await act(async () => { resolveA({ id: 'n1' }); });
       expect(await screen.findByText(/Invalid YAML in chart "b"/)).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: /remove chart 1/i }));
       await user.click(screen.getByRole('button', { name: /save template/i }));
       await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/templates/t1'));
+      expect(templateService.deleteChart).toHaveBeenCalledWith('t1', 'n1');
       expect(templateService.updateChart).not.toHaveBeenCalled();
       expect(templateService.addChart).toHaveBeenLastCalledWith('t1', expect.objectContaining({ chart_name: 'b' }));
     });
