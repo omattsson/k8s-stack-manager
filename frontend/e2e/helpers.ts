@@ -1,4 +1,4 @@
-import { Page, expect, APIRequestContext, APIResponse } from '@playwright/test';
+import { Page, Locator, expect, APIRequestContext, APIResponse } from '@playwright/test';
 import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -567,4 +567,69 @@ export async function ensureAdminEnabled(request: APIRequestContext): Promise<st
   const after = await login();
   expect(after.status(), 'admin login after enabling it in the database').toBe(200);
   return `WARNING: the built-in admin was disabled (an earlier last-admin.spec.ts run did not reach its afterAll?); enabled it in the database (${rows} row changed)`;
+}
+
+/**
+ * The Monaco editor under a YamlEditor label (the label is plain text above the
+ * editor, not a form label). `nth` picks one of several editors with the same label.
+ */
+export function yamlEditor(page: Page, label: string, nth = 0): Locator {
+  return page
+    .getByText(label, { exact: true })
+    .nth(nth)
+    .locator('xpath=following-sibling::*[1]')
+    .locator('.monaco-editor');
+}
+
+/** Replace the text of a YAML editor. Use flat YAML: the editor keeps the indentation of the line. */
+export async function setYamlEditorText(page: Page, label: string, text: string, nth = 0): Promise<void> {
+  const editor = yamlEditor(page, label, nth);
+  await expect(editor).toBeVisible({ timeout: 20_000 });
+  await editor.locator('.view-lines').click();
+  // Both: Monaco binds select-all to Cmd on macOS and to Ctrl elsewhere.
+  await page.keyboard.press('Control+A');
+  await page.keyboard.press('Meta+A');
+  await page.keyboard.press('Delete');
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    // insertText: typed quotes and braces would trigger the auto-closing of Monaco.
+    if (lines[i]) await page.keyboard.insertText(lines[i]);
+    if (i < lines.length - 1) await page.keyboard.press('Enter');
+  }
+  await expect
+    .poll(async () => (await editor.locator('.view-lines').innerText()).replace(/ /g, ' ').trimEnd(), {
+      message: `the editor "${label}" does not hold the typed text`,
+    })
+    .toBe(text.replace(/\n+/g, '\n'));
+}
+
+/** Create a draft template through the API. Returns the template ID. */
+export async function apiCreateTemplate(
+  request: APIRequestContext,
+  token: string,
+  name: string,
+): Promise<string> {
+  const res = await request.post(`${API_BASE}/api/v1/templates`, {
+    headers: { Authorization: `Bearer ${token}` },
+    data: { name, description: `E2E template ${name}`, category: 'Web', version: '1.0.0', default_branch: 'main' },
+  });
+  const body = await res.json();
+  expect(res.ok(), `apiCreateTemplate failed: ${res.status()} ${JSON.stringify(body)}`).toBe(true);
+  return body.id;
+}
+
+/** Add a chart to a template through the API. Returns the template chart ID. */
+export async function apiAddTemplateChart(
+  request: APIRequestContext,
+  token: string,
+  templateId: string,
+  chart: { chart_name: string; default_values?: string; locked_values?: string },
+): Promise<string> {
+  const res = await request.post(`${API_BASE}/api/v1/templates/${templateId}/charts`, {
+    headers: { Authorization: `Bearer ${token}` },
+    data: { repository_url: 'https://charts.example.com', chart_version: '1.0.0', ...chart },
+  });
+  const body = await res.json();
+  expect(res.ok(), `apiAddTemplateChart failed: ${res.status()} ${JSON.stringify(body)}`).toBe(true);
+  return body.id;
 }

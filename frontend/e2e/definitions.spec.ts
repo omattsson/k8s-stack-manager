@@ -1,5 +1,14 @@
 import { test, expect } from '@playwright/test';
-import { loginAsDevops, uniqueName, createAndPublishTemplate, instantiateTemplate, API_BASE } from './helpers';
+import type { Page } from '@playwright/test';
+import {
+  loginAsDevops,
+  uniqueName,
+  createAndPublishTemplate,
+  instantiateTemplate,
+  API_BASE,
+  setYamlEditorText,
+  tokenFromPage,
+} from './helpers';
 
 test.describe('Stack Definition Management', () => {
   test.beforeEach(async ({ page }) => {
@@ -135,5 +144,66 @@ test.describe('Stack Definition Management', () => {
     // Wait for the list to load, then check the name is absent
     await page.waitForTimeout(1000);
     await expect(page.getByText(defName)).not.toBeVisible();
+  });
+});
+
+// Chart values that the deploy cannot parse (#756). The tests type into Monaco,
+// so the hint and the save button follow the editor as a user sees them.
+test.describe('Definition form: chart values validation (#756)', () => {
+  const created: string[] = [];
+
+  test.afterEach(async ({ page, request }) => {
+    const token = await tokenFromPage(page);
+    for (const name of created.splice(0)) {
+      const res = await request.get(`${API_BASE}/api/v1/stack-definitions?name=${encodeURIComponent(name)}&pageSize=100`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const body = await res.json();
+      for (const d of body.data ?? []) {
+        if (d.name === name) {
+          await request.delete(`${API_BASE}/api/v1/stack-definitions/${d.id}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+        }
+      }
+    }
+  });
+
+  async function openForm(page: Page, name: string) {
+    await loginAsDevops(page);
+    await page.goto('/stack-definitions/new');
+    await page.getByRole('textbox', { name: 'Name', exact: true }).fill(name);
+    await page.getByRole('button', { name: 'Add Chart' }).click();
+    await page.getByLabel('Chart Name').fill('vchart');
+    await page.getByLabel('Repository URL').fill('https://charts.example.com');
+  }
+
+  test('an unquoted template blocks the save until it is quoted', async ({ page }) => {
+    await openForm(page, uniqueName('def-yaml-block'));
+    const save = page.getByRole('button', { name: 'Save Definition' });
+
+    await setYamlEditorText(page, 'Default Values (YAML)', 'tag: {{.Branch}}');
+    await expect(save).toBeDisabled({ timeout: 10_000 });
+    await expect(page.getByTestId('yaml-error-hint')).toHaveText('Fix the YAML errors before you save.');
+
+    await setYamlEditorText(page, 'Default Values (YAML)', 'tag: "{{.Branch}}"');
+    await expect(save).toBeEnabled({ timeout: 10_000 });
+    await expect(page.getByTestId('yaml-error-hint')).toHaveCount(0);
+  });
+
+  test('a duplicate key does not block the save and the API 400 shows on the form', async ({ page }) => {
+    const name = uniqueName('def-yaml-dup');
+    created.push(name);
+    await openForm(page, name);
+    const save = page.getByRole('button', { name: 'Save Definition' });
+
+    await setYamlEditorText(page, 'Default Values (YAML)', 'a: 1\na: 2');
+    await expect(page.getByTestId('yaml-hint')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId('yaml-error-hint')).toHaveCount(0);
+    await expect(save).toBeEnabled();
+
+    await save.click();
+    await expect(page.getByRole('alert').filter({ hasText: /HTTP 400: Invalid YAML in/ })).toBeVisible({ timeout: 10_000 });
+    await expect(page).toHaveURL(/\/stack-definitions\/new/);
   });
 });
