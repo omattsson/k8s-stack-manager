@@ -38,7 +38,7 @@ export const AA_NON_TEXT = 3;
 const PHONE_MAX_WIDTH = 599;
 
 /** The diff viewer sets role="banner" on its summary bar; we cannot name it (#760). */
-const LANDMARK_UNIQUE_EXCLUDED = 'div[role="banner"]';
+const LANDMARK_UNIQUE_EXCLUDED = '[class*="sticky-header"] > [role="banner"]';
 
 /**
  * The only nodes that axe may leave undecided. Any other undecided node fails, so

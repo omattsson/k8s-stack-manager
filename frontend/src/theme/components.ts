@@ -15,6 +15,11 @@ export function getComponentOverrides(mode: 'light' | 'dark'): ThemeOptions['com
         disableElevation: true,
       },
     },
+    MuiCircularProgress: {
+      defaultProps: {
+        'aria-label': 'Loading',
+      },
+    },
     MuiCard: {
       styleOverrides: {
         root: {

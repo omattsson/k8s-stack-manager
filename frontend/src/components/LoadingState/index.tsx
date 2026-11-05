@@ -10,7 +10,7 @@ const LoadingState = ({ label }: LoadingStateProps) => (
     aria-live="polite"
     role="status"
   >
-    <CircularProgress />
+    <CircularProgress aria-label={label ?? 'Loading'} />
     {label && (
       <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
         {label}

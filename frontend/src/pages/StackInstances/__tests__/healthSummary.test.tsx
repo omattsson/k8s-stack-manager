@@ -100,6 +100,13 @@ describe('summarizeHealthChanges and diffHealth', () => {
     ])).toBe('2 stacks changed health: alpha degraded, beta not found');
   });
 
+  it('names at most five stacks', () => {
+    const changes = Array.from({ length: 7 }, (_, i) => ({ id: `${i}`, name: `s${i}`, status: 'healthy' }));
+    expect(summarizeHealthChanges(changes)).toBe(
+      '7 stacks changed health: s0 healthy, s1 healthy, s2 healthy, s3 healthy, s4 healthy, and 2 more',
+    );
+  });
+
   it('ignores a first value and an unchanged value', () => {
     const names = (id: string) => ({ a: 'alpha', b: 'beta', c: 'gamma' } as Record<string, string>)[id];
     expect(diffHealth({ a: 'healthy', b: 'healthy' }, { a: 'degraded', b: 'healthy', c: 'healthy' }, names))

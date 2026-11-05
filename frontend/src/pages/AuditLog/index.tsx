@@ -253,7 +253,6 @@ const AuditLog = () => {
         <LoadingState label="Loading audit logs..." />
       ) : (
         <Paper>
-          {/* A scroll box needs a tab stop for keyboard users. */}
           <TableContainer tabIndex={0} role="region" aria-label="Audit log entries" sx={{ maxHeight: 600, scrollPaddingTop: '48px', ...scrollBoxFocusSx }}>
             <Table size="small" stickyHeader>
               <TableHead>

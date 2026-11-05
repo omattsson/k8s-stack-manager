@@ -4,10 +4,14 @@ export interface HealthChange {
   status: string;
 }
 
+const MAX_NAMED = 5;
+
 /** One sentence for a screen reader, or an empty string when nothing changed. */
 export function summarizeHealthChanges(changes: HealthChange[]): string {
   if (changes.length === 0) return '';
-  const list = changes.map((c) => `${c.name} ${c.status.replace(/_/g, ' ')}`).join(', ');
+  const named = changes.slice(0, MAX_NAMED).map((c) => `${c.name} ${c.status.replace(/_/g, ' ')}`);
+  if (changes.length > MAX_NAMED) named.push(`and ${changes.length - MAX_NAMED} more`);
+  const list = named.join(', ');
   return `${changes.length} ${changes.length === 1 ? 'stack' : 'stacks'} changed health: ${list}`;
 }
 
