@@ -245,7 +245,7 @@ const Builder = () => {
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
       <Paper sx={{ p: 3, mb: 3 }}>
-        <Typography variant="h6" gutterBottom>Template Details</Typography>
+        <Typography variant="h6" component="h2" gutterBottom>Template Details</Typography>
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           <TextField label="Name" value={name} onChange={(e) => setName(e.target.value)} required fullWidth />
           <TextField label="Description" value={description} onChange={(e) => setDescription(e.target.value)} fullWidth multiline rows={2} />
@@ -276,7 +276,7 @@ const Builder = () => {
 
       <Paper sx={{ p: 3, mb: 3 }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-          <Typography variant="h6">Charts</Typography>
+          <Typography variant="h6" component="h2">Charts</Typography>
           <Button startIcon={<AddIcon />} onClick={addChart}>Add Chart</Button>
         </Box>
 
@@ -287,7 +287,7 @@ const Builder = () => {
         {charts.map((chart, index) => (
           <Box key={chart.chart_name || `new-chart-${index}`} sx={{ mb: 3, p: 2, border: 1, borderColor: 'divider', borderRadius: 1 }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-              <Typography variant="subtitle1">Chart #{index + 1}</Typography>
+              <Typography variant="subtitle1" component="h3">Chart #{index + 1}</Typography>
               <IconButton onClick={() => removeChart(index)} size="small" color="error" aria-label={`Remove chart ${index + 1}`}>
                 <DeleteIcon />
               </IconButton>

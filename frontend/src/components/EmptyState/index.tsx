@@ -17,7 +17,7 @@ const EmptyState = ({ icon, title, description, action }: EmptyStateProps) => (
         {icon}
       </Box>
     )}
-    <Typography variant="h6" gutterBottom>
+    <Typography variant="h6" component="h2" gutterBottom>
       {title}
     </Typography>
     {description && (

@@ -483,7 +483,7 @@ const Gallery = () => {
       {/* Recently Used section — only on Published tab */}
       {tab === 0 && resolvedRecentTemplates.length > 0 && (
         <Box sx={{ mb: 3 }}>
-          <Typography variant="h6" gutterBottom>
+          <Typography variant="h6" component="h2" gutterBottom>
             Recently Used
           </Typography>
           <Box sx={{ display: 'flex', overflowX: 'auto', gap: 2, pb: 1 }}>

@@ -171,7 +171,7 @@ const PodStatusDisplay = ({ status, loading }: PodStatusDisplayProps) => {
   return (
     <Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-        <Typography variant="subtitle2">Cluster Status:</Typography>
+        <Typography variant="subtitle2" component="div">Cluster Status:</Typography>
         <Chip label={status.status} size="small" color={chartStatusColor(status.status)} />
         <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto' }}>
           Last checked: {new Date(status.last_checked).toLocaleString()}
@@ -181,7 +181,7 @@ const PodStatusDisplay = ({ status, loading }: PodStatusDisplayProps) => {
       {(status.charts || []).map((chart) => (
         <Paper key={chart.release_name} sx={{ p: 2, mb: 2 }} variant="outlined">
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-            <Typography variant="subtitle2">{chart.chart_name}</Typography>
+            <Typography variant="subtitle2" component="h3">{chart.chart_name}</Typography>
             <Chip label={chart.status} size="small" color={chartStatusColor(chart.status)} />
           </Box>
 
@@ -227,7 +227,7 @@ const PodStatusDisplay = ({ status, loading }: PodStatusDisplayProps) => {
 
       {warningEvents.length > 0 && (
         <Box sx={{ mt: 2 }}>
-          <Typography variant="subtitle2" gutterBottom>Recent Warnings</Typography>
+          <Typography variant="subtitle2" component="h3" gutterBottom>Recent Warnings</Typography>
           {warningEvents.slice(0, 10).map((event) => (
             <Alert key={`${event.object}-${event.reason}-${event.last_seen}`} severity="warning" sx={{ mb: 0.5, py: 0, '& .MuiAlert-message': { py: 0.5 } }}>
               <Typography variant="caption" sx={{ fontWeight: 600 }}>{event.reason}</Typography>

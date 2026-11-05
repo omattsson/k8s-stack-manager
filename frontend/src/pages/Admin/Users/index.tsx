@@ -493,7 +493,7 @@ const AdminUsers = () => {
                         <Collapse in={expandedUsers.has(u.id)} timeout="auto" unmountOnExit>
                           <Box sx={{ px: 4, py: 2 }}>
                             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                              <Typography variant="subtitle2">API Keys</Typography>
+                              <Typography variant="subtitle2" component="h2">API Keys</Typography>
                               <Button
                                 size="small"
                                 variant="outlined"

@@ -148,7 +148,7 @@ const DeployPreviewDialog = ({
                     aria-labelledby={`preview-tab-${activeTab}`}
                   >
                     {chartsWithChanges.length === 1 && (
-                      <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                      <Typography variant="subtitle2" component="h3" sx={{ mb: 1 }}>
                         {activeChart.chart_name}
                       </Typography>
                     )}

@@ -142,7 +142,7 @@ const ImportDefinitionDialog = ({ open, onClose, onImported }: ImportDefinitionD
 
         {bundle && (
           <Paper variant="outlined" sx={{ p: 2 }}>
-            <Typography variant="subtitle2" gutterBottom>Preview</Typography>
+            <Typography variant="subtitle2" component="h3" gutterBottom>Preview</Typography>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
               <Typography variant="body2">
                 <strong>Name:</strong> {bundle.definition.name}

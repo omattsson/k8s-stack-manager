@@ -153,7 +153,7 @@ const Analytics = () => {
                     <Typography color="text.secondary" gutterBottom>
                       Templates
                     </Typography>
-                    <Typography variant="h4">{overview.total_templates}</Typography>
+                    <Typography variant="h4" component="div">{overview.total_templates}</Typography>
                   </CardContent>
                 </Card>
               </Grid>
@@ -163,7 +163,7 @@ const Analytics = () => {
                     <Typography color="text.secondary" gutterBottom>
                       Definitions
                     </Typography>
-                    <Typography variant="h4">{overview.total_definitions}</Typography>
+                    <Typography variant="h4" component="div">{overview.total_definitions}</Typography>
                   </CardContent>
                 </Card>
               </Grid>
@@ -174,7 +174,7 @@ const Analytics = () => {
                       Instances
                     </Typography>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <Typography variant="h4">{overview.total_instances}</Typography>
+                      <Typography variant="h4" component="div">{overview.total_instances}</Typography>
                       <Chip
                         label={`${overview.running_instances} running`}
                         size="small"
@@ -190,7 +190,7 @@ const Analytics = () => {
                     <Typography color="text.secondary" gutterBottom>
                       Running Instances
                     </Typography>
-                    <Typography variant="h4">{overview.running_instances}</Typography>
+                    <Typography variant="h4" component="div">{overview.running_instances}</Typography>
                   </CardContent>
                 </Card>
               </Grid>
@@ -200,7 +200,7 @@ const Analytics = () => {
                     <Typography color="text.secondary" gutterBottom>
                       Total Deploys
                     </Typography>
-                    <Typography variant="h4">{overview.total_deploys}</Typography>
+                    <Typography variant="h4" component="div">{overview.total_deploys}</Typography>
                     {(overview.deploy_log_retention_days ?? 0) > 0 && (
                       <Typography variant="caption" color="text.secondary">
                         Last {overview.deploy_log_retention_days} days
@@ -215,7 +215,7 @@ const Analytics = () => {
                     <Typography color="text.secondary" gutterBottom>
                       Users
                     </Typography>
-                    <Typography variant="h4">{overview.total_users}</Typography>
+                    <Typography variant="h4" component="div">{overview.total_users}</Typography>
                   </CardContent>
                 </Card>
               </Grid>
@@ -223,7 +223,7 @@ const Analytics = () => {
           )}
 
           {/* Template Usage Table */}
-          <Typography variant="h6" sx={{ mb: 1 }}>
+          <Typography variant="h6" component="h2" sx={{ mb: 1 }}>
             Template Usage
           </Typography>
           {templatesError ? (
@@ -298,7 +298,7 @@ const Analytics = () => {
           {/* User Activity Table (admin only) */}
           {isAdmin && (
             <>
-              <Typography variant="h6" sx={{ mb: 1 }}>
+              <Typography variant="h6" component="h2" sx={{ mb: 1 }}>
                 User Activity
               </Typography>
               {usersError ? (

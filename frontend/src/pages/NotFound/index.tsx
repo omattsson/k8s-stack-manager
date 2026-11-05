@@ -16,7 +16,7 @@ const NotFound = () => {
       <Typography variant="h1" sx={{ fontSize: '8rem', fontWeight: 700, color: 'text.secondary' }}>
         404
       </Typography>
-      <Typography variant="h5" sx={{ mb: 1 }}>
+      <Typography variant="h5" component="h2" sx={{ mb: 1 }}>
         Page not found
       </Typography>
       <Typography variant="body1" color="text.secondary" sx={{ mb: 4 }}>

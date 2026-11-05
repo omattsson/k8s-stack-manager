@@ -37,6 +37,9 @@ export const AA_NON_TEXT = 3;
 /** Widest viewport that gets the phone layout (MUI `sm` breakpoint is 600). */
 const PHONE_MAX_WIDTH = 599;
 
+/** The diff viewer sets role="banner" on its summary bar; we cannot name it (#760). */
+const LANDMARK_UNIQUE_EXCLUDED = 'div[role="banner"]';
+
 /**
  * The only nodes that axe may leave undecided. Any other undecided node fails, so
  * a new surface or a new overlay cannot escape the check unseen. `phoneOnly`: only
@@ -358,9 +361,9 @@ async function expectExplicitContrast(page: Page, what: string, selector: string
  */
 export async function expectContrastAndLists(page: Page, what: string, hasMain: boolean, scope?: AxeScope): Promise<void> {
   await waitForTransitions(page);
-  // Own pass before revealClippedContent: that removes vertical scroll, which this rule needs.
+  // Own pass before revealClippedContent: that removes vertical scroll, which scrollable-region-focusable needs.
   const early = await (scope ? new AxeBuilder({ page }).include(scope.selector) : new AxeBuilder({ page }))
-    .withRules(['scrollable-region-focusable']).analyze();
+    .exclude(LANDMARK_UNIQUE_EXCLUDED).withRules(['scrollable-region-focusable', 'landmark-unique']).analyze();
   await revealClippedContent(page);
   await flattenGradients(page);
   await expectExplicitContrast(page, what, scope?.selector ?? 'body');
@@ -369,7 +372,7 @@ export async function expectContrastAndLists(page: Page, what: string, hasMain: 
   const builder = new AxeBuilder({ page })
     // One-character text is measured too, for example a badge count.
     .options({ checks: { 'color-contrast': { options: { ignoreLength: true } } } } as unknown as Parameters<AxeBuilder['options']>[0])
-    .withRules(['color-contrast', 'listitem', 'label-content-name-mismatch', 'link-in-text-block', 'region', 'aria-progressbar-name', 'empty-table-header']);
+    .withRules(['color-contrast', 'listitem', 'label-content-name-mismatch', 'link-in-text-block', 'region', 'aria-progressbar-name', 'empty-table-header', 'heading-order']);
   const showApp = scope ? await hideAppBehindModal(page, scope.selector) : async () => undefined;
   const results = await (scope ? builder.include(scope.selector) : builder).analyze();
   await showApp();

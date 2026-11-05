@@ -27,7 +27,7 @@ const ClusterHealthWidget = ({ clusters }: Props) => {
         <Card key={cl.id} variant="outlined" sx={{ minWidth: 200, flex: '1 1 200px', maxWidth: 320 }}>
           <CardContent sx={{ pb: '12px !important' }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-              <Typography variant="subtitle2" noWrap>{cl.name}</Typography>
+              <Typography variant="subtitle2" component="span" noWrap>{cl.name}</Typography>
               <Chip
                 label={cl.health_status || 'unknown'}
                 color={healthColor[cl.health_status] ?? 'default'}

@@ -644,7 +644,7 @@ const NotificationChannels = () => {
                     <TableCell colSpan={7} sx={{ py: 0, borderBottom: expandedChannelId === channel.id ? undefined : 'none' }}>
                       <Collapse in={expandedChannelId === channel.id} timeout="auto" unmountOnExit>
                         <Box sx={{ py: 2, px: 1 }}>
-                          <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                          <Typography variant="subtitle2" component="h3" sx={{ mb: 1 }}>
                             Delivery Logs (last 20)
                           </Typography>
                           {logsLoading && <CircularProgress size={20} />}
@@ -852,7 +852,7 @@ const NotificationChannels = () => {
                 if (relevantEvents.length === 0) return null;
                 return (
                   <Box key={category} sx={{ mb: 2 }}>
-                    <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 0.5 }}>
+                    <Typography variant="subtitle2" component="h3" color="text.secondary" sx={{ mb: 0.5 }}>
                       {category}
                     </Typography>
                     <FormGroup>

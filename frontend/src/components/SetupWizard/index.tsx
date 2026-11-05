@@ -97,7 +97,7 @@ const SetupWizard = ({ hasClusters, hasTemplates, hasInstances, isAdmin, isDevOp
             {completedSteps.has(activeStep) ? <CheckCircleIcon sx={{ fontSize: 48 }} /> : steps[activeStep].icon}
           </Box>
 
-          <Typography variant="h6" gutterBottom>
+          <Typography variant="h6" component="h2" gutterBottom>
             {steps[activeStep].label}
           </Typography>
 

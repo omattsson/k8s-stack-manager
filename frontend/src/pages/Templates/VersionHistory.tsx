@@ -263,7 +263,7 @@ const VersionHistory = ({ templateId }: VersionHistoryProps) => {
                     </Typography>
                   ) : (
                   <Box>
-                    <Typography variant="subtitle2" gutterBottom>
+                    <Typography variant="subtitle2" component="h2" gutterBottom>
                       Template Snapshot
                     </Typography>
                     <Box sx={{ display: 'flex', gap: 1, mb: 2, flexWrap: 'wrap' }}>
@@ -278,7 +278,7 @@ const VersionHistory = ({ templateId }: VersionHistoryProps) => {
                       />
                     </Box>
 
-                    <Typography variant="subtitle2" gutterBottom>
+                    <Typography variant="subtitle2" component="h2" gutterBottom>
                       Charts ({expandedSnapshot.snapshot.charts.length})
                     </Typography>
                     {expandedSnapshot.snapshot.charts.map((chart) => (
@@ -337,7 +337,7 @@ const VersionHistory = ({ templateId }: VersionHistoryProps) => {
                 leftTitle={diffSideTitle(diffData.left)}
                 rightTitle={diffSideTitle(diffData.right)}
               />
-              <Typography variant="subtitle1" sx={{ mb: 1 }}>Charts</Typography>
+              <Typography variant="subtitle1" component="h3" sx={{ mb: 1 }}>Charts</Typography>
               <ChartDiffList
                 chartDiffs={diffData.chart_diffs}
                 leftTitle={diffSideTitle(diffData.left)}

@@ -399,7 +399,7 @@ const Layout = ({ children }: LayoutProps) => {
             </IconButton>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexGrow: 1, minWidth: 0 }}>
               <BrandLogo size={24} />
-              <Typography variant="h6" noWrap sx={{ fontWeight: 700 }}>
+              <Typography variant="h6" component="span" noWrap sx={{ fontWeight: 700 }}>
                 {appTitle}
               </Typography>
             </Box>

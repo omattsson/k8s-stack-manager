@@ -40,7 +40,7 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
           }}
         >
           <Paper sx={{ p: 4, textAlign: 'center', maxWidth: 480 }}>
-            <Typography variant="h5" gutterBottom>
+            <Typography variant="h5" component="h1" gutterBottom>
               Something went wrong
             </Typography>
             <Typography variant="body1" color="text.secondary" sx={{ mb: 3 }}>

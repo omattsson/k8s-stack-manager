@@ -826,7 +826,7 @@ const Dashboard = () => {
 
       {/* My Favorites section */}
       <Box sx={{ mb: 3 }}>
-        <Typography variant="h6" gutterBottom>
+        <Typography variant="h6" component="h2" gutterBottom>
           My Favorites
         </Typography>
         {favoritedInstances.length === 0 ? (
@@ -864,7 +864,7 @@ const Dashboard = () => {
       {/* Recent Stacks section */}
       {recentInstances.length > 0 && (
         <Box sx={{ mb: 3 }}>
-          <Typography variant="h6" gutterBottom>
+          <Typography variant="h6" component="h2" gutterBottom>
             Recent Stacks
           </Typography>
           <Box sx={{ display: 'flex', overflowX: 'auto', gap: 2, pb: 1 }}>

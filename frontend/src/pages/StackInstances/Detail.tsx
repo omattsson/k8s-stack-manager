@@ -961,7 +961,7 @@ const Detail = () => {
 
     return (
       <Box sx={{ mb: 2 }}>
-        <Typography variant="subtitle2" gutterBottom>Status Lifecycle</Typography>
+        <Typography variant="subtitle2" component="h2" gutterBottom>Status Lifecycle</Typography>
         {status === 'stopped' ? (
           // A normal state that the user chose or the TTL caused, not a problem.
           <Typography variant="body2" color="text.secondary" data-testid="instance-stopped-note">
@@ -1175,7 +1175,7 @@ const Detail = () => {
 
         {(instance.status === 'running' || instance.status === 'partial' || instance.status === 'deploying' || instance.status === 'stabilizing' || instance.status === 'error' || instance.status === 'stopping' || instance.status === 'cleaning') && (
           <Box sx={{ mb: 2 }}>
-            <Typography variant="subtitle2" gutterBottom>Cluster Resources</Typography>
+            <Typography variant="subtitle2" component="h2" gutterBottom>Cluster Resources</Typography>
             <PodStatusDisplay status={k8sStatus} loading={statusLoading} />
           </Box>
         )}

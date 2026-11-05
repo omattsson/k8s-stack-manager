@@ -194,7 +194,7 @@ const Compare = () => {
                 <Typography variant="overline" color="text.secondary">
                   Left Instance
                 </Typography>
-                <Typography variant="h6">{result.left.name}</Typography>
+                <Typography variant="h6" component="h2">{result.left.name}</Typography>
                 <Typography variant="body2" color="text.secondary">
                   Definition: {result.left.definition_name}
                 </Typography>
@@ -211,7 +211,7 @@ const Compare = () => {
                 <Typography variant="overline" color="text.secondary">
                   Right Instance
                 </Typography>
-                <Typography variant="h6">{result.right.name}</Typography>
+                <Typography variant="h6" component="h2">{result.right.name}</Typography>
                 <Typography variant="body2" color="text.secondary">
                   Definition: {result.right.definition_name}
                 </Typography>
@@ -264,7 +264,7 @@ const Compare = () => {
                   {activeTab === index && (
                     <Box>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-                        <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                        <Typography variant="subtitle1" component="h3" sx={{ fontWeight: 600 }}>
                           {chart.chart_name}
                         </Typography>
                         {!chart.has_differences && (
