@@ -67,8 +67,8 @@ while IFS= read -r line || [ -n "$line" ]; do
     continue
   fi
 
-  # ISO dates compare correctly as strings.
-  if [ "$exp" \> "$limit" ]; then
+  # ISO dates compare as numbers once the dashes are gone (YYYYMMDD).
+  if [ "$(printf '%s' "$exp" | tr -d -)" -gt "$(printf '%s' "$limit" | tr -d -)" ]; then
     echo "$file:$lineno: exp date $exp is more than 90 days from today ($today); latest allowed is $limit" >&2
     status=1
   fi

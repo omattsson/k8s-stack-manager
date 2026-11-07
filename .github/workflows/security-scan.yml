@@ -123,6 +123,9 @@ jobs:
           push: false
           tags: ksm-backend:scan
           cache-from: type=gha,scope=backend
+          # Rebuild the production stage every time, so apk upgrade gets the
+          # current OS package fixes while the base image digest stays the same.
+          no-cache-filters: production
 
       # Gate: fail on a fixable CRITICAL or HIGH finding. The ignore file is
       # passed explicitly; entries are global by CVE ID.
@@ -134,6 +137,7 @@ jobs:
           format: sarif
           output: trivy-image-backend.sarif
           severity: 'CRITICAL,HIGH'
+          limit-severities-for-sarif: true
           ignore-unfixed: true
           trivyignores: .trivyignore
           exit-code: '1'
@@ -166,6 +170,9 @@ jobs:
           push: false
           tags: ksm-frontend:scan
           cache-from: type=gha,scope=frontend
+          # Rebuild the production stage every time, so apk upgrade gets the
+          # current OS package fixes while the base image digest stays the same.
+          no-cache-filters: production
 
       # Gate: fail on a fixable CRITICAL or HIGH finding. The ignore file is
       # passed explicitly; entries are global by CVE ID.
@@ -177,6 +184,7 @@ jobs:
           format: sarif
           output: trivy-image-frontend.sarif
           severity: 'CRITICAL,HIGH'
+          limit-severities-for-sarif: true
           ignore-unfixed: true
           trivyignores: .trivyignore
           exit-code: '1'
@@ -217,6 +225,7 @@ jobs:
           format: sarif
           output: trivy-image-mysql.sarif
           severity: 'CRITICAL,HIGH'
+          limit-severities-for-sarif: true
           trivyignores: ${{ runner.temp }}/empty.trivyignore
           exit-code: '0'
 
