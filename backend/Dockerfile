@@ -50,7 +50,10 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 # Final production image — Alpine-based so helm can execute
 FROM alpine:3.24 AS production
 # 20261020-r0 or later distrusts the compromised eMudhra intermediate CAs (#665).
-RUN apk add --no-cache 'ca-certificates>=20261020-r0' 'ca-certificates-bundle>=20261020-r0'
+# The upgrade picks up fixed Alpine packages (for example zlib) that are newer
+# than the alpine:3.24 base image.
+RUN apk upgrade --no-cache && \
+    apk add --no-cache 'ca-certificates>=20261020-r0' 'ca-certificates-bundle>=20261020-r0'
 WORKDIR /app/
 COPY --from=build-prod /app/main .
 COPY --from=helm /usr/local/bin/helm /usr/local/bin/helm

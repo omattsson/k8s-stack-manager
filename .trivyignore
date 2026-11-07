@@ -1,0 +1,4 @@
+# golang.org/x/net v0.60.0 inside the helm 3.22.1 binary (/usr/local/bin/helm): fixed in x/net 0.62.0, but no released helm contains it (3.22.1 is the newest; 4.x uses 0.60.0 or 0.61.0 too).
+CVE-2026-78661 exp:2027-02-05
+# Go stdlib 1.26.9 inside the helm 3.22.1 binary (/usr/local/bin/helm): fixed in Go 1.26.10 / 1.27.3, but no released helm is built with it.
+CVE-2026-111943 exp:2027-02-05
