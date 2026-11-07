@@ -670,7 +670,8 @@ mysql:
     # first start; back up the database first. A custom mysql.config must
     # not set options that 8.4 removed (for example
     # default_authentication_plugin), or mysqld does not start.
-    tag: "8.4"
+    # The tag is pinned so that scans are reproducible; a chart release bumps it.
+    tag: "8.4.13"
     pullPolicy: IfNotPresent
   auth:
     rootPassword: "CHANGE-ME-set-a-secure-password"

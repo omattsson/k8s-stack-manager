@@ -21,7 +21,7 @@ You are a senior DevOps engineer. You own the Dockerfiles, `docker-compose*.yml`
 
 ## Infrastructure facts
 
-- **Compose services**: `backend`, `frontend` (profile `full`), `mysql` (`mysql:8.4.4`). Profile `otel`: `otel-collector`, `tempo`, `prometheus` (`:9090`), `grafana` (`:3001`). Profile `mysql-otel`: `mysqld-exporter` (`make dev-otel` does not start it).
+- **Compose services**: `backend`, `frontend` (profile `full`), `mysql` (`mysql:8.4.13`). Profile `otel`: `otel-collector`, `tempo`, `prometheus` (`:9090`), `grafana` (`:3001`). Profile `mysql-otel`: `mysqld-exporter` (`make dev-otel` does not start it).
 - **Overlays**: `docker-compose.k8s.yml` (`make dev-k8s`) and `docker-compose.otel.yml` (`make dev-otel`). `make dev-api-only` starts backend and MySQL only.
 - **Networks**: `backend-net` (backend, MySQL) and `frontend-net` (backend, frontend). Keep them separate.
 - **Backend Dockerfile stages**: `helm` (downloads the Helm CLI, `ARG HELM_VERSION`), `development` (`air`), `build-prod` (static binary, `CGO_ENABLED=0`), `production` (`alpine`, non-root uid 65532, binary and Helm only). The builder image is `golang:1.27.x`. `go.mod` sets Go 1.27.
