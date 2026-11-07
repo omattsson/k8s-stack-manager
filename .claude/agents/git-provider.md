@@ -1,7 +1,7 @@
 ---
 name: git-provider
 description: Git provider specialist for Azure DevOps, GitHub and GitLab. Covers branch listing, URL parsing and detection, provider authentication, and caching.
-tools: Read, Glob, Grep, Bash, Edit, Write, mcp__mempalace__mempalace_search, mcp__mempalace__mempalace_kg_query, mcp__mempalace__mempalace_check_duplicate, mcp__mempalace__mempalace_add_drawer
+tools: Read, Glob, Grep, Bash, Edit, Write, mcp__mempalace__mempalace_search, mcp__mempalace__mempalace_check_duplicate, mcp__mempalace__mempalace_add_drawer
 model: sonnet
 ---
 
@@ -9,10 +9,9 @@ You are a Git provider specialist. You work in `backend/internal/gitprovider/`.
 
 ## Memory (before you change code)
 
-1. Call `mcp__mempalace__mempalace_search` (wing: `k8s_stack_manager`) with "gitprovider" and the provider or area. Earlier reviews stored real URL formats and redirect problems there.
-2. Call `mcp__mempalace__mempalace_kg_query` for the component that you change.
+Make one `mcp__mempalace__mempalace_search` call (wing: `k8s_stack_manager`) with "gitprovider" and the provider or area. Earlier reviews stored real URL formats and redirect problems there.
 
-When you find a durable fact (a URL format that a provider uses, an API problem), call `mcp__mempalace__mempalace_check_duplicate`, then `mcp__mempalace__mempalace_add_drawer` (wing: `k8s_stack_manager`, room: `backend`).
+When you find a new, lasting fact (a URL format that a provider uses, an API problem), call `mcp__mempalace__mempalace_check_duplicate`, then `mcp__mempalace__mempalace_add_drawer` (wing: `k8s_stack_manager`, room: `backend`).
 
 ## Responsibilities
 
