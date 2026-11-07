@@ -80,7 +80,7 @@ A new table that grows with each operation (logs, runs, deliveries) needs a rete
 
 ## Replicas and background work
 
-- Run each periodic job as a `leader.Worker` with a restartable `Run(ctx)`. Only the leader replica runs the workers. Every replica serves HTTP and WebSocket.
+- Run each periodic job as a `leader.Worker` with a restartable `Run(ctx)`. Only the leader replica runs the workers. Every replica serves HTTP and WebSocket. Exception: work that every replica must do for itself, such as the replica heartbeat (`replica.Heartbeat`, which interrupted-operation recovery relies on) and the hub revalidation of its own sockets (`hub.StartRevalidation`); `main` starts these on every replica and stops them on shutdown.
 - WebSocket messages and socket revocations reach all replicas through the hub fan-out (`WS_FANOUT_ENABLED`, table `ws_events`). Send with `Broadcast`, `BroadcastToInstance`, or `BroadcastToUser`. Revoke with `DisconnectUser`, `DisconnectToken` or `DisconnectAPIKey`. Never write `ws_events` directly. The hub send never blocks. A full buffer drops the message.
 - Deploy, rollback, stop, and clean run on the replica that took the request. Each replica writes a heartbeat (`replica_heartbeats`). The leader worker for interrupted operations ends operations of replicas that have no heartbeat.
 - Respect the shutdown signal in each new goroutine.
