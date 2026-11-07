@@ -74,6 +74,7 @@ Name the file and line, say what breaks and when, and propose a fix. Do not repe
 
 **Access control.** Roles are `user`, `devops`, `admin`. The backend is the authority; the UI only hides controls.
 - Instance deploy, stop, clean, delete, rollback, overrides, TTL and custom actions: owner, `devops` or `admin` (`requireInstanceModify`, before any side effect).
+- Bulk routes (`/stack-instances/bulk/*`: deploy, stop, clean, delete; `/templates/bulk/*`: delete, publish, unpublish) need `RequireDevOps` on the route group; a plain owner never gets them. Template bulk also checks each template: owner or admin. Flag a bulk route outside the `devops` group.
 - Definition create, import, export and add or remove chart: `RequireDevOps`. Update, delete, upgrade and chart update: owner, `devops` or `admin` (`requireDefinitionModify`).
 - A `user` may change chart default values and deploy order, but not the chart name, repository, path or version (`chartSourceChanged`, 403).
 - Template edit, delete, publish, unpublish and chart changes: `RequireDevOps` and the template owner or an admin. Instantiate and quick deploy are open to every authenticated user.
