@@ -2,7 +2,7 @@
 # Checks the Trivy ignore file (default .trivyignore, override with TRIVYIGNORE).
 # Every entry line must
 #   - have a "#" comment line directly above it that names the reason, and
-#   - carry an "exp:YYYY-MM-DD" date that is at most 90 days from today.
+#   - carry exactly one "exp:YYYY-MM-DD" date that is at most 90 days from today.
 # Blank lines are skipped. A missing or empty file passes.
 # Prints "file:line: reason" for each violation and exits 1 if there is any.
 
@@ -43,6 +43,14 @@ while IFS= read -r line || [ -n "$line" ]; do
     status=1
   fi
   prev_comment=0
+
+  # Trivy reads the first exp: token, so a second one could hide a long date.
+  exp_count=$(printf '%s\n' "$trimmed" | grep -o 'exp:' | wc -l | tr -d '[:space:]')
+  if [ "$exp_count" -gt 1 ]; then
+    echo "$file:$lineno: entry has more than one exp: date" >&2
+    status=1
+    continue
+  fi
 
   exp=$(printf '%s' "$trimmed" | sed -n 's/.*[[:space:]]exp:\([^[:space:]]*\).*/\1/p')
   if [ -z "$exp" ]; then
