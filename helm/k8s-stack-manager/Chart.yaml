@@ -45,7 +45,7 @@ annotations:
     - name: frontend
       image: ghcr.io/omattsson/k8s-stack-manager/frontend:0.16.1
     - name: mysql
-      image: mysql:8.4
+      image: mysql:8.4.13
   artifacthub.io/screenshots: |
     - title: Dashboard
       url: https://raw.githubusercontent.com/omattsson/k8s-stack-manager/main/docs/screenshots/dashboard.png

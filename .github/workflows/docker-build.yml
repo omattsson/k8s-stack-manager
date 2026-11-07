@@ -63,6 +63,9 @@ jobs:
           labels: ${{ steps.meta-backend.outputs.labels }}
           cache-from: type=gha,scope=backend
           cache-to: type=gha,mode=max,scope=backend
+          # Rebuild the production stage every time, so apk upgrade gets the
+          # current OS package fixes while the base image digest stays the same.
+          no-cache-filters: production
 
   build-frontend:
     runs-on: ubuntu-latest

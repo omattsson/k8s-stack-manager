@@ -42,7 +42,7 @@ You are a senior DevOps engineer. You own the Dockerfiles, `docker-compose*.yml`
 | --- | --- | --- | --- | --- |
 | `backend` | `./backend` (multi-stage) | none | backend-net, frontend-net | `wget` on `/health/live` |
 | `frontend` | `./frontend` (multi-stage) | `full` | frontend-net | none |
-| `mysql` | `mysql:8.4.4` | none | backend-net | `mysqladmin ping` |
+| `mysql` | `mysql:8.4.13` | none | backend-net | `mysqladmin ping` |
 | `mysqld-exporter` | `prom/mysqld-exporter` | `mysql-otel` (`make dev-otel` does not start it) | backend-net | `wget --spider /metrics` |
 | `otel-collector` | `otel/opentelemetry-collector-contrib` | `otel` | backend-net | `otelcol validate` |
 | `tempo` | `grafana/tempo` (HTTP `:3200`) | `otel` | backend-net | `wget /ready` |

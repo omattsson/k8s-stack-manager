@@ -1374,7 +1374,7 @@
             "tag": {
               "description": "MySQL version. 8.4 is the long-term support line; MySQL upgrades an 8.0 volume in place on the first start (back up first).",
               "type": "string",
-              "default": "8.4"
+              "default": "8.4.13"
             },
             "pullPolicy": {
               "type": "string",

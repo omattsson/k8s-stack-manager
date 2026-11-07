@@ -88,3 +88,150 @@ jobs:
         with:
           sarif_file: trivy-helm.sarif
           category: trivy-helm
+
+  trivyignore-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Check .trivyignore entries
+        run: bash scripts/check-trivyignore.sh
+
+  # The release images are multi-arch (amd64 and arm64). The three image jobs
+  # below scan the amd64 build only.
+  trivy-image-backend:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build backend image
+        uses: docker/build-push-action@v7
+        with:
+          context: backend
+          target: production
+          load: true
+          push: false
+          tags: ksm-backend:scan
+          cache-from: type=gha,scope=backend
+          # Rebuild the production stage every time, so apk upgrade gets the
+          # current OS package fixes while the base image digest stays the same.
+          no-cache-filters: production
+
+      # Gate: fail on a fixable CRITICAL or HIGH finding. The ignore file is
+      # passed explicitly; entries are global by CVE ID.
+      - name: Run Trivy on backend image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: ksm-backend:scan
+          format: sarif
+          output: trivy-image-backend.sarif
+          severity: 'CRITICAL,HIGH'
+          limit-severities-for-sarif: true
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+          exit-code: '1'
+
+      - name: Upload backend image Trivy results to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-image-backend.sarif
+          category: trivy-image-backend
+
+  trivy-image-frontend:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build frontend image
+        uses: docker/build-push-action@v7
+        with:
+          context: frontend
+          target: production
+          load: true
+          push: false
+          tags: ksm-frontend:scan
+          cache-from: type=gha,scope=frontend
+          # Rebuild the production stage every time, so apk upgrade gets the
+          # current OS package fixes while the base image digest stays the same.
+          no-cache-filters: production
+
+      # Gate: fail on a fixable CRITICAL or HIGH finding. The ignore file is
+      # passed explicitly; entries are global by CVE ID.
+      - name: Run Trivy on frontend image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: ksm-frontend:scan
+          format: sarif
+          output: trivy-image-frontend.sarif
+          severity: 'CRITICAL,HIGH'
+          limit-severities-for-sarif: true
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+          exit-code: '1'
+
+      - name: Upload frontend image Trivy results to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-image-frontend.sarif
+          category: trivy-image-frontend
+
+  # The bundled MySQL image is Oracle's. This project cannot patch it, so the
+  # findings are informational and never fail the job.
+  trivy-image-mysql:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Read MySQL image tag from the Helm chart
+        id: mysql
+        run: echo "tag=$(yq '.mysql.image.tag' helm/k8s-stack-manager/values.yaml)" >> "$GITHUB_OUTPUT"
+
+      # Trivy reads ./.trivyignore on its own and entries are global by CVE ID.
+      # Pass an empty file so that the findings of the other images do not hide
+      # anything here.
+      - name: Create empty ignore file
+        run: touch "${{ runner.temp }}/empty.trivyignore"
+
+      - name: Run Trivy on MySQL image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: mysql:${{ steps.mysql.outputs.tag }}
+          format: sarif
+          output: trivy-image-mysql.sarif
+          severity: 'CRITICAL,HIGH'
+          limit-severities-for-sarif: true
+          trivyignores: ${{ runner.temp }}/empty.trivyignore
+          exit-code: '0'
+
+      - name: Upload MySQL image Trivy results to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-image-mysql.sarif
+          category: trivy-image-mysql
