@@ -49,7 +49,7 @@ Name the file and line, say what breaks and when, and propose a fix. Do not repe
 **Concurrent writes.** Domain models have no version column. Concurrent writers use targeted or conditional updates (`UpdateRole`, `SetDisabled`, compare-and-set on status). Flag a read-modify-write of a whole domain row that another request or worker can change at the same time.
 
 **Audit trail.**
-- Every successful POST, PUT and DELETE writes an audit entry through `middleware.NewAuditMiddleware`. Handlers do not write audit logs directly (exception: `quick_deploy.go`).
+- Every successful POST, PUT and DELETE writes an audit entry through `middleware.NewAuditMiddleware`. Handlers do not write audit logs directly. Exceptions: `quick_deploy.go`, and the stream handlers (`instance_stream.go`, `instance_port_forward.go`, `instance_exec.go`): the middleware does not audit GET, so they write start and end entries themselves, and exec writes its start entry before the command (fail closed).
 - A successful request that changed nothing calls `middleware.SkipAudit(c)`.
 - An operation that is not plain CRUD (deploy, stop, publish, test, bulk, ...) needs an entry in `auditRoutes` (`middleware/audit.go`).
 - New actions and entity types go in `KnownAuditActions` and `KnownAuditEntityTypes`, and in the filter lists of `frontend/src/pages/AuditLog`.
@@ -99,11 +99,11 @@ Name the file and line, say what breaks and when, and propose a fix. Do not repe
 - Audit entries never hold payload bytes (port-forward: service, port and pod).
 - After a hijack, clear the connection deadline and use the session deadlines only.
 
-**Encryption at rest.** Kubeconfig data, registry passwords, notification channel secrets and webhook URLs are encrypted with AES-GCM (`KUBECONFIG_ENCRYPTION_KEY`). Without the key, the backend refuses `kubeconfig_data`, `registry_password` and a non-empty channel `secret` (400). Never return these values in a response or a log.
+**Encryption at rest.** Kubeconfig data, registry passwords and notification channel secrets are encrypted with AES-GCM (`KUBECONFIG_ENCRYPTION_KEY`). Without the key, the backend refuses `kubeconfig_data`, `registry_password` and a non-empty channel `secret` (400). Never return these values in a response or a log. Channel webhook URLs are encrypted when the key is set and stored in plaintext without it (by design: the URL is required and the Helm default key is empty). The channel API returns `webhook_url` to its DevOps and admin users for the editor; error texts, delivery logs and log lines never contain it.
 
 **Hooks.** Organization-specific behavior belongs in hook subscribers, not in the core. Outbound hooks are HMAC-signed when `secret_env` is set and do not follow redirects. Never log hook secrets or provider tokens.
 
-**Notifications.** `total` and `unread_count` are capped at 1000 (`total_capped`, `unread_count_capped`). A new log table that grows needs a retention in `internal/retention`.
+**Notifications.** The list `total` is exact up to offset + 1000, then `total_capped: true`. `unread_count` is exact up to 1000, then `unread_count_capped: true`. A new log table that grows needs a retention in `internal/retention`.
 
 ## Backend tests
 
