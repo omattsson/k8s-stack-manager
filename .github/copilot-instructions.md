@@ -61,7 +61,7 @@ Name the file and line, say what breaks and when, and propose a fix. Do not repe
 - Computed response fields are model fields with `gorm:"-"`.
 
 **Background work and replicas.**
-- A periodic job is a `leader.Worker` with a restartable `Run(ctx)`, built in `buildLeaderWorkers`. Not a goroutine in `main.go`. No closed stop channels or one-shot state.
+- A periodic job is a `leader.Worker` with a restartable `Run(ctx)`, built in `buildLeaderWorkers`. Not a goroutine in `main.go`. No closed stop channels or one-shot state. Exception: work that every replica must do for itself, such as the replica heartbeat (`replica.Heartbeat`, which interrupted-operation recovery relies on) and the hub revalidation of its own sockets (`hub.StartRevalidation`); `main` starts these on every replica and stops them on shutdown.
 - State that must survive a leader change lives in the database.
 - WebSocket sends go through `Broadcast`, `BroadcastToInstance` or `BroadcastToUser`. Revocations go through `DisconnectUser`, `DisconnectToken` or `DisconnectAPIKey`. Never write `ws_events` directly. Per-user messages use `BroadcastToUser`, not `Broadcast`.
 - Every new goroutine respects the shutdown signal.
