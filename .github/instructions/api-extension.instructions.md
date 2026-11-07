@@ -1,5 +1,5 @@
 ---
-applyTo: "**"
+applyTo: "backend/**,frontend/src/api/**,frontend/src/pages/**,frontend/src/routes.tsx"
 ---
 
 # API Extension Instructions
@@ -44,7 +44,7 @@ func (o *Order) Validate() error {
 
 ### 3. Add a migration
 
-Add a named function that returns `schema.Migration` in `internal/database/migrations.go`. Register it with `migrator.AddMigration(...)`. The version is a date plus a 6-digit sequence. The last one is `20261012000058`. Migrations run at startup.
+Add a named function that returns `schema.Migration` in `internal/database/migrations.go`. Register it with `migrator.AddMigration(...)`. The version is a date plus a 6-digit sequence; use the next one after the last registered migration. Two open branches can pick the same version: check it again after a rebase. Migrations run at startup.
 
 ```go
 func createOrdersMigration() schema.Migration {

@@ -168,7 +168,7 @@ When the user reports that an agent finished a step:
 ## When in doubt
 
 - Read the GitHub issue for the requirements.
-- Read `.github/copilot-instructions.md` for the architecture.
+- Read `CLAUDE.md` and `docs/claude/structure.md` for the architecture.
 - Read `.github/instructions/*.md` for the conventions.
 - If a task needs more than one specialty, split it into steps of one specialty.
 - Always include a **code-reviewer** step before merge.
