@@ -84,14 +84,33 @@ rateLimiter := handlers.NewRateLimiter(int(cfg.Server.RateLimit), time.Minute)
 v1.Use(rateLimiter.RateLimit())
 ```
 
+The client IP is `c.ClientIP()`: the TCP peer, or the client named in `X-Forwarded-For` or `X-Real-IP` by a peer in `TRUSTED_PROXIES` (`config.ParseTrustedProxies`; an invalid entry stops the start). `0.0.0.0/0`, `::/0` and IPv4-mapped IPv6 entries are refused. Never trust all proxies: a client could pick a new IP for each request and skip the limiters. Never read the forwarded headers directly.
+
 ## Sessions, tokens, and headers
 
-- Logout adds the access token `jti` to the blocklist in `sessionstore` (`BlockToken`). It revokes the refresh token through `RefreshTokenRepository`. Reuse of a rotated refresh token revokes the whole session family.
-- JSON Web Token (JWT) auth checks `IsTokenBlocked` and `IsUserBlocked`. It fails open on store errors (log and continue). API key auth does not use the blocklist.
+- Logout revokes the refresh token family (`RefreshTokenRepository`), blocks the session `sid` (`BlockSessions`) and adds the access token `jti` to the blocklist in `sessionstore`. Reuse of a rotated refresh token revokes the whole family and blocks the session. Logout-all also writes a user block. Details: `docs/claude/auth-sessions.md`.
+- JSON Web Token (JWT) auth checks the token, session and user blocklists (`middleware.RevocationStatus`). It fails open on store errors (log and continue); keep it that way unless the docs change. API key auth does not use the blocklist; revoking a key closes its sockets with `DisconnectAPIKey`.
 - Every auth path (login, refresh, OpenID Connect (OIDC), and API key) and the `/ws` upgrade reject `User.Disabled`.
-- `middleware.SecurityHeaders()` sets baseline security headers. `middleware.RedactWSToken()` removes `?token=` from `/ws` URLs before logging, metrics, and tracing. Keep both.
+- `middleware.SecurityHeaders()` sets baseline security headers. `middleware.RedactWSToken()` removes `?token=` from `/ws` URLs and the stream routes before logging, metrics, and tracing. Keep it first after RequestID. Keep both.
 - Outbound hooks carry a hash-based message authentication code (HMAC) signature in `X-StackManager-Signature` when the subscription or action sets `secret_env` (`internal/hooks/client.go`). Omitting `secret_env` is the only unsigned mode. A `secret_env` that resolves to an empty value is rejected at config load (fail closed). Hooks do not follow redirects.
 - Kubeconfig data, registry passwords, notification channel secrets and notification channel webhook URLs are encrypted at rest with AES-GCM (`pkg/crypto`, `KUBECONFIG_ENCRYPTION_KEY`). Without the key, the backend refuses `kubeconfig_data`, `registry_password` and a non-empty channel `secret` (400). It stores a channel `webhook_url` in plaintext.
+
+## Stream routes (port-forward and exec)
+
+`GET /api/v1/stack-instances/:id/port-forward` and `GET /api/v1/stack-instances/:id/exec` tunnel bytes into a pod. The kubelet connects inside the pod network, so port-forward bypasses NetworkPolicies, and exec shows the container environment and its secrets.
+
+- Both are off by default: `STACK_PORT_FORWARD_ENABLED` and the cluster `allow_port_forward`; `STACK_EXEC_ENABLED`, the cluster `allow_exec` and a container name in `STACK_EXEC_ALLOWED_CONTAINERS`.
+- Header auth only, never `?token=`. API keys are refused unless `STACK_STREAM_ALLOW_API_KEYS=true`. The caller is the owner, `devops` or `admin`.
+- Refuse a namespace without `managed-by=k8s-stack-manager`, and the backend namespace.
+- Exec takes the pod from the release pods in the instance namespace, never from the request. It never wraps the command in a shell. It refuses a container that holds a service-account token unless `STACK_EXEC_ALLOW_SERVICE_ACCOUNT_TOKEN=true`. The start audit entry is written before the command and fails closed.
+- Build executors only from the cluster `rest.Config` with the stock client-go constructors. A hand-built upgrade transport without a TLS config skips the certificate check.
+- The hub revalidation closes open streams when the access, the role or the cluster switch changes. A new stream kind needs its own switch in the access checker.
+- Audit entries never hold payload bytes.
+
+## Contexts and deadlines
+
+- A write whose side effects follow the commit uses a detached context with a deadline (`detachedCtx(c)`, `writeCtx(c)`, `ctxutil.Detach`), so a client that leaves cannot skip them and a stalled database cannot hold a request forever.
+- Never use a bare `context.WithoutCancel` (`ctxutil.TestNoUnboundedDetach` fails).
 
 ## Recovery middleware
 

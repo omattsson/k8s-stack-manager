@@ -1,5 +1,5 @@
 ---
-applyTo: "**"
+applyTo: "backend/**,docker-compose*.yml,helm/**"
 ---
 
 # Scalability Instructions
@@ -72,10 +72,16 @@ Older endpoints (items, notifications, delivery logs) take `limit` and `offset`.
 
 Use batch lookups (`FindByIDs`, `NamesByIDs`, `CountByTemplateIDs`) instead of N+1 loops.
 
+Notification counts are capped (#654): `total` is exact up to offset + 1000, then `total_capped: true`; `unread_count` is exact up to 1000, then `unread_count_capped: true`. Do not add an uncapped `COUNT(*)` over a table that grows per user.
+
+## Log retention
+
+A new table that grows with each operation (logs, runs, deliveries) needs a retention in `internal/retention` (`*_RETENTION_DAYS`, deletes in batches through `RetentionRepository`). Keep the rows that running operations and rollback still need.
+
 ## Replicas and background work
 
 - Run each periodic job as a `leader.Worker` with a restartable `Run(ctx)`. Only the leader replica runs the workers. Every replica serves HTTP and WebSocket.
-- WebSocket messages and socket revocations reach all replicas through the hub fan-out (`WS_FANOUT_ENABLED`, table `ws_events`). Send with `Broadcast`, `BroadcastToInstance`, or `BroadcastToUser`. Revoke with `DisconnectUser` or `DisconnectToken`. The hub send never blocks. A full buffer drops the message.
+- WebSocket messages and socket revocations reach all replicas through the hub fan-out (`WS_FANOUT_ENABLED`, table `ws_events`). Send with `Broadcast`, `BroadcastToInstance`, or `BroadcastToUser`. Revoke with `DisconnectUser`, `DisconnectToken` or `DisconnectAPIKey`. Never write `ws_events` directly. The hub send never blocks. A full buffer drops the message.
 - Deploy, rollback, stop, and clean run on the replica that took the request. Each replica writes a heartbeat (`replica_heartbeats`). The leader worker for interrupted operations ends operations of replicas that have no heartbeat.
 - Respect the shutdown signal in each new goroutine.
 
