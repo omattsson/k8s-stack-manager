@@ -76,3 +76,6 @@ backend/test-results/
 
 # Snapshots of the Playwright MCP browser tool
 /.playwright-mcp/
+
+# Local superpowers plans and specs
+/docs/superpowers/
