@@ -71,7 +71,7 @@ test.describe('TTL stop time', () => {
     await picker.fill(toLocalInput(stop));
     await expect(page.getByText(/\(in \d+d \d+h\)/)).toBeVisible();
     await page.getByRole('button', { name: 'Create Instance' }).click();
-    await page.waitForURL(/\/stack-instances\/[^/]+$/, { timeout: 10_000 });
+    await page.waitForURL(/\/stack-instances\/(?!new(?:$|\?))[^/]+$/, { timeout: 10_000 });
 
     // The instance page shows the fixed stop time, also before the deploy.
     await expect(page.getByText(/^Stops at /)).toBeVisible({ timeout: 10_000 });

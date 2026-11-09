@@ -55,7 +55,7 @@ test.describe('Stack Instance Management', () => {
 
     await page.getByRole('button', { name: 'Create Instance' }).click();
     // Redirects to instance detail
-    await page.waitForURL(/\/stack-instances\/[^/]+$/, { timeout: 10_000 });
+    await page.waitForURL(/\/stack-instances\/(?!new(?:$|\?))[^/]+$/, { timeout: 10_000 });
     await page.waitForLoadState('domcontentloaded');
     await expect(page.getByRole('heading', { level: 1, name: instName })).toBeVisible({
       timeout: 10_000,
@@ -75,7 +75,7 @@ test.describe('Stack Instance Management', () => {
     await page.getByRole('option', { name: new RegExp(defName) }).click();
     await page.getByLabel('Instance Name').fill(instName);
     await page.getByRole('button', { name: 'Create Instance' }).click();
-    await page.waitForURL(/\/stack-instances\/[^/]+$/, { timeout: 10_000 });
+    await page.waitForURL(/\/stack-instances\/(?!new(?:$|\?))[^/]+$/, { timeout: 10_000 });
     await page.waitForLoadState('domcontentloaded');
 
     // Go to dashboard — use polling with reload to handle race where list was fetched before creation
@@ -101,7 +101,7 @@ test.describe('Stack Instance Management', () => {
     await page.getByRole('option', { name: new RegExp(defName) }).click();
     await page.getByLabel('Instance Name').fill(instName);
     await page.getByRole('button', { name: 'Create Instance' }).click();
-    await page.waitForURL(/\/stack-instances\/[^/]+$/, { timeout: 10_000 });
+    await page.waitForURL(/\/stack-instances\/(?!new(?:$|\?))[^/]+$/, { timeout: 10_000 });
     await page.waitForLoadState('domcontentloaded');
 
     // Verify detail page content
@@ -132,7 +132,7 @@ test.describe('Stack Instance Management', () => {
     await page.getByRole('option', { name: new RegExp(defName) }).click();
     await page.getByLabel('Instance Name').fill(instName);
     await page.getByRole('button', { name: 'Create Instance' }).click();
-    await page.waitForURL(/\/stack-instances\/[^/]+$/, { timeout: 10_000 });
+    await page.waitForURL(/\/stack-instances\/(?!new(?:$|\?))[^/]+$/, { timeout: 10_000 });
     await page.waitForLoadState('domcontentloaded');
 
     const originalUrl = page.url();
@@ -171,7 +171,7 @@ test.describe('Stack Instance Management', () => {
     await page.getByRole('option', { name: new RegExp(defName) }).click();
     await page.getByLabel('Instance Name').fill(instName);
     await page.getByRole('button', { name: 'Create Instance' }).click();
-    await page.waitForURL(/\/stack-instances\/[^/]+$/, { timeout: 10_000 });
+    await page.waitForURL(/\/stack-instances\/(?!new(?:$|\?))[^/]+$/, { timeout: 10_000 });
     await page.waitForLoadState('domcontentloaded');
     await expect(page.getByRole('heading', { level: 1, name: instName })).toBeVisible({
       timeout: 10_000,
@@ -203,7 +203,7 @@ test.describe('Stack Instance Management', () => {
     await page.getByRole('option', { name: new RegExp(defName) }).click();
     await page.getByLabel('Instance Name').fill(instName);
     await page.getByRole('button', { name: 'Create Instance' }).click();
-    await page.waitForURL(/\/stack-instances\/[^/]+$/, { timeout: 10_000 });
+    await page.waitForURL(/\/stack-instances\/(?!new(?:$|\?))[^/]+$/, { timeout: 10_000 });
     await page.waitForLoadState('domcontentloaded');
 
     // Go to dashboard and search
@@ -232,7 +232,7 @@ test.describe('Stack Instance Management', () => {
     await page.getByRole('option', { name: new RegExp(defName) }).click();
     await page.getByLabel('Instance Name').fill(instName);
     await page.getByRole('button', { name: 'Create Instance' }).click();
-    await page.waitForURL(/\/stack-instances\/[^/]+$/, { timeout: 10_000 });
+    await page.waitForURL(/\/stack-instances\/(?!new(?:$|\?))[^/]+$/, { timeout: 10_000 });
     await page.waitForLoadState('domcontentloaded');
 
     // Go to dashboard — use polling with reload to handle race where list was fetched before creation
@@ -244,7 +244,7 @@ test.describe('Stack Instance Management', () => {
     // Click Details button on the card
     const card = page.locator('.MuiCard-root', { hasText: instName });
     await card.getByRole('button', { name: 'Details' }).click();
-    await page.waitForURL(/\/stack-instances\/[^/]+$/, { timeout: 10_000 });
+    await page.waitForURL(/\/stack-instances\/(?!new(?:$|\?))[^/]+$/, { timeout: 10_000 });
     await page.waitForLoadState('domcontentloaded');
     await expect(page.getByRole('heading', { level: 1, name: instName })).toBeVisible({
       timeout: 10_000,
@@ -309,7 +309,7 @@ test.describe('Stack Instance Management', () => {
     await page.getByRole('option', { name: new RegExp(defName) }).click();
     await page.getByLabel('Instance Name').fill(instName);
     await page.getByRole('button', { name: 'Create Instance' }).click();
-    await page.waitForURL(/\/stack-instances\/[^/]+$/, { timeout: 10_000 });
+    await page.waitForURL(/\/stack-instances\/(?!new(?:$|\?))[^/]+$/, { timeout: 10_000 });
     await page.waitForLoadState('domcontentloaded');
     await expect(page.getByRole('heading', { level: 1, name: instName })).toBeVisible({
       timeout: 10_000,
@@ -347,7 +347,7 @@ test.describe('Stack Instance Management', () => {
     await page.getByRole('option', { name: new RegExp(defName) }).click();
     await page.getByLabel('Instance Name').fill(instName);
     await page.getByRole('button', { name: 'Create Instance' }).click();
-    await page.waitForURL(/\/stack-instances\/[^/]+$/, { timeout: 10_000 });
+    await page.waitForURL(/\/stack-instances\/(?!new(?:$|\?))[^/]+$/, { timeout: 10_000 });
     await page.waitForLoadState('domcontentloaded');
     await expect(page.getByRole('heading', { level: 1, name: instName })).toBeVisible({
       timeout: 10_000,
@@ -384,7 +384,7 @@ test.describe('Stack Instance Management', () => {
     await page.getByRole('option', { name: new RegExp(defName) }).click();
     await page.getByLabel('Instance Name').fill(instName);
     await page.getByRole('button', { name: 'Create Instance' }).click();
-    await page.waitForURL(/\/stack-instances\/[^/]+$/, { timeout: 10_000 });
+    await page.waitForURL(/\/stack-instances\/(?!new(?:$|\?))[^/]+$/, { timeout: 10_000 });
     await page.waitForLoadState('domcontentloaded');
     await expect(page.getByRole('heading', { level: 1, name: instName })).toBeVisible({
       timeout: 10_000,
