@@ -276,7 +276,7 @@ test.describe('Template Management', () => {
     await page.getByRole('button', { name: 'Deploy' }).click();
 
     // Should navigate to the created instance page
-    await page.waitForURL(/\/stack-instances\/[^/]+$/, { timeout: 15_000 });
+    await page.waitForURL(/\/stack-instances\/(?!new(?:$|\?))[^/]+$/, { timeout: 15_000 });
   });
 
   test('favorite toggle on template gallery card', async ({ page }) => {

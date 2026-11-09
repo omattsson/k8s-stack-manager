@@ -461,7 +461,7 @@ test.describe('Deployment UI', () => {
     await page.getByRole('option', { name: new RegExp(defName) }).click();
     await page.getByLabel('Instance Name').fill(instName);
     await page.getByRole('button', { name: 'Create Instance' }).click();
-    await page.waitForURL(/\/stack-instances\/[^/]+$/, { timeout: 10_000 });
+    await page.waitForURL(/\/stack-instances\/(?!new(?:$|\?))[^/]+$/, { timeout: 10_000 });
     await page.waitForLoadState('domcontentloaded');
 
     // Verify Deploy button is visible for draft instance.
@@ -483,7 +483,7 @@ test.describe('Deployment UI', () => {
     await page.getByRole('option', { name: new RegExp(defName) }).click();
     await page.getByLabel('Instance Name').fill(instName);
     await page.getByRole('button', { name: 'Create Instance' }).click();
-    await page.waitForURL(/\/stack-instances\/[^/]+$/, { timeout: 10_000 });
+    await page.waitForURL(/\/stack-instances\/(?!new(?:$|\?))[^/]+$/, { timeout: 10_000 });
     await page.waitForLoadState('domcontentloaded');
 
     // Click Deploy — this opens the DeployPreviewDialog.
@@ -511,7 +511,7 @@ test.describe('Deployment UI', () => {
     await page.getByRole('option', { name: new RegExp(defName) }).click();
     await page.getByLabel('Instance Name').fill(instName);
     await page.getByRole('button', { name: 'Create Instance' }).click();
-    await page.waitForURL(/\/stack-instances\/[^/]+$/, { timeout: 10_000 });
+    await page.waitForURL(/\/stack-instances\/(?!new(?:$|\?))[^/]+$/, { timeout: 10_000 });
     await page.waitForLoadState('domcontentloaded');
 
     // Draft instance should NOT show Deployment History yet.
@@ -576,7 +576,7 @@ test.describe('Deployment UI', () => {
     await page.getByRole('option', { name: new RegExp(defName) }).click();
     await page.getByLabel('Instance Name').fill(instName);
     await page.getByRole('button', { name: 'Create Instance' }).click();
-    await page.waitForURL(/\/stack-instances\/[^/]+$/, { timeout: 10_000 });
+    await page.waitForURL(/\/stack-instances\/(?!new(?:$|\?))[^/]+$/, { timeout: 10_000 });
     await page.waitForLoadState('domcontentloaded');
 
     // Deploy to trigger error state (helm not available in test env).
