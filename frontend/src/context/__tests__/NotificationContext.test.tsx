@@ -216,7 +216,8 @@ describe('NotificationContext', () => {
       expect(stack).toContainElement(screen.getByRole('alert'));
       const style = window.getComputedStyle(stack);
       expect(style.position).toBe('fixed');
-      expect(style.top).toBe('calc(72px + env(safe-area-inset-top, 0px))');
+      // jsdom computes the md-and-up rule (default width 1024) and resolves env() to 0.
+      expect(style.top).toBe('16px');
       expect(style.bottom).toBe('auto');
       expect(style.left).toBe('0px');
       expect(style.right).toBe('0px');
