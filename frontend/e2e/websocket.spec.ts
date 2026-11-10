@@ -121,6 +121,7 @@ test.describe('WebSocket real-time updates', () => {
 
   test('removes a deleted stack from Recent Stacks without a reload (#781)', async ({ page }) => {
     await loginAsDevops(page);
+    await page.goto('/');
     const token = await tokenFromPage(page);
     const auth = { Authorization: `Bearer ${token}` };
     const defId = await apiCreateDefinition(page.request, token, uniqueName('ws-recent-def'));
