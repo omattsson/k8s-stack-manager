@@ -2,6 +2,8 @@
 
 Deploy K8s Stack Manager to your cluster and create your first stack in about 10 minutes.
 
+No cluster yet? See [Deploy to Azure Kubernetes Service (AKS)](deploy-to-aks.md).
+
 ## Prerequisites
 
 - A running Kubernetes cluster and a configured `kubectl` context.
