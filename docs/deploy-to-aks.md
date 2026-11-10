@@ -149,7 +149,7 @@ K8s Stack Manager supports OpenID Connect (OIDC) single sign-on. Entra ID accept
 
 1. In Entra ID, create an app registration. Add the web redirect URL `https://<host>/api/v1/auth/oidc/callback`.
 2. Create a client secret.
-3. Add app roles (for example `StackManager.Admin` and `StackManager.DevOps`). Assign them to users or groups. Each SSO login sets the role of the user from these app roles. Without them, all SSO users get the role `user`, and a role that an admin sets in the UI is lost at the next SSO login.
+3. Add app roles (for example `StackManager.Admin` and `StackManager.DevOps`). Assign them to users or groups. Each SSO login sets the role of the user from these app roles. Without them, all SSO users get the role `user`. The UI cannot change the role of an SSO user. Change the app role assignment in Entra ID instead.
 4. Add the settings to the values file. Use the tenant ID (a GUID), not the domain name: the issuer must match exactly.
 
    ```yaml
