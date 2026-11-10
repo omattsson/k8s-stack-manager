@@ -2,8 +2,8 @@ apiVersion: v2
 name: k8s-stack-manager
 description: Self-service environments for multi-service Helm applications on your own Kubernetes clusters (web UI, API, MySQL)
 type: application
-version: 0.15.2
-appVersion: "0.16.1"
+version: 0.16.0
+appVersion: "0.17.0"
 keywords:
   - kubernetes
   - helm
@@ -27,10 +27,22 @@ maintainers:
 annotations:
   artifacthub.io/category: integration-delivery
   artifacthub.io/changes: |
+    - kind: added
+      description: The API checks chart values on definitions and templates when they are saved and returns 400 for values that Helm cannot parse. The Definition, Template Builder and Instantiate forms block the save.
+    - kind: added
+      description: The exec hints of the stack status and pods responses include exec_pods, the pod that stack exec picks for each hinted container.
+    - kind: security
+      description: The backend and frontend images are rebuilt with the fixed Alpine packages (zlib, libexpat). The bundled MySQL image is pinned to mysql:8.4.13.
     - kind: fixed
-      description: The stack page shows the stackctl port-forward and exec commands to stack owners with the role user. GET /clusters and GET /clusters/{id} now return allow_port_forward and allow_exec in the summary for this role.
+      description: A stack values override that the deploy cannot parse is refused with 400, and the editor blocks the save. The stack pages show the API error of failed actions, and the stopped, stopping and cleaning status chips are clearer.
+    - kind: fixed
+      description: A partial deploy counts as finished on the stack list, and the Recent Stacks cards follow status changes and deletes without a page reload.
+    - kind: fixed
+      description: Notification links open an existing page.
     - kind: changed
-      description: Dependency updates (Kubernetes client-go 0.37.2, axios 1.21.0, react-router-dom 7.18.5).
+      description: The UI meets the WCAG AA contrast ratio in the tested states, in light and dark mode, with adjusted colours in both modes. Cards are keyboard links with focus rings, pod health has icons, and screen readers get headings, landmarks and a live region for stack changes. The bulk toolbar counts selected stacks that a filter hides, and a filter without a match offers Clear filters.
+    - kind: changed
+      description: Dependency updates (Azure SDK azcore 1.24.0).
   artifacthub.io/license: MIT
   artifacthub.io/links: |
     - name: Documentation
@@ -41,9 +53,9 @@ annotations:
       url: https://github.com/omattsson/stackctl
   artifacthub.io/images: |
     - name: backend
-      image: ghcr.io/omattsson/k8s-stack-manager/backend:0.16.1
+      image: ghcr.io/omattsson/k8s-stack-manager/backend:0.17.0
     - name: frontend
-      image: ghcr.io/omattsson/k8s-stack-manager/frontend:0.16.1
+      image: ghcr.io/omattsson/k8s-stack-manager/frontend:0.17.0
     - name: mysql
       image: mysql:8.4.13
   artifacthub.io/screenshots: |
