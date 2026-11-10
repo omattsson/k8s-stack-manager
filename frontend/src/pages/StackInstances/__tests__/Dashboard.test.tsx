@@ -564,6 +564,50 @@ describe('Dashboard', () => {
     });
   });
 
+  describe('recent stacks follow WebSocket messages (#781)', () => {
+    const renderWithRecent = async () => {
+      const stack = mockInstance({ id: 'r-1', name: 'Recent Stack', status: 'running', namespace: 'stack-rec' });
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([stack]);
+      (instanceService.recent as ReturnType<typeof vi.fn>).mockResolvedValue([stack]);
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      const heading = await screen.findByRole('heading', { name: 'Recent Stacks' });
+      return heading.parentElement as HTMLElement;
+    };
+
+    it('updates the status of a recent stack on deployment.status', async () => {
+      const section = await renderWithRecent();
+      expect(within(section).getByText('running')).toBeInTheDocument();
+
+      act(() => {
+        broadcastWs({ type: 'deployment.status', payload: { instance_id: 'r-1', status: 'cleaning' } });
+      });
+
+      await waitFor(() => {
+        expect(within(section).getByText('cleaning')).toBeInTheDocument();
+      });
+      expect(within(section).queryByText('running')).not.toBeInTheDocument();
+    });
+
+    it('removes a recent stack on instance.deleted', async () => {
+      await renderWithRecent();
+
+      act(() => {
+        broadcastWs({ type: 'instance.deleted', payload: { instance_id: 'r-1' } });
+      });
+
+      await waitFor(() => {
+        expect(screen.queryByRole('heading', { name: 'Recent Stacks' })).not.toBeInTheDocument();
+      });
+      expect(screen.queryByText('Recent Stack')).not.toBeInTheDocument();
+    });
+  });
+
   it('hides recent stacks section when empty', async () => {
     (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
       mockInstance({ name: 'Some Instance', namespace: 'stack-some' }),
