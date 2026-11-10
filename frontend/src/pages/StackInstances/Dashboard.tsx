@@ -462,17 +462,20 @@ const Dashboard = () => {
         fetchedStatusIdsRef.current.delete(id);
         scheduleFinishedReload();
       }
-      setInstances((prev) =>
+      const withStatus = (prev: StackInstance[]) =>
         prev.map((inst) =>
           inst.id === payload.instance_id ? { ...inst, status: payload.status as string } : inst
-        )
-      );
+        );
+      setInstances(withStatus);
+      setRecentInstances(withStatus);
     }
     if (msg.type === 'instance.deleted') {
       const payload = msg.payload as { instance_id?: string };
       const deletedId = payload.instance_id;
       if (!deletedId) return;
-      setInstances((prev) => prev.filter((inst) => inst.id !== deletedId));
+      const withoutDeleted = (prev: StackInstance[]) => prev.filter((inst) => inst.id !== deletedId);
+      setInstances(withoutDeleted);
+      setRecentInstances(withoutDeleted);
       setSelectedIds((prev) => {
         if (!prev.has(deletedId)) return prev;
         const next = new Set(prev);

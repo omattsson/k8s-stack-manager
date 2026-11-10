@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import type { WebSocket as PlaywrightWebSocket } from '@playwright/test';
 import {
+  API_BASE,
   loginAsDevops,
   uniqueName,
   apiCreateDefinition,
@@ -116,5 +117,52 @@ test.describe('WebSocket real-time updates', () => {
     // And the UI reacted to it: the NotificationContext shows an info toast
     // whose title is the notification title ("Stack created").
     await expect(page.getByText('Stack created')).toBeVisible({ timeout: 10_000 });
+  });
+
+  test('removes a deleted stack from Recent Stacks without a reload (#781)', async ({ page }) => {
+    await loginAsDevops(page);
+    await page.goto('/');
+    const token = await tokenFromPage(page);
+    const auth = { Authorization: `Bearer ${token}` };
+    const defId = await apiCreateDefinition(page.request, token, uniqueName('ws-recent-def'));
+    const instName = uniqueName('ws-recent');
+    const instId = await apiCreateInstance(page.request, token, defId, instName);
+
+    try {
+      const wsPromise = page.waitForEvent('websocket', {
+        predicate: (ws) => ws.url().includes('/ws'),
+        timeout: 20_000,
+      });
+      const recentUrl = /\/api\/v1\/stack-instances\/recent(\?|$)/;
+      const recentResponse = page.waitForResponse((r) => recentUrl.test(r.url()));
+      await page.goto('/');
+      const recent = page.getByRole('heading', { name: 'Recent Stacks' }).locator('..');
+      const card = recent.getByRole('link', { name: new RegExp(instName) });
+      await expect(card).toBeVisible({ timeout: 10_000 });
+      const ws = await wsPromise;
+
+      // Other workers create stacks, and each create reloads the list. Serve the old
+      // recent list, so only the WebSocket handler can remove the card.
+      const staleRecent = await (await recentResponse).text();
+      await page.route(recentUrl, (route) =>
+        route.fulfill({ status: 200, contentType: 'application/json', body: staleRecent }),
+      );
+
+      const deletedFrame = ws.waitForEvent('framereceived', {
+        predicate: (frame) =>
+          typeof frame.payload === 'string' &&
+          frame.payload.includes('instance.deleted') &&
+          frame.payload.includes(instId),
+        timeout: 15_000,
+      });
+      const res = await page.request.delete(`${API_BASE}/api/v1/stack-instances/${instId}`, { headers: auth });
+      expect(res.status()).toBe(204);
+      await deletedFrame;
+
+      await expect(card).toHaveCount(0, { timeout: 10_000 });
+    } finally {
+      await page.request.delete(`${API_BASE}/api/v1/stack-instances/${instId}`, { headers: auth }).catch(() => undefined);
+      await page.request.delete(`${API_BASE}/api/v1/stack-definitions/${defId}`, { headers: auth }).catch(() => undefined);
+    }
   });
 });
