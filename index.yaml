@@ -4,6 +4,74 @@ entries:
   - annotations:
       artifacthub.io/category: integration-delivery
       artifacthub.io/changes: |
+        - kind: added
+          description: The API checks chart values on definitions and templates when they are saved and returns 400 for values that Helm cannot parse. The Definition, Template Builder and Instantiate forms block the save.
+        - kind: added
+          description: The exec hints of the stack status and pods responses include exec_pods, the pod that stack exec picks for each hinted container.
+        - kind: security
+          description: The backend and frontend images are rebuilt with the fixed Alpine packages (zlib, libexpat). The bundled MySQL image is pinned to mysql:8.4.13.
+        - kind: fixed
+          description: A stack values override that the deploy cannot parse is refused with 400, and the editor blocks the save. The stack pages show the API error of failed actions, and the stopped, stopping and cleaning status chips are clearer.
+        - kind: fixed
+          description: A partial deploy counts as finished on the stack list, and the Recent Stacks cards follow status changes and deletes without a page reload.
+        - kind: fixed
+          description: Notification links open an existing page.
+        - kind: changed
+          description: The UI meets the WCAG AA contrast ratio in the tested states, in light and dark mode, with adjusted colours in both modes. Cards are keyboard links with focus rings, pod health has icons, and screen readers get headings, landmarks and a live region for stack changes. The bulk toolbar counts selected stacks that a filter hides, and a filter without a match offers Clear filters.
+        - kind: changed
+          description: Dependency updates (Azure SDK azcore 1.24.0).
+      artifacthub.io/images: |
+        - name: backend
+          image: ghcr.io/omattsson/k8s-stack-manager/backend:0.17.0
+        - name: frontend
+          image: ghcr.io/omattsson/k8s-stack-manager/frontend:0.17.0
+        - name: mysql
+          image: mysql:8.4.13
+      artifacthub.io/license: MIT
+      artifacthub.io/links: |
+        - name: Documentation
+          url: https://github.com/omattsson/k8s-stack-manager#readme
+        - name: Getting Started
+          url: https://github.com/omattsson/k8s-stack-manager/blob/main/docs/getting-started.md
+        - name: stackctl (CLI)
+          url: https://github.com/omattsson/stackctl
+      artifacthub.io/screenshots: |
+        - title: Dashboard
+          url: https://raw.githubusercontent.com/omattsson/k8s-stack-manager/main/docs/screenshots/dashboard.png
+        - title: Port-forward and exec commands on the stack page
+          url: https://raw.githubusercontent.com/omattsson/k8s-stack-manager/main/docs/screenshots/access-urls.png
+        - title: Template gallery
+          url: https://raw.githubusercontent.com/omattsson/k8s-stack-manager/main/docs/screenshots/templates.png
+    apiVersion: v2
+    appVersion: 0.17.0
+    created: "2026-11-10T13:51:18.069008971Z"
+    description: Self-service environments for multi-service Helm applications on
+      your own Kubernetes clusters (web UI, API, MySQL)
+    digest: e7dc4123bc216422d90957d229b77256d0ccceeac438cf9e1a369032578f0ed0
+    home: https://github.com/omattsson/k8s-stack-manager
+    icon: https://raw.githubusercontent.com/omattsson/k8s-stack-manager/main/frontend/public/logo.svg
+    keywords:
+    - kubernetes
+    - helm
+    - stack-manager
+    - argo-rollouts
+    - platform-engineering
+    - ephemeral-environments
+    - preview-environments
+    - self-service
+    maintainers:
+    - name: omattsson
+      url: https://github.com/omattsson
+    name: k8s-stack-manager
+    sources:
+    - https://github.com/omattsson/k8s-stack-manager
+    type: application
+    urls:
+    - https://github.com/omattsson/k8s-stack-manager/releases/download/k8s-stack-manager-0.16.0/k8s-stack-manager-0.16.0.tgz
+    version: 0.16.0
+  - annotations:
+      artifacthub.io/category: integration-delivery
+      artifacthub.io/changes: |
         - kind: fixed
           description: The stack page shows the stackctl port-forward and exec commands to stack owners with the role user. GET /clusters and GET /clusters/{id} now return allow_port_forward and allow_exec in the summary for this role.
         - kind: changed
@@ -754,4 +822,4 @@ entries:
     urls:
     - https://github.com/omattsson/k8s-stack-manager/releases/download/k8s-stack-manager-0.2.0/k8s-stack-manager-0.2.0.tgz
     version: 0.2.0
-generated: "2026-11-02T09:41:22.349670772Z"
+generated: "2026-11-10T13:51:18.06930864Z"
