@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"backend/internal/ctxutil"
 	"backend/internal/models"
@@ -122,6 +121,8 @@ type AuditRoute struct {
 	// list, and the middleware writes one entry per item with status
 	// "success". The field holds the entity ID of an item.
 	BulkIDField string
+	// BulkNameField is the field of a bulk result item with the entity name.
+	BulkNameField string
 	// Skip means no audit entry: the request changes nothing worth auditing
 	// (notification read state), or the handler writes its own entry.
 	Skip bool
@@ -213,9 +214,9 @@ var auditRoutes = map[string]AuditRoute{
 	"POST /templates/:id/clone":       {Action: AuditActionClone, EntityType: "stack_template", IDParam: "id", ResultFields: map[string]string{"id": "clone_id"}},
 	// Quick deploy writes its own entry (quick_deploy | stack_instance).
 	"POST /templates/:id/quick-deploy": {Skip: true},
-	"POST /templates/bulk/delete":      {Action: AuditActionDelete, EntityType: "stack_template", BulkIDField: "template_id"},
-	"POST /templates/bulk/publish":     {Action: AuditActionPublish, EntityType: "stack_template", BulkIDField: "template_id"},
-	"POST /templates/bulk/unpublish":   {Action: AuditActionUnpublish, EntityType: "stack_template", BulkIDField: "template_id"},
+	"POST /templates/bulk/delete":      {Action: AuditActionDelete, EntityType: "stack_template", BulkIDField: "template_id", BulkNameField: "template_name"},
+	"POST /templates/bulk/publish":     {Action: AuditActionPublish, EntityType: "stack_template", BulkIDField: "template_id", BulkNameField: "template_name"},
+	"POST /templates/bulk/unpublish":   {Action: AuditActionUnpublish, EntityType: "stack_template", BulkIDField: "template_id", BulkNameField: "template_name"},
 
 	// Port-forward: GET is not audited by the middleware. StreamHandler
 	// (handlers/instance_stream.go) writes port_forward at the start and
@@ -241,10 +242,10 @@ var auditRoutes = map[string]AuditRoute{
 	"POST /stack-instances/:id/follow":        {Action: AuditActionFollow, EntityType: "stack_instance", IDParam: "id"},
 	"DELETE /stack-instances/:id/follow":      {Action: AuditActionUnfollow, EntityType: "stack_instance", IDParam: "id"},
 	"POST /stack-instances/:id/actions/:name": {Action: AuditActionInvokeAction, EntityType: "stack_instance", IDParam: "id", DetailParams: map[string]string{"name": "action"}},
-	"POST /stack-instances/bulk/deploy":       {Action: AuditActionDeploy, EntityType: "stack_instance", BulkIDField: "instance_id"},
-	"POST /stack-instances/bulk/stop":         {Action: AuditActionStop, EntityType: "stack_instance", BulkIDField: "instance_id"},
-	"POST /stack-instances/bulk/clean":        {Action: AuditActionClean, EntityType: "stack_instance", BulkIDField: "instance_id"},
-	"POST /stack-instances/bulk/delete":       {Action: AuditActionDelete, EntityType: "stack_instance", BulkIDField: "instance_id"},
+	"POST /stack-instances/bulk/deploy":       {Action: AuditActionDeploy, EntityType: "stack_instance", BulkIDField: "instance_id", BulkNameField: "instance_name"},
+	"POST /stack-instances/bulk/stop":         {Action: AuditActionStop, EntityType: "stack_instance", BulkIDField: "instance_id", BulkNameField: "instance_name"},
+	"POST /stack-instances/bulk/clean":        {Action: AuditActionClean, EntityType: "stack_instance", BulkIDField: "instance_id", BulkNameField: "instance_name"},
+	"POST /stack-instances/bulk/delete":       {Action: AuditActionDelete, EntityType: "stack_instance", BulkIDField: "instance_id", BulkNameField: "instance_name"},
 
 	// Users and API keys.
 	"PUT /users/:id/disable":                       {Action: AuditActionDisable, EntityType: "user", IDParam: "id"},
@@ -298,7 +299,8 @@ func buildAuditEntries(c *gin.Context, route AuditRoute, body []byte) []*models.
 	userID := GetUserIDFromContext(c)
 	username := GetUsernameFromContext(c)
 	now := time.Now().UTC()
-	newEntry := func(entityID string, details map[string]any) *models.AuditLog {
+	rc := CaptureRequestContext(c)
+	newEntry := func(entityID, entityName string, details map[string]any) *models.AuditLog {
 		entry := &models.AuditLog{
 			ID:         uuid.New().String(),
 			UserID:     userID,
@@ -306,8 +308,10 @@ func buildAuditEntries(c *gin.Context, route AuditRoute, body []byte) []*models.
 			Action:     route.Action,
 			EntityType: route.EntityType,
 			EntityID:   truncateEntityID(entityID),
+			EntityName: TruncateUTF8(entityName, models.MaxAuditEntityNameLen),
 			Timestamp:  now,
 		}
+		rc.Apply(entry)
 		if len(details) > 0 {
 			if raw, err := json.Marshal(details); err == nil {
 				entry.Details = string(raw)
@@ -357,16 +361,33 @@ func buildAuditEntries(c *gin.Context, route AuditRoute, body []byte) []*models.
 		// Table route without an ID parameter: the ID of the response.
 		entityID = responseID(resp)
 	}
-	return []*models.AuditLog{newEntry(entityID, details)}
+	return []*models.AuditLog{newEntry(entityID, auditEntityName(c, entityID, resp), details)}
+}
+
+// auditEntityName returns the name that the handler set (SetAuditEntityName),
+// else the "name" of the response when the response is the entity itself
+// (its "id" is the entity ID). Clone, instantiate and child creates keep the
+// source or parent ID, so the response name is not the entity name.
+func auditEntityName(c *gin.Context, entityID string, resp map[string]any) string {
+	if v, ok := c.Get(auditEntityNameKey{}); ok {
+		if name, ok := v.(string); ok {
+			return name
+		}
+	}
+	if entityID == "" || responseID(resp) != entityID {
+		return ""
+	}
+	name, _ := resp["name"].(string)
+	return name
 }
 
 // bulkAuditEntries returns one entry per item of the bulk response with
 // status "success", so that a filter on the entity ID finds the operation.
 // A response that cannot be read gives one entry without an entity ID.
-func bulkAuditEntries(route AuditRoute, resp map[string]any, newEntry func(string, map[string]any) *models.AuditLog) []*models.AuditLog {
+func bulkAuditEntries(route AuditRoute, resp map[string]any, newEntry func(string, string, map[string]any) *models.AuditLog) []*models.AuditLog {
 	results, ok := resp["results"].([]any)
 	if !ok {
-		return []*models.AuditLog{newEntry("", map[string]any{"bulk": true})}
+		return []*models.AuditLog{newEntry("", "", map[string]any{"bulk": true})}
 	}
 	var entries []*models.AuditLog
 	for _, item := range results {
@@ -382,7 +403,8 @@ func bulkAuditEntries(route AuditRoute, resp map[string]any, newEntry func(strin
 		if logID, ok := m["log_id"].(string); ok && logID != "" {
 			details["log_id"] = logID
 		}
-		entries = append(entries, newEntry(id, details))
+		name, _ := m[route.BulkNameField].(string)
+		entries = append(entries, newEntry(id, name, details))
 	}
 	return entries
 }
@@ -429,14 +451,7 @@ func snakeCase(s string) string {
 // UUIDs or namespace names (at most 63 characters); a longer value is not a
 // valid ID, and the cut keeps the entry.
 func truncateEntityID(id string) string {
-	if len(id) <= models.MaxAuditEntityIDLen {
-		return id
-	}
-	cut := models.MaxAuditEntityIDLen
-	for cut > 0 && !utf8.RuneStart(id[cut]) {
-		cut--
-	}
-	return id[:cut]
+	return TruncateUTF8(id, models.MaxAuditEntityIDLen)
 }
 
 // responseID returns the "id" field of a JSON response object as a string.

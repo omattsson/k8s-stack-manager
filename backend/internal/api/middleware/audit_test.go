@@ -816,3 +816,73 @@ func TestTruncateEntityID(t *testing.T) {
 		})
 	}
 }
+
+func TestAuditMiddleware_EntityNameAndContext(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		method   string
+		route    string
+		path     string
+		body     string
+		setName  string
+		wantName []string
+	}{
+		{name: "create name from response", method: http.MethodPost, route: "/api/v1/stack-instances", path: "/api/v1/stack-instances",
+			body: `{"id":"x","name":"stack-a"}`, wantName: []string{"stack-a"}},
+		{name: "clone keeps source id, no name", method: http.MethodPost, route: "/api/v1/stack-instances/:id/clone", path: "/api/v1/stack-instances/src/clone",
+			body: `{"id":"new","name":"copy"}`, wantName: []string{""}},
+		{name: "child create under parent, no name", method: http.MethodPost, route: "/api/v1/clusters/:id/shared-values", path: "/api/v1/clusters/c1/shared-values",
+			body: `{"id":"sv1","name":"base"}`, wantName: []string{""}},
+		{name: "handler sets name on delete", method: http.MethodDelete, route: "/api/v1/stack-instances/:id", path: "/api/v1/stack-instances/i1",
+			setName: "old", wantName: []string{"old"}},
+		{name: "long name truncated", method: http.MethodPost, route: "/api/v1/stack-instances", path: "/api/v1/stack-instances",
+			body: `{"id":"x","name":"` + strings.Repeat("n", 300) + `"}`, wantName: []string{strings.Repeat("n", models.MaxAuditEntityNameLen)}},
+		{name: "bulk instance names", method: http.MethodPost, route: "/api/v1/stack-instances/bulk/stop", path: "/api/v1/stack-instances/bulk/stop",
+			body:     `{"results":[{"instance_id":"i1","instance_name":"a","status":"success"},{"instance_id":"i2","instance_name":"b","status":"success"}]}`,
+			wantName: []string{"a", "b"}},
+		{name: "bulk template names", method: http.MethodPost, route: "/api/v1/templates/bulk/delete", path: "/api/v1/templates/bulk/delete",
+			body: `{"results":[{"template_id":"t1","template_name":"tpl","status":"success"}]}`, wantName: []string{"tpl"}},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			logger := &mockAuditLogger{}
+			r := gin.New()
+			r.Use(RequestID())
+			r.Use(func(c *gin.Context) {
+				c.Set(contextKeyUserID, "u1")
+				c.Set(contextKeyUsername, "alice")
+				c.Set(contextKeyAuthMethod, AuthMethodJWT)
+				c.Next()
+			})
+			r.Use(NewAuditMiddleware(logger))
+			r.Handle(tt.method, tt.route, func(c *gin.Context) {
+				if tt.setName != "" {
+					SetAuditEntityName(c, tt.setName)
+				}
+				if tt.body != "" {
+					c.Data(http.StatusOK, "application/json", []byte(tt.body))
+					return
+				}
+				c.Status(http.StatusNoContent)
+			})
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(tt.method, tt.path, nil)
+			req.RemoteAddr = "198.51.100.7:5555"
+			r.ServeHTTP(w, req)
+			require.True(t, waitForAuditCount(logger, len(tt.wantName), 2*time.Second))
+			entries := logger.all()
+			require.Len(t, entries, len(tt.wantName))
+			var names []string
+			for _, e := range entries {
+				names = append(names, e.EntityName)
+				assert.Equal(t, "198.51.100.7", e.ClientIP)
+				assert.Equal(t, w.Header().Get("X-Request-ID"), e.RequestID)
+				assert.Equal(t, AuthMethodJWT, e.AuthMethod)
+			}
+			assert.ElementsMatch(t, tt.wantName, names)
+		})
+	}
+}
