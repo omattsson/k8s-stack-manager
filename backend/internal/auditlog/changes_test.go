@@ -194,3 +194,35 @@ func TestChangedKeyPaths_LongKeyCut(t *testing.T) {
 	require.Len(t, got, 1)
 	assert.LessOrEqual(t, len(got[0].Field), 256)
 }
+
+// TestChangedKeyPaths_DottedKeys: a key with a dot differs from a nested key
+// (PR 790 review).
+func TestChangedKeyPaths_DottedKeys(t *testing.T) {
+	t.Parallel()
+	got, err := ChangedKeyPaths("", `{"a.b": 1}`, "a:\n  b: 1")
+	require.NoError(t, err)
+	var fields []string
+	for _, c := range got {
+		fields = append(fields, c.Field)
+	}
+	assert.Equal(t, []string{`a.b`, `a\.b`}, fields)
+
+	got, err = ChangedKeyPaths("", "", "a:\n  b: 1\n'a.b': 2\n'c\\d': 3")
+	require.NoError(t, err)
+	fields = nil
+	for _, c := range got {
+		fields = append(fields, c.Field)
+	}
+	assert.Equal(t, []string{`a.b`, `a\.b`, `c\\d`}, fields)
+}
+
+func TestChangedKeyPaths_CutKeepsEscapes(t *testing.T) {
+	t.Parallel()
+	// The escaped key is 255 "k", then "\." at bytes 255 and 256: a cut at 256
+	// would end in a lone backslash.
+	got, err := ChangedKeyPaths("", "", "'"+strings.Repeat("k", 255)+".z': 1")
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.LessOrEqual(t, len(got[0].Field), 256)
+	assert.False(t, strings.HasSuffix(got[0].Field, `\`), got[0].Field[240:])
+}

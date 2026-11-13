@@ -3,6 +3,7 @@
 package main
 
 import (
+	"backend/internal/api/middleware"
 	"backend/internal/config"
 	"backend/internal/ctxutil"
 	"backend/internal/deployer"
@@ -37,6 +38,8 @@ const (
 	// streamShutdownBudget is the time that the stream sessions get to close
 	// and write their end audit entries, apart from the shutdown timeout.
 	streamShutdownBudget = 10 * time.Second
+	// auditWriteShutdownBudget bounds the wait for asynchronous audit writes.
+	auditWriteShutdownBudget = 10 * time.Second
 )
 
 // must logs a fatal error and exits if err is non-nil.
@@ -289,6 +292,14 @@ func gracefulShutdown(srvs *servers, timeout time.Duration, deps shutdownDeps) {
 			slog.Error("Metrics server forced to shutdown", "error", err)
 		}
 	}
+
+	// Right after the servers: let the running audit writes (middleware,
+	// sign-in) finish, with a budget of their own. A late write runs inline.
+	auditCtx, auditCancel := context.WithTimeout(context.Background(), auditWriteShutdownBudget)
+	if err := middleware.WaitAuditWrites(auditCtx); err != nil {
+		slog.Warn("Audit writes still running at shutdown", "error", err)
+	}
+	auditCancel()
 
 	// 2. Stop producers of deploy work: the leader workers (TTL reaper,
 	//    cleanup scheduler, monitors, pollers, watcher), then release the

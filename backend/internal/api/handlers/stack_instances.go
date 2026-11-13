@@ -901,6 +901,8 @@ func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
+	// Before the 202 branch: its response has no name (#787).
+	middleware.SetAuditEntityName(c, inst.Name)
 
 	// Authorization: only the owner, an admin or a devops user may delete the instance.
 	// Checked before any side effect (hooks, status change, deploy log, Helm).
@@ -920,7 +922,6 @@ func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 		})
 		return
 	}
-	middleware.SetAuditEntityName(c, inst.Name)
 	c.Status(http.StatusNoContent)
 }
 

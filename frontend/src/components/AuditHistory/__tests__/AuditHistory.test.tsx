@@ -48,6 +48,19 @@ describe('AuditHistory', () => {
     expect(screen.getByText('stack_instance')).toBeInTheDocument();
   });
 
+  it('section starts at the first page for another entity', async () => {
+    const list = auditService.list as ReturnType<typeof vi.fn>;
+    list.mockResolvedValue({ data: [entry('a1')], total: 25, limit: 10, offset: 0 });
+    const { rerender } = render(<MemoryRouter><AuditHistorySection entityId="i1" /></MemoryRouter>);
+    await userEvent.click(screen.getByRole('button', { name: /audit history/i }));
+    await waitFor(() => expect(screen.getByText('alice')).toBeInTheDocument());
+    await userEvent.click(screen.getByRole('button', { name: /next page/i }));
+    await waitFor(() => expect(list).toHaveBeenLastCalledWith({ entity_id: 'i1', limit: 10, offset: 10 }));
+
+    rerender(<MemoryRouter><AuditHistorySection entityId="i2" /></MemoryRouter>);
+    await waitFor(() => expect(list).toHaveBeenLastCalledWith({ entity_id: 'i2', limit: 10, offset: 0 }));
+  });
+
   it('shows an empty state', async () => {
     (auditService.list as ReturnType<typeof vi.fn>).mockResolvedValue({ data: [], total: 0, limit: 10, offset: 0 });
     render(<MemoryRouter><AuditHistory entityId="i1" /></MemoryRouter>);

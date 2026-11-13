@@ -1191,6 +1191,9 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	}
 
 	h.clearRefreshCookie(c)
+	if userID == "" && bearer != nil {
+		userID = bearer.UserID // a token without a session (SSO CLI token)
+	}
 	if userID != "" {
 		entry := &models.AuditLog{Action: middleware.AuditActionLogout, UserID: userID}
 		if bearer != nil && bearer.UserID == userID {

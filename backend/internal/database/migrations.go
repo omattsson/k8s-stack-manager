@@ -2132,11 +2132,12 @@ var auditLogContextColumns = []string{"EntityName", "ClientIP", "RequestID", "Tr
 
 // auditLogContextMigration is migration 68. It adds the request context and
 // the entity name to audit_logs, with indexes for the username and API key
-// filters. Old rows keep NULL in the new columns. Up and Down are idempotent.
+// filters and for the entity history (entity_id without entity_type). Old rows keep NULL in the new columns. Up and Down are idempotent.
 func auditLogContextMigration() schema.Migration {
 	indexes := []struct{ name, sql string }{
 		{"idx_audit_logs_username_ts", "CREATE INDEX idx_audit_logs_username_ts ON audit_logs(username, timestamp)"},
 		{"idx_audit_logs_api_key_ts", "CREATE INDEX idx_audit_logs_api_key_ts ON audit_logs(api_key_id, timestamp)"},
+		{"idx_audit_logs_entity_id_ts", "CREATE INDEX idx_audit_logs_entity_id_ts ON audit_logs(entity_id, timestamp)"},
 	}
 	return schema.Migration{
 		Version:     "20261113000068",

@@ -189,9 +189,9 @@ func flatten(path string, v any, out map[string]any) {
 		return
 	}
 	for _, k := range keys {
-		p := k
+		p := escapeKey(k)
 		if path != "" {
-			p = path + "." + k
+			p = path + "." + p
 		}
 		flatten(p, get(k), out)
 	}
@@ -206,5 +206,16 @@ func cutPath(p string) string {
 	for cut > 0 && !utf8.RuneStart(p[cut]) {
 		cut--
 	}
-	return p[:cut]
+	p = p[:cut]
+	// Do not end inside an escape pair: drop an odd trailing backslash.
+	n := len(p) - len(strings.TrimRight(p, `\`))
+	if n%2 == 1 {
+		p = p[:len(p)-1]
+	}
+	return p
 }
+
+// keyEscaper keeps "a.b" (one key) apart from a nested "a" and "b".
+var keyEscaper = strings.NewReplacer(`\`, `\\`, `.`, `\.`)
+
+func escapeKey(k string) string { return keyEscaper.Replace(k) }

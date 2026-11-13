@@ -24,7 +24,7 @@ func writeAuthAudit(c *gin.Context, repo models.AuditLogRepository, users models
 	e.EntityID = e.UserID
 	middleware.ApplyRequestContext(c, e)
 	ctx, cancel := ctxutil.Detach(c.Request.Context(), ctxutil.WriteTimeout)
-	go func() {
+	middleware.GoAuditWrite(func() {
 		defer cancel()
 		if e.Username == "" && e.UserID != "" && users != nil {
 			if u, err := users.FindByID(ctx, e.UserID); err == nil && u != nil {
@@ -37,7 +37,7 @@ func writeAuthAudit(c *gin.Context, repo models.AuditLogRepository, users models
 		if err := repo.Create(ctx, e); err != nil {
 			slog.Error("failed to create sign-in audit entry", "action", e.Action, "user_id", e.UserID, "error", err)
 		}
-	}()
+	})
 }
 
 // auditReason returns the details of a failed sign-in.

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"backend/internal/ctxutil"
@@ -88,14 +89,14 @@ func NewAuditMiddleware(repo AuditLogger) gin.HandlerFunc {
 		// Fire and forget — audit failures must not affect the response. A
 		// stalled database must not hold the goroutine forever (#674).
 		ctx, cancel := ctxutil.Detach(c.Request.Context(), ctxutil.WriteTimeout)
-		go func() {
+		GoAuditWrite(func() {
 			defer cancel()
 			for _, entry := range entries {
 				if err := repo.Create(ctx, entry); err != nil {
 					slog.Error("failed to create audit log", "error", err)
 				}
 			}
-		}()
+		})
 	}
 }
 
@@ -577,3 +578,55 @@ func capAuditChanges(names []models.AuditChange) []models.AuditChange {
 	}
 	return []models.AuditChange{more}
 }
+
+// auditTracker tracks the asynchronous audit writes, so shutdown can wait
+// for them before the database closes. After Wait began, Go runs a write
+// inline: a WaitGroup must not get an Add from zero while Wait runs.
+type auditTracker struct {
+	mu     sync.Mutex
+	wg     sync.WaitGroup
+	closed bool
+}
+
+// Go runs fn in a tracked goroutine, or inline after Wait began.
+func (t *auditTracker) Go(fn func()) {
+	t.mu.Lock()
+	if t.closed {
+		t.mu.Unlock()
+		fn()
+		return
+	}
+	t.wg.Add(1)
+	t.mu.Unlock()
+	go func() {
+		defer t.wg.Done()
+		fn()
+	}()
+}
+
+// Wait stops new tracked goroutines and waits until the running ones end or
+// ctx is done.
+func (t *auditTracker) Wait(ctx context.Context) error {
+	t.mu.Lock()
+	t.closed = true
+	t.mu.Unlock()
+	done := make(chan struct{})
+	go func() {
+		t.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+var auditWrites = &auditTracker{}
+
+// GoAuditWrite runs an audit write in a goroutine that WaitAuditWrites waits for.
+func GoAuditWrite(fn func()) { auditWrites.Go(fn) }
+
+// WaitAuditWrites waits for the running audit writes (graceful shutdown).
+func WaitAuditWrites(ctx context.Context) error { return auditWrites.Wait(ctx) }

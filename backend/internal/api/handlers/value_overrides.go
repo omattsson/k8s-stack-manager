@@ -248,7 +248,11 @@ func (h *InstanceHandler) deleteValueOverride(c *gin.Context, instanceID, chartI
 	}
 	wctx, cancel := writeCtx(c)
 	defer cancel()
-	return h.overrideRepo.Delete(wctx, existing.ID)
+	if err := h.overrideRepo.Delete(wctx, existing.ID); err != nil {
+		return err
+	}
+	setOverrideAuditChanges(c, existing.Values, "")
+	return nil
 }
 
 // GetOverride godoc

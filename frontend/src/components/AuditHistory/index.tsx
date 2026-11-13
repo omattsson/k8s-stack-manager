@@ -118,7 +118,7 @@ export const AuditHistorySection = ({ entityId }: AuditHistoryProps) => {
         <Typography variant="subtitle2" component="span">Audit history</Typography>
       </AccordionSummary>
       <AccordionDetails>
-        {expanded && <AuditHistory entityId={entityId} />}
+        {expanded && <AuditHistory key={entityId} entityId={entityId} />}
       </AccordionDetails>
     </Accordion>
   );

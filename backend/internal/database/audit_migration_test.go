@@ -72,7 +72,7 @@ func TestAuditLogContextMigration_Idempotent(t *testing.T) {
 	mig := auditLogContextMigration()
 	m := db.DB.Migrator()
 	cols := []string{"EntityName", "ClientIP", "RequestID", "TraceID", "AuthMethod", "APIKeyID"}
-	idx := []string{"idx_audit_logs_username_ts", "idx_audit_logs_api_key_ts"}
+	idx := []string{"idx_audit_logs_username_ts", "idx_audit_logs_api_key_ts", "idx_audit_logs_entity_id_ts"}
 
 	require.NoError(t, mig.Up(db.DB))
 	require.NoError(t, mig.Up(db.DB))

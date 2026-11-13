@@ -27,7 +27,7 @@ startHTTPServer              # main server, optional pprof and metrics servers
 ```
 
 **Graceful shutdown** (`SIGINT` or `SIGTERM`), in this order:
-1. Stop the HTTP servers. Then close the port-forward tunnels and the exec sessions (1001, both `podstream.Manager`s at once) and wait for them: `http.Server.Shutdown` does not close hijacked connections (`podstream.Manager.Shutdown`).
+1. Stop the HTTP servers. Then close the port-forward tunnels and the exec sessions (1001, both `podstream.Manager`s at once) and wait for them: `http.Server.Shutdown` does not close hijacked connections (`podstream.Manager.Shutdown`). Then wait for the asynchronous audit writes (`middleware.WaitAuditWrites`, 10 s budget; a later write runs inline).
 2. Stop the leader workers, release the lease, stop the cleanup scheduler.
 3. Wait for in-flight deploys. Stop the heartbeat and delete its row.
 4. Flush the fan-out queue. Stop the hub, the cluster registry, the notifier, the session store and the dashboard handler.

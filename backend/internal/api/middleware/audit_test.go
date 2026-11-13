@@ -958,3 +958,35 @@ func TestAuditChanges(t *testing.T) {
 		})
 	}
 }
+
+func TestAuditTracker_Wait(t *testing.T) {
+	t.Parallel()
+	tr := &auditTracker{}
+	release := make(chan struct{})
+	done := make(chan struct{})
+	tr.Go(func() {
+		<-release
+		close(done)
+	})
+
+	short, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	require.ErrorIs(t, tr.Wait(short), context.DeadlineExceeded, "a running write keeps the wait open")
+
+	close(release)
+	require.NoError(t, tr.Wait(context.Background()))
+	select {
+	case <-done:
+	default:
+		t.Fatal("Wait returned before the write ended")
+	}
+}
+
+func TestAuditTracker_GoAfterWaitRunsInline(t *testing.T) {
+	t.Parallel()
+	tr := &auditTracker{}
+	require.NoError(t, tr.Wait(context.Background()))
+	ran := false
+	tr.Go(func() { ran = true })
+	assert.True(t, ran, "a write after shutdown began runs before Go returns")
+}
