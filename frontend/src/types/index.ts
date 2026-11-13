@@ -365,10 +365,22 @@ export interface AuditLog {
   entity_id: string;
   details: string;
   timestamp: string;
+  /** Name of the entity when the entry was written (#787). */
+  entity_name?: string;
+  /** Request context (#785); absent on old entries. */
+  client_ip?: string;
+  request_id?: string;
+  trace_id?: string;
+  /** jwt, api_key, password, oidc or system. */
+  auth_method?: string;
+  api_key_id?: string;
 }
 
 export interface AuditLogFilters {
   user_id?: string;
+  /** Exact username. */
+  username?: string;
+  api_key_id?: string;
   entity_type?: string;
   entity_id?: string;
   action?: string;

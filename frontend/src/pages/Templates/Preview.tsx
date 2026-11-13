@@ -19,6 +19,7 @@ import {
   ToggleButton,
   ToggleButtonGroup,
 } from '@mui/material';
+import { AuditHistorySection } from '../../components/AuditHistory';
 import { templateService } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import type { PublishTemplateResult, StackTemplate, VersionDiffResponse } from '../../types';
@@ -383,6 +384,8 @@ const Preview = () => {
           <Button onClick={() => setChangesOpen(false)}>Close</Button>
         </DialogActions>
       </Dialog>
+
+      {id && <AuditHistorySection entityId={id} />}
 
       <Button variant="outlined" onClick={() => navigate('/templates')} sx={{ mt: 2 }}>
         Back to Gallery

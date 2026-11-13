@@ -1,5 +1,13 @@
 import { test, expect } from '@playwright/test';
-import { loginAsDevops, uniqueName, createAndPublishTemplate } from './helpers';
+import {
+  API_BASE,
+  apiCreateDefinition,
+  apiCreateInstance,
+  createAndPublishTemplate,
+  loginAsDevops,
+  tokenFromPage,
+  uniqueName,
+} from './helpers';
 
 test.describe('Audit Log', () => {
   test.beforeEach(async ({ page }) => {
@@ -16,7 +24,7 @@ test.describe('Audit Log', () => {
     await expect(page.getByRole('columnheader', { name: 'User' })).toBeVisible();
     await expect(page.getByRole('columnheader', { name: 'Action' })).toBeVisible();
     await expect(page.getByRole('columnheader', { name: 'Entity Type' })).toBeVisible();
-    await expect(page.getByRole('columnheader', { name: 'Entity ID' })).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: 'Entity', exact: true })).toBeVisible();
     await expect(page.getByRole('columnheader', { name: 'Details' })).toBeVisible();
   });
 
@@ -89,7 +97,7 @@ test.describe('Audit Log', () => {
     });
     await page.waitForLoadState('domcontentloaded');
 
-    await page.getByLabel('User ID').fill('admin');
+    await page.getByLabel('Username').fill('admin');
     await page.getByRole('button', { name: 'Filter' }).click();
 
     await page.waitForTimeout(1000);
@@ -136,5 +144,75 @@ test.describe('Audit Log', () => {
       await expect(page.getByRole('cell', { name: 'stack_template' }).first()).toBeVisible();
       await expect(page.getByRole('cell', { name: 'create' }).first()).toBeVisible();
     }
+  });
+
+  test('a sign-in shows as a login entry, filtered by username (#784)', async ({ page }) => {
+    const devops = await loginAsDevops(page);
+    await page.goto('/audit-log');
+    await expect(page.getByRole('heading', { level: 1, name: 'Audit Log' })).toBeVisible({ timeout: 10_000 });
+
+    await page.getByLabel('Username').fill(devops);
+    await page.getByLabel('Action').click();
+    await page.getByRole('option', { name: 'login', exact: true }).click();
+    await page.getByRole('button', { name: 'Filter' }).click();
+
+    await expect(page.getByRole('cell', { name: 'login', exact: true }).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('cell', { name: devops }).first()).toBeVisible();
+  });
+
+  test('a failed login shows as login_failed with the stored username (#784)', async ({ page }) => {
+    const devops = await loginAsDevops(page);
+    const res = await page.request.post(`${API_BASE}/api/v1/auth/login`, {
+      data: { username: devops, password: 'wrong-password-e2e' },
+    });
+    expect(res.status()).toBe(401);
+
+    await page.goto('/audit-log');
+    await page.getByLabel('Username').fill(devops);
+    await page.getByLabel('Action').click();
+    await page.getByRole('option', { name: 'login_failed' }).click();
+    await page.getByRole('button', { name: 'Filter' }).click();
+
+    await expect(page.getByRole('cell', { name: 'login_failed' }).first()).toBeVisible({ timeout: 10_000 });
+    await page.getByRole('button', { name: 'Show details' }).first().click();
+    await expect(page.getByText('password_mismatch').first()).toBeVisible();
+    await expect(page.getByText('wrong-password-e2e')).toHaveCount(0);
+  });
+
+  test('a row expands to its request context (#785)', async ({ page }) => {
+    await loginAsDevops(page);
+    await page.goto('/audit-log');
+    await expect(page.getByRole('heading', { level: 1, name: 'Audit Log' })).toBeVisible({ timeout: 10_000 });
+    await page.getByLabel('Action').click();
+    await page.getByRole('option', { name: 'login', exact: true }).click();
+    await page.getByRole('button', { name: 'Filter' }).click();
+
+    await page.getByRole('button', { name: 'Show details' }).first().click();
+    await expect(page.getByText('Request ID').first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('Client IP').first()).toBeVisible();
+  });
+
+  test('an entry names and links its instance, and the instance shows its history (#787, #788)', async ({ page }) => {
+    await loginAsDevops(page);
+    await page.goto('/');
+    const token = await tokenFromPage(page);
+    const defId = await apiCreateDefinition(page.request, token, uniqueName('def-audit'));
+    const instName = uniqueName('audit').slice(0, 40).toLowerCase();
+    const instId = await apiCreateInstance(page.request, token, defId, instName);
+
+    await page.goto('/audit-log');
+    await page.getByLabel('Entity Type').click();
+    await page.getByRole('option', { name: 'stack_instance' }).click();
+    await page.getByLabel('Entity ID').fill(instId);
+    await page.getByRole('button', { name: 'Filter' }).click();
+
+    const link = page.getByRole('link', { name: instName });
+    await expect(link).toBeVisible({ timeout: 10_000 });
+    await link.click();
+    await expect(page).toHaveURL(new RegExp(`/stack-instances/${instId}$`));
+
+    await page.getByRole('button', { name: 'Audit history' }).click();
+    const history = page.getByRole('table', { name: 'Audit history' });
+    await expect(history.getByRole('cell', { name: 'create', exact: true })).toBeVisible({ timeout: 10_000 });
   });
 });
