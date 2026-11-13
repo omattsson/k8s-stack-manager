@@ -20,19 +20,27 @@ import (
 // returns the parsed details of the one audit entry.
 func auditedPut(t *testing.T, build func(gin.HandlerFunc) *gin.Engine, path, body string) (map[string]any, string) {
 	t.Helper()
+	details, raw, _ := auditedRequest(t, build, http.MethodPut, path, body)
+	return details, raw
+}
+
+// auditedRequest sends a request through a router that runs the audit
+// middleware and returns the parsed details, the raw details and the entry.
+func auditedRequest(t *testing.T, build func(gin.HandlerFunc) *gin.Engine, method, path, body string) (map[string]any, string, models.AuditLog) {
+	t.Helper()
 	rec := &auditRecorder{}
 	r := build(middleware.NewAuditMiddleware(rec))
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPut, path, bytes.NewBufferString(body))
+	req := httptest.NewRequest(method, path, bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
-	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Less(t, w.Code, 300, w.Body.String())
 	e := rec.waitOne(t)
 	details := map[string]any{}
 	if e.Details != "" {
 		require.NoError(t, json.Unmarshal([]byte(e.Details), &details), e.Details)
 	}
-	return details, e.Details
+	return details, e.Details, e
 }
 
 // changeMap returns details.changes keyed by field.
@@ -156,5 +164,54 @@ func TestUpdateInstance_AuditChanges(t *testing.T) {
 	assert.Equal(t, map[string]any{"field": "ttl_minutes", "old": float64(0), "new": float64(60)}, ch["ttl_minutes"])
 	for _, computed := range []string{"owner_username", "definition_name", "cluster_name", "values_drift"} {
 		assert.NotContains(t, ch, computed)
+	}
+}
+
+// TestOverrideHandlers_AuditEntityName checks that override entries name the
+// instance: their entity ID is the instance ID.
+func TestOverrideHandlers_AuditEntityName(t *testing.T) {
+	t.Parallel()
+	seed := func() (*MockStackInstanceRepository, *MockValueOverrideRepository, *MockStackDefinitionRepository, *MockChartConfigRepository) {
+		insts, overrides := NewMockStackInstanceRepository(), NewMockValueOverrideRepository()
+		defs, charts := NewMockStackDefinitionRepository(), NewMockChartConfigRepository()
+		_ = defs.Create(context.Background(), &models.StackDefinition{ID: "def-1", Name: "shop", OwnerID: "u-1"})
+		_ = charts.Create(context.Background(), &models.ChartConfig{ID: "chart-1", StackDefinitionID: "def-1", ChartName: "app"})
+		_ = insts.Create(context.Background(), &models.StackInstance{ID: "i-1", Name: "stack-a", OwnerID: "u-1", StackDefinitionID: "def-1", Status: models.StackStatusDraft})
+		_ = overrides.Create(context.Background(), &models.ValueOverride{ID: "o-1", StackInstanceID: "i-1", ChartConfigID: "chart-1", Values: "replicas: 1"})
+		return insts, overrides, defs, charts
+	}
+	instanceRouter := func(mw gin.HandlerFunc) *gin.Engine {
+		insts, overrides, defs, charts := seed()
+		r := setupInstanceRouter(insts, overrides, defs, charts, NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(), "u-1", "alice", "user", mw)
+		h := NewInstanceHandler(insts, overrides, NewMockChartBranchOverrideRepository(), defs, charts, nil, nil, nil, NewMockUserRepository(), 0)
+		r.DELETE("/api/v1/stack-instances/:id/overrides/:chartId", h.DeleteOverride)
+		return r
+	}
+	branchRouter := func(mw gin.HandlerFunc) *gin.Engine {
+		insts, bos := NewMockStackInstanceRepository(), NewMockChartBranchOverrideRepository()
+		_ = insts.Create(context.Background(), &models.StackInstance{ID: "i-1", Name: "stack-a", OwnerID: "u-1", StackDefinitionID: "def-1", Status: models.StackStatusDraft})
+		seedBranchOverride(t, bos, "bo-1", "i-1", "chart-1", "main")
+		return setupBranchOverrideRouter(insts, bos, "u-1", "user", mw)
+	}
+	tests := []struct {
+		name   string
+		build  func(gin.HandlerFunc) *gin.Engine
+		method string
+		path   string
+		body   string
+	}{
+		{"set value override", instanceRouter, http.MethodPut, "/api/v1/stack-instances/i-1/overrides/chart-1", `{"values":"replicas: 2"}`},
+		{"delete value override", instanceRouter, http.MethodDelete, "/api/v1/stack-instances/i-1/overrides/chart-1", ""},
+		{"set branch override", branchRouter, http.MethodPut, "/api/v1/stack-instances/i-1/branches/chart-1", `{"branch":"feature-x"}`},
+		{"delete branch override", branchRouter, http.MethodDelete, "/api/v1/stack-instances/i-1/branches/chart-1", ""},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, _, e := auditedRequest(t, tt.build, tt.method, tt.path, tt.body)
+			assert.Equal(t, "i-1", e.EntityID)
+			assert.Equal(t, "stack-a", e.EntityName)
+		})
 	}
 }

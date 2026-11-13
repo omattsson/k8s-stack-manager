@@ -85,6 +85,7 @@ func (h *InstanceHandler) SetOverride(c *gin.Context) {
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
+	middleware.SetAuditEntityName(c, inst.Name)
 
 	// Authorization: only the owner, an admin or a devops user may set overrides.
 	if !requireInstanceModify(c, inst) {
@@ -327,6 +328,7 @@ func (h *InstanceHandler) DeleteOverride(c *gin.Context) {
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
+	middleware.SetAuditEntityName(c, inst.Name)
 
 	// Authorization: same rule as SetOverride (owner, admin or devops).
 	if !requireInstanceModify(c, inst) {

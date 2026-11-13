@@ -181,6 +181,7 @@ func (h *BranchOverrideHandler) SetBranchOverride(c *gin.Context) {
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
+	middleware.SetAuditEntityName(c, inst.Name)
 
 	// Authorization: owner, admin or devops (see canModifyInstance).
 	if !requireInstanceModify(c, inst) {
@@ -271,6 +272,7 @@ func (h *BranchOverrideHandler) DeleteBranchOverride(c *gin.Context) {
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
+	middleware.SetAuditEntityName(c, inst.Name)
 
 	// Authorization: owner, admin or devops (see canModifyInstance).
 	if !requireInstanceModify(c, inst) {

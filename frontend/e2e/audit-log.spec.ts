@@ -158,6 +158,9 @@ test.describe('Audit Log', () => {
 
     await expect(page.getByRole('cell', { name: 'login', exact: true }).first()).toBeVisible({ timeout: 10_000 });
     await expect(page.getByRole('cell', { name: devops }).first()).toBeVisible();
+    // The user entity is named by its username, not by its ID.
+    const firstRow = page.locator('tbody tr').filter({ hasText: 'login' }).first();
+    await expect(firstRow.getByRole('cell').nth(5)).toContainText(devops);
   });
 
   test('a failed login shows as login_failed with the stored username (#784)', async ({ page }) => {
@@ -211,8 +214,14 @@ test.describe('Audit Log', () => {
     await link.click();
     await expect(page).toHaveURL(new RegExp(`/stack-instances/${instId}$`));
 
-    await page.getByRole('button', { name: 'Audit history' }).click();
+    const section = page.getByRole('button', { name: 'Audit history' });
+    await section.click();
     const history = page.getByRole('table', { name: 'Audit history' });
     await expect(history.getByRole('cell', { name: 'create', exact: true })).toBeVisible({ timeout: 10_000 });
+    await expect(history.getByRole('columnheader', { name: 'Type' })).toBeVisible();
+    await expect(history.getByRole('cell', { name: 'stack_instance' }).first()).toBeVisible();
+    // The section stays open while the page finishes its other requests.
+    await page.waitForTimeout(2000);
+    await expect(section).toHaveAttribute('aria-expanded', 'true');
   });
 });

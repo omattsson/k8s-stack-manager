@@ -164,6 +164,7 @@ func TestAuthAudit_Login(t *testing.T) {
 			assert.Equal(t, tt.wantUserID, e.UserID)
 			assert.Equal(t, tt.wantUserID, e.EntityID)
 			assert.Equal(t, tt.wantUser, e.Username)
+			assert.Equal(t, tt.wantUser, e.EntityName, "the user entity is named by its username")
 			assert.Equal(t, models.AuditAuthPassword, e.AuthMethod)
 			assert.Equal(t, "198.51.100.7", e.ClientIP)
 			assert.Equal(t, w.Header().Get("X-Request-ID"), e.RequestID)
@@ -232,6 +233,7 @@ func TestAuthAudit_Logout(t *testing.T) {
 		assert.Equal(t, "logout", e.Action)
 		assert.Equal(t, "uid-1", e.UserID)
 		assert.Equal(t, "alice", e.Username, "username from the lookup")
+		assert.Equal(t, "alice", e.EntityName)
 	})
 	t.Run("no credentials", func(t *testing.T) {
 		t.Parallel()

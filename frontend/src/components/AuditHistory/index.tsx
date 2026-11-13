@@ -74,11 +74,12 @@ const AuditHistory = ({ entityId }: AuditHistoryProps) => {
               <TableCell>Timestamp</TableCell>
               <TableCell>User</TableCell>
               <TableCell>Action</TableCell>
+              <TableCell>Type</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {logs.map((log) => (
-              <AuditEntryRow key={log.id} log={log} isAdmin={user?.role === 'admin'} />
+              <AuditEntryRow key={log.id} log={log} showType isAdmin={user?.role === 'admin'} />
             ))}
           </TableBody>
         </Table>

@@ -10,14 +10,16 @@ interface AuditEntryRowProps {
   log: AuditLog;
   /** Show the entity type and entity columns (the audit log page). */
   showEntity?: boolean;
+  /** Show the entity type column only (the history of one entity). */
+  showType?: boolean;
   isAdmin?: boolean;
 }
 
 /** One audit entry as a table row that expands to its details. */
-const AuditEntryRow = ({ log, showEntity = false, isAdmin = false }: AuditEntryRowProps) => {
+const AuditEntryRow = ({ log, showEntity = false, showType = false, isAdmin = false }: AuditEntryRowProps) => {
   const [open, setOpen] = useState(false);
   const rows = detailRows(log);
-  const columns = showEntity ? 6 : 4;
+  const columns = 4 + (showEntity ? 2 : 0) + (showType ? 1 : 0);
   return (
     <Fragment>
       <TableRow sx={{ '& > *': { borderBottom: open ? 'unset' : undefined } }}>
@@ -35,7 +37,7 @@ const AuditEntryRow = ({ log, showEntity = false, isAdmin = false }: AuditEntryR
         <TableCell sx={{ whiteSpace: 'nowrap' }}>{new Date(log.timestamp).toLocaleString()}</TableCell>
         <TableCell>{log.username}</TableCell>
         <TableCell>{log.action}</TableCell>
-        {showEntity && <TableCell>{log.entity_type}</TableCell>}
+        {(showEntity || showType) && <TableCell>{log.entity_type}</TableCell>}
         {showEntity && (
           <TableCell>
             <EntityLink

@@ -37,6 +37,17 @@ describe('AuditHistory', () => {
     await waitFor(() => expect(list).toHaveBeenLastCalledWith({ entity_id: 'i1', limit: 10, offset: 10 }));
   });
 
+  it('shows the entity type of each entry', async () => {
+    (auditService.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      data: [{ ...entry('a1'), entity_type: 'value_override' }, { ...entry('a2'), entity_type: 'stack_instance' }],
+      total: 2, limit: 10, offset: 0,
+    });
+    render(<MemoryRouter><AuditHistory entityId="i1" /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByText('value_override')).toBeInTheDocument());
+    expect(screen.getByRole('columnheader', { name: 'Type' })).toBeInTheDocument();
+    expect(screen.getByText('stack_instance')).toBeInTheDocument();
+  });
+
   it('shows an empty state', async () => {
     (auditService.list as ReturnType<typeof vi.fn>).mockResolvedValue({ data: [], total: 0, limit: 10, offset: 0 });
     render(<MemoryRouter><AuditHistory entityId="i1" /></MemoryRouter>);
