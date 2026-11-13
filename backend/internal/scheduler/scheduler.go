@@ -577,6 +577,8 @@ func (s *Scheduler) createAuditEntry(ctx context.Context, policy *models.Cleanup
 		Action:     "cleanup_policy_executed",
 		EntityType: "stack_instance",
 		EntityID:   inst.ID,
+		EntityName: inst.Name,
+		AuthMethod: models.AuditAuthSystem,
 		Details:    string(details),
 	}
 	auditCtx, cancel := ctxutil.Detach(ctx, ctxutil.WriteTimeout)

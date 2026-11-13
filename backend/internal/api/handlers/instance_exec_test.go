@@ -199,7 +199,7 @@ func newExecFixture(t *testing.T, o execFixtureOpts) *execFixture {
 		o.cfg = execStreamCfg()
 	}
 	if o.instance == nil {
-		o.instance = &models.StackInstance{ID: "inst-1", OwnerID: "owner-1", Namespace: "stack-ns", ClusterID: "cl-1", StackDefinitionID: "def-1", Status: models.StackStatusRunning}
+		o.instance = &models.StackInstance{ID: "inst-1", Name: "stack-a", OwnerID: "owner-1", Namespace: "stack-ns", ClusterID: "cl-1", StackDefinitionID: "def-1", Status: models.StackStatusRunning}
 	}
 	if o.cluster == nil {
 		o.cluster = &models.Cluster{ID: "cl-1", AllowExec: true}
@@ -235,6 +235,7 @@ func newExecFixture(t *testing.T, o execFixtureOpts) *execFixture {
 		Hub:             f.hub, Audit: audit, AllowedOrigins: o.origins, Config: o.cfg,
 	})
 	r := gin.New()
+	r.Use(middleware.RequestID())
 	r.Use(func(c *gin.Context) {
 		c.Set("userID", o.userID)
 		c.Set("username", "alice")
@@ -554,6 +555,11 @@ func TestExec_EndToEnd(t *testing.T) {
 		"command": `bin/console cache:clear 'it'\''s a test' ''`,
 	}, sd)
 	assert.Equal(t, "exec_end", end.Action)
+	assert.Equal(t, "stack-a", start.EntityName)
+	assert.Equal(t, "stack-a", end.EntityName)
+	assert.NotEmpty(t, start.RequestID)
+	assert.Equal(t, start.RequestID, end.RequestID)
+	assert.Equal(t, "jwt", end.AuthMethod)
 	var ed map[string]any
 	require.NoError(t, json.Unmarshal([]byte(end.Details), &ed))
 	assert.EqualValues(t, 3, ed["exit_code"])

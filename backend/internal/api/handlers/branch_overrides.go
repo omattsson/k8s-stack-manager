@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"backend/internal/api/middleware"
 	"backend/internal/models"
 	"backend/pkg/dberrors"
 
@@ -180,6 +181,7 @@ func (h *BranchOverrideHandler) SetBranchOverride(c *gin.Context) {
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
+	middleware.SetAuditEntityName(c, inst.Name)
 
 	// Authorization: owner, admin or devops (see canModifyInstance).
 	if !requireInstanceModify(c, inst) {
@@ -234,6 +236,15 @@ func (h *BranchOverrideHandler) SetBranchOverride(c *gin.Context) {
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
+	// No SkipAudit: a concurrent write can make existing stale, so an equal
+	// branch does not prove a no-op (PR 790 review).
+	if existing == nil || existing.Branch != override.Branch {
+		branchChange := models.AuditChange{Field: "branch", New: override.Branch}
+		if existing != nil {
+			branchChange.Old = existing.Branch
+		}
+		middleware.SetAuditChanges(c, []models.AuditChange{branchChange})
+	}
 
 	c.JSON(http.StatusOK, override)
 }
@@ -265,6 +276,7 @@ func (h *BranchOverrideHandler) DeleteBranchOverride(c *gin.Context) {
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
+	middleware.SetAuditEntityName(c, inst.Name)
 
 	// Authorization: owner, admin or devops (see canModifyInstance).
 	if !requireInstanceModify(c, inst) {

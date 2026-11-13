@@ -27,7 +27,7 @@ startHTTPServer              # main server, optional pprof and metrics servers
 ```
 
 **Graceful shutdown** (`SIGINT` or `SIGTERM`), in this order:
-1. Stop the HTTP servers. Then close the port-forward tunnels and the exec sessions (1001, both `podstream.Manager`s at once) and wait for them: `http.Server.Shutdown` does not close hijacked connections (`podstream.Manager.Shutdown`).
+1. Stop the HTTP servers. Then close the port-forward tunnels and the exec sessions (1001, both `podstream.Manager`s at once) and wait for them: `http.Server.Shutdown` does not close hijacked connections (`podstream.Manager.Shutdown`). Then wait for the asynchronous audit writes (`middleware.WaitAuditWrites`, 10 s budget; a later write runs inline).
 2. Stop the leader workers, release the lease, stop the cleanup scheduler.
 3. Wait for in-flight deploys. Stop the heartbeat and delete its row.
 4. Flush the fan-out queue. Stop the hub, the cluster registry, the notifier, the session store and the dashboard handler.
@@ -183,6 +183,7 @@ Developers use this application to configure, store and deploy multi-service Hel
 - An operation that is not plain CRUD (deploy, stop, publish, test, bulk, ...) needs an entry in the route table `auditRoutes` (`middleware/audit.go`: action, entity type, ID parameter, details). Without an entry, the action comes from the HTTP method and the entity type from the last route segment.
 - Add new actions and entity types to `KnownAuditActions` and `KnownAuditEntityTypes`, and to the filter lists of `pages/AuditLog`.
 - `routes/audit_routes_test.go` fails for a mutating route with an unknown entity type.
+- Each entry carries the request context and the entity name; a delete handler calls `middleware.SetAuditEntityName`, an update handler calls `middleware.SetAuditChanges` with `auditlog.Fields` (values only for an allow-list; secret fields `auditlog.Redacted`). Code that writes an entry after the handler returned uses `middleware.CaptureRequestContext`. Sign-in events and `AUDIT_LOG_STDOUT`: `docs/claude/domain.md` (Audit log).
 
 ## Security Rules
 

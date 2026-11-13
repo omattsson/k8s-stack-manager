@@ -12,6 +12,7 @@ import {
   Divider,
   Tooltip,
 } from '@mui/material';
+import { AuditHistorySection } from '../../components/AuditHistory';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import LockIcon from '@mui/icons-material/Lock';
@@ -536,6 +537,7 @@ const Form = () => {
           }}
         />
       )}
+      {isEdit && id && <AuditHistorySection entityId={id} />}
     </Box>
   );
 };

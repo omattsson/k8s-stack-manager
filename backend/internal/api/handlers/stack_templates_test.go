@@ -25,10 +25,12 @@ func setupTemplateRouter(
 	definitionRepo *MockStackDefinitionRepository,
 	chartConfigRepo *MockChartConfigRepository,
 	callerID, callerRole string,
+	extra ...gin.HandlerFunc,
 ) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(injectAuthContext(callerID, callerRole))
+	r.Use(extra...)
 
 	h := NewTemplateHandler(templateRepo, chartRepo, definitionRepo, chartConfigRepo)
 	versionRepo := newWorkingCopyReleaseRepo(templateRepo, chartRepo)

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"backend/internal/api/middleware"
+	"backend/internal/auditlog"
 	"backend/internal/cluster"
 	"backend/internal/ctxutil"
 	"backend/internal/k8s"
@@ -414,6 +415,7 @@ func (h *ClusterHandler) UpdateCluster(c *gin.Context) {
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
+	before := *existing
 
 	var req UpdateClusterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -529,6 +531,16 @@ func (h *ClusterHandler) UpdateCluster(c *gin.Context) {
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
+	changes := auditlog.Fields(before, *existing)
+	// The credentials, not kubeconfigChanged: that flag also follows a
+	// use_in_cluster request that changes no credential.
+	if before.KubeconfigData != existing.KubeconfigData || before.KubeconfigPath != existing.KubeconfigPath {
+		changes = append(changes, auditlog.Redacted("kubeconfig"))
+	}
+	if req.RegistryPassword != nil && *req.RegistryPassword != before.RegistryPassword {
+		changes = append(changes, auditlog.Redacted("registry_password"))
+	}
+	middleware.SetAuditChanges(c, changes)
 
 	// Invalidate cached clients as needed.
 	if h.registry != nil {
@@ -600,6 +612,7 @@ func (h *ClusterHandler) DeleteCluster(c *gin.Context) {
 		h.registry.InvalidateDefault()
 	}
 
+	middleware.SetAuditEntityName(c, cl.Name)
 	c.Status(http.StatusNoContent)
 }
 

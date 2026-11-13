@@ -31,6 +31,8 @@ func NewAuditLogHandler(auditRepo models.AuditLogRepository) *AuditLogHandler {
 func parseAuditFilters(c *gin.Context) (models.AuditLogFilters, error) {
 	filters := models.AuditLogFilters{
 		UserID:     c.Query("user_id"),
+		Username:   c.Query("username"),
+		APIKeyID:   c.Query("api_key_id"),
 		EntityType: c.Query("entity_type"),
 		EntityID:   c.Query("entity_id"),
 		Action:     c.Query("action"),
@@ -81,6 +83,8 @@ func parseAuditFilters(c *gin.Context) (models.AuditLogFilters, error) {
 // @Produce     json
 // @Security    BearerAuth
 // @Param       user_id     query    string false "Filter by user ID"
+// @Param       username    query    string false "Filter by username (exact)"
+// @Param       api_key_id  query    string false "Filter by API key ID"
 // @Param       entity_type query    string false "Filter by entity type"
 // @Param       entity_id   query    string false "Filter by entity ID"
 // @Param       action      query    string false "Filter by action"
@@ -126,6 +130,8 @@ func (h *AuditLogHandler) ListAuditLogs(c *gin.Context) {
 // @Security    BearerAuth
 // @Param       format      query    string false "Export format: csv or json (default: json)"
 // @Param       user_id     query    string false "Filter by user ID"
+// @Param       username    query    string false "Filter by username (exact)"
+// @Param       api_key_id  query    string false "Filter by API key ID"
 // @Param       entity_type query    string false "Filter by entity type"
 // @Param       entity_id   query    string false "Filter by entity ID"
 // @Param       action      query    string false "Filter by action"
@@ -169,22 +175,21 @@ func (h *AuditLogHandler) ExportAuditLogs(c *gin.Context) {
 	case "csv":
 		var buf bytes.Buffer
 		w := csv.NewWriter(&buf)
-		if err := w.Write([]string{"ID", "Timestamp", "UserID", "Username", "Action", "EntityType", "EntityID", "Details"}); err != nil {
+		if err := w.Write([]string{"ID", "Timestamp", "UserID", "Username", "AuthMethod", "APIKeyID", "ClientIP", "Action",
+			"EntityType", "EntityID", "EntityName", "RequestID", "TraceID", "Details"}); err != nil {
 			slog.Error("failed to write CSV header", "error", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 			return
 		}
 		for _, l := range logs {
-			if err := w.Write([]string{
-				l.ID,
-				l.Timestamp.Format(time.RFC3339),
-				l.UserID,
-				l.Username,
-				l.Action,
-				l.EntityType,
-				l.EntityID,
-				l.Details,
-			}); err != nil {
+			row := []string{
+				l.ID, l.Timestamp.Format(time.RFC3339), l.UserID, l.Username, l.AuthMethod, l.APIKeyID, l.ClientIP,
+				l.Action, l.EntityType, l.EntityID, l.EntityName, l.RequestID, l.TraceID, l.Details,
+			}
+			for i := range row {
+				row[i] = csvSafe(row[i])
+			}
+			if err := w.Write(row); err != nil {
 				slog.Error("failed to write CSV row", "error", err)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 				return
@@ -210,4 +215,17 @@ func (h *AuditLogHandler) ExportAuditLogs(c *gin.Context) {
 			slog.Error("failed to encode audit logs JSON", "error", err)
 		}
 	}
+}
+
+// csvSafe stops a spreadsheet from running a cell as a formula: entity
+// names and usernames are user input.
+func csvSafe(s string) string {
+	if s == "" {
+		return s
+	}
+	switch s[0] {
+	case '=', '+', '-', '@', '\t', '\r':
+		return "'" + s
+	}
+	return s
 }

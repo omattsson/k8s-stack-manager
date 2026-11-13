@@ -336,10 +336,11 @@ func TestExportAuditLogs(t *testing.T) {
 		records, err := reader.ReadAll()
 		require.NoError(t, err)
 		assert.Len(t, records, 2) // 1 header + 1 data row
-		assert.Equal(t, []string{"ID", "Timestamp", "UserID", "Username", "Action", "EntityType", "EntityID", "Details"}, records[0])
+		assert.Equal(t, []string{"ID", "Timestamp", "UserID", "Username", "AuthMethod", "APIKeyID", "ClientIP", "Action",
+			"EntityType", "EntityID", "EntityName", "RequestID", "TraceID", "Details"}, records[0])
 		assert.Equal(t, "log-1", records[1][0])
 		assert.Equal(t, "uid-1", records[1][2])
-		assert.Equal(t, "create", records[1][4])
+		assert.Equal(t, "create", records[1][7])
 	})
 
 	t.Run("export with filters passes filters to repo", func(t *testing.T) {

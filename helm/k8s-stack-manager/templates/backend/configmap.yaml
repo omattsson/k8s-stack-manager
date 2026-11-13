@@ -73,6 +73,10 @@ data:
   LOG_RETENTION_INTERVAL: {{ .interval | quote }}
   {{- end }}
   {{- end }}
+  {{- /* Audit log copy to stdout. An explicit backend.env value wins. */}}
+  {{- if and .Values.backend.audit (not (hasKey .Values.backend.env "AUDIT_LOG_STDOUT")) }}
+  AUDIT_LOG_STDOUT: {{ .Values.backend.audit.stdout | toString | quote }}
+  {{- end }}
   {{- /* Port-forward and stream settings. An explicit backend.env value wins. */}}
   {{- with .Values.backend.portForward }}
   {{- if not (hasKey $.Values.backend.env "STACK_PORT_FORWARD_ENABLED") }}

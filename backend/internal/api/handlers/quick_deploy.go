@@ -463,16 +463,19 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 
 	// 6. Audit log.
 	if h.auditRepo != nil {
-		if auditErr := h.auditRepo.Create(finalCtx, &models.AuditLog{
+		entry := &models.AuditLog{
 			ID:         uuid.New().String(),
 			UserID:     userID,
 			Username:   username,
 			Action:     "quick_deploy",
 			EntityType: "stack_instance",
 			EntityID:   inst.ID,
+			EntityName: middleware.TruncateUTF8(inst.Name, models.MaxAuditEntityNameLen),
 			Details:    fmt.Sprintf("Quick deployed from template %s", tmpl.Name),
 			Timestamp:  now,
-		}); auditErr != nil {
+		}
+		middleware.ApplyRequestContext(c, entry)
+		if auditErr := h.auditRepo.Create(finalCtx, entry); auditErr != nil {
 			slog.Error("Failed to create audit log for quick deploy", "instance_id", inst.ID, "error", auditErr)
 		}
 	}

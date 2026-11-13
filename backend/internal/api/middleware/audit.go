@@ -8,8 +8,8 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
-	"unicode/utf8"
 
 	"backend/internal/ctxutil"
 	"backend/internal/models"
@@ -89,14 +89,14 @@ func NewAuditMiddleware(repo AuditLogger) gin.HandlerFunc {
 		// Fire and forget — audit failures must not affect the response. A
 		// stalled database must not hold the goroutine forever (#674).
 		ctx, cancel := ctxutil.Detach(c.Request.Context(), ctxutil.WriteTimeout)
-		go func() {
+		GoAuditWrite(func() {
 			defer cancel()
 			for _, entry := range entries {
 				if err := repo.Create(ctx, entry); err != nil {
 					slog.Error("failed to create audit log", "error", err)
 				}
 			}
-		}()
+		})
 	}
 }
 
@@ -122,6 +122,8 @@ type AuditRoute struct {
 	// list, and the middleware writes one entry per item with status
 	// "success". The field holds the entity ID of an item.
 	BulkIDField string
+	// BulkNameField is the field of a bulk result item with the entity name.
+	BulkNameField string
 	// Skip means no audit entry: the request changes nothing worth auditing
 	// (notification read state), or the handler writes its own entry.
 	Skip bool
@@ -171,6 +173,12 @@ const (
 	AuditActionPortForwardEnd        = "port_forward_end"        // handlers.StreamHandler (end of a tunnel)
 	AuditActionExec                  = "exec"                    // handlers.StreamHandler (start of an exec command)
 	AuditActionExecEnd               = "exec_end"                // handlers.StreamHandler (end of an exec command)
+	AuditActionLogin                 = "login"                   // handlers.AuthHandler (local login)
+	AuditActionLoginFailed           = "login_failed"            // handlers.AuthHandler, handlers.OIDCHandler
+	AuditActionOIDCLogin             = "oidc_login"              // handlers.OIDCHandler
+	AuditActionLogout                = "logout"                  // handlers.AuthHandler
+	AuditActionLogoutAll             = "logout_all"              // handlers.AuthHandler
+	AuditActionRefreshReuseRevoked   = "refresh_reuse_revoked"   // handlers.AuthHandler (replayed refresh token)
 )
 
 // KnownAuditActions lists every action that new audit entries can have. The
@@ -187,6 +195,8 @@ var KnownAuditActions = []string{
 	AuditActionQuickDeploy, AuditActionExpired, AuditActionCleanupPolicyExecuted,
 	AuditActionInterrupted, AuditActionPortForward, AuditActionPortForwardEnd,
 	AuditActionExec, AuditActionExecEnd,
+	AuditActionLogin, AuditActionLoginFailed, AuditActionOIDCLogin,
+	AuditActionLogout, AuditActionLogoutAll, AuditActionRefreshReuseRevoked,
 }
 
 // KnownAuditEntityTypes lists every entity type that new audit entries can
@@ -213,9 +223,9 @@ var auditRoutes = map[string]AuditRoute{
 	"POST /templates/:id/clone":       {Action: AuditActionClone, EntityType: "stack_template", IDParam: "id", ResultFields: map[string]string{"id": "clone_id"}},
 	// Quick deploy writes its own entry (quick_deploy | stack_instance).
 	"POST /templates/:id/quick-deploy": {Skip: true},
-	"POST /templates/bulk/delete":      {Action: AuditActionDelete, EntityType: "stack_template", BulkIDField: "template_id"},
-	"POST /templates/bulk/publish":     {Action: AuditActionPublish, EntityType: "stack_template", BulkIDField: "template_id"},
-	"POST /templates/bulk/unpublish":   {Action: AuditActionUnpublish, EntityType: "stack_template", BulkIDField: "template_id"},
+	"POST /templates/bulk/delete":      {Action: AuditActionDelete, EntityType: "stack_template", BulkIDField: "template_id", BulkNameField: "template_name"},
+	"POST /templates/bulk/publish":     {Action: AuditActionPublish, EntityType: "stack_template", BulkIDField: "template_id", BulkNameField: "template_name"},
+	"POST /templates/bulk/unpublish":   {Action: AuditActionUnpublish, EntityType: "stack_template", BulkIDField: "template_id", BulkNameField: "template_name"},
 
 	// Port-forward: GET is not audited by the middleware. StreamHandler
 	// (handlers/instance_stream.go) writes port_forward at the start and
@@ -241,10 +251,10 @@ var auditRoutes = map[string]AuditRoute{
 	"POST /stack-instances/:id/follow":        {Action: AuditActionFollow, EntityType: "stack_instance", IDParam: "id"},
 	"DELETE /stack-instances/:id/follow":      {Action: AuditActionUnfollow, EntityType: "stack_instance", IDParam: "id"},
 	"POST /stack-instances/:id/actions/:name": {Action: AuditActionInvokeAction, EntityType: "stack_instance", IDParam: "id", DetailParams: map[string]string{"name": "action"}},
-	"POST /stack-instances/bulk/deploy":       {Action: AuditActionDeploy, EntityType: "stack_instance", BulkIDField: "instance_id"},
-	"POST /stack-instances/bulk/stop":         {Action: AuditActionStop, EntityType: "stack_instance", BulkIDField: "instance_id"},
-	"POST /stack-instances/bulk/clean":        {Action: AuditActionClean, EntityType: "stack_instance", BulkIDField: "instance_id"},
-	"POST /stack-instances/bulk/delete":       {Action: AuditActionDelete, EntityType: "stack_instance", BulkIDField: "instance_id"},
+	"POST /stack-instances/bulk/deploy":       {Action: AuditActionDeploy, EntityType: "stack_instance", BulkIDField: "instance_id", BulkNameField: "instance_name"},
+	"POST /stack-instances/bulk/stop":         {Action: AuditActionStop, EntityType: "stack_instance", BulkIDField: "instance_id", BulkNameField: "instance_name"},
+	"POST /stack-instances/bulk/clean":        {Action: AuditActionClean, EntityType: "stack_instance", BulkIDField: "instance_id", BulkNameField: "instance_name"},
+	"POST /stack-instances/bulk/delete":       {Action: AuditActionDelete, EntityType: "stack_instance", BulkIDField: "instance_id", BulkNameField: "instance_name"},
 
 	// Users and API keys.
 	"PUT /users/:id/disable":                       {Action: AuditActionDisable, EntityType: "user", IDParam: "id"},
@@ -298,7 +308,8 @@ func buildAuditEntries(c *gin.Context, route AuditRoute, body []byte) []*models.
 	userID := GetUserIDFromContext(c)
 	username := GetUsernameFromContext(c)
 	now := time.Now().UTC()
-	newEntry := func(entityID string, details map[string]any) *models.AuditLog {
+	rc := CaptureRequestContext(c)
+	newEntry := func(entityID, entityName string, details map[string]any) *models.AuditLog {
 		entry := &models.AuditLog{
 			ID:         uuid.New().String(),
 			UserID:     userID,
@@ -306,8 +317,10 @@ func buildAuditEntries(c *gin.Context, route AuditRoute, body []byte) []*models.
 			Action:     route.Action,
 			EntityType: route.EntityType,
 			EntityID:   truncateEntityID(entityID),
+			EntityName: TruncateUTF8(entityName, models.MaxAuditEntityNameLen),
 			Timestamp:  now,
 		}
+		rc.Apply(entry)
 		if len(details) > 0 {
 			if raw, err := json.Marshal(details); err == nil {
 				entry.Details = string(raw)
@@ -340,6 +353,8 @@ func buildAuditEntries(c *gin.Context, route AuditRoute, body []byte) []*models.
 		}
 	}
 
+	addAuditChanges(c, details)
+
 	var entityID string
 	switch {
 	case route.CRUD:
@@ -357,16 +372,33 @@ func buildAuditEntries(c *gin.Context, route AuditRoute, body []byte) []*models.
 		// Table route without an ID parameter: the ID of the response.
 		entityID = responseID(resp)
 	}
-	return []*models.AuditLog{newEntry(entityID, details)}
+	return []*models.AuditLog{newEntry(entityID, auditEntityName(c, entityID, resp), details)}
+}
+
+// auditEntityName returns the name that the handler set (SetAuditEntityName),
+// else the "name" of the response when the response is the entity itself
+// (its "id" is the entity ID). Clone, instantiate and child creates keep the
+// source or parent ID, so the response name is not the entity name.
+func auditEntityName(c *gin.Context, entityID string, resp map[string]any) string {
+	if v, ok := c.Get(auditEntityNameKey{}); ok {
+		if name, ok := v.(string); ok {
+			return name
+		}
+	}
+	if entityID == "" || responseID(resp) != entityID {
+		return ""
+	}
+	name, _ := resp["name"].(string)
+	return name
 }
 
 // bulkAuditEntries returns one entry per item of the bulk response with
 // status "success", so that a filter on the entity ID finds the operation.
 // A response that cannot be read gives one entry without an entity ID.
-func bulkAuditEntries(route AuditRoute, resp map[string]any, newEntry func(string, map[string]any) *models.AuditLog) []*models.AuditLog {
+func bulkAuditEntries(route AuditRoute, resp map[string]any, newEntry func(string, string, map[string]any) *models.AuditLog) []*models.AuditLog {
 	results, ok := resp["results"].([]any)
 	if !ok {
-		return []*models.AuditLog{newEntry("", map[string]any{"bulk": true})}
+		return []*models.AuditLog{newEntry("", "", map[string]any{"bulk": true})}
 	}
 	var entries []*models.AuditLog
 	for _, item := range results {
@@ -382,7 +414,8 @@ func bulkAuditEntries(route AuditRoute, resp map[string]any, newEntry func(strin
 		if logID, ok := m["log_id"].(string); ok && logID != "" {
 			details["log_id"] = logID
 		}
-		entries = append(entries, newEntry(id, details))
+		name, _ := m[route.BulkNameField].(string)
+		entries = append(entries, newEntry(id, name, details))
 	}
 	return entries
 }
@@ -429,14 +462,7 @@ func snakeCase(s string) string {
 // UUIDs or namespace names (at most 63 characters); a longer value is not a
 // valid ID, and the cut keeps the entry.
 func truncateEntityID(id string) string {
-	if len(id) <= models.MaxAuditEntityIDLen {
-		return id
-	}
-	cut := models.MaxAuditEntityIDLen
-	for cut > 0 && !utf8.RuneStart(id[cut]) {
-		cut--
-	}
-	return id[:cut]
+	return TruncateUTF8(id, models.MaxAuditEntityIDLen)
 }
 
 // responseID returns the "id" field of a JSON response object as a string.
@@ -495,3 +521,112 @@ func normalizeEntityType(segment string) string {
 	}
 	return strings.ReplaceAll(segment, "-", "_")
 }
+
+// maxAuditChangesBytes caps details.changes (#786).
+const maxAuditChangesBytes = 8192
+
+// auditChangesKey holds the change set of this request. A private key type.
+type auditChangesKey struct{}
+
+// SetAuditChanges adds changed fields to the audit entry of this request.
+// Build them with auditlog.Fields, auditlog.Redacted or
+// auditlog.ChangedKeyPaths; never put secret values in them.
+func SetAuditChanges(c *gin.Context, changes []models.AuditChange) {
+	if len(changes) == 0 {
+		return
+	}
+	prev, _ := c.Get(auditChangesKey{})
+	list, _ := prev.([]models.AuditChange)
+	c.Set(auditChangesKey{}, append(list, changes...))
+}
+
+// addAuditChanges puts the change set into the details. A set longer than
+// maxAuditChangesBytes keeps the field names only.
+func addAuditChanges(c *gin.Context, details map[string]any) {
+	v, ok := c.Get(auditChangesKey{})
+	if !ok {
+		return
+	}
+	changes, _ := v.([]models.AuditChange)
+	if len(changes) == 0 {
+		return
+	}
+	if raw, err := json.Marshal(changes); err == nil && len(raw) <= maxAuditChangesBytes {
+		details["changes"] = changes
+		return
+	}
+	names := make([]models.AuditChange, len(changes))
+	for i, ch := range changes {
+		names[i] = models.AuditChange{Field: ch.Field, Redacted: ch.Redacted}
+	}
+	details["changes"] = capAuditChanges(names)
+	details["changes_truncated"] = true
+}
+
+// capAuditChanges drops entries from the end, and adds "…", until the JSON
+// fits maxAuditChangesBytes: names without values can still be too long.
+func capAuditChanges(names []models.AuditChange) []models.AuditChange {
+	if raw, err := json.Marshal(names); err == nil && len(raw) <= maxAuditChangesBytes {
+		return names
+	}
+	more := models.AuditChange{Field: "…"}
+	for n := len(names) - 1; n >= 0; n-- {
+		out := append(names[:n:n], more)
+		if raw, err := json.Marshal(out); err == nil && len(raw) <= maxAuditChangesBytes {
+			return out
+		}
+	}
+	return []models.AuditChange{more}
+}
+
+// auditTracker tracks the asynchronous audit writes, so shutdown can wait
+// for them before the database closes. After Wait began, Go runs a write
+// inline: a WaitGroup must not get an Add from zero while Wait runs.
+type auditTracker struct {
+	mu     sync.Mutex
+	wg     sync.WaitGroup
+	closed bool
+}
+
+// Go runs fn in a tracked goroutine, or inline after Wait began.
+func (t *auditTracker) Go(fn func()) {
+	t.mu.Lock()
+	if t.closed {
+		t.mu.Unlock()
+		fn()
+		return
+	}
+	t.wg.Add(1)
+	t.mu.Unlock()
+	go func() {
+		defer t.wg.Done()
+		fn()
+	}()
+}
+
+// Wait stops new tracked goroutines and waits until the running ones end or
+// ctx is done.
+func (t *auditTracker) Wait(ctx context.Context) error {
+	t.mu.Lock()
+	t.closed = true
+	t.mu.Unlock()
+	done := make(chan struct{})
+	go func() {
+		t.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+var auditWrites = &auditTracker{}
+
+// GoAuditWrite runs an audit write in a goroutine that WaitAuditWrites waits for.
+func GoAuditWrite(fn func()) { auditWrites.Go(fn) }
+
+// WaitAuditWrites waits for the running audit writes (graceful shutdown).
+func WaitAuditWrites(ctx context.Context) error { return auditWrites.Wait(ctx) }

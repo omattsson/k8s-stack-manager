@@ -254,6 +254,10 @@ func TestReaper_ExpiredInstancesGetStopped(t *testing.T) {
 
 	assert.Equal(t, 1, auditRepo.count())
 	assert.Equal(t, 1, hub.count())
+	auditRepo.mu.Lock()
+	assert.Equal(t, models.AuditAuthSystem, auditRepo.logs[0].AuthMethod)
+	assert.Equal(t, "expired", auditRepo.logs[0].EntityName)
+	auditRepo.mu.Unlock()
 }
 
 func TestReaper_NoExpiredInstances(t *testing.T) {

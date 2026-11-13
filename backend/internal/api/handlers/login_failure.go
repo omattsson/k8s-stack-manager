@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"log/slog"
-	"unicode/utf8"
 
 	"backend/internal/api/middleware"
 )
@@ -99,9 +98,5 @@ func truncateForLog(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	cut := n
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return s[:cut] + "..."
+	return middleware.TruncateUTF8(s, n) + "..."
 }

@@ -53,6 +53,7 @@ import { useNotification } from '../../context/NotificationContext';
 import LoadingState from '../../components/LoadingState';
 import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
 import { useAuth } from '../../context/AuthContext';
+import { AuditHistorySection } from '../../components/AuditHistory';
 import { canModifyInstance, hasAtLeastRole } from '../../utils/roles';
 import { describeApiError, getApiErrorInfo } from '../../utils/apiError';
 import { downloadBlob } from '../../utils/download';
@@ -1310,6 +1311,8 @@ const Detail = () => {
         hideWhenEmpty={instanceActions.actions.length === 0}
         actions={instanceActions.actions}
       />
+
+      <AuditHistorySection entityId={id ?? instance.id} />
 
       {canModify && invalidOverrideMessage && (
         <Alert severity="error" sx={{ mb: 2 }} data-testid="invalid-override-message">

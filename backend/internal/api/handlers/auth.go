@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -70,6 +71,7 @@ type AuthHandler struct {
 	loginCache       *cache.TTLCache[struct{}]                   // key: verified credentials; value unused
 	logger           *slog.Logger                                // login failure log; nil uses slog.Default() (tests set it)
 	compareHash      func(hashedPassword, password []byte) error // bcrypt.CompareHashAndPassword; tests wrap it
+	audit            models.AuditLogRepository                   // sign-in audit entries; nil writes none
 }
 
 // NewAuthHandler creates a new AuthHandler.
@@ -88,6 +90,11 @@ func (h *AuthHandler) comparePassword(hash []byte, password string) error {
 	bcryptSem <- struct{}{}
 	defer func() { <-bcryptSem }()
 	return h.compareHash(hash, []byte(password))
+}
+
+// SetAuditLogger sets the repository of the sign-in audit entries (#784).
+func (h *AuthHandler) SetAuditLogger(repo models.AuditLogRepository) {
+	h.audit = repo
 }
 
 // SetRefreshTokenRepo sets the refresh token repository for refresh token support.
@@ -168,6 +175,12 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		f.clientIP = c.ClientIP()
 		f.requestID = c.GetString(middleware.RequestIDKey)
 		h.logLoginFailure(f)
+		// No username: the typed value can be a password (#784). A known
+		// user ID gets the stored username.
+		writeAuthAudit(c, h.audit, h.userRepo, &models.AuditLog{
+			Action: middleware.AuditActionLoginFailed, UserID: f.userID,
+			AuthMethod: models.AuditAuthPassword, Details: auditReason(f.reason),
+		})
 		c.JSON(f.httpCode, gin.H{"error": body})
 	}
 	const msgInvalidCredentials = "Invalid username or password"
@@ -341,6 +354,10 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 
 	middleware.RecordLogin("local", "success")
+	writeAuthAudit(c, h.audit, h.userRepo, &models.AuditLog{
+		Action: middleware.AuditActionLogin, UserID: user.ID, Username: user.Username,
+		AuthMethod: models.AuditAuthPassword,
+	})
 	c.JSON(http.StatusOK, LoginResponse{Token: token, User: *user})
 }
 
@@ -752,6 +769,11 @@ func (h *AuthHandler) refreshConsumedToken(readCtx context.Context, c *gin.Conte
 	h.blockSessions(writeCtx, stored.UserID, []sessionToBlock{{id: family, revokeFailed: revokeErr != nil}})
 	h.clearRefreshCookie(c)
 	middleware.RecordRefresh("revoked")
+	tokenID, _ := json.Marshal(map[string]string{"token_id": stored.ID})
+	writeAuthAudit(c, h.audit, h.userRepo, &models.AuditLog{
+		Action: middleware.AuditActionRefreshReuseRevoked, UserID: stored.UserID, Details: string(tokenID),
+		AuthMethod: models.AuditAuthRefreshToken,
+	})
 	c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
 }
 
@@ -1170,6 +1192,17 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	}
 
 	h.clearRefreshCookie(c)
+	if userID == "" && bearer != nil {
+		userID = bearer.UserID // a token without a session (SSO CLI token)
+	}
+	if userID != "" {
+		entry := &models.AuditLog{Action: middleware.AuditActionLogout, UserID: userID, AuthMethod: models.AuditAuthRefreshToken}
+		if bearer != nil && bearer.UserID == userID {
+			entry.Username = bearer.Username
+			entry.AuthMethod = middleware.AuthMethodJWT
+		}
+		writeAuthAudit(c, h.audit, h.userRepo, entry)
+	}
 	if revokeFailed {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
@@ -1309,6 +1342,9 @@ func (h *AuthHandler) LogoutAll(c *gin.Context) {
 	}
 
 	h.clearRefreshCookie(c)
+	writeAuthAudit(c, h.audit, h.userRepo, &models.AuditLog{
+		Action: middleware.AuditActionLogoutAll, UserID: userID, Username: middleware.GetUsernameFromContext(c),
+	})
 	if revokeFailed {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return

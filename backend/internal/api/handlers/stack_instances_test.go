@@ -31,6 +31,7 @@ func setupInstanceRouter(
 	tmplRepo *MockStackTemplateRepository,
 	tmplChartRepo *MockTemplateChartConfigRepository,
 	callerID, callerUsername, callerRole string,
+	extra ...gin.HandlerFunc,
 ) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -46,6 +47,7 @@ func setupInstanceRouter(
 		}
 		c.Next()
 	})
+	r.Use(extra...)
 
 	valuesGen := helm.NewValuesGenerator()
 	userRepo := NewMockUserRepository()
@@ -63,6 +65,7 @@ func setupInstanceRouter(
 		insts.POST("", h.CreateInstance)
 		insts.GET("/:id", h.GetInstance)
 		insts.PUT("/:id", h.UpdateInstance)
+		insts.PUT("/:id/overrides/:chartId", h.SetOverride)
 		insts.DELETE("/:id", h.DeleteInstance)
 		insts.POST("/:id/clone", h.CloneInstance)
 		insts.GET("/:id/values/:chartId", h.ExportChartValues)

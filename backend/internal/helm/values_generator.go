@@ -122,24 +122,24 @@ func (g *ValuesGenerator) GenerateValues(_ context.Context, params GenerateParam
 	// Start with shared values (lowest priority, applied first).
 	merged := make(map[string]interface{})
 	for _, sv := range params.SharedValues {
-		parsed, err := parseYAML(sv)
+		parsed, err := ParseYAML(sv)
 		if err != nil {
 			continue // skip invalid shared values YAML
 		}
 		merged = deepMerge(merged, parsed)
 	}
 
-	defaults, err := parseYAML(params.DefaultValues)
+	defaults, err := ParseYAML(params.DefaultValues)
 	if err != nil {
 		return nil, fmt.Errorf("parsing default values: %w", err)
 	}
 
-	overrides, err := parseYAML(params.OverrideValues)
+	overrides, err := ParseYAML(params.OverrideValues)
 	if err != nil {
 		return nil, fmt.Errorf("parsing override values: %w", err)
 	}
 
-	locked, err := parseYAML(params.LockedValues)
+	locked, err := ParseYAML(params.LockedValues)
 	if err != nil {
 		return nil, fmt.Errorf("parsing locked values: %w", err)
 	}
@@ -225,7 +225,7 @@ func (g *ValuesGenerator) ExportAsZip(ctx context.Context, params GenerateAllPar
 // no scalar value or anchor name of the input. It can hold a map key
 // (`mapping key "a" already defined`).
 func ValidateValues(s string) error {
-	_, err := parseYAML(s)
+	_, err := ParseYAML(s)
 	if err == nil {
 		return nil
 	}
@@ -249,7 +249,7 @@ var (
 	yamlAnchorName = regexp.MustCompile(`anchor '[^']*'`)
 )
 
-// describeYAMLError returns the text of a parseYAML error for the user. yaml.v3
+// describeYAMLError returns the text of a ParseYAML error for the user. yaml.v3
 // messages can quote a value and name the Go target type, and "invalid map key"
 // prints the key as a Go value.
 func describeYAMLError(err error) string {
@@ -281,8 +281,8 @@ func cleanYAMLMessage(msg string) string {
 	return yamlAnchorName.ReplaceAllString(msg, "anchor")
 }
 
-// parseYAML parses a YAML string into a map. Returns empty map for empty input.
-func parseYAML(s string) (map[string]interface{}, error) {
+// ParseYAML parses a YAML string into a map. Returns empty map for empty input.
+func ParseYAML(s string) (map[string]interface{}, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return map[string]interface{}{}, nil

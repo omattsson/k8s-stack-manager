@@ -363,6 +363,8 @@ type Config struct {
 	Retention RetentionConfig
 	// Stream holds the settings of the port-forward tunnels.
 	Stream StreamConfig
+	// Audit holds the audit log settings.
+	Audit AuditConfig
 
 	// Branding holds the display values of the web UI (title, logo, favicon).
 	Branding BrandingConfig
@@ -809,6 +811,12 @@ func LoadConfig() (*Config, error) {
 	cfg.Retention = loadRetentionConfig()
 	cfg.Stream = loadStreamConfig()
 	cfg.Branding = loadBrandingConfig()
+
+	audit, err := ParseAuditConfig(getEnv("AUDIT_LOG_STDOUT", ""))
+	if err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+	cfg.Audit = audit
 
 	nsLabels, err := ParseNamespaceLabels(getEnv("NAMESPACE_LABELS", ""))
 	if err != nil {

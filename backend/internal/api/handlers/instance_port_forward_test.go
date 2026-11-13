@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"backend/internal/api/middleware"
 	"backend/internal/config"
 	"backend/internal/k8s"
 	"backend/internal/models"
@@ -180,7 +181,7 @@ func newStreamFixture(t *testing.T, o fixtureOpts) *streamFixture {
 		o.cfg = defaultStreamCfg()
 	}
 	if o.instance == nil {
-		o.instance = &models.StackInstance{ID: "inst-1", OwnerID: "owner-1", Namespace: "stack-ns", ClusterID: "cl-1", Status: models.StackStatusRunning}
+		o.instance = &models.StackInstance{ID: "inst-1", Name: "stack-a", OwnerID: "owner-1", Namespace: "stack-ns", ClusterID: "cl-1", Status: models.StackStatusRunning}
 	}
 	if o.cluster == nil {
 		o.cluster = &models.Cluster{ID: "cl-1", AllowPortForward: true}
@@ -210,6 +211,7 @@ func newStreamFixture(t *testing.T, o fixtureOpts) *streamFixture {
 	}
 	f.handler = NewStreamHandler(deps)
 	r := gin.New()
+	r.Use(middleware.RequestID())
 	r.Use(func(c *gin.Context) {
 		c.Set("userID", o.userID)
 		c.Set("username", "alice")
@@ -435,12 +437,17 @@ func TestPortForward_EndToEnd(t *testing.T) {
 	assert.EqualValues(t, 8080, sd["target_port"])
 	assert.Equal(t, "jwt", sd["auth"])
 	assert.NotContains(t, start.Details, "ping-pong")
+	assert.Equal(t, "stack-a", start.EntityName)
+	assert.NotEmpty(t, start.RequestID)
+	assert.Equal(t, "jwt", start.AuthMethod)
 
 	// Closing ends the tunnel and writes the end entry.
 	require.NoError(t, c.WriteControl(gorilla.CloseMessage, gorilla.FormatCloseMessage(1000, ""), time.Now().Add(time.Second)))
 	require.Eventually(t, func() bool { return len(f.audit.snapshot()) == 2 }, 3*time.Second, 10*time.Millisecond)
 	end := f.audit.snapshot()[1]
 	assert.Equal(t, "port_forward_end", end.Action)
+	assert.Equal(t, "stack-a", end.EntityName)
+	assert.Equal(t, start.RequestID, end.RequestID)
 	var ed map[string]any
 	require.NoError(t, json.Unmarshal([]byte(end.Details), &ed))
 	assert.EqualValues(t, 9, ed["bytes_in"])
@@ -666,5 +673,35 @@ func TestMapStreamError_Timeouts(t *testing.T) {
 			assert.Equal(t, tt.wantStatus, status)
 			assert.Equal(t, tt.wantCode, code)
 		})
+	}
+}
+
+// TestStreamAudit_EndAfterHandlerReturns checks that the end entry, written
+// after the handler returned, has the request context of its own request,
+// not of a later request that reuses the *gin.Context (run with -race).
+func TestStreamAudit_EndAfterHandlerReturns(t *testing.T) {
+	t.Parallel()
+	f := newStreamFixture(t, fixtureOpts{})
+	srv, base := f.server(t)
+
+	hdr := http.Header{"X-Request-Id": []string{"pf-req-1"}}
+	c, _, err := gorilla.DefaultDialer.Dial(base+"/api/v1/stack-instances/inst-1/port-forward?service=web&port=80", hdr)
+	require.NoError(t, err)
+	defer c.Close()
+	require.Eventually(t, func() bool { return len(f.audit.snapshot()) == 1 }, 2*time.Second, 10*time.Millisecond)
+
+	for i := 0; i < 20; i++ {
+		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/stack-instances/inst-1/port-forward?service=web&port=80", nil)
+		req.Header.Set("X-Request-ID", fmt.Sprintf("other-%d", i))
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		_ = resp.Body.Close()
+	}
+
+	require.NoError(t, c.WriteControl(gorilla.CloseMessage, gorilla.FormatCloseMessage(1000, ""), time.Now().Add(time.Second)))
+	require.Eventually(t, func() bool { return len(f.audit.snapshot()) >= 2 }, 3*time.Second, 10*time.Millisecond)
+	for _, e := range f.audit.snapshot() {
+		assert.Equal(t, "pf-req-1", e.RequestID, e.Action)
+		assert.Equal(t, "127.0.0.1", e.ClientIP, e.Action)
 	}
 }

@@ -21,10 +21,10 @@ import {
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import { auditService } from '../../api/client';
 import type { AuditLog as AuditLogType } from '../../types';
-import EntityLink from '../../components/EntityLink';
+import AuditEntryRow from '../../components/AuditHistory/AuditEntryRow';
 import { useAuth } from '../../context/AuthContext';
 import LoadingState from '../../components/LoadingState';
-import { scrollBoxFocusSx } from '../../utils/visuallyHidden';
+import { scrollBoxFocusSx, visuallyHidden } from '../../utils/visuallyHidden';
 
 /**
  * Filter options. They mirror KnownAuditEntityTypes and KnownAuditActions in
@@ -49,6 +49,7 @@ const ACTIONS = [
   'disable', 'enable', 'reset_password', 'change_role', 'follow', 'unfollow',
   'expired', 'cleanup_policy_executed', 'interrupted',
   'port_forward', 'port_forward_end', 'exec', 'exec_end',
+  'login', 'login_failed', 'oidc_login', 'logout', 'logout_all', 'refresh_reuse_revoked',
 ];
 
 const AuditLog = () => {
@@ -59,7 +60,7 @@ const AuditLog = () => {
   const [error, setError] = useState<string | null>(null);
   const [entityType, setEntityType] = useState('All');
   const [action, setAction] = useState('All');
-  const [userID, setUserID] = useState('');
+  const [username, setUsername] = useState('');
   const [entityID, setEntityID] = useState('');
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(25);
@@ -77,7 +78,7 @@ const AuditLog = () => {
       };
       if (entityType !== 'All') filters.entity_type = entityType;
       if (action !== 'All') filters.action = action;
-      if (userID) filters.user_id = userID;
+      if (username.trim()) filters.username = username.trim();
       if (entityID) filters.entity_id = entityID;
       if (startDate) filters.start_date = startDate;
       if (endDate) filters.end_date = endDate;
@@ -90,7 +91,7 @@ const AuditLog = () => {
     } finally {
       setLoading(false);
     }
-  }, [entityType, action, userID, entityID, page, rowsPerPage, startDate, endDate]);
+  }, [entityType, action, username, entityID, page, rowsPerPage, startDate, endDate]);
 
   useEffect(() => {
     fetchLogs();
@@ -107,7 +108,7 @@ const AuditLog = () => {
       const filters: Record<string, string> = {};
       if (entityType !== 'All') filters.entity_type = entityType;
       if (action !== 'All') filters.action = action;
-      if (userID) filters.user_id = userID;
+      if (username.trim()) filters.username = username.trim();
       if (entityID) filters.entity_id = entityID;
       if (startDate) filters.start_date = startDate;
       if (endDate) filters.end_date = endDate;
@@ -126,9 +127,9 @@ const AuditLog = () => {
       <Paper sx={{ p: 2, mb: 3 }}>
         <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <TextField
-            label="User ID"
-            value={userID}
-            onChange={(e) => setUserID(e.target.value)}
+            label="Username"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
             size="small"
             sx={{ minWidth: 150 }}
           />
@@ -257,12 +258,12 @@ const AuditLog = () => {
             <Table size="small" stickyHeader>
               <TableHead>
                 <TableRow>
+                  <TableCell padding="checkbox"><Box component="span" sx={visuallyHidden}>Details</Box></TableCell>
                   <TableCell>Timestamp</TableCell>
                   <TableCell>User</TableCell>
                   <TableCell>Action</TableCell>
                   <TableCell>Entity Type</TableCell>
-                  <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>Entity ID</TableCell>
-                  <TableCell>Details</TableCell>
+                  <TableCell>Entity</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -276,22 +277,7 @@ const AuditLog = () => {
                   </TableRow>
                 ) : (
                   logs.map((log) => (
-                    <TableRow key={log.id}>
-                      <TableCell sx={{ whiteSpace: 'nowrap' }}>
-                        {new Date(log.timestamp).toLocaleString()}
-                      </TableCell>
-                      <TableCell>{log.username}</TableCell>
-                      <TableCell>{log.action}</TableCell>
-                      <TableCell>{log.entity_type}</TableCell>
-                      <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>
-                        <EntityLink entityType={log.entity_type} entityId={log.entity_id} />
-                      </TableCell>
-                      <TableCell sx={{ maxWidth: 300 }}>
-                        <Typography variant="body2" noWrap>
-                          {log.details}
-                        </Typography>
-                      </TableCell>
-                    </TableRow>
+                    <AuditEntryRow key={log.id} log={log} showEntity isAdmin={user?.role === 'admin'} />
                   ))
                 )}
               </TableBody>

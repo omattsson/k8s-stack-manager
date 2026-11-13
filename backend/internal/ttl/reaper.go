@@ -216,6 +216,8 @@ func (r *Reaper) logExpiry(ctx context.Context, inst *models.StackInstance) {
 			Action:     "expired",
 			EntityType: "stack_instance",
 			EntityID:   inst.ID,
+			EntityName: inst.Name,
+			AuthMethod: models.AuditAuthSystem,
 			Details:    "Instance expired after TTL",
 			Timestamp:  time.Now().UTC(),
 		}

@@ -175,11 +175,13 @@ func Recovery() gin.HandlerFunc {
 const RequestIDKey = "request_id"
 
 // RequestID adds a unique request ID to each request.
-// If the client sends an X-Request-ID header, it is reused; otherwise a new one is generated.
+// A client X-Request-ID of 1 to 64 bytes of [A-Za-z0-9._-] is reused;
+// otherwise a new one is generated, so logs and audit entries hold no
+// client-chosen junk.
 func RequestID() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		requestID := c.GetHeader("X-Request-ID")
-		if requestID == "" {
+		if !validRequestID(requestID) {
 			requestID = generateRequestID()
 		}
 		c.Set(RequestIDKey, requestID)

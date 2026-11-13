@@ -110,7 +110,7 @@ describe('Audit Log Page', () => {
       expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
     });
 
-    expect(screen.getByLabelText('User ID')).toBeInTheDocument();
+    expect(screen.getByLabelText('Username')).toBeInTheDocument();
     expect(screen.getByLabelText('Entity Type')).toBeInTheDocument();
     expect(screen.getByLabelText('Action')).toBeInTheDocument();
     expect(screen.getByLabelText('From')).toBeInTheDocument();
@@ -214,12 +214,12 @@ describe('Audit Log Page', () => {
       expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
     });
 
-    await user.type(screen.getByLabelText('User ID'), 'u123');
+    await user.type(screen.getByLabelText('Username'), 'u123');
     await user.click(screen.getByRole('button', { name: /filter/i }));
 
     await waitFor(() => {
       expect(auditService.list).toHaveBeenCalledWith(
-        expect.objectContaining({ user_id: 'u123' }),
+        expect.objectContaining({ username: 'u123' }),
       );
     });
   });
@@ -298,6 +298,43 @@ describe('Audit Log Page', () => {
         expect.objectContaining({ entity_id: 'inst-1' }),
         'csv',
       );
+    });
+  });
+
+  it('expands a row to show the details', async () => {
+    (auditService.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      data: [{ id: '9', user_id: '1', username: 'admin', action: 'update', entity_type: 'cluster', entity_id: 'c1',
+        entity_name: 'prod', request_id: 'req-9', details: '{"changes":[{"field":"allow_exec","old":false,"new":true}]}',
+        timestamp: '2024-01-01T00:00:00Z' }],
+      total: 1, limit: 25, offset: 0,
+    });
+    const user = userEvent.setup();
+    render(<MemoryRouter><AuditLog /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByText('prod')).toBeInTheDocument());
+    expect(screen.queryByText('req-9')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /show details/i }));
+    expect(await screen.findByText('req-9')).toBeInTheDocument();
+    expect(screen.getByText('false to true')).toBeInTheDocument();
+  });
+
+  it('offers the sign-in actions', async () => {
+    (auditService.list as ReturnType<typeof vi.fn>).mockResolvedValue({ data: [], total: 0, limit: 25, offset: 0 });
+    const user = userEvent.setup();
+    render(<MemoryRouter><AuditLog /></MemoryRouter>);
+    await user.click(screen.getByLabelText('Action'));
+    for (const a of ['login', 'login_failed', 'oidc_login', 'logout', 'logout_all', 'refresh_reuse_revoked']) {
+      expect(screen.getByRole('option', { name: a })).toBeInTheDocument();
+    }
+  });
+
+  it('keeps a space inside the username and trims it when sent', async () => {
+    (auditService.list as ReturnType<typeof vi.fn>).mockResolvedValue({ data: [], total: 0, limit: 25, offset: 0 });
+    const user = userEvent.setup();
+    render(<MemoryRouter><AuditLog /></MemoryRouter>);
+    await user.type(screen.getByLabelText('Username'), ' john doe ');
+    await user.click(screen.getByRole('button', { name: 'Filter' }));
+    await waitFor(() => {
+      expect(auditService.list).toHaveBeenLastCalledWith(expect.objectContaining({ username: 'john doe' }));
     });
   });
 });

@@ -19,10 +19,11 @@ import (
 
 // setupUserRouter creates a gin engine wired to UserHandler routes, mirroring the production
 // route configuration: RequireAdmin middleware gates both GET /users and DELETE /users/:id.
-func setupUserRouter(userRepo *MockUserRepository, callerID, callerRole string) *gin.Engine {
+func setupUserRouter(userRepo *MockUserRepository, callerID, callerRole string, extra ...gin.HandlerFunc) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(injectAuthContext(callerID, callerRole))
+	r.Use(extra...)
 	seedCallerAdmin(userRepo, callerID, callerRole)
 	h := NewUserHandler(userRepo, nil, nil)
 	adminMW := middleware.RequireAdmin()

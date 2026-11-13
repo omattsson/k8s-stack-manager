@@ -141,6 +141,8 @@ func TestQuickDeploy(t *testing.T) {
 				defer auditRepo.mu.RUnlock()
 				assert.Len(t, auditRepo.entries, 1)
 				assert.Equal(t, "quick_deploy", auditRepo.entries[0].Action)
+				assert.Equal(t, "my-instance", auditRepo.entries[0].EntityName)
+				assert.Equal(t, "198.51.100.7", auditRepo.entries[0].ClientIP)
 			},
 		},
 		{
@@ -377,6 +379,7 @@ func TestQuickDeploy(t *testing.T) {
 			body, _ := json.Marshal(tt.body)
 			w := httptest.NewRecorder()
 			req, _ := http.NewRequest(http.MethodPost, "/api/v1/templates/"+tt.templateID+"/quick-deploy", bytes.NewReader(body))
+			req.RemoteAddr = "198.51.100.7:5555"
 			req.Header.Set("Content-Type", "application/json")
 			router.ServeHTTP(w, req)
 

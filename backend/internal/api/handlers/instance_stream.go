@@ -321,12 +321,13 @@ func streamIdentity(c *gin.Context, authTime time.Time) websocket.ClientIdentity
 
 // writeAudit writes an audit entry with a context that is not tied to the
 // request. A failure is logged; it does not stop the tunnel.
-func (h *StreamHandler) writeAudit(userID, username, action, instanceID string, details map[string]any) {
-	_ = h.writeAuditErr(userID, username, action, instanceID, details)
+func (h *StreamHandler) writeAudit(rc middleware.AuditRequestContext, userID, username, action, instanceID, instanceName string, details map[string]any) {
+	_ = h.writeAuditErr(rc, userID, username, action, instanceID, instanceName, details)
 }
 
 // writeAuditErr is writeAudit that returns the error. Exec fails closed on it.
-func (h *StreamHandler) writeAuditErr(userID, username, action, instanceID string, details map[string]any) error {
+// rc is captured in the handler: the end entries run after it returned.
+func (h *StreamHandler) writeAuditErr(rc middleware.AuditRequestContext, userID, username, action, instanceID, instanceName string, details map[string]any) error {
 	if h.audit == nil {
 		return nil
 	}
@@ -340,8 +341,10 @@ func (h *StreamHandler) writeAuditErr(userID, username, action, instanceID strin
 	entry := &models.AuditLog{
 		ID: uuid.New().String(), UserID: userID, Username: username,
 		Action: action, EntityType: "stack_instance", EntityID: instanceID,
-		Details: string(raw), Timestamp: time.Now(),
+		EntityName: middleware.TruncateUTF8(instanceName, models.MaxAuditEntityNameLen),
+		Details:    string(raw), Timestamp: time.Now(),
 	}
+	rc.Apply(entry)
 	if err := h.audit.Create(ctx, entry); err != nil {
 		slog.Error("Stream: failed to write audit entry", "action", action, "instance_id", instanceID, "error", err)
 		return err

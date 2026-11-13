@@ -1916,6 +1916,12 @@ func (m *MockAuditLogRepository) List(ctx context.Context, filters models.AuditL
 		if filters.EntityID != "" && e.EntityID != filters.EntityID {
 			continue
 		}
+		if filters.Username != "" && e.Username != filters.Username {
+			continue
+		}
+		if filters.APIKeyID != "" && e.APIKeyID != filters.APIKeyID {
+			continue
+		}
 		if filters.Action != "" && e.Action != filters.Action {
 			continue
 		}

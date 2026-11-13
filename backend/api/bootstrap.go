@@ -4,6 +4,7 @@ import (
 	"backend/internal/api/handlers"
 	"backend/internal/api/middleware"
 	"backend/internal/api/routes"
+	"backend/internal/auditlog"
 	"backend/internal/auth"
 	"backend/internal/cluster"
 	"backend/internal/config"
@@ -168,6 +169,11 @@ func initRepositories(cfg *config.Config, db *gorm.DB) (*database.RepositorySet,
 	if err != nil {
 		return nil, fmt.Errorf("create domain repositories: %w", err)
 	}
+	var auditOut io.Writer
+	if cfg.Audit.Stdout {
+		auditOut = os.Stdout
+	}
+	repos.AuditLog = auditlog.NewWriter(repos.AuditLog, auditlog.WriterOptions{Out: auditOut})
 	return repos, nil
 }
 
@@ -520,6 +526,7 @@ func buildHandlers(
 	// Auth handler.
 	authHandler := handlers.NewAuthHandler(repos.User, &cfg.Auth, &cfg.OIDC)
 	authHandler.SetSessionStore(sessStore)
+	authHandler.SetAuditLogger(repos.AuditLog)
 	if hub != nil {
 		authHandler.SetWebSocketRevoker(hub)
 	}
@@ -535,6 +542,7 @@ func buildHandlers(
 			return nil, fmt.Errorf("initialize OIDC provider: %w", oidcErr)
 		}
 		oidcHandler = handlers.NewOIDCHandler(oidcProvider, sessStore, repos.User, &cfg.OIDC, &cfg.Auth)
+		oidcHandler.SetAuditLogger(repos.AuditLog)
 		if repos.RefreshToken != nil {
 			oidcHandler.SetRefreshTokenRepo(repos.RefreshToken)
 		}

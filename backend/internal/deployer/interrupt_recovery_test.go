@@ -435,6 +435,8 @@ func TestInterruptRecovery_RunOnce(t *testing.T) {
 				assert.Equal(t, "stack_instance", entries[0].EntityType)
 				assert.Equal(t, inst.ID, entries[0].EntityID)
 				assert.Equal(t, "system", entries[0].UserID)
+				assert.Equal(t, models.AuditAuthSystem, entries[0].AuthMethod)
+				assert.Equal(t, "demo", entries[0].EntityName)
 				assert.Contains(t, entries[0].Details, tt.replicaID)
 			}
 		})

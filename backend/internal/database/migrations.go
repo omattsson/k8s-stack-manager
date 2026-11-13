@@ -1137,6 +1137,7 @@ func (d *Database) AutoMigrate() error {
 
 	// Migration 67: clusters.allow_exec, the per-cluster switch of exec (#723).
 	migrator.AddMigration(clusterAllowExecMigration())
+	migrator.AddMigration(auditLogContextMigration())
 
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
@@ -2120,6 +2121,67 @@ func clusterAllowExecMigration() schema.Migration {
 			m := tx.Migrator()
 			if m.HasTable(&models.Cluster{}) && m.HasColumn(&models.Cluster{}, "AllowExec") {
 				return m.DropColumn(&models.Cluster{}, "AllowExec")
+			}
+			return nil
+		},
+	}
+}
+
+// auditLogContextColumns are the columns of migration 68 (#785, #787).
+var auditLogContextColumns = []string{"EntityName", "ClientIP", "RequestID", "TraceID", "AuthMethod", "APIKeyID"}
+
+// auditLogContextMigration is migration 68. It adds the request context and
+// the entity name to audit_logs, with indexes for the username and API key
+// filters and for the entity history (entity_id without entity_type). Old rows keep NULL in the new columns. Up and Down are idempotent.
+func auditLogContextMigration() schema.Migration {
+	indexes := []struct{ name, sql string }{
+		{"idx_audit_logs_username_ts", "CREATE INDEX idx_audit_logs_username_ts ON audit_logs(username, timestamp)"},
+		{"idx_audit_logs_api_key_ts", "CREATE INDEX idx_audit_logs_api_key_ts ON audit_logs(api_key_id, timestamp)"},
+		{"idx_audit_logs_entity_id_ts", "CREATE INDEX idx_audit_logs_entity_id_ts ON audit_logs(entity_id, timestamp)"},
+	}
+	return schema.Migration{
+		Version:     "20261113000068",
+		Name:        "add_audit_log_context",
+		Description: "Add request context and entity name columns to audit_logs",
+		Up: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if !m.HasTable(&models.AuditLog{}) {
+				return nil
+			}
+			for _, col := range auditLogContextColumns {
+				if !m.HasColumn(&models.AuditLog{}, col) {
+					if err := m.AddColumn(&models.AuditLog{}, col); err != nil {
+						return err
+					}
+				}
+			}
+			for _, idx := range indexes {
+				if !m.HasIndex(&models.AuditLog{}, idx.name) {
+					if err := tx.Exec(idx.sql).Error; err != nil { // #nosec G202 -- SQL from constants
+						return err
+					}
+				}
+			}
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if !m.HasTable(&models.AuditLog{}) {
+				return nil
+			}
+			for _, idx := range indexes {
+				if m.HasIndex(&models.AuditLog{}, idx.name) {
+					if err := m.DropIndex(&models.AuditLog{}, idx.name); err != nil {
+						return err
+					}
+				}
+			}
+			for _, col := range auditLogContextColumns {
+				if m.HasColumn(&models.AuditLog{}, col) {
+					if err := m.DropColumn(&models.AuditLog{}, col); err != nil {
+						return err
+					}
+				}
 			}
 			return nil
 		},

@@ -113,6 +113,7 @@ type OIDCHandler struct {
 	refreshTokenRepo models.RefreshTokenRepository
 	cfg              *config.OIDCConfig
 	authCfg          *config.AuthConfig
+	audit            models.AuditLogRepository // sign-in audit entries; nil writes none
 }
 
 // NewOIDCHandler creates a new OIDCHandler.
@@ -124,6 +125,11 @@ func NewOIDCHandler(provider *auth.Provider, sessionStore sessionstore.SessionSt
 		cfg:          cfg,
 		authCfg:      authCfg,
 	}
+}
+
+// SetAuditLogger sets the repository of the sign-in audit entries (#784).
+func (h *OIDCHandler) SetAuditLogger(repo models.AuditLogRepository) {
+	h.audit = repo
 }
 
 // SetRefreshTokenRepo sets the refresh token repository for the OIDC handler.
@@ -248,14 +254,28 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 		slog.Error("OIDC user provisioning failed", "error", err)
 		// Policy rejections are expected outcomes, not operational failures;
 		// keep them in distinct series to match local login.
+		reason := "failure"
 		switch {
 		case errors.Is(err, errAccountDisabled):
+			reason = "disabled"
 			middleware.RecordLogin("oidc", "disabled")
 		case errors.Is(err, errNoAccount):
+			reason = "restricted"
 			middleware.RecordLogin("oidc", "restricted")
 		default:
 			middleware.RecordLogin("oidc", "failure")
 		}
+		// A known local account names itself; else the username that
+		// provisioning would give (from the verified token, not client input).
+		entry := &models.AuditLog{
+			Action: middleware.AuditActionLoginFailed, Username: oidcAuditName(oidcUser),
+			AuthMethod: models.AuditAuthOIDC, Details: auditReason(reason),
+		}
+		var disabled *disabledAccountError
+		if errors.As(err, &disabled) {
+			entry.UserID, entry.Username = disabled.user.ID, disabled.user.Username
+		}
+		writeAuthAudit(c, h.audit, nil, entry)
 		c.Redirect(http.StatusFound, "/login?error="+err.Error())
 		return
 	}
@@ -266,6 +286,19 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 	// CLI-session errors are recorded as failures rather than successes.
 	loginOutcome := "failure"
 	defer func() { middleware.RecordLogin("oidc", loginOutcome) }()
+	defer func() {
+		entry := &models.AuditLog{UserID: user.ID, Username: user.Username, AuthMethod: models.AuditAuthOIDC}
+		if loginOutcome == "success" {
+			entry.Action = middleware.AuditActionOIDCLogin
+			if strings.HasPrefix(stateData.RedirectURL, "cli:") {
+				entry.Details = `{"cli":true}`
+			}
+		} else {
+			entry.Action = middleware.AuditActionLoginFailed
+			entry.Details = auditReason(loginOutcome)
+		}
+		writeAuthAudit(c, h.audit, h.userRepo, entry)
+	}()
 
 	// Generate local JWT with OIDC-specific claims.
 	expiration := h.authCfg.AccessTokenExpiration
@@ -593,7 +626,7 @@ func (h *OIDCHandler) provisionUser(ctx context.Context, oidcUser *auth.OIDCUser
 // IdP response into the local user record.
 func (h *OIDCHandler) updateExistingOIDCUser(ctx context.Context, user *models.User, oidcUser *auth.OIDCUser) (*models.User, error) {
 	if user.Disabled {
-		return nil, errAccountDisabled
+		return nil, &disabledAccountError{user: user}
 	}
 	// Write only the changed profile columns: a full-row save would
 	// overwrite a concurrent change of other columns (for example disabled).
@@ -629,7 +662,7 @@ func (h *OIDCHandler) updateExistingOIDCUser(ctx context.Context, user *models.U
 // linkLocalUserToOIDC converts a local user to an OIDC-linked user.
 func (h *OIDCHandler) linkLocalUserToOIDC(ctx context.Context, user *models.User, oidcUser *auth.OIDCUser) (*models.User, error) {
 	if user.Disabled {
-		return nil, errAccountDisabled
+		return nil, &disabledAccountError{user: user}
 	}
 	user.AuthProvider = "oidc"
 	user.ExternalID = &oidcUser.Subject
@@ -756,3 +789,19 @@ func isDuplicateError(err error) bool {
 	msg := err.Error()
 	return strings.Contains(msg, "duplicate key") || strings.Contains(msg, "Duplicate entry")
 }
+
+// oidcAuditName returns the username that provisioning gives a verified OIDC
+// identity (deriveOIDCUsername), cut to the column size.
+func oidcAuditName(u *auth.OIDCUser) string {
+	if u == nil {
+		return ""
+	}
+	return middleware.TruncateUTF8(deriveOIDCUsername(u), 100)
+}
+
+// disabledAccountError is errAccountDisabled with the local account, so the
+// audit entry names the stored user, not only the token identity.
+type disabledAccountError struct{ user *models.User }
+
+func (e *disabledAccountError) Error() string        { return errAccountDisabled.Error() }
+func (e *disabledAccountError) Is(target error) bool { return target == errAccountDisabled }

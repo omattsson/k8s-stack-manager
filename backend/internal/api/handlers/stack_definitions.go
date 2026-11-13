@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"backend/internal/api/middleware"
+	"backend/internal/auditlog"
 	"backend/internal/database"
 	"backend/internal/models"
 	"backend/pkg/dberrors"
@@ -349,6 +350,7 @@ func (h *DefinitionHandler) UpdateDefinition(c *gin.Context) {
 	if !requireDefinitionModify(c, existing) {
 		return
 	}
+	before := *existing
 
 	var update models.StackDefinition
 	if err := c.ShouldBindJSON(&update); err != nil {
@@ -379,6 +381,7 @@ func (h *DefinitionHandler) UpdateDefinition(c *gin.Context) {
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
+	middleware.SetAuditChanges(c, auditlog.Fields(before, *existing))
 
 	setDefinitionOwnerNames(c.Request.Context(), h.userRepo, existing)
 	c.JSON(http.StatusOK, existing)
@@ -441,6 +444,7 @@ func (h *DefinitionHandler) DeleteDefinition(c *gin.Context) {
 		return
 	}
 
+	middleware.SetAuditEntityName(c, def.Name)
 	c.Status(http.StatusNoContent)
 }
 

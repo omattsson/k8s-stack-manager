@@ -38,10 +38,12 @@ func setupDefinitionRouterWithTemplates(
 	templateRepo *MockStackTemplateRepository,
 	templateChartRepo *MockTemplateChartConfigRepository,
 	callerID, callerRole string,
+	extra ...gin.HandlerFunc,
 ) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(injectAuthContext(callerID, callerRole))
+	r.Use(extra...)
 
 	h := NewDefinitionHandler(defRepo, chartRepo, instanceRepo, templateRepo, templateChartRepo)
 	h.txRunner = &mockHandlerTxRunner{repos: database.TxRepos{

@@ -1192,6 +1192,18 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
+                        "description": "Filter by username (exact)",
+                        "name": "username",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by API key ID",
+                        "name": "api_key_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
                         "description": "Filter by entity type",
                         "name": "entity_type",
                         "in": "query"
@@ -1311,6 +1323,18 @@ const docTemplate = `{
                         "type": "string",
                         "description": "Filter by user ID",
                         "name": "user_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by username (exact)",
+                        "name": "username",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by API key ID",
+                        "name": "api_key_id",
                         "in": "query"
                     },
                     {
@@ -13870,11 +13894,23 @@ const docTemplate = `{
                 "action": {
                     "type": "string"
                 },
+                "api_key_id": {
+                    "type": "string"
+                },
+                "auth_method": {
+                    "type": "string"
+                },
+                "client_ip": {
+                    "type": "string"
+                },
                 "details": {
                     "type": "string"
                 },
                 "entity_id": {
                     "description": "63: RFC 1123 label (namespace name); a UUID has 36",
+                    "type": "string"
+                },
+                "entity_name": {
                     "type": "string"
                 },
                 "entity_type": {
@@ -13883,7 +13919,13 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
+                "request_id": {
+                    "type": "string"
+                },
                 "timestamp": {
+                    "type": "string"
+                },
+                "trace_id": {
                     "type": "string"
                 },
                 "user_id": {

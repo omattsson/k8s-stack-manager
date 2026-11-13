@@ -84,6 +84,12 @@ backend:
     # Time between two runs (at least 1m).
     interval: 1h
 
+  # Audit log (env AUDIT_LOG_STDOUT). stdout: true also writes each audit
+  # entry as one JSON line ("log_type":"audit") to stdout, so that a log
+  # pipeline can send it to a SIEM. The database keeps the entries in both cases.
+  audit:
+    stdout: false
+
   resources:
     requests:
       memory: 256Mi
