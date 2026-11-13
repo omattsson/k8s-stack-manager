@@ -532,7 +532,9 @@ func (h *ClusterHandler) UpdateCluster(c *gin.Context) {
 		return
 	}
 	changes := auditlog.Fields(before, *existing)
-	if kubeconfigChanged {
+	// The credentials, not kubeconfigChanged: that flag also follows a
+	// use_in_cluster request that changes no credential.
+	if before.KubeconfigData != existing.KubeconfigData || before.KubeconfigPath != existing.KubeconfigPath {
 		changes = append(changes, auditlog.Redacted("kubeconfig"))
 	}
 	if req.RegistryPassword != nil && *req.RegistryPassword != before.RegistryPassword {

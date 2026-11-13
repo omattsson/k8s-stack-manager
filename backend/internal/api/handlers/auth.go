@@ -772,6 +772,7 @@ func (h *AuthHandler) refreshConsumedToken(readCtx context.Context, c *gin.Conte
 	tokenID, _ := json.Marshal(map[string]string{"token_id": stored.ID})
 	writeAuthAudit(c, h.audit, h.userRepo, &models.AuditLog{
 		Action: middleware.AuditActionRefreshReuseRevoked, UserID: stored.UserID, Details: string(tokenID),
+		AuthMethod: models.AuditAuthRefreshToken,
 	})
 	c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
 }
@@ -1195,7 +1196,7 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 		userID = bearer.UserID // a token without a session (SSO CLI token)
 	}
 	if userID != "" {
-		entry := &models.AuditLog{Action: middleware.AuditActionLogout, UserID: userID}
+		entry := &models.AuditLog{Action: middleware.AuditActionLogout, UserID: userID, AuthMethod: models.AuditAuthRefreshToken}
 		if bearer != nil && bearer.UserID == userID {
 			entry.Username = bearer.Username
 			entry.AuthMethod = middleware.AuthMethodJWT

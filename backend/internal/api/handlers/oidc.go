@@ -265,11 +265,17 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 		default:
 			middleware.RecordLogin("oidc", "failure")
 		}
-		// The identity comes from the verified token, not from client input.
-		writeAuthAudit(c, h.audit, nil, &models.AuditLog{
+		// A known local account names itself; else the username that
+		// provisioning would give (from the verified token, not client input).
+		entry := &models.AuditLog{
 			Action: middleware.AuditActionLoginFailed, Username: oidcAuditName(oidcUser),
 			AuthMethod: models.AuditAuthOIDC, Details: auditReason(reason),
-		})
+		}
+		var disabled *disabledAccountError
+		if errors.As(err, &disabled) {
+			entry.UserID, entry.Username = disabled.user.ID, disabled.user.Username
+		}
+		writeAuthAudit(c, h.audit, nil, entry)
 		c.Redirect(http.StatusFound, "/login?error="+err.Error())
 		return
 	}
@@ -620,7 +626,7 @@ func (h *OIDCHandler) provisionUser(ctx context.Context, oidcUser *auth.OIDCUser
 // IdP response into the local user record.
 func (h *OIDCHandler) updateExistingOIDCUser(ctx context.Context, user *models.User, oidcUser *auth.OIDCUser) (*models.User, error) {
 	if user.Disabled {
-		return nil, errAccountDisabled
+		return nil, &disabledAccountError{user: user}
 	}
 	// Write only the changed profile columns: a full-row save would
 	// overwrite a concurrent change of other columns (for example disabled).
@@ -656,7 +662,7 @@ func (h *OIDCHandler) updateExistingOIDCUser(ctx context.Context, user *models.U
 // linkLocalUserToOIDC converts a local user to an OIDC-linked user.
 func (h *OIDCHandler) linkLocalUserToOIDC(ctx context.Context, user *models.User, oidcUser *auth.OIDCUser) (*models.User, error) {
 	if user.Disabled {
-		return nil, errAccountDisabled
+		return nil, &disabledAccountError{user: user}
 	}
 	user.AuthProvider = "oidc"
 	user.ExternalID = &oidcUser.Subject
@@ -784,15 +790,18 @@ func isDuplicateError(err error) bool {
 	return strings.Contains(msg, "duplicate key") || strings.Contains(msg, "Duplicate entry")
 }
 
-// oidcAuditName returns the name of a verified OIDC identity for an audit
-// entry: the preferred username, else the email.
+// oidcAuditName returns the username that provisioning gives a verified OIDC
+// identity (deriveOIDCUsername), cut to the column size.
 func oidcAuditName(u *auth.OIDCUser) string {
 	if u == nil {
 		return ""
 	}
-	name := u.PreferredUsername
-	if name == "" {
-		name = u.Email
-	}
-	return middleware.TruncateUTF8(name, 100)
+	return middleware.TruncateUTF8(deriveOIDCUsername(u), 100)
 }
+
+// disabledAccountError is errAccountDisabled with the local account, so the
+// audit entry names the stored user, not only the token identity.
+type disabledAccountError struct{ user *models.User }
+
+func (e *disabledAccountError) Error() string        { return errAccountDisabled.Error() }
+func (e *disabledAccountError) Is(target error) bool { return target == errAccountDisabled }

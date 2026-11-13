@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"backend/internal/api/middleware"
 	"backend/internal/models"
@@ -214,4 +215,37 @@ func TestOverrideHandlers_AuditEntityName(t *testing.T) {
 			assert.Equal(t, "stack-a", e.EntityName)
 		})
 	}
+}
+
+// TestSetBranchOverride_UnchangedWritesNoEntry: saving the stored branch is a
+// no-op and writes no audit entry (PR 790 review).
+func TestSetBranchOverride_UnchangedWritesNoEntry(t *testing.T) {
+	t.Parallel()
+	insts, bos := NewMockStackInstanceRepository(), NewMockChartBranchOverrideRepository()
+	_ = insts.Create(context.Background(), &models.StackInstance{ID: "i-1", Name: "stack-a", OwnerID: "u-1", StackDefinitionID: "def-1", Status: models.StackStatusDraft})
+	seedBranchOverride(t, bos, "bo-1", "i-1", "chart-1", "main")
+	rec := &auditRecorder{}
+	r := setupBranchOverrideRouter(insts, bos, "u-1", "user", middleware.NewAuditMiddleware(rec))
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/stack-instances/i-1/branches/chart-1", bytes.NewBufferString(`{"branch":"main"}`))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	time.Sleep(150 * time.Millisecond)
+	assert.Empty(t, rec.all())
+}
+
+// TestUpdateCluster_InClusterWithoutCredentialsNoKubeconfigChange: turning on
+// use_in_cluster on a cluster without stored credentials changes no
+// credential (PR 790 review).
+func TestUpdateCluster_InClusterWithoutCredentialsNoKubeconfigChange(t *testing.T) {
+	t.Parallel()
+	clusters := NewMockClusterRepository()
+	require.NoError(t, clusters.Create(context.Background(), &models.Cluster{ID: "cl-1", Name: "prod", APIServerURL: "https://k8s.example.com", UseInCluster: true}))
+	details, _ := auditedPut(t, func(mw gin.HandlerFunc) *gin.Engine {
+		return setupClusterRouter(clusters, NewMockStackInstanceRepository(), nil, "admin", mw)
+	}, "/api/v1/clusters/cl-1", `{"use_in_cluster":true,"description":"same creds"}`)
+	ch := changeMap(t, details)
+	assert.NotContains(t, ch, "kubeconfig")
+	assert.Contains(t, ch, "description")
 }

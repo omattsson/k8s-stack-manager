@@ -371,7 +371,7 @@ export interface AuditLog {
   client_ip?: string;
   request_id?: string;
   trace_id?: string;
-  /** jwt, api_key, password, oidc or system. */
+  /** jwt, api_key, password, oidc, refresh_token or system. */
   auth_method?: string;
   api_key_id?: string;
 }

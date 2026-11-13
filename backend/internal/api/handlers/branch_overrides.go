@@ -236,11 +236,15 @@ func (h *BranchOverrideHandler) SetBranchOverride(c *gin.Context) {
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
-	branchChange := models.AuditChange{Field: "branch", New: override.Branch}
-	if existing != nil {
-		branchChange.Old = existing.Branch
+	if existing != nil && existing.Branch == override.Branch {
+		middleware.SkipAudit(c) // no change
+	} else {
+		branchChange := models.AuditChange{Field: "branch", New: override.Branch}
+		if existing != nil {
+			branchChange.Old = existing.Branch
+		}
+		middleware.SetAuditChanges(c, []models.AuditChange{branchChange})
 	}
-	middleware.SetAuditChanges(c, []models.AuditChange{branchChange})
 
 	c.JSON(http.StatusOK, override)
 }

@@ -22,6 +22,9 @@ const (
 	AuditAuthSystem   = "system"   // background jobs
 	AuditAuthPassword = "password" // local login
 	AuditAuthOIDC     = "oidc"     // OIDC sign-in
+	// AuditAuthRefreshToken: a public auth route that the refresh-token
+	// cookie authenticates (refresh-token reuse, logout without a bearer).
+	AuditAuthRefreshToken = "refresh_token"
 )
 
 // AuditLog records a user action for auditing purposes.
