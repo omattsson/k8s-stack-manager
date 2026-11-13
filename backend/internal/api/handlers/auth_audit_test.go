@@ -332,6 +332,3 @@ func TestAuthAudit_OIDC(t *testing.T) {
 		a.none(t)
 	})
 }
-
-
-

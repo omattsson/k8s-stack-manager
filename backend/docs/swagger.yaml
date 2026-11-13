@@ -2229,16 +2229,28 @@ definitions:
     properties:
       action:
         type: string
+      api_key_id:
+        type: string
+      auth_method:
+        type: string
+      client_ip:
+        type: string
       details:
         type: string
       entity_id:
         description: '63: RFC 1123 label (namespace name); a UUID has 36'
         type: string
+      entity_name:
+        type: string
       entity_type:
         type: string
       id:
         type: string
+      request_id:
+        type: string
       timestamp:
+        type: string
+      trace_id:
         type: string
       user_id:
         type: string
@@ -3862,6 +3874,14 @@ paths:
         in: query
         name: user_id
         type: string
+      - description: Filter by username (exact)
+        in: query
+        name: username
+        type: string
+      - description: Filter by API key ID
+        in: query
+        name: api_key_id
+        type: string
       - description: Filter by entity type
         in: query
         name: entity_type
@@ -3942,6 +3962,14 @@ paths:
       - description: Filter by user ID
         in: query
         name: user_id
+        type: string
+      - description: Filter by username (exact)
+        in: query
+        name: username
+        type: string
+      - description: Filter by API key ID
+        in: query
+        name: api_key_id
         type: string
       - description: Filter by entity type
         in: query

@@ -103,3 +103,27 @@ const unreadNotificationCountSchema = `{
 "unread_count_capped": {"type": "boolean"}
 }
 }`
+
+// auditLogListSchema is the contract of GET /audit-logs (#785, #787): the
+// context fields are optional strings (absent on old entries).
+const auditLogListSchema = `{
+"type": "object",
+"required": ["data", "total", "limit", "offset"],
+"properties": {
+"data": {"type": ["array", "null"], "items": {
+"type": "object",
+"required": ["id", "user_id", "username", "action", "entity_type", "entity_id", "details", "timestamp"],
+"additionalProperties": false,
+"properties": {
+"id": {"type": "string"}, "user_id": {"type": "string"}, "username": {"type": "string"},
+"action": {"type": "string"}, "entity_type": {"type": "string"}, "entity_id": {"type": "string"},
+"details": {"type": "string"}, "timestamp": {"type": "string"},
+"entity_name": {"type": "string"}, "client_ip": {"type": "string"}, "request_id": {"type": "string"},
+"trace_id": {"type": "string"}, "auth_method": {"type": "string"}, "api_key_id": {"type": "string"}
+}}},
+"total": {"type": "integer", "minimum": 0},
+"limit": {"type": "integer"},
+"offset": {"type": "integer"},
+"next_cursor": {"type": "string"}
+}
+}`

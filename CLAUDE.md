@@ -183,6 +183,7 @@ Developers use this application to configure, store and deploy multi-service Hel
 - An operation that is not plain CRUD (deploy, stop, publish, test, bulk, ...) needs an entry in the route table `auditRoutes` (`middleware/audit.go`: action, entity type, ID parameter, details). Without an entry, the action comes from the HTTP method and the entity type from the last route segment.
 - Add new actions and entity types to `KnownAuditActions` and `KnownAuditEntityTypes`, and to the filter lists of `pages/AuditLog`.
 - `routes/audit_routes_test.go` fails for a mutating route with an unknown entity type.
+- Each entry carries the request context and the entity name; a delete handler calls `middleware.SetAuditEntityName`, an update handler calls `middleware.SetAuditChanges` with `auditlog.Fields` (values only for an allow-list; secret fields `auditlog.Redacted`). Code that writes an entry after the handler returned uses `middleware.CaptureRequestContext`. Sign-in events and `AUDIT_LOG_STDOUT`: `docs/claude/domain.md` (Audit log).
 
 ## Security Rules
 
