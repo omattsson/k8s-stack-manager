@@ -91,6 +91,7 @@ All configuration uses environment variables with a `.env` fallback (godotenv). 
 - `OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, `OTEL_TRACE_SAMPLE_RATE`, `METRICS_ENABLED`, `METRICS_ADDR`.
 - `LEADER_ELECTION_*` (`ENABLED` default false means this process is always the leader; `LEASE_NAME`, `NAMESPACE`, `LEASE_DURATION`, `RENEW_DEADLINE`, `RETRY_PERIOD`) with `POD_NAME` and `POD_NAMESPACE`.
 - `WS_FANOUT_ENABLED`, `WS_FANOUT_POLL_INTERVAL`, `WS_FANOUT_RETENTION`.
+- `AUDIT_LOG_STDOUT` (default false; `config/audit.go`): `auditlog.Writer` also writes each audit entry as one JSON line (`"log_type":"audit"`) to stdout. An invalid value stops the start.
 - `DEPLOY_LOG_RETENTION_DAYS` (180), `AUDIT_LOG_RETENTION_DAYS` (365), `NOTIFICATION_RETENTION_DAYS` (90), `DELIVERY_LOG_RETENTION_DAYS` (30), `ACTION_RUN_RETENTION_DAYS` (180), `LOG_RETENTION_INTERVAL` (1h). `0` keeps the rows forever. A value that is not a number stops the start (`config/retention.go`).
 
 ## Background Workers
@@ -137,6 +138,7 @@ All configuration uses environment variables with a `.env` fallback (godotenv). 
 - `internal/websocket/tracing.go` holds the hub and fan-out metrics: `websocket.fanout.events_written_total`, `events_dropped_total`, `events_delivered_total`, `events_skipped_total`, `poll_errors_total`, `delivery_lag`.
 - `internal/podstream/metrics.go` holds the stream metrics: `stack_stream.sessions_active{kind}`, `stack_stream.bytes_total{kind,direction}`, `stack_stream.sessions_closed_total{kind,reason}`, `stack_stream.rejected_total{kind,reason}` (`kind` = `port_forward` or `exec`; `stack_stream.exec_exit_total{result}` counts finished exec commands). `rejected_total` is counted in one place, `streamError`, with the error code as the reason (the tunnel limit is counted by the manager). `internal/k8s/tracing.go` has the spans of the port-forward calls.
 - `internal/notifier/channel/metrics.go` holds the counter `notification.channel.dropped` (#649).
+- `internal/auditlog/metrics.go` holds the counter `audit.write_failed_total{action}`: audit entries that the database did not store (#789).
 - `middleware/metrics.go` records HTTP metrics. `middleware/auth_metrics.go` records auth outcomes. `middleware/otel.go` adds the user to spans.
 - `middleware/ws_redact.go` removes `?token=` from `/ws` URLs and from the stream routes before logging and tracing.
 

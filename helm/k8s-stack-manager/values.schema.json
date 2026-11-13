@@ -191,6 +191,16 @@
             }
           }
         },
+        "audit": {
+          "description": "Audit log (env AUDIT_LOG_STDOUT). stdout: true also writes each audit entry as one JSON line (\"log_type\":\"audit\") to stdout, so that a log pipeline can send it to a SIEM. The database keeps the entries in both cases.",
+          "type": "object",
+          "properties": {
+            "stdout": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        },
         "resources": {
           "description": "Resource requests and limits of the backend container.",
           "type": "object",

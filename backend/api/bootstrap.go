@@ -4,6 +4,7 @@ import (
 	"backend/internal/api/handlers"
 	"backend/internal/api/middleware"
 	"backend/internal/api/routes"
+	"backend/internal/auditlog"
 	"backend/internal/auth"
 	"backend/internal/cluster"
 	"backend/internal/config"
@@ -168,6 +169,11 @@ func initRepositories(cfg *config.Config, db *gorm.DB) (*database.RepositorySet,
 	if err != nil {
 		return nil, fmt.Errorf("create domain repositories: %w", err)
 	}
+	var auditOut io.Writer
+	if cfg.Audit.Stdout {
+		auditOut = os.Stdout
+	}
+	repos.AuditLog = auditlog.NewWriter(repos.AuditLog, auditlog.WriterOptions{Out: auditOut})
 	return repos, nil
 }
 
