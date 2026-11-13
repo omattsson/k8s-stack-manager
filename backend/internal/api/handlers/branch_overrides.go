@@ -236,9 +236,9 @@ func (h *BranchOverrideHandler) SetBranchOverride(c *gin.Context) {
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
-	if existing != nil && existing.Branch == override.Branch {
-		middleware.SkipAudit(c) // no change
-	} else {
+	// No SkipAudit: a concurrent write can make existing stale, so an equal
+	// branch does not prove a no-op (PR 790 review).
+	if existing == nil || existing.Branch != override.Branch {
 		branchChange := models.AuditChange{Field: "branch", New: override.Branch}
 		if existing != nil {
 			branchChange.Old = existing.Branch

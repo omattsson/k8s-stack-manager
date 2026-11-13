@@ -133,8 +133,8 @@ func ChangedKeyPaths(prefix, oldYAML, newYAML string) ([]models.AuditChange, err
 		return nil, err
 	}
 	oldLeaves, newLeaves := map[string]any{}, map[string]any{}
-	flatten("", oldMap, oldLeaves)
-	flatten("", newMap, newLeaves)
+	flatten("", true, oldMap, oldLeaves)
+	flatten("", true, newMap, newLeaves)
 	var paths []string
 	for p, v := range oldLeaves {
 		if nv, ok := newLeaves[p]; !ok || !reflect.DeepEqual(v, nv) {
@@ -163,7 +163,7 @@ func ChangedKeyPaths(prefix, oldYAML, newYAML string) ([]models.AuditChange, err
 
 // flatten adds the leaves of a YAML value: a non-empty map recurses, anything
 // else (scalar, list, empty map) is a leaf.
-func flatten(path string, v any, out map[string]any) {
+func flatten(path string, root bool, v any, out map[string]any) {
 	var keys []string
 	var get func(string) any
 	switch m := v.(type) {
@@ -183,17 +183,17 @@ func flatten(path string, v any, out map[string]any) {
 		get = func(k string) any { return byName[k] }
 	}
 	if len(keys) == 0 {
-		if path != "" {
+		if !root {
 			out[path] = v
 		}
 		return
 	}
 	for _, k := range keys {
 		p := escapeKey(k)
-		if path != "" {
+		if !root {
 			p = path + "." + p
 		}
-		flatten(p, get(k), out)
+		flatten(p, false, get(k), out)
 	}
 }
 
@@ -215,7 +215,13 @@ func cutPath(p string) string {
 	return p
 }
 
-// keyEscaper keeps "a.b" (one key) apart from a nested "a" and "b".
-var keyEscaper = strings.NewReplacer(`\`, `\\`, `.`, `\.`)
+// keyEscaper keeps "a.b" (one key) apart from a nested "a" and "b", and a
+// literal key `""` apart from the empty key.
+var keyEscaper = strings.NewReplacer(`\`, `\\`, `.`, `\.`, `"`, `\"`)
 
-func escapeKey(k string) string { return keyEscaper.Replace(k) }
+func escapeKey(k string) string {
+	if k == "" {
+		return `""`
+	}
+	return keyEscaper.Replace(k)
+}

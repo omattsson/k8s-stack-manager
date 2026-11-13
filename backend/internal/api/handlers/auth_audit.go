@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"log/slog"
+	"time"
 
 	"backend/internal/api/middleware"
 	"backend/internal/ctxutil"
@@ -22,6 +23,9 @@ func writeAuthAudit(c *gin.Context, repo models.AuditLogRepository, users models
 	}
 	e.EntityType = "user"
 	e.EntityID = e.UserID
+	if e.Timestamp.IsZero() {
+		e.Timestamp = time.Now().UTC()
+	}
 	middleware.ApplyRequestContext(c, e)
 	ctx, cancel := ctxutil.Detach(c.Request.Context(), ctxutil.WriteTimeout)
 	middleware.GoAuditWrite(func() {

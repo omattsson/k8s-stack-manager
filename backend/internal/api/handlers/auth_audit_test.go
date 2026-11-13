@@ -349,3 +349,20 @@ func TestAuthAudit_OIDC(t *testing.T) {
 		a.none(t)
 	})
 }
+
+// TestLogin_AuditTimestampIsEventTime: the entry carries the time of the
+// sign-in, not the time of the delayed write (PR 790 review).
+func TestLogin_AuditTimestampIsEventTime(t *testing.T) {
+	t.Parallel()
+	f := newAuthAuditFixture(t, nil)
+	f.audit.block = make(chan struct{})
+	before := time.Now().UTC()
+	w := f.post(t, "/api/v1/auth/login", `{"username":"alice","password":"secret"}`, nil)
+	after := time.Now().UTC()
+	require.Equal(t, http.StatusOK, w.Code)
+	time.Sleep(50 * time.Millisecond)
+	close(f.audit.block)
+	e := f.audit.one(t)
+	assert.False(t, e.Timestamp.Before(before), e.Timestamp)
+	assert.False(t, e.Timestamp.After(after), e.Timestamp)
+}

@@ -226,3 +226,20 @@ func TestChangedKeyPaths_CutKeepsEscapes(t *testing.T) {
 	assert.LessOrEqual(t, len(got[0].Field), 256)
 	assert.False(t, strings.HasSuffix(got[0].Field, `\`), got[0].Field[240:])
 }
+
+func TestChangedKeyPaths_EmptyKeys(t *testing.T) {
+	t.Parallel()
+	fields := func(oldYAML, newYAML string) []string {
+		got, err := ChangedKeyPaths("", oldYAML, newYAML)
+		require.NoError(t, err)
+		var out []string
+		for _, c := range got {
+			out = append(out, c.Field)
+		}
+		return out
+	}
+	assert.Equal(t, []string{`""`}, fields(`{"": 1}`, `{"": 2}`))
+	assert.Equal(t, []string{`"".a`, `a`}, fields(`{"": {"a": 1}}`, `{"a": 1}`))
+	assert.Equal(t, []string{`a."".b`}, fields(`{"a": {"": {"b": 1}}}`, `{"a": {"": {"b": 2}}}`))
+	assert.Equal(t, []string{`\"\"`}, fields(``, `{'""': 1}`))
+}

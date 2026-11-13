@@ -217,9 +217,9 @@ func TestOverrideHandlers_AuditEntityName(t *testing.T) {
 	}
 }
 
-// TestSetBranchOverride_UnchangedWritesNoEntry: saving the stored branch is a
-// no-op and writes no audit entry (PR 790 review).
-func TestSetBranchOverride_UnchangedWritesNoEntry(t *testing.T) {
+// TestSetBranchOverride_UnchangedWritesNoChange: saving the stored branch
+// records no branch change, but the entry stays (PR 790 review).
+func TestSetBranchOverride_UnchangedWritesNoChange(t *testing.T) {
 	t.Parallel()
 	insts, bos := NewMockStackInstanceRepository(), NewMockChartBranchOverrideRepository()
 	_ = insts.Create(context.Background(), &models.StackInstance{ID: "i-1", Name: "stack-a", OwnerID: "u-1", StackDefinitionID: "def-1", Status: models.StackStatusDraft})
@@ -232,7 +232,9 @@ func TestSetBranchOverride_UnchangedWritesNoEntry(t *testing.T) {
 	r.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	time.Sleep(150 * time.Millisecond)
-	assert.Empty(t, rec.all())
+	entries := rec.all()
+	require.Len(t, entries, 1, "a concurrent write can make the earlier read stale, so the entry stays")
+	assert.NotContains(t, entries[0].Details, `"changes"`)
 }
 
 // TestUpdateCluster_InClusterWithoutCredentialsNoKubeconfigChange: turning on
