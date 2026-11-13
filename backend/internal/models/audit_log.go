@@ -42,6 +42,16 @@ type AuditLog struct {
 	APIKeyID   string    `json:"api_key_id,omitempty" gorm:"size:36"`
 }
 
+// AuditChange is one changed field in the "changes" of an audit entry (#786).
+// Old and New are set only for fields that are safe to show; Redacted marks a
+// secret field that changed.
+type AuditChange struct {
+	Field    string `json:"field"`
+	Old      any    `json:"old,omitempty"`
+	New      any    `json:"new,omitempty"`
+	Redacted bool   `json:"redacted,omitempty"`
+}
+
 // AuditLogFilters holds optional filters for querying audit logs.
 type AuditLogFilters struct {
 	StartDate  *time.Time

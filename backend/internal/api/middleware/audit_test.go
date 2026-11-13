@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -883,6 +884,62 @@ func TestAuditMiddleware_EntityNameAndContext(t *testing.T) {
 				assert.Equal(t, AuthMethodJWT, e.AuthMethod)
 			}
 			assert.ElementsMatch(t, tt.wantName, names)
+		})
+	}
+}
+
+func TestAuditChanges(t *testing.T) {
+	t.Parallel()
+	big := make([]models.AuditChange, 0, 200)
+	for i := 0; i < 200; i++ {
+		big = append(big, models.AuditChange{Field: fmt.Sprintf("field_%03d", i), Old: strings.Repeat("o", 30), New: strings.Repeat("n", 30)})
+	}
+	tests := []struct {
+		name          string
+		changes       [][]models.AuditChange
+		wantChanges   int
+		wantTruncated bool
+	}{
+		{name: "none", changes: nil},
+		{name: "empty slice writes nothing", changes: [][]models.AuditChange{{}}},
+		{name: "small", changes: [][]models.AuditChange{{{Field: "allow_exec", Old: false, New: true}}}, wantChanges: 1},
+		{name: "two calls append", changes: [][]models.AuditChange{{{Field: "a"}}, {{Field: "b", Redacted: true}}}, wantChanges: 2},
+		{name: "over 8 KiB keeps names only", changes: [][]models.AuditChange{big}, wantChanges: 200, wantTruncated: true},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			logger := &mockAuditLogger{}
+			r := gin.New()
+			r.Use(NewAuditMiddleware(logger))
+			r.PUT("/api/v1/clusters/:id", func(c *gin.Context) {
+				for _, ch := range tt.changes {
+					SetAuditChanges(c, ch)
+				}
+				c.JSON(http.StatusOK, gin.H{"id": c.Param("id")})
+			})
+			r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPut, "/api/v1/clusters/c1", nil))
+			require.True(t, waitForAudit(logger, 2*time.Second))
+			e := logger.last()
+			var details map[string]any
+			if e.Details != "" {
+				require.NoError(t, json.Unmarshal([]byte(e.Details), &details))
+			}
+			if tt.wantChanges == 0 {
+				assert.NotContains(t, details, "changes")
+				return
+			}
+			changes, ok := details["changes"].([]any)
+			require.True(t, ok, e.Details)
+			assert.Len(t, changes, tt.wantChanges)
+			if tt.wantTruncated {
+				assert.Equal(t, true, details["changes_truncated"])
+				assert.NotContains(t, e.Details, `"old"`)
+				assert.NotContains(t, e.Details, `"new"`)
+				return
+			}
+			assert.NotContains(t, details, "changes_truncated")
 		})
 	}
 }

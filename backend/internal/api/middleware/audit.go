@@ -344,6 +344,8 @@ func buildAuditEntries(c *gin.Context, route AuditRoute, body []byte) []*models.
 		}
 	}
 
+	addAuditChanges(c, details)
+
 	var entityID string
 	switch {
 	case route.CRUD:
@@ -509,4 +511,45 @@ func normalizeEntityType(segment string) string {
 		return v
 	}
 	return strings.ReplaceAll(segment, "-", "_")
+}
+
+// maxAuditChangesBytes caps details.changes (#786).
+const maxAuditChangesBytes = 8192
+
+// auditChangesKey holds the change set of this request. A private key type.
+type auditChangesKey struct{}
+
+// SetAuditChanges adds changed fields to the audit entry of this request.
+// Build them with auditlog.Fields, auditlog.Redacted or
+// auditlog.ChangedKeyPaths; never put secret values in them.
+func SetAuditChanges(c *gin.Context, changes []models.AuditChange) {
+	if len(changes) == 0 {
+		return
+	}
+	prev, _ := c.Get(auditChangesKey{})
+	list, _ := prev.([]models.AuditChange)
+	c.Set(auditChangesKey{}, append(list, changes...))
+}
+
+// addAuditChanges puts the change set into the details. A set longer than
+// maxAuditChangesBytes keeps the field names only.
+func addAuditChanges(c *gin.Context, details map[string]any) {
+	v, ok := c.Get(auditChangesKey{})
+	if !ok {
+		return
+	}
+	changes, _ := v.([]models.AuditChange)
+	if len(changes) == 0 {
+		return
+	}
+	if raw, err := json.Marshal(changes); err == nil && len(raw) <= maxAuditChangesBytes {
+		details["changes"] = changes
+		return
+	}
+	names := make([]models.AuditChange, len(changes))
+	for i, ch := range changes {
+		names[i] = models.AuditChange{Field: ch.Field, Redacted: ch.Redacted}
+	}
+	details["changes"] = names
+	details["changes_truncated"] = true
 }
