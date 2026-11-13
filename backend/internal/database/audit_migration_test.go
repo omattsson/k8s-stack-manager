@@ -61,3 +61,35 @@ func TestAuditEntityTypeRenames_TargetsAreKnown(t *testing.T) {
 		assert.Contains(t, middleware.KnownAuditEntityTypes, to, from)
 	}
 }
+
+// TestAuditLogContextMigration_Idempotent checks migration 68: Up and Down
+// can run twice, and Down also drops the username index (the username
+// column stays).
+func TestAuditLogContextMigration_Idempotent(t *testing.T) {
+	t.Parallel()
+	db := setupMigrationTestDB(t)
+	require.NoError(t, db.AutoMigrate())
+	mig := auditLogContextMigration()
+	m := db.DB.Migrator()
+	cols := []string{"EntityName", "ClientIP", "RequestID", "TraceID", "AuthMethod", "APIKeyID"}
+	idx := []string{"idx_audit_logs_username_ts", "idx_audit_logs_api_key_ts"}
+
+	require.NoError(t, mig.Up(db.DB))
+	require.NoError(t, mig.Up(db.DB))
+	for _, c := range cols {
+		assert.True(t, m.HasColumn(&models.AuditLog{}, c), c)
+	}
+	for _, i := range idx {
+		assert.True(t, m.HasIndex(&models.AuditLog{}, i), i)
+	}
+
+	require.NoError(t, mig.Down(db.DB))
+	require.NoError(t, mig.Down(db.DB))
+	for _, c := range cols {
+		assert.False(t, m.HasColumn(&models.AuditLog{}, c), c)
+	}
+	for _, i := range idx {
+		assert.False(t, m.HasIndex(&models.AuditLog{}, i), i)
+	}
+	assert.True(t, m.HasColumn(&models.AuditLog{}, "Username"))
+}

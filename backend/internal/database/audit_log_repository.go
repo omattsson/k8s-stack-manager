@@ -60,6 +60,12 @@ func (r *GORMAuditLogRepository) List(ctx context.Context, filters models.AuditL
 	if filters.UserID != "" {
 		query = query.Where("user_id = ?", filters.UserID)
 	}
+	if filters.Username != "" {
+		query = query.Where("username = ?", filters.Username)
+	}
+	if filters.APIKeyID != "" {
+		query = query.Where("api_key_id = ?", filters.APIKeyID)
+	}
 	if filters.StartDate != nil {
 		query = query.Where("timestamp >= ?", *filters.StartDate)
 	}
@@ -107,12 +113,8 @@ func (r *GORMAuditLogRepository) List(ctx context.Context, filters models.AuditL
 	// Use an estimated count for large unfiltered result sets to avoid expensive
 	// full table scans on this append-only table. When any filter is active the
 	// result set is bounded, so exact count is acceptable.
-	hasFilters := filters.Action != "" || filters.EntityType != "" ||
-		filters.EntityID != "" || filters.UserID != "" ||
-		filters.StartDate != nil || filters.EndDate != nil
-
 	var total int64
-	if hasFilters {
+	if auditHasFilters(filters) {
 		if err := query.Count(&total).Error; err != nil {
 			return nil, dberrors.NewDatabaseError("count", err)
 		}
@@ -167,4 +169,12 @@ func decodeAuditCursor(cursor string) (time.Time, string, error) {
 		return time.Time{}, "", fmt.Errorf("invalid cursor timestamp")
 	}
 	return ts, parts[1], nil
+}
+
+// auditHasFilters reports whether a filter limits the list, so that the count
+// is exact and not the table estimate.
+func auditHasFilters(f models.AuditLogFilters) bool {
+	return f.Action != "" || f.EntityType != "" || f.EntityID != "" ||
+		f.UserID != "" || f.Username != "" || f.APIKeyID != "" ||
+		f.StartDate != nil || f.EndDate != nil
 }

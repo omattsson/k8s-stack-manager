@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"testing"
+	"time"
 
 	"backend/internal/models"
 
@@ -98,6 +99,28 @@ func TestGORMAuditLogRepository_List(t *testing.T) {
 			wantTotal: 2,
 		},
 		{
+			name:    "filter by username",
+			filters: models.AuditLogFilters{Username: "bob", Limit: 10},
+			seedLogs: []models.AuditLog{
+				{UserID: "u1", Username: "alice", Action: "create", EntityType: "instance", EntityID: "e1"},
+				{UserID: "u2", Username: "bob", Action: "delete", EntityType: "instance", EntityID: "e2"},
+				{UserID: "u2", Username: "bob", Action: "update", EntityType: "instance", EntityID: "e3"},
+			},
+			wantCount: 2,
+			wantTotal: 2,
+		},
+		{
+			name:    "filter by api_key_id",
+			filters: models.AuditLogFilters{APIKeyID: "k1", Limit: 10},
+			seedLogs: []models.AuditLog{
+				{UserID: "u1", Username: "alice", Action: "create", EntityType: "instance", EntityID: "e1", APIKeyID: "k1"},
+				{UserID: "u1", Username: "alice", Action: "delete", EntityType: "instance", EntityID: "e2", APIKeyID: "k2"},
+				{UserID: "u1", Username: "alice", Action: "update", EntityType: "instance", EntityID: "e3"},
+			},
+			wantCount: 1,
+			wantTotal: 1,
+		},
+		{
 			name:    "filter by entity ID",
 			filters: models.AuditLogFilters{EntityID: "e1", Limit: 10},
 			seedLogs: []models.AuditLog{
@@ -122,6 +145,35 @@ func TestGORMAuditLogRepository_List(t *testing.T) {
 			require.NoError(t, err)
 			assert.Len(t, result.Data, tt.wantCount)
 			assert.Equal(t, tt.wantTotal, result.Total)
+		})
+	}
+}
+
+// TestAuditHasFilters checks that each filter gives an exact count: the
+// unfiltered list uses the table estimate on MySQL.
+func TestAuditHasFilters(t *testing.T) {
+	t.Parallel()
+	now := time.Now()
+	tests := []struct {
+		name    string
+		filters models.AuditLogFilters
+		want    bool
+	}{
+		{"none", models.AuditLogFilters{Limit: 10, Offset: 5}, false},
+		{"action", models.AuditLogFilters{Action: "create"}, true},
+		{"entity type", models.AuditLogFilters{EntityType: "user"}, true},
+		{"entity id", models.AuditLogFilters{EntityID: "e1"}, true},
+		{"user id", models.AuditLogFilters{UserID: "u1"}, true},
+		{"username", models.AuditLogFilters{Username: "bob"}, true},
+		{"api key id", models.AuditLogFilters{APIKeyID: "k1"}, true},
+		{"start date", models.AuditLogFilters{StartDate: &now}, true},
+		{"end date", models.AuditLogFilters{EndDate: &now}, true},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, auditHasFilters(tt.filters))
 		})
 	}
 }
