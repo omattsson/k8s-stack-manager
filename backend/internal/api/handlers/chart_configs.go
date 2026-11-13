@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"time"
 
+	"backend/internal/api/middleware"
+	"backend/internal/auditlog"
 	"backend/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -158,6 +160,7 @@ func (h *DefinitionHandler) UpdateChartConfig(c *gin.Context) {
 	if !ok {
 		return
 	}
+	before := *existing
 
 	var update chartConfigUpdateRequest
 	if err := c.ShouldBindJSON(&update); err != nil {
@@ -229,6 +232,11 @@ func (h *DefinitionHandler) UpdateChartConfig(c *gin.Context) {
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
+	changes := auditlog.Fields(before, *existing)
+	if paths, err := auditlog.ChangedKeyPaths("default_values.", before.DefaultValues, existing.DefaultValues); err == nil {
+		changes = append(changes, paths...)
+	}
+	middleware.SetAuditChanges(c, changes)
 
 	c.JSON(http.StatusOK, existing)
 }

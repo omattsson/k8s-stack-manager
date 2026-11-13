@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"backend/internal/api/middleware"
+	"backend/internal/auditlog"
 	"backend/internal/helm"
 	"backend/internal/models"
 	"backend/pkg/dberrors"
@@ -153,6 +155,11 @@ func (h *InstanceHandler) SetOverride(c *gin.Context) {
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
+	oldValues := ""
+	if err == nil && existing != nil {
+		oldValues = existing.Values
+	}
+	setOverrideAuditChanges(c, oldValues, input.Values)
 	if err == nil && existing != nil {
 		existing.Values = input.Values
 		existing.UpdatedAt = now
@@ -424,4 +431,14 @@ func (h *InstanceHandler) checkLockedValues(ctx context.Context, inst *models.St
 	}
 
 	return nil
+}
+
+// setOverrideAuditChanges records the changed key paths of the values, never
+// the values. Values that do not parse give the field name only.
+func setOverrideAuditChanges(c *gin.Context, oldValues, newValues string) {
+	paths, err := auditlog.ChangedKeyPaths("", oldValues, newValues)
+	if err != nil {
+		paths = []models.AuditChange{{Field: "values"}}
+	}
+	middleware.SetAuditChanges(c, paths)
 }

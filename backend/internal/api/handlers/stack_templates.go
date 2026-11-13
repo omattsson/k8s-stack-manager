@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"backend/internal/api/middleware"
+	"backend/internal/auditlog"
 	"backend/internal/ctxutil"
 	"backend/internal/database"
 	"backend/internal/models"
@@ -493,6 +494,7 @@ func (h *TemplateHandler) UpdateTemplate(c *gin.Context) {
 	if existing == nil {
 		return
 	}
+	before := *existing
 
 	var update updateTemplateRequest
 	if err := c.ShouldBindJSON(&update); err != nil {
@@ -533,6 +535,7 @@ func (h *TemplateHandler) UpdateTemplate(c *gin.Context) {
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
+	middleware.SetAuditChanges(c, auditlog.Fields(before, *existing))
 
 	c.JSON(http.StatusOK, existing)
 }

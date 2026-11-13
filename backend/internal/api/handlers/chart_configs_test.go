@@ -23,10 +23,12 @@ func setupChartConfigRouter(
 	chartRepo *MockChartConfigRepository,
 	templateChartRepo *MockTemplateChartConfigRepository,
 	callerID, callerRole string,
+	extra ...gin.HandlerFunc,
 ) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(injectAuthContext(callerID, callerRole))
+	r.Use(extra...)
 
 	h := NewDefinitionHandler(defRepo, chartRepo, NewMockStackInstanceRepository(), nil, templateChartRepo)
 

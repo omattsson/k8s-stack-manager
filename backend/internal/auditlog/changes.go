@@ -20,7 +20,7 @@ var valueFields = map[string]bool{
 }
 
 // skippedFields change on every write and say nothing.
-var skippedFields = map[string]bool{"created_at": true, "updated_at": true, "deleted_at": true, "version": true}
+var skippedFields = map[string]bool{"created_at": true, "updated_at": true, "deleted_at": true}
 
 const (
 	maxValueBytes = 200

@@ -65,6 +65,7 @@ func setupInstanceRouter(
 		insts.POST("", h.CreateInstance)
 		insts.GET("/:id", h.GetInstance)
 		insts.PUT("/:id", h.UpdateInstance)
+		insts.PUT("/:id/overrides/:chartId", h.SetOverride)
 		insts.DELETE("/:id", h.DeleteInstance)
 		insts.POST("/:id/clone", h.CloneInstance)
 		insts.GET("/:id/values/:chartId", h.ExportChartValues)

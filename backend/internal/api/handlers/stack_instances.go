@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"backend/internal/api/middleware"
+	"backend/internal/auditlog"
 	"backend/internal/cluster"
 	"backend/internal/ctxutil"
 	"backend/internal/database"
@@ -793,6 +794,7 @@ func (h *InstanceHandler) UpdateInstance(c *gin.Context) {
 	if !requireInstanceModify(c, existing) {
 		return
 	}
+	before := *existing
 
 	var update struct {
 		ExpiresAt  *time.Time `json:"expires_at"`
@@ -867,6 +869,7 @@ func (h *InstanceHandler) UpdateInstance(c *gin.Context) {
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
+	middleware.SetAuditChanges(c, auditlog.Fields(before, *existing))
 
 	h.enrichInstanceDetail(c, existing)
 	c.JSON(http.StatusOK, existing)
