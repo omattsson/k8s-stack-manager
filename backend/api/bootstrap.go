@@ -526,6 +526,7 @@ func buildHandlers(
 	// Auth handler.
 	authHandler := handlers.NewAuthHandler(repos.User, &cfg.Auth, &cfg.OIDC)
 	authHandler.SetSessionStore(sessStore)
+	authHandler.SetAuditLogger(repos.AuditLog)
 	if hub != nil {
 		authHandler.SetWebSocketRevoker(hub)
 	}
@@ -541,6 +542,7 @@ func buildHandlers(
 			return nil, fmt.Errorf("initialize OIDC provider: %w", oidcErr)
 		}
 		oidcHandler = handlers.NewOIDCHandler(oidcProvider, sessStore, repos.User, &cfg.OIDC, &cfg.Auth)
+		oidcHandler.SetAuditLogger(repos.AuditLog)
 		if repos.RefreshToken != nil {
 			oidcHandler.SetRefreshTokenRepo(repos.RefreshToken)
 		}

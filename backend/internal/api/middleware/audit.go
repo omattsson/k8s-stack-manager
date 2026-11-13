@@ -172,6 +172,12 @@ const (
 	AuditActionPortForwardEnd        = "port_forward_end"        // handlers.StreamHandler (end of a tunnel)
 	AuditActionExec                  = "exec"                    // handlers.StreamHandler (start of an exec command)
 	AuditActionExecEnd               = "exec_end"                // handlers.StreamHandler (end of an exec command)
+	AuditActionLogin                 = "login"                   // handlers.AuthHandler (local login)
+	AuditActionLoginFailed           = "login_failed"            // handlers.AuthHandler, handlers.OIDCHandler
+	AuditActionOIDCLogin             = "oidc_login"              // handlers.OIDCHandler
+	AuditActionLogout                = "logout"                  // handlers.AuthHandler
+	AuditActionLogoutAll             = "logout_all"              // handlers.AuthHandler
+	AuditActionRefreshReuseRevoked   = "refresh_reuse_revoked"   // handlers.AuthHandler (replayed refresh token)
 )
 
 // KnownAuditActions lists every action that new audit entries can have. The
@@ -188,6 +194,8 @@ var KnownAuditActions = []string{
 	AuditActionQuickDeploy, AuditActionExpired, AuditActionCleanupPolicyExecuted,
 	AuditActionInterrupted, AuditActionPortForward, AuditActionPortForwardEnd,
 	AuditActionExec, AuditActionExecEnd,
+	AuditActionLogin, AuditActionLoginFailed, AuditActionOIDCLogin,
+	AuditActionLogout, AuditActionLogoutAll, AuditActionRefreshReuseRevoked,
 }
 
 // KnownAuditEntityTypes lists every entity type that new audit entries can

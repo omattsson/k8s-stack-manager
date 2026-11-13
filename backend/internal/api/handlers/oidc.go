@@ -113,6 +113,7 @@ type OIDCHandler struct {
 	refreshTokenRepo models.RefreshTokenRepository
 	cfg              *config.OIDCConfig
 	authCfg          *config.AuthConfig
+	audit            models.AuditLogRepository // sign-in audit entries; nil writes none
 }
 
 // NewOIDCHandler creates a new OIDCHandler.
@@ -124,6 +125,11 @@ func NewOIDCHandler(provider *auth.Provider, sessionStore sessionstore.SessionSt
 		cfg:          cfg,
 		authCfg:      authCfg,
 	}
+}
+
+// SetAuditLogger sets the repository of the sign-in audit entries (#784).
+func (h *OIDCHandler) SetAuditLogger(repo models.AuditLogRepository) {
+	h.audit = repo
 }
 
 // SetRefreshTokenRepo sets the refresh token repository for the OIDC handler.
@@ -248,14 +254,22 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 		slog.Error("OIDC user provisioning failed", "error", err)
 		// Policy rejections are expected outcomes, not operational failures;
 		// keep them in distinct series to match local login.
+		reason := "failure"
 		switch {
 		case errors.Is(err, errAccountDisabled):
+			reason = "disabled"
 			middleware.RecordLogin("oidc", "disabled")
 		case errors.Is(err, errNoAccount):
+			reason = "restricted"
 			middleware.RecordLogin("oidc", "restricted")
 		default:
 			middleware.RecordLogin("oidc", "failure")
 		}
+		// The identity comes from the verified token, not from client input.
+		writeAuthAudit(c, h.audit, nil, &models.AuditLog{
+			Action: middleware.AuditActionLoginFailed, Username: oidcAuditName(oidcUser),
+			AuthMethod: models.AuditAuthOIDC, Details: auditReason(reason),
+		})
 		c.Redirect(http.StatusFound, "/login?error="+err.Error())
 		return
 	}
@@ -266,6 +280,19 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 	// CLI-session errors are recorded as failures rather than successes.
 	loginOutcome := "failure"
 	defer func() { middleware.RecordLogin("oidc", loginOutcome) }()
+	defer func() {
+		entry := &models.AuditLog{UserID: user.ID, Username: user.Username, AuthMethod: models.AuditAuthOIDC}
+		if loginOutcome == "success" {
+			entry.Action = middleware.AuditActionOIDCLogin
+			if strings.HasPrefix(stateData.RedirectURL, "cli:") {
+				entry.Details = `{"cli":true}`
+			}
+		} else {
+			entry.Action = middleware.AuditActionLoginFailed
+			entry.Details = auditReason(loginOutcome)
+		}
+		writeAuthAudit(c, h.audit, h.userRepo, entry)
+	}()
 
 	// Generate local JWT with OIDC-specific claims.
 	expiration := h.authCfg.AccessTokenExpiration
@@ -755,4 +782,17 @@ func isDuplicateError(err error) bool {
 	}
 	msg := err.Error()
 	return strings.Contains(msg, "duplicate key") || strings.Contains(msg, "Duplicate entry")
+}
+
+// oidcAuditName returns the name of a verified OIDC identity for an audit
+// entry: the preferred username, else the email.
+func oidcAuditName(u *auth.OIDCUser) string {
+	if u == nil {
+		return ""
+	}
+	name := u.PreferredUsername
+	if name == "" {
+		name = u.Email
+	}
+	return middleware.TruncateUTF8(name, 100)
 }
