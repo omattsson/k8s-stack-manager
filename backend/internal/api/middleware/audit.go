@@ -558,6 +558,22 @@ func addAuditChanges(c *gin.Context, details map[string]any) {
 	for i, ch := range changes {
 		names[i] = models.AuditChange{Field: ch.Field, Redacted: ch.Redacted}
 	}
-	details["changes"] = names
+	details["changes"] = capAuditChanges(names)
 	details["changes_truncated"] = true
+}
+
+// capAuditChanges drops entries from the end, and adds "…", until the JSON
+// fits maxAuditChangesBytes: names without values can still be too long.
+func capAuditChanges(names []models.AuditChange) []models.AuditChange {
+	if raw, err := json.Marshal(names); err == nil && len(raw) <= maxAuditChangesBytes {
+		return names
+	}
+	more := models.AuditChange{Field: "…"}
+	for n := len(names) - 1; n >= 0; n-- {
+		out := append(names[:n:n], more)
+		if raw, err := json.Marshal(out); err == nil && len(raw) <= maxAuditChangesBytes {
+			return out
+		}
+	}
+	return []models.AuditChange{more}
 }

@@ -78,7 +78,7 @@ const AuditLog = () => {
       };
       if (entityType !== 'All') filters.entity_type = entityType;
       if (action !== 'All') filters.action = action;
-      if (username) filters.username = username;
+      if (username.trim()) filters.username = username.trim();
       if (entityID) filters.entity_id = entityID;
       if (startDate) filters.start_date = startDate;
       if (endDate) filters.end_date = endDate;
@@ -108,7 +108,7 @@ const AuditLog = () => {
       const filters: Record<string, string> = {};
       if (entityType !== 'All') filters.entity_type = entityType;
       if (action !== 'All') filters.action = action;
-      if (username) filters.username = username;
+      if (username.trim()) filters.username = username.trim();
       if (entityID) filters.entity_id = entityID;
       if (startDate) filters.start_date = startDate;
       if (endDate) filters.end_date = endDate;
@@ -129,7 +129,7 @@ const AuditLog = () => {
           <TextField
             label="Username"
             value={username}
-            onChange={(e) => setUsername(e.target.value.trim())}
+            onChange={(e) => setUsername(e.target.value)}
             size="small"
             sx={{ minWidth: 150 }}
           />

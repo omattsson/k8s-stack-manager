@@ -894,10 +894,15 @@ func TestAuditChanges(t *testing.T) {
 	for i := 0; i < 200; i++ {
 		big = append(big, models.AuditChange{Field: fmt.Sprintf("field_%03d", i), Old: strings.Repeat("o", 30), New: strings.Repeat("n", 30)})
 	}
+	longNames := make([]models.AuditChange, 0, 200)
+	for i := 0; i < 200; i++ {
+		longNames = append(longNames, models.AuditChange{Field: fmt.Sprintf("%03d.%s", i, strings.Repeat("k", 100))})
+	}
 	tests := []struct {
 		name          string
 		changes       [][]models.AuditChange
 		wantChanges   int
+		wantMaxBytes  int
 		wantTruncated bool
 	}{
 		{name: "none", changes: nil},
@@ -905,6 +910,7 @@ func TestAuditChanges(t *testing.T) {
 		{name: "small", changes: [][]models.AuditChange{{{Field: "allow_exec", Old: false, New: true}}}, wantChanges: 1},
 		{name: "two calls append", changes: [][]models.AuditChange{{{Field: "a"}}, {{Field: "b", Redacted: true}}}, wantChanges: 2},
 		{name: "over 8 KiB keeps names only", changes: [][]models.AuditChange{big}, wantChanges: 200, wantTruncated: true},
+		{name: "long names are cut to the cap", changes: [][]models.AuditChange{longNames}, wantMaxBytes: 8192, wantTruncated: true},
 	}
 	for _, tt := range tests {
 		tt := tt
@@ -925,6 +931,15 @@ func TestAuditChanges(t *testing.T) {
 			var details map[string]any
 			if e.Details != "" {
 				require.NoError(t, json.Unmarshal([]byte(e.Details), &details))
+			}
+			if tt.wantMaxBytes > 0 {
+				raw, err := json.Marshal(details["changes"])
+				require.NoError(t, err)
+				assert.LessOrEqual(t, len(raw), tt.wantMaxBytes)
+				list := details["changes"].([]any)
+				assert.Equal(t, "…", list[len(list)-1].(map[string]any)["field"])
+				assert.Equal(t, true, details["changes_truncated"])
+				return
 			}
 			if tt.wantChanges == 0 {
 				assert.NotContains(t, details, "changes")

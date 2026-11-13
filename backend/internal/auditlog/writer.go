@@ -36,14 +36,16 @@ func NewWriter(next models.AuditLogRepository, opts WriterOptions) *Writer {
 	return &Writer{next: next, failed: writeFailed, out: opts.Out}
 }
 
-// stdoutLine is the JSON line of one entry.
+// stdoutLine is the JSON line of one entry. Stored tells whether the
+// database stored it: a refused exec start is not a command that ran.
 type stdoutLine struct {
 	LogType string `json:"log_type"`
+	Stored  bool   `json:"stored"`
 	*models.AuditLog
 }
 
-// Create writes the log line first, so that the line exists also when the
-// database write fails.
+// Create stores the entry, then writes the log line, also when the database
+// write failed.
 func (w *Writer) Create(ctx context.Context, e *models.AuditLog) error {
 	if e.ID == "" {
 		e.ID = uuid.New().String()
@@ -51,20 +53,20 @@ func (w *Writer) Create(ctx context.Context, e *models.AuditLog) error {
 	if e.Timestamp.IsZero() {
 		e.Timestamp = time.Now().UTC()
 	}
-	if w.out != nil {
-		line, err := json.Marshal(stdoutLine{LogType: "audit", AuditLog: e})
-		if err == nil {
-			w.mu.Lock()
-			_, err = w.out.Write(append(line, '\n'))
-			w.mu.Unlock()
-		}
-		if err != nil {
-			slog.Error("failed to write audit log line", "action", e.Action, "error", err)
-		}
-	}
 	err := w.next.Create(ctx, e)
 	if err != nil && w.failed != nil {
 		w.failed.Add(ctx, 1, metric.WithAttributes(attribute.String("action", e.Action)))
+	}
+	if w.out != nil {
+		line, mErr := json.Marshal(stdoutLine{LogType: "audit", Stored: err == nil, AuditLog: e})
+		if mErr == nil {
+			w.mu.Lock()
+			_, mErr = w.out.Write(append(line, '\n'))
+			w.mu.Unlock()
+		}
+		if mErr != nil {
+			slog.Error("failed to write audit log line", "action", e.Action, "error", mErr)
+		}
 	}
 	return err
 }

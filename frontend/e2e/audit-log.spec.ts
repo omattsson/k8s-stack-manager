@@ -2,9 +2,11 @@ import { test, expect } from '@playwright/test';
 import {
   API_BASE,
   apiCreateDefinition,
+  apiLogin,
   apiCreateInstance,
   createAndPublishTemplate,
   loginAsDevops,
+  loginAsUser,
   tokenFromPage,
   uniqueName,
 } from './helpers';
@@ -223,5 +225,19 @@ test.describe('Audit Log', () => {
     // The section stays open while the page finishes its other requests.
     await page.waitForTimeout(2000);
     await expect(section).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  test('a user-role account sees no audit history section (#788)', async ({ page }) => {
+    await loginAsUser(page);
+    await page.goto('/');
+    const userToken = await tokenFromPage(page);
+    const adminToken = await apiLogin(page.request);
+    const defId = await apiCreateDefinition(page.request, adminToken, uniqueName('def-audit-user'));
+    const instName = uniqueName('audit-user').slice(0, 40).toLowerCase();
+    const instId = await apiCreateInstance(page.request, userToken, defId, instName);
+
+    await page.goto(`/stack-instances/${instId}`);
+    await expect(page.getByRole('heading', { name: instName })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('button', { name: 'Audit history' })).toHaveCount(0);
   });
 });

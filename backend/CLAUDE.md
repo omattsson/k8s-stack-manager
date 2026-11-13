@@ -91,7 +91,7 @@ All configuration uses environment variables with a `.env` fallback (godotenv). 
 - `OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, `OTEL_TRACE_SAMPLE_RATE`, `METRICS_ENABLED`, `METRICS_ADDR`.
 - `LEADER_ELECTION_*` (`ENABLED` default false means this process is always the leader; `LEASE_NAME`, `NAMESPACE`, `LEASE_DURATION`, `RENEW_DEADLINE`, `RETRY_PERIOD`) with `POD_NAME` and `POD_NAMESPACE`.
 - `WS_FANOUT_ENABLED`, `WS_FANOUT_POLL_INTERVAL`, `WS_FANOUT_RETENTION`.
-- `AUDIT_LOG_STDOUT` (default false; `config/audit.go`): `auditlog.Writer` also writes each audit entry as one JSON line (`"log_type":"audit"`) to stdout. An invalid value stops the start.
+- `AUDIT_LOG_STDOUT` (default false; `config/audit.go`): `auditlog.Writer` also writes each audit entry as one JSON line (`"log_type":"audit"`, `"stored"`: whether the database stored it) to stdout. An invalid value stops the start.
 - `DEPLOY_LOG_RETENTION_DAYS` (180), `AUDIT_LOG_RETENTION_DAYS` (365), `NOTIFICATION_RETENTION_DAYS` (90), `DELIVERY_LOG_RETENTION_DAYS` (30), `ACTION_RUN_RETENTION_DAYS` (180), `LOG_RETENTION_INTERVAL` (1h). `0` keeps the rows forever. A value that is not a number stops the start (`config/retention.go`).
 
 ## Background Workers

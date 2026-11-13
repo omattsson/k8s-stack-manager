@@ -152,6 +152,7 @@ func TestWriter_Create(t *testing.T) {
 				assert.Equal(t, "deploy", lines[0]["action"])
 				assert.Equal(t, got.ID, lines[0]["id"])
 				assert.Equal(t, got.Timestamp.Format(time.RFC3339Nano), lines[0]["timestamp"])
+				assert.Equal(t, tt.dbErr == nil, lines[0]["stored"], "the line says whether the database stored the entry")
 			}
 			assert.Equal(t, tt.wantFailed, failedSum(t, reader, "deploy"))
 		})

@@ -326,4 +326,15 @@ describe('Audit Log Page', () => {
       expect(screen.getByRole('option', { name: a })).toBeInTheDocument();
     }
   });
+
+  it('keeps a space inside the username and trims it when sent', async () => {
+    (auditService.list as ReturnType<typeof vi.fn>).mockResolvedValue({ data: [], total: 0, limit: 25, offset: 0 });
+    const user = userEvent.setup();
+    render(<MemoryRouter><AuditLog /></MemoryRouter>);
+    await user.type(screen.getByLabelText('Username'), ' john doe ');
+    await user.click(screen.getByRole('button', { name: 'Filter' }));
+    await waitFor(() => {
+      expect(auditService.list).toHaveBeenLastCalledWith(expect.objectContaining({ username: 'john doe' }));
+    });
+  });
 });

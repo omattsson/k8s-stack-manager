@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"backend/internal/helm"
 	"backend/internal/models"
@@ -25,6 +26,7 @@ var skippedFields = map[string]bool{"created_at": true, "updated_at": true, "del
 const (
 	maxValueBytes = 200
 	maxKeyPaths   = 200
+	maxPathBytes  = 256
 )
 
 // Fields returns the changed fields between two values of the same struct
@@ -151,7 +153,7 @@ func ChangedKeyPaths(prefix, oldYAML, newYAML string) ([]models.AuditChange, err
 	}
 	out := make([]models.AuditChange, 0, len(paths)+1)
 	for _, p := range paths {
-		out = append(out, models.AuditChange{Field: prefix + p})
+		out = append(out, models.AuditChange{Field: cutPath(prefix + p)})
 	}
 	if cut {
 		out = append(out, models.AuditChange{Field: "…"})
@@ -193,4 +195,16 @@ func flatten(path string, v any, out map[string]any) {
 		}
 		flatten(p, get(k), out)
 	}
+}
+
+// cutPath cuts a key path to maxPathBytes at a rune start.
+func cutPath(p string) string {
+	if len(p) <= maxPathBytes {
+		return p
+	}
+	cut := maxPathBytes
+	for cut > 0 && !utf8.RuneStart(p[cut]) {
+		cut--
+	}
+	return p[:cut]
 }

@@ -186,3 +186,11 @@ func TestChangedKeyPaths_NoValues(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(raw), "hunter2")
 }
+
+func TestChangedKeyPaths_LongKeyCut(t *testing.T) {
+	t.Parallel()
+	got, err := ChangedKeyPaths("", "", strings.Repeat("k", 400)+": 1")
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.LessOrEqual(t, len(got[0].Field), 256)
+}
