@@ -45,6 +45,7 @@ describe('AuditHistory', () => {
     render(<MemoryRouter><AuditHistory entityId="i1" /></MemoryRouter>);
     await waitFor(() => expect(screen.getByText('value_override')).toBeInTheDocument());
     expect(screen.getByRole('columnheader', { name: 'Type' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Details' })).toBeInTheDocument();
     expect(screen.getByText('stack_instance')).toBeInTheDocument();
   });
 

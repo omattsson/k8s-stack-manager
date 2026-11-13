@@ -4,6 +4,7 @@ import {
   AccordionDetails,
   AccordionSummary,
   Alert,
+  Box,
   Table,
   TableBody,
   TableCell,
@@ -18,6 +19,7 @@ import { auditService } from '../../api/client';
 import type { AuditLog } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { hasAtLeastRole } from '../../utils/roles';
+import { visuallyHidden } from '../../utils/visuallyHidden';
 import LoadingState from '../LoadingState';
 import AuditEntryRow from './AuditEntryRow';
 
@@ -70,7 +72,7 @@ const AuditHistory = ({ entityId }: AuditHistoryProps) => {
         <Table size="small" aria-label="Audit history">
           <TableHead>
             <TableRow>
-              <TableCell padding="checkbox" />
+              <TableCell padding="checkbox"><Box component="span" sx={visuallyHidden}>Details</Box></TableCell>
               <TableCell>Timestamp</TableCell>
               <TableCell>User</TableCell>
               <TableCell>Action</TableCell>
