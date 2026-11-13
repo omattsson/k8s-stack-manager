@@ -600,6 +600,7 @@ func (h *ClusterHandler) DeleteCluster(c *gin.Context) {
 		h.registry.InvalidateDefault()
 	}
 
+	middleware.SetAuditEntityName(c, cl.Name)
 	c.Status(http.StatusNoContent)
 }
 

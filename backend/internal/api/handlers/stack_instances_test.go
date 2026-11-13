@@ -31,6 +31,7 @@ func setupInstanceRouter(
 	tmplRepo *MockStackTemplateRepository,
 	tmplChartRepo *MockTemplateChartConfigRepository,
 	callerID, callerUsername, callerRole string,
+	extra ...gin.HandlerFunc,
 ) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -46,6 +47,7 @@ func setupInstanceRouter(
 		}
 		c.Next()
 	})
+	r.Use(extra...)
 
 	valuesGen := helm.NewValuesGenerator()
 	userRepo := NewMockUserRepository()

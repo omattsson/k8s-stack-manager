@@ -157,7 +157,8 @@ func (h *StreamHandler) PortForward(c *gin.Context) {
 
 	username := middleware.GetUsernameFromContext(c)
 	auth := middleware.GetAuthMethodFromContext(c)
-	h.writeAudit(userID, username, auditActionPortForward, inst.ID, map[string]any{
+	rc := middleware.CaptureRequestContext(c)
+	h.writeAudit(rc, userID, username, auditActionPortForward, inst.ID, inst.Name, map[string]any{
 		"service": service, "port": port, "pod": target.Pod, "target_port": target.TargetPort, "auth": auth,
 	})
 
@@ -168,7 +169,7 @@ func (h *StreamHandler) PortForward(c *gin.Context) {
 		Identity: identity, InstanceID: inst.ID,
 		PostRegister: h.postRegisterCheck(identity, inst.ID, podstream.KindPortForward),
 		OnEnd: func(s podstream.Summary) {
-			h.writeAudit(userID, username, auditActionPortForwardEnd, inst.ID, map[string]any{
+			h.writeAudit(rc, userID, username, auditActionPortForwardEnd, inst.ID, inst.Name, map[string]any{
 				"service": service, "port": port, "pod": target.Pod,
 				"bytes_in": s.BytesIn, "bytes_out": s.BytesOut, "duration_ms": s.Duration.Milliseconds(),
 				"close_code": s.CloseCode, "close_reason": s.CloseReason,

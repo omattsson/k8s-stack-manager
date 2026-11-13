@@ -193,6 +193,7 @@ func (h *StreamHandler) Exec(c *gin.Context) {
 
 	username := middleware.GetUsernameFromContext(c)
 	auth := middleware.GetAuthMethodFromContext(c)
+	rc := middleware.CaptureRequestContext(c)
 	namespace := inst.Namespace
 	handedOver = true
 	identity := streamIdentity(c, authTime)
@@ -209,7 +210,7 @@ func (h *StreamHandler) Exec(c *gin.Context) {
 				slog.Error("Exec: no audit logger configured; the command is refused", "instance_id", inst.ID)
 				return podstream.ErrExecAuditUnavailable
 			}
-			err := h.writeAuditErr(userID, username, auditActionExec, inst.ID, map[string]any{
+			err := h.writeAuditErr(rc, userID, username, auditActionExec, inst.ID, inst.Name, map[string]any{
 				"chart": chart, "container": target.Container, "pod": target.Pod,
 				"command": auditCommand(command), "auth": auth,
 			})
@@ -240,7 +241,7 @@ func (h *StreamHandler) Exec(c *gin.Context) {
 			if s.ExitCode != nil {
 				exit = *s.ExitCode
 			}
-			h.writeAudit(userID, username, auditActionExecEnd, inst.ID, map[string]any{
+			h.writeAudit(rc, userID, username, auditActionExecEnd, inst.ID, inst.Name, map[string]any{
 				"chart": chart, "container": target.Container, "pod": target.Pod,
 				"exit_code": exit, "result": s.Result, "duration_ms": s.Duration.Milliseconds(),
 				"bytes_stdout": s.BytesStdout, "bytes_stderr": s.BytesStderr,

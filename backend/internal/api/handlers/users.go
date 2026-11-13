@@ -225,6 +225,7 @@ func (h *UserHandler) DeleteUser(c *gin.Context) {
 
 	h.revokeUserAccess(ctx, user.ID, revokeOptions{deleteAPIKeys: true})
 
+	middleware.SetAuditEntityName(c, user.Username)
 	c.Status(http.StatusNoContent)
 }
 

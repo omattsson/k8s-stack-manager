@@ -441,6 +441,7 @@ func (h *DefinitionHandler) DeleteDefinition(c *gin.Context) {
 		return
 	}
 
+	middleware.SetAuditEntityName(c, def.Name)
 	c.Status(http.StatusNoContent)
 }
 

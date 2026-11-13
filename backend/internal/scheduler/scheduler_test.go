@@ -398,6 +398,8 @@ func TestRunPolicyWithExecutor(t *testing.T) {
 	// Verify audit log was created.
 	assert.Len(t, auditRepo.entries, 1)
 	assert.Equal(t, "cleanup_policy_executed", auditRepo.entries[0].Action)
+	assert.Equal(t, models.AuditAuthSystem, auditRepo.entries[0].AuthMethod)
+	assert.Equal(t, "old-instance", auditRepo.entries[0].EntityName)
 }
 
 func TestRunPolicyCleanAction(t *testing.T) {

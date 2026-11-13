@@ -584,6 +584,7 @@ func (h *TemplateHandler) DeleteTemplate(c *gin.Context) {
 		return
 	}
 
+	middleware.SetAuditEntityName(c, tmpl.Name)
 	c.Status(http.StatusNoContent)
 }
 

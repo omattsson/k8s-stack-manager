@@ -203,7 +203,11 @@ func (r *InterruptRecovery) interrupt(ctx context.Context, l models.DeploymentLo
 		"started_at", l.StartedAt,
 		"instance_set_to_error", res.InstanceUpdated)
 	recordInterruptEvent(l.Action, interruptEventRecovered)
-	r.audit(ctx, l, res.InstanceUpdated, now)
+	instName := ""
+	if inst != nil {
+		instName = inst.Name
+	}
+	r.audit(ctx, l, instName, res.InstanceUpdated, now)
 
 	if res.InstanceUpdated && inst != nil {
 		r.broadcast(l, message)
@@ -212,7 +216,7 @@ func (r *InterruptRecovery) interrupt(ctx context.Context, l models.DeploymentLo
 	return true
 }
 
-func (r *InterruptRecovery) audit(ctx context.Context, l models.DeploymentLog, instanceUpdated bool, now time.Time) {
+func (r *InterruptRecovery) audit(ctx context.Context, l models.DeploymentLog, instName string, instanceUpdated bool, now time.Time) {
 	if r.cfg.AuditLog == nil {
 		return
 	}
@@ -226,6 +230,8 @@ func (r *InterruptRecovery) audit(ctx context.Context, l models.DeploymentLog, i
 		Action:     auditActionInterrupted,
 		EntityType: "stack_instance",
 		EntityID:   l.StackInstanceID,
+		EntityName: instName,
+		AuthMethod: models.AuditAuthSystem,
 		Details:    details,
 		Timestamp:  now,
 	}

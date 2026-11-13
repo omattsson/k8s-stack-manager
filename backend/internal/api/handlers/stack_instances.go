@@ -917,6 +917,7 @@ func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 		})
 		return
 	}
+	middleware.SetAuditEntityName(c, inst.Name)
 	c.Status(http.StatusNoContent)
 }
 

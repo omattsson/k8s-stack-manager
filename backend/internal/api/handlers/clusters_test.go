@@ -62,10 +62,12 @@ func setupClusterRouter(
 	instanceRepo *MockStackInstanceRepository,
 	registry *cluster.Registry,
 	callerRole string,
+	extra ...gin.HandlerFunc,
 ) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(injectAuthContext("test-user-id", callerRole))
+	r.Use(extra...)
 
 	h := NewClusterHandler(clusterRepo, registry, instanceRepo)
 	adminMW := middleware.RequireAdmin()
