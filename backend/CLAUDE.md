@@ -54,7 +54,7 @@ The entry point is `api/main.go`. The helpers (repositories, services, handlers,
 - Domain handler mocks are in `handlers/mock_domain_repositories_test.go`. The session store mock is in `mock_session_store_test.go`. The transaction runner mock is in `mock_tx_runner_test.go`.
 - Test setup: `gin.SetMode(gin.TestMode)`, `httptest.NewRecorder()` and `setupTestRouter()`.
 - Validate JSON responses with `gojsonschema` against the schemas in `test_schemas.go`.
-- Run unit tests: `go test ./... -v -short`.
+- Run unit tests: `go test ./... -short` (`-v` only for one failing package).
 - Coverage (80% threshold): `make test-coverage`.
 
 ## Swagger/OpenAPI
