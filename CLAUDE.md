@@ -5,7 +5,7 @@ Developers use this application to configure, store and deploy multi-service Hel
 ## Architecture Overview
 
 - Backend: Go (Gin). Frontend: React (TypeScript, Vite, MUI). Data store: MySQL (GORM). Docker Compose runs all services.
-- Versions: Go 1.27.3 (`backend/go.mod`; CI reads the version from `backend/go.mod`, and the images build with `golang:1.27.3`), Node 22.12 or later (Vitest needs `^22.12 || ^24 || >=26`; the images use `node:26-alpine`).
+- Versions: Go 1.27.4 (`backend/go.mod`; CI reads the version from `backend/go.mod`, and the images build with `golang:1.27.4`), Node 22.12 or later (Vitest needs `^22.12 || ^24 || >=26`; the images use `node:26-alpine`).
 - Ports: backend `:8081` (`SERVER_PORT`), frontend `:3000` in dev. The backend registers routes under `/api/v1`. nginx and the Vite dev proxy keep the `/api` prefix.
 - Bootstrap order, graceful shutdown, Gin mode, optional servers, middleware order, telemetry and WebSocket messages: `docs/claude/backend-runtime.md`.
 

@@ -132,4 +132,4 @@ Name the file and line, say what breaks and when, and propose a fix. Do not repe
 - A change of `helm/k8s-stack-manager/values.yaml` needs the regenerated values schema (`make helm-schema`); `make helm-test` checks it.
 - Keep `backend.rbac.scope: namespace` and its admission policy as the defaults. Keep CORS `same-origin` as the chart default.
 - A new env var needs a default in `internal/config/config.go`, a Helm value where operators need it, and a line in the docs.
-- Docker images pin exact versions (Go 1.27.3, `node:26-alpine`).
+- Docker images pin exact versions (Go 1.27.4, `node:26-alpine`).

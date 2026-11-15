@@ -7,7 +7,7 @@ How to run, build and test K8s Stack Manager on your machine. Contributors also 
 ### Prerequisites
 
 - Docker and Docker Compose
-- Go 1.27.3 or later (for local backend development)
+- Go 1.27.4 or later (for local backend development)
 - Node.js 22.12 or later (for local frontend development). CI and the Docker images use Node.js 26.
 - MySQL 8.0 or later for an external database. Docker Compose and the Helm chart (by default) use the image `mysql:8.4.13`.
 
