@@ -80,7 +80,7 @@ Use the error types in `pkg/dberrors/errors.go` (`internal/database/errors.go` r
 - Domain handler tests: the mocks in `handlers/mock_domain_repositories_test.go` and a router helper with `callerID` and `callerRole` in each test file.
 - Validate JSON responses with `gojsonschema` (`handlers/test_schemas.go`).
 - Integration tests use the build tag `integration` and run with `make test-backend-all` (starts MySQL in Docker).
-- Run unit tests: `cd backend && go test ./... -v -short`.
+- Run unit tests: `cd backend && go test ./... -short` (`-v` only for one failing package).
 - Run with coverage (80% minimum): `cd backend && make test-coverage`.
 
 ## Swagger and OpenAPI

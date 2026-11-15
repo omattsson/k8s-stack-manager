@@ -61,7 +61,7 @@ Then the generator substitutes the template variables.
 ## Reference
 
 - Tests: `backend/internal/helm/values_generator_test.go`, `backend/internal/deployer/helm_test.go`, `backend/internal/deployer/create_namespace_test.go`.
-- Run `cd backend && go test ./internal/helm/... ./internal/deployer/... -v -short`.
+- Run `cd backend && go test ./internal/helm/... ./internal/deployer/... -short`.
 
 ## MemPalace
 

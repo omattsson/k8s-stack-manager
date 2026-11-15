@@ -54,7 +54,7 @@ startHTTPServer              # main server, optional pprof and metrics servers
 | Backend and MySQL only (for `stackctl` workflows) | `make dev-api-only` |
 | Backend and frontend on the host with hot reload (Go `air`, Vite HMR) | `make dev-local` |
 | Seed sample data into a running dev stack | `make seed` |
-| Backend tests (unit, no database) | `cd backend && go test ./... -v -short` |
+| Backend tests (unit, no database) | `cd backend && go test ./... -short` (add `-v` for one package) |
 | All backend tests (unit and integration) | `make test-backend-all` (starts MySQL) |
 | Changed backend packages with `-race -count=3` (order-dependent tests) | `make test-backend-repeat` (`REPEAT_BASE`, default `origin/main`; `REPEAT_COUNT`) |
 | Frontend tests | `cd frontend && npm test` |
