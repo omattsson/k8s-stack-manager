@@ -51,3 +51,17 @@ Then the generator substitutes the template variables.
 - Deploys pass `--skip-crds` (`SkipCRDs: true`). Before an install, `recoverPendingRelease` removes a release that an interrupted deploy left in a `pending-*` state.
 - `validatePositionalArg` protects the release name, chart path, and namespace from argument injection. Keep it.
 - A rollback to a deploy log (`target_log_id`) upgrades each chart to the stored values and chart version. It does not restore images.
+
+## When something is unclear
+
+You cannot ask the user. When the request allows two readings that lead to different behavior, a different API or different data, or when it needs a new dependency, do not guess: stop before that part and put the question in your report, with the options and the one you recommend. Decide small things yourself and list them under Assumptions.
+
+## Report
+
+End with this report:
+
+- **Status**: done, or blocked (with the question that blocks you).
+- **Files changed**: one line each.
+- **Checks**: each command and its result, one line each. Do not paste output.
+- **Assumptions**: decisions that the request did not settle.
+- **Questions**: open questions, each with its options and your recommendation.
