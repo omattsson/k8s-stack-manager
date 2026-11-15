@@ -65,3 +65,17 @@ make helm-lint                         # lint chart
 make helm-template                     # render chart
 make helm-test                         # render checks (default, External Secrets, extra values)
 ```
+
+## When something is unclear
+
+You cannot ask the user. When the request allows two readings that lead to different behavior, a different API or different data, or when it needs a new dependency, do not guess: stop before that part and put the question in your report, with the options and the one you recommend. Decide small things yourself and list them under Assumptions.
+
+## Report
+
+End with this report:
+
+- **Status**: done, or blocked (with the question that blocks you).
+- **Files changed**: one line each.
+- **Checks**: each command and its result, one line each. Do not paste output.
+- **Assumptions**: decisions that the request did not settle.
+- **Questions**: open questions, each with its options and your recommendation.

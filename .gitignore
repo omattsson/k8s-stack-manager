@@ -79,3 +79,6 @@ backend/test-results/
 
 # Local superpowers plans and specs
 /docs/superpowers/
+
+# Specs of running work (ship-issue): local state, never committed
+.claude/work/

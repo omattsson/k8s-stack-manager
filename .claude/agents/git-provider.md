@@ -78,3 +78,17 @@ Detection uses the exact host name. Never use a substring match.
 - Add the real URLs from the Clone dialog of each provider. For example `https://org@dev.azure.com/org/My%20Project/_git/repo`, `git@ssh.dev.azure.com:v3/org/My%20Project/repo`, `org@vs-ssh.visualstudio.com:v3/...`, and GitLab subgroups. Stricter parsers without these tests caused regressions.
 - Put the test for a security fix in a `*_regression_test.go` file. The test must fail without the fix.
 - The full `./...` run can stop with an out-of-memory error. Run only the related packages: `cd backend && go test -p 2 -short ./internal/gitprovider/... ./internal/api/handlers/... ./internal/config/...` and `go test -race -short ./internal/gitprovider/`.
+
+## When something is unclear
+
+You cannot ask the user. When the request allows two readings that lead to different behavior, a different API or different data, or when it needs a new dependency, do not guess: stop before that part and put the question in your report, with the options and the one you recommend. Decide small things yourself and list them under Assumptions.
+
+## Report
+
+End with this report:
+
+- **Status**: done, or blocked (with the question that blocks you).
+- **Files changed**: one line each.
+- **Checks**: each command and its result, one line each. Do not paste output.
+- **Assumptions**: decisions that the request did not settle.
+- **Questions**: open questions, each with its options and your recommendation.

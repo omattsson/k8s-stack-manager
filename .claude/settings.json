@@ -20,7 +20,17 @@
       "Bash(go test:*)",
       "Bash(go tool:*)",
       "Bash(go vet:*)",
-      "Bash(docker build:*)"
+      "Bash(docker build:*)",
+      "Bash(gofmt:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git fetch:*)",
+      "Bash(gh issue view:*)",
+      "Bash(gh issue list:*)",
+      "Bash(gh run list:*)",
+      "Bash(gh run view:*)"
     ],
     "ask": [
       "Bash(git push:*)",
