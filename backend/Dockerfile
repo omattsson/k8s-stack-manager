@@ -3,7 +3,7 @@
 # ($BUILDPLATFORM) and cross-compile for $TARGETOS/$TARGETARCH. A
 # multi-platform build therefore never runs the Go compiler under QEMU
 # emulation (the arm64 build took about 15 minutes that way).
-FROM --platform=$BUILDPLATFORM golang:1.27.3 AS helm
+FROM --platform=$BUILDPLATFORM golang:1.27.4 AS helm
 
 # Download the helm CLI for the target architecture (download only, so it
 # works from any build platform). The checksums are pinned here, not fetched
@@ -26,7 +26,7 @@ RUN set -eu; \
     rm /tmp/helm.tgz
 
 # For development mode
-FROM golang:1.27.3 AS development
+FROM golang:1.27.4 AS development
 WORKDIR /app
 COPY --from=helm /usr/local/bin/helm /usr/local/bin/helm
 RUN go install github.com/cosmtrek/air@v1.49.0
@@ -36,7 +36,7 @@ CMD ["air"]
 # the target platform, so one cached layer serves all platforms. The modules
 # stay in the image layer (not in a cache mount): the GitHub Actions cache
 # stores layers, but not cache mounts.
-FROM --platform=$BUILDPLATFORM golang:1.27.3 AS build-prod
+FROM --platform=$BUILDPLATFORM golang:1.27.4 AS build-prod
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
