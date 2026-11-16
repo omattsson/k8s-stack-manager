@@ -5,7 +5,7 @@ K8s Stack Manager: developers configure, store and deploy multi-service Helm sta
 - Backend: Go (Gin), GORM on MySQL, in `backend/`. Frontend: React 19, TypeScript, Vite, MUI v9, in `frontend/`. Helm chart in `helm/`.
 - Several backend replicas can run at once. One leader replica runs the background workers. Every replica serves HTTP and WebSocket.
 
-This file holds the rules to check in a review. The full rules are in `CLAUDE.md`, `backend/CLAUDE.md`, `frontend/CLAUDE.md`, `backend/internal/api/handlers/CLAUDE.md` and `docs/claude/*.md` (domain, auth and sessions, hooks, Helm chart, operations). Those files are the source of truth. When this guide and those files differ, follow those files and say that this guide is out of date.
+This file holds the rules to check in a review. The full rules are in `CLAUDE.md`, `backend/CLAUDE.md`, `frontend/CLAUDE.md`, `backend/internal/api/handlers/CLAUDE.md` and `docs/claude/*.md` (domain, auth and sessions, hooks, Helm chart, operations, backend runtime, commands, new resource). Those files are the source of truth. When this guide and those files differ, follow those files and say that this guide is out of date.
 
 Path-specific rules are in `.github/instructions/*.instructions.md` (security, scalability, Go, handlers, TypeScript, React pages, adding an API resource).
 

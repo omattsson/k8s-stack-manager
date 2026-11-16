@@ -1,79 +1,30 @@
 # K8s Stack Manager
 
+Developers use this application to configure, store and deploy multi-service Helm-based application stacks to shared Kubernetes clusters.
+
 ## Architecture Overview
 
-K8s Stack Manager is a full-stack application.
-- Backend: Go (Gin). Frontend: React (TypeScript, Vite, MUI). Data store: MySQL (GORM).
-- Docker Compose runs all services.
+- Backend: Go (Gin). Frontend: React (TypeScript, Vite, MUI). Data store: MySQL (GORM). Docker Compose runs all services.
 - Versions: Go 1.27.3 (`backend/go.mod`; CI reads the version from `backend/go.mod`, and the images build with `golang:1.27.3`), Node 22.12 or later (Vitest needs `^22.12 || ^24 || >=26`; the images use `node:26-alpine`).
-
-**Bootstrap flow.** `backend/api/main.go` calls helpers in `backend/api/bootstrap.go` in this order:
-
-```
-config.LoadConfig()
-telemetry.Init(cfg.Otel)
-leader.NewInCluster          # fails the start when LEADER_ELECTION_ENABLED=true outside a pod
-initDatabase                 # database.NewRepositoryWithGormDB(cfg)
-initRepositories             # all domain repositories
-buildWSFanout                # WebSocket fan-out, when WS_FANOUT_ENABLED=true
-buildDomainServices          # git, cluster registry, deployer, hooks, notifier, ...
-replica heartbeat            # replica_heartbeats row, every replica
-session store                # sessionstore
-buildHandlers
-hub.StartRevalidation        # closes revoked sockets, every minute
-buildRouter                  # gin.SetMode, then routes.SetupRoutes(router, routes.Deps{...})
-buildLeaderWorkers + startLeaderElection   # leader-only background workers
-startHTTPServer              # main server, optional pprof and metrics servers
-```
-
-**Graceful shutdown** (`SIGINT` or `SIGTERM`), in this order:
-1. Stop the HTTP servers. Then close the port-forward tunnels and the exec sessions (1001, both `podstream.Manager`s at once) and wait for them: `http.Server.Shutdown` does not close hijacked connections (`podstream.Manager.Shutdown`). Then wait for the asynchronous audit writes (`middleware.WaitAuditWrites`, 10 s budget; a later write runs inline).
-2. Stop the leader workers, release the lease, stop the cleanup scheduler.
-3. Wait for in-flight deploys. Stop the heartbeat and delete its row.
-4. Flush the fan-out queue. Stop the hub, the cluster registry, the notifier, the session store and the dashboard handler.
-5. Flush telemetry.
-6. Close the database.
-
-**Gin mode.** `GIN_MODE` wins when it is set. Otherwise the mode is debug when `APP_DEBUG` is true, and release when it is false. The code default of `APP_DEBUG` is `true`. The Helm chart sets `APP_DEBUG: "false"`.
-
-**Ports.**
-- Backend: `:8081` on the host (`SERVER_PORT`). Frontend: `:3000` in dev.
-- Docker: nginx (`location /api/` with `proxy_pass http://backend:8081/api/`) and the Vite dev proxy (`/api` to the backend, no rewrite) both keep the `/api` prefix.
-- The backend registers routes under `/api/v1`.
-- Local development without Docker calls `localhost:8081` directly (`frontend/src/api/config.ts`).
-- Optional servers: Prometheus metrics (`METRICS_ENABLED`, `METRICS_ADDR`, default `:9090`) and pprof (`PPROF_ENABLED`, `PPROF_ADDR`, default `127.0.0.1:6060`; `PPROF_MUTEX_FRACTION` and `PPROF_BLOCK_RATE` turn on the mutex and block profiles, default 0 = off).
-- `make dev-otel`: Grafana on `:3001`, Prometheus on `:9090`.
+- Ports: backend `:8081` (`SERVER_PORT`), frontend `:3000` in dev. The backend registers routes under `/api/v1`. nginx and the Vite dev proxy keep the `/api` prefix.
+- Bootstrap order, graceful shutdown, Gin mode, optional servers, middleware order, telemetry and WebSocket messages: `docs/claude/backend-runtime.md`.
 
 ## Development Commands
 
 | Task | Command |
 |---|---|
 | Full stack (Docker) | `make dev` |
-| Full stack with local Kubernetes cluster access (Rancher Desktop, Docker Desktop Kubernetes) | `make dev-k8s` |
-| Full stack with the OpenTelemetry stack (collector, Prometheus, Tempo, Grafana) | `make dev-otel` |
-| Backend and MySQL only (for `stackctl` workflows) | `make dev-api-only` |
-| Backend and frontend on the host with hot reload (Go `air`, Vite HMR) | `make dev-local` |
-| Seed sample data into a running dev stack | `make seed` |
+| Backend and frontend on the host with hot reload | `make dev-local` |
 | Backend tests (unit, no database) | `cd backend && go test ./... -short` (add `-v` for one package) |
 | All backend tests (unit and integration) | `make test-backend-all` (starts MySQL) |
-| Changed backend packages with `-race -count=3` (order-dependent tests) | `make test-backend-repeat` (`REPEAT_BASE`, default `origin/main`; `REPEAT_COUNT`) |
 | Frontend tests | `cd frontend && npm test` |
-| Unit tests (backend and frontend) | `make test` |
-| End-to-end tests | `make test-e2e` (starts infrastructure, backend and Playwright; no cluster access unless `E2E_KUBECONFIG` names a local kubeconfig; starts the test stub `frontend/e2e/stub/`: the subscriber of the actions in `frontend/e2e/fixtures/hooks-e2e.json` on http://127.0.0.1:18090, and an HTTPS webhook receiver on port 18443, which the backend trusts on Linux only; `E2E_SPECS=e2e/x.spec.ts` runs only these specs and skips the isolated phase; `E2E_SHARD=2/4` runs one part of the main suite and skips the isolated phase; then restarts the backend with short session limits and runs the `isolated` project; CI: `.github/workflows/e2e.yml`, 4 shard jobs and one `isolated` job in parallel) |
-| Isolated e2e tests only | `make test-e2e-isolated` (project `isolated`, one worker; backend with `E2E_SESSION_*` limits: access token 10s, idle 20s, maximum lifetime 60s, reuse grace 3s) |
-| Swagger docs | `make docs` (runs `swag init -g api/main.go` in `backend`) |
-| Coverage (80% threshold) | `cd backend && make test-coverage` |
-| Format | `make fmt` |
-| Lint | `make lint` (`go vet` and `npm run lint`) |
-| Security scan (backend) | `make gosec` (`scripts/gosec.sh`: pinned gosec built with the local Go, run inside `backend/`, as in CI) |
-| Install dependencies | `make install` |
-| Helm lint | `make helm-lint` |
-| Helm dry-run render | `make helm-template` |
-| Helm render checks (default values, secrets, External Secrets, Traefik priority, Grafana dashboard ConfigMap, values schema current) | `make helm-test` |
-| Helm values schema (after a change of `values.yaml`; descriptions come from its comments, extra rules in `backend/tools/helmschema`) | `make helm-schema` |
-| Helm install, upgrade, uninstall | `make helm-install`, `make helm-upgrade`, `make helm-uninstall` |
-| Helm package for release | `make helm-release` |
-| Load tests | `make loadtest` (see the `loadtest-*` targets; `LOADTEST_PORT`, `LOADTEST_MYSQL=external`; memory and CPU: `make loadtest-capture` or `LOADTEST_CAPTURE=1`, see `loadtest/README.md`) |
+| End-to-end tests | `make test-e2e` (`E2E_SPECS=e2e/x.spec.ts` runs only these specs) |
+| Swagger docs | `make docs` |
+| Format, lint | `make fmt`, `make lint` |
+| Security scan (backend) | `make gosec` |
+| Helm render checks, values schema | `make helm-test`, `make helm-schema` (after a change of `values.yaml`) |
+
+All other commands (dev variants, seed, coverage, repeat runs, Helm install and release, load tests, e2e details): `docs/claude/commands.md`.
 
 ## Reference Docs
 
@@ -81,62 +32,37 @@ These files do not load on every request. Read the matching file before you work
 
 | Area | File |
 |---|---|
-| Domain rules: instances, TTL, deploy and Helm values, rollback, quotas, access control, templates, definitions, clusters, cleanup policies, notifications, dashboard, branding, API route groups | `docs/claude/domain.md` |
+| Domain rules: instances, TTL, deploy and Helm values, rollback, quotas, access control, templates, definitions, clusters, cleanup policies, notifications, dashboard, branding, port-forward, exec, audit log, API route groups | `docs/claude/domain.md` |
 | Sessions, refresh tokens, login, WebSocket auth and revocation | `docs/claude/auth-sessions.md` |
 | Lifecycle hooks and custom actions | `docs/claude/hooks-actions.md` |
 | Helm chart: structure, design decisions, values | `docs/claude/helm-chart.md` |
 | Backend and frontend file trees | `docs/claude/structure.md` |
 | Scalability, replicas, interrupted operation recovery, log retention | `docs/claude/operations.md` |
+| Bootstrap, shutdown, ports, middleware order, client IP, telemetry, WebSocket messages | `docs/claude/backend-runtime.md` |
+| All development commands | `docs/claude/commands.md` |
+| A new entity, repository or handler: steps, handler struct, optimistic locking, filter whitelist | `docs/claude/new-resource.md` |
 
 Directory rules: `backend/CLAUDE.md`, `frontend/CLAUDE.md`, `backend/internal/api/handlers/CLAUDE.md`.
 
 ## Key Backend Patterns
 
 **Repository interface.**
-- The generic `models.Repository` interface has `Create`, `FindByID`, `Update`, `Delete`, `List`. All take `context.Context` first. `GenericRepository` (GORM, MySQL) implements it.
-- Domain repositories (for example `StackInstanceRepository`, `UserRepository`, `AuditLogRepository`) have their own interfaces in their model files. Their method signatures differ.
-- `GenericRepository` calls `Validate()` on create and update when the model implements `Validator`. Domain repositories call it where they choose (for example chart configs on create and update); check the repository before you rely on it.
-- Paginated list endpoints (stack instances, definitions, templates) use `ListPaged(..., limit, offset)`. It returns `([]T, total, error)`. GORM uses `SELECT` with column projection and `LIMIT/OFFSET`.
-- List filters go into the paged query through a filter struct (`StackInstanceFilter`, `StackDefinitionFilter`). The count query uses the same conditions, so `total` counts the matching rows.
-- New or changed list endpoints must use this pattern. Small admin lists (users, clusters, cleanup policies, favorites, API keys) still return unpaged `List()` results.
-- Batch methods (`CountByTemplateIDs`, `FindByIDs`, `NamesByIDs`) remove N+1 queries for enrichment lookups.
-- Computed response fields are model fields with `gorm:"-"` (for example `ValuesDrift`, `OwnerUsername`).
-
-**Handler struct.**
-- `handlers.Handler` holds `models.Repository` and an optional `websocket.BroadcastSender`. Use constructor injection: `NewHandler(repo)` or `NewHandlerWithHub(repo, hub)`.
-- Domain handlers (for example `InstanceHandler`, `DefinitionHandler`, `AdminHandler`, `DashboardHandler`) use separate structs. Each has its own constructor with the repositories it needs.
-- Health handlers are factory functions that return a `gin.HandlerFunc` closure.
+- The generic `models.Repository` interface has `Create`, `FindByID`, `Update`, `Delete`, `List`. All take `context.Context` first. Domain repositories (for example `StackInstanceRepository`) have their own interfaces in their model files.
+- `GenericRepository` calls `Validate()` on create and update when the model implements `Validator`. Domain repositories call it where they choose; check the repository before you rely on it.
+- Paginated lists use `ListPaged(..., limit, offset)`, which returns `([]T, total, error)`, with a filter struct (`StackInstanceFilter`, `StackDefinitionFilter`) that the count query shares. New or changed list endpoints must use this pattern. Small admin lists (users, clusters, cleanup policies, favorites, API keys) still return unpaged `List()` results.
+- Batch methods (`CountByTemplateIDs`, `FindByIDs`, `NamesByIDs`) remove N+1 queries. Computed response fields are model fields with `gorm:"-"`.
 
 **Error flow.**
-- A repository returns `*dberrors.DatabaseError` that wraps a sentinel error.
-- Two functions map it to an HTTP status:
-  - `handleDBError()` in `handlers/items.go` (Items reference implementation, uses `errors.As` and `errors.Is`).
-  - `mapError()` in `handlers/errors.go` (all domain handlers, takes the entity name for the message).
-- Both map: 400 validation, 404 not found, 409 duplicate or conflict, 501 not implemented, 500 internal.
-- A cancelled request context (`context.Canceled`) gives 499 (client closed request) and a debug log, not 500. `context.DeadlineExceeded` stays 500.
+- A repository returns `*dberrors.DatabaseError` that wraps a sentinel error. `mapError()` in `handlers/errors.go` (domain handlers) and `handleDBError()` in `handlers/items.go` (Items reference) map it: 400 validation, 404 not found, 409 duplicate or conflict, 501 not implemented, 500 internal.
+- A cancelled request context (`context.Canceled`) gives 499 and a debug log, not 500. `context.DeadlineExceeded` stays 500.
 - Context rule: a repository read on the request path uses the request context (`c.Request.Context()`). A write whose side effects follow the commit uses a detached context, so a client that leaves cannot skip them: `detachedCtx(c)` (`writeCtx(c)` in instance handlers, `ctxutil.Detach(ctx, timeout)` elsewhere). Each one has a deadline (`ctxutil.WriteTimeout`, 30 s) and returns a cancel function that the caller must call, so a stalled database cannot hold a request forever (#674); a timeout gives 500. Never use a bare `context.WithoutCancel` anywhere in the backend: background jobs detach with `ctxutil.Detach` too (`ctxutil.TestNoUnboundedDetach` fails). A post-commit hook (`InstanceHandler.firePostHook`) detaches again with `WriteTimeout` plus the subscriber timeouts, so the write deadline never cuts a hook short. Never keep the request context after the handler returns.
-- Never expose a raw error message for a 500. Always return `"Internal server error"`.
-
-**Optimistic locking.** Only the `Item` reference model has `Version uint` (`default:1`). `GenericRepository.Update()` uses `WHERE version = ?`. On a conflict it returns a `"version mismatch"` error. The Items `UpdateItem` handler maps it to 409. The domain models have no version column. They use targeted or conditional writes (for example `UserRepository.UpdateRole`, the conditional instance status updates).
-
-**Filter whitelist.** `GenericRepository` has an `allowedFilterFields` map. A new entity needs `NewRepositoryWithFilterFields()`, or you must extend the existing repository.
 
 **Routes registration.**
-- `SetupRoutes()` takes a `Deps` struct with all handlers and repositories. Handlers are optional. Register each one inside an `if deps.XHandler != nil` block.
-- It returns `*RateLimiters` (API limiter and optional login limiter). The caller must call `Stop()` on shutdown.
-- Global middleware order: RequestID, RedactWSToken, RedactGitRepoQuery, HTTPMetrics (if `OTEL_ENABLED` or `METRICS_ENABLED`), otelgin (if `OTEL_ENABLED`), Logger, Recovery, SecurityHeaders, CORS, MaxBodySize (1 MB).
-- `/api/v1` adds the API rate limiter (`RATE_LIMIT`, default 100 requests per minute per IP). The login route gets a stricter limiter when `LOGIN_RATE_LIMIT` is greater than 0 (default 10 per minute). `POST /auth/refresh` uses the login limiter too.
-- Client IP: `SetupRoutes` calls `SetTrustedProxies` with `TRUSTED_PROXIES` (IPs or CIDRs, `config.ParseTrustedProxies`; an invalid entry stops the start). Only those peers may set the client IP with `X-Forwarded-For` or `X-Real-IP`. Code default: no trusted proxy (the TCP peer). `0.0.0.0/0`, `::/0` and IPv4-mapped IPv6 entries are refused. The Helm chart (`backend.trustedProxies`) trusts the private IPv4 ranges and `fc00::/7`. The rate limiters, the `/ws` API-key limit and the refresh token IP use `c.ClientIP()`.
-- The authenticated group adds `CombinedAuth` (JWT and API key, checks the token blocklist and disabled users), `SpanEnrichUser` (if `OTEL_ENABLED`) and `NewAuditMiddleware` (if an audit logger is configured).
+- `SetupRoutes()` takes a `Deps` struct. Handlers are optional. Register each one inside an `if deps.XHandler != nil` block.
+- It returns `*RateLimiters`. The caller must call `Stop()` on shutdown.
 - Role gates use `RequireAdmin()` and `RequireDevOps()`.
-- WebSocket: `/ws` (outside the `/api/v1` rate limiter). Health: `/health/*`. Swagger UI: `/swagger/*` only when `ENABLE_SWAGGER=true`.
 
-**Telemetry.** `telemetry.Init` configures OTLP traces, metrics and logs (`OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, `OTEL_TRACE_SAMPLE_RATE`). `StartDBMetrics`, `StartBusinessMetrics` and `StartLeaderMetric` register gauges. Middleware records HTTP and auth metrics. Add tracing for new outbound calls in a `tracing.go` next to the package (see `cluster/`, `deployer/`, `gitprovider/`, `hooks/`). With `OTEL_ENABLED`, the backend also sends its logs to the collector: `setupOTelLogging` (`api/bootstrap.go`) bridges `slog` to the OTel log pipeline (`telemetry.LogHandler`, `otelslog`) and to a slog text handler on stderr, both at `LOG_LEVEL`. Log records with a context carry its trace and span ID. Never wrap the package default slog handler in a new default: it writes through the `log` package, which then writes back through the new default and deadlocks. GORM SQL errors and slow queries also go through slog with the query context (`internal/database/gorm_logger.go`, #653).
-
-**WebSocket messages.**
-- Client to server: `subscribe` and `unsubscribe` with `{"instance_id": "..."}`.
-- Server to client: `deployment.status`, `deployment.log` (only to the subscribers of the instance, if the sender supports it), `instance.created`, `instance.deleted`, `notification.new` (only to the sockets of the notified user). The Items reference handler (`handlers/items.go`) also sends `item.*`, but no route registers it (#534).
-- Stream route: `GET /api/v1/stack-instances/:id/port-forward` is a WebSocket upgrade that tunnels raw bytes to a stack service (`internal/podstream`, `STACK_PORT_FORWARD_*`). It uses header auth only (no `?token=`) and the hub can revoke it. `GET /api/v1/stack-instances/:id/exec?chart=<chart>&container=<name>` runs one command in a container (`STACK_EXEC_*`, per-cluster `allow_exec`, own `podstream.Manager` with kind `exec`). Rules: `docs/claude/domain.md`, `docs/claude/auth-sessions.md`.
+**Telemetry.** Add tracing for new outbound calls in a `tracing.go` next to the package (see `cluster/`, `deployer/`, `gitprovider/`, `hooks/`). Never wrap the package default slog handler in a new default: it deadlocks (`docs/claude/backend-runtime.md`).
 
 ## Frontend
 
@@ -161,23 +87,8 @@ Directory rules: `backend/CLAUDE.md`, `frontend/CLAUDE.md`, `backend/internal/ap
 
 **Integration test names:** `TestDatabase*` (MySQL).
 
-## Adding a New API Resource
+## Audit Trail
 
-1. Model: create `internal/models/<entity>.go`. Domain models have a string UUID `ID` (`gorm:"primaryKey;size:36"`, set by the repository `Create`) and their own timestamps. Do not embed `Base` (uint ID, only for `Item`). Deletes are hard deletes: `Base.DeletedAt` is a plain field, not `gorm.DeletedAt`. Define the repository interface in the same file.
-2. Validation: add it in `internal/models/validation.go` (implement the `Validator` interface).
-3. Repository: create `internal/database/<entity>_repository.go`. Wire it in `repository_factory.go`.
-4. Migration: add it in `internal/database/migrations.go` (the next version string).
-5. Handler: create a file in `internal/api/handlers/` with a dedicated handler struct. Use `mapError()` for errors. Follow `items.go` for the CRUD shape.
-6. Routes: register them in `internal/api/routes/routes.go` under the authenticated `/api/v1` group, inside an `if deps.XHandler != nil` block. Add the handler to `Deps` and to `api/bootstrap.go` (`buildHandlers`, `buildRouter`).
-7. Swagger: add annotations to the handlers. Then run `make docs`.
-8. Tests: use the mocks in `mock_domain_repositories_test.go` and the table-driven pattern.
-9. Frontend: add service methods in `api/client.ts`, a new page in `pages/`, register it in `routes.tsx`, and add navigation in `components/Layout/`.
-
-## Domain
-
-Developers use this application to configure, store and deploy multi-service Helm-based application stacks to shared Kubernetes clusters.
-
-**Audit trail**
 - Every mutating API endpoint (POST, PUT, DELETE) must create an AuditLog entry. `middleware.NewAuditMiddleware` writes it.
 - A handler calls `middleware.SkipAudit(c)` for a successful request that changed nothing (a no-op), so no entry is written.
 - An operation that is not plain CRUD (deploy, stop, publish, test, bulk, ...) needs an entry in the route table `auditRoutes` (`middleware/audit.go`: action, entity type, ID parameter, details). Without an entry, the action comes from the HTTP method and the entity type from the last route segment.
@@ -198,8 +109,8 @@ Developers use this application to configure, store and deploy multi-service Hel
 - `RedactWSToken` removes `?token=` from `/ws` URLs and from the stream routes before logging, metrics and tracing. Keep it first after RequestID.
 - Outbound hooks carry an HMAC signature (`X-StackManager-Signature`) when a subscription has a secret. A subscription without a secret is sent unsigned. Never log hook secrets or provider tokens.
 - Kubeconfig data, registry passwords, notification channel secrets and notification channel webhook URLs are encrypted at rest with AES-GCM (`KUBECONFIG_ENCRYPTION_KEY`). Without the key, the backend refuses `kubeconfig_data`, `registry_password` and a non-empty channel `secret` (400). It stores a channel `webhook_url` in plaintext, because the URL is required and the Helm default key is empty.
-- Port-forward (off by default; needs `STACK_PORT_FORWARD_ENABLED` and the per-cluster `allow_port_forward`) bypasses NetworkPolicies and the ingress auth of tools: the kubelet connects inside the pod network. Keep `allow_port_forward` off on clusters with real data. Stream routes take header auth only, refuse API keys unless `STACK_STREAM_ALLOW_API_KEYS=true`, and refuse a namespace without the label `managed-by=k8s-stack-manager` and the backend namespace. Audit entries hold service, port and pod, never payload bytes.
-- Exec (off by default; needs `STACK_EXEC_ENABLED`, the per-cluster `allow_exec` and a container name in `STACK_EXEC_ALLOWED_CONTAINERS`) shows the container environment and its secrets. The pod comes only from a list of the release pods in the instance namespace, never from the request. A container that holds a service-account token is refused unless `STACK_EXEC_ALLOW_SERVICE_ACCOUNT_TOKEN=true`. The backend never wraps the command in a shell. The start audit entry is written before the command and fails closed. Build the executors only from the cluster `rest.Config` with the stock client-go constructors (a hand-built upgrade transport without a TLS config skips the certificate check). The remote process can keep running after the stream closes.
+- Port-forward bypasses NetworkPolicies and the ingress auth of tools. Keep `allow_port_forward` off on clusters with real data. Stream routes take header auth only and refuse API keys unless `STACK_STREAM_ALLOW_API_KEYS=true`. Rules: `docs/claude/domain.md` (Port-forward).
+- Exec shows the container environment and its secrets. The pod comes only from a list of the release pods, never from the request. Never wrap the command in a shell. Build the executors only from the cluster `rest.Config` with the stock client-go constructors (a hand-built upgrade transport without a TLS config skips the certificate check). Rules: `docs/claude/domain.md` (Exec).
 - Helm runs with the backend identity. On shared clusters: keep `ALLOWED_CHART_REPOS` set, keep `backend.rbac.scope: namespace` and its admission policy, and never give a role `user` path a way to change a chart source.
 
 ## Scalability Rules
