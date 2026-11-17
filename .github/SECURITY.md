@@ -35,7 +35,7 @@ We take the security of this project seriously. If you find a security vulnerabi
 The project uses these security practices:
 
 - Dependabot opens weekly pull requests for dependency updates.
-- Each pull request runs `gosec` (Go) and `npm audit` (frontend).
+- Each pull request runs `gosec` (Go) and `npm audit` (frontend, production dependencies).
 - CodeQL analysis runs on `main`, on pull requests, and every week.
 - A weekly Trivy scan checks the repository for known vulnerabilities.
 - Code review includes security considerations.

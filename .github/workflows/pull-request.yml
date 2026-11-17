@@ -179,4 +179,5 @@ jobs:
         run: |
           cd frontend
           npm ci --prefer-offline
-          npm audit --audit-level=high
+          # Production dependencies only: the dev tooling (vite, vitest, eslint) is not in the image.
+          npm audit --omit=dev --audit-level=high
