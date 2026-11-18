@@ -843,7 +843,7 @@ branding:
 ### Prerequisites
 
 - Docker and Docker Compose
-- Go 1.27.3 or later (backend)
+- Go 1.27.4 or later (backend)
 - Node.js 22.12 or later (frontend). CI and the Docker images use Node.js 26.
 
 ### Running
