@@ -770,6 +770,9 @@ helm-test: ## Verify Deployment, Argo Rollout, and External Secrets Helm renders
 	grep -q 'GITLAB_BASE_URL: ""' "$$template_file"; \
 	test "$$(grep -c 'DB_MAX_IDLE_CONNS:' "$$template_file")" = 1; \
 	grep -q 'DB_MAX_IDLE_CONNS: "25"' "$$template_file"; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) -f $(HELM_CHART)/tests/extra-objects-values.yaml \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template | grep -q 'name: extra-test'; \
+	test "$$(helm template $(HELM_RELEASE) $(HELM_CHART) --set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template | grep -c 'name: extra-test')" = 0; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
 		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
 		--set-string backend.env.DB_MAX_IDLE_CONNS=10 > "$$template_file"; \
