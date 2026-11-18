@@ -83,6 +83,7 @@ All values with their types, defaults and descriptions are in the values schema 
 | `externalSecrets.enabled` | `false` | Create the backend Secret with the External Secrets Operator (for example from Azure Key Vault) |
 | `argoRollouts.enabled` | `false` | Argo Rollouts with a canary strategy instead of Deployments |
 | `branding.title`, `branding.logoUrl` | `""` | Your product name and logo in the UI |
+| `extraObjects` | `[]` | Extra manifests that the chart renders unchanged with the release, for example Helm hook Jobs |
 
 All values, with comments: [values.yaml](https://github.com/omattsson/k8s-stack-manager/blob/main/helm/k8s-stack-manager/values.yaml). Deployment details (security settings, External Secrets, what the chart deploys): [docs/deployment.md](https://github.com/omattsson/k8s-stack-manager/blob/main/docs/deployment.md).
 

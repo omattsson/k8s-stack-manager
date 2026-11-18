@@ -1,0 +1,7 @@
+extraObjects:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: extra-test
+    data:
+      key: value

@@ -23,7 +23,7 @@ The Helm chart is in `helm/k8s-stack-manager/`. `Chart.yaml` holds the chart ver
 helm/k8s-stack-manager/
   Chart.yaml                              # Chart metadata (version, appVersion; source of truth)
   values.yaml                             # All configurable values
-  tests/                                  # Values files for `make helm-test`: backend-extra, branding, exec, external-secrets, namespace-label, port-forward
+  tests/                                  # Values files for `make helm-test`: backend-extra, branding, exec, external-secrets, extra-objects, namespace-label, port-forward
   templates/_helpers.tpl                  # Reusable named templates
   templates/NOTES.txt                     # Post-install instructions
   templates/analysis-template.yaml        # Argo AnalysisTemplate for canary steps
@@ -40,6 +40,7 @@ helm/k8s-stack-manager/
     hooks-configmap.yaml                  # Hook subscriptions file (hooks.enabled)
     servicemonitor.yaml                   # Prometheus Operator scrape (metrics.serviceMonitor.enabled)
   templates/grafana-dashboard.yaml        # ConfigMap with dashboards/k8s-stack-manager.json for a Grafana dashboard sidecar (metrics.grafanaDashboard.enabled)
+  templates/extra-objects.yaml            # Each extraObjects entry, unchanged (toYaml, no tpl)
   dashboards/k8s-stack-manager.json       # Grafana dashboard of the backend metrics (API, auth, deploys, hooks, clusters, WebSocket, DB pool, runtime)
   templates/frontend/
     configmap.yaml                        # nginx.conf (SPA only)
@@ -103,6 +104,7 @@ Key values in `values.yaml`:
 - `backend.env.APP_PUBLIC_URL`: public https URL of the web UI for the links in notification channel cards. Default: `https://<ingress.host>` when `ingress.host` is set and the ingress has TLS; a set value wins.
 - `otel.enabled`, `metrics.enabled`, `metrics.serviceMonitor.enabled`, `metrics.grafanaDashboard.enabled`: observability
 - `hooks.enabled`, `hooks.subscriptions`, `hooks.actions`: outbound webhook subscriptions and custom actions (see `EXTENDING.md`)
+- `extraObjects`: extra manifests rendered unchanged with the release, for example Helm hook Jobs of the operator
 - `branding.title`, `branding.logoUrl`, `branding.faviconUrl`: set `APP_TITLE`, `APP_LOGO_URL`, `APP_FAVICON_URL` in the backend ConfigMap
 - `branding.files`, `branding.binaryFiles`: ConfigMap that the frontend nginx serves at `/branding/` (nosniff header, sandbox CSP, names `^[-._a-zA-Z0-9]+$`, at most 900 KiB in total)
 - `externalSecrets.enabled`, `externalSecrets.secretStore.*`: External Secrets Operator

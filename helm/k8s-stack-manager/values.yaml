@@ -845,3 +845,6 @@ metrics:
       grafana_dashboard: "1"
     # Grafana folder, for sidecars with folderAnnotation set.
     annotations: {}
+
+# Extra manifests to render with the release, for example Helm hook Jobs.
+extraObjects: []

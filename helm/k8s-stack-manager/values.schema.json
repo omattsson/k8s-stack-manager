@@ -1786,6 +1786,11 @@
           }
         }
       }
+    },
+    "extraObjects": {
+      "description": "Extra manifests to render with the release, for example Helm hook Jobs.",
+      "type": "array",
+      "default": []
     }
   }
 }
