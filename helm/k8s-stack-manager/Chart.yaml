@@ -2,8 +2,8 @@ apiVersion: v2
 name: k8s-stack-manager
 description: Self-service environments for multi-service Helm applications on your own Kubernetes clusters (web UI, API, MySQL)
 type: application
-version: 0.16.0
-appVersion: "0.17.0"
+version: 0.17.0
+appVersion: "0.18.0"
 keywords:
   - kubernetes
   - helm
@@ -28,21 +28,19 @@ annotations:
   artifacthub.io/category: integration-delivery
   artifacthub.io/changes: |
     - kind: added
-      description: The API checks chart values on definitions and templates when they are saved and returns 400 for values that Helm cannot parse. The Definition, Template Builder and Instantiate forms block the save.
+      description: The audit log records sign-in events (login, failed login with the reason, OIDC login, logout, refresh token reuse), the request context of each entry (client IP, request ID, trace ID, auth method, API key ID), the changed fields of an update and the entity name. Secret fields are redacted.
     - kind: added
-      description: The exec hints of the stack status and pods responses include exec_pods, the pod that stack exec picks for each hinted container.
+      description: The Audit Log page filters by username, links each entity and shows the context and the changes of an entry. The instance, definition and template pages have an Audit history section.
+    - kind: added
+      description: backend.audit.stdout (AUDIT_LOG_STDOUT) also writes each audit entry as one JSON line on stdout, for a SIEM. The metric audit.write_failed_total counts entries that the database did not store.
+    - kind: added
+      description: extraObjects renders extra manifests with the release, for example Helm hook Jobs.
+    - kind: changed
+      description: Database migration 68 adds six nullable columns and two indexes to audit_logs. Old rows keep NULL in the new columns.
     - kind: security
-      description: The backend and frontend images are rebuilt with the fixed Alpine packages (zlib, libexpat). The bundled MySQL image is pinned to mysql:8.4.13.
-    - kind: fixed
-      description: A stack values override that the deploy cannot parse is refused with 400, and the editor blocks the save. The stack pages show the API error of failed actions, and the stopped, stopping and cleaning status chips are clearer.
-    - kind: fixed
-      description: A partial deploy counts as finished on the stack list, and the Recent Stacks cards follow status changes and deletes without a page reload.
-    - kind: fixed
-      description: Notification links open an existing page.
+      description: The backend is built with Go 1.27.4 (GO-2026-6859 in net/http).
     - kind: changed
-      description: The UI meets the WCAG AA contrast ratio in the tested states, in light and dark mode, with adjusted colours in both modes. Cards are keyboard links with focus rings, pod health has icons, and screen readers get headings, landmarks and a live region for stack changes. The bulk toolbar counts selected stacks that a filter hides, and a filter without a match offers Clear filters.
-    - kind: changed
-      description: Dependency updates (Azure SDK azcore 1.24.0).
+      description: Dependency updates (golang.org/x/crypto 0.59.0, golang.org/x/oauth2 0.38.0, golang.org/x/sync 0.25.0, axios 1.21.1).
   artifacthub.io/license: MIT
   artifacthub.io/links: |
     - name: Documentation
@@ -53,9 +51,9 @@ annotations:
       url: https://github.com/omattsson/stackctl
   artifacthub.io/images: |
     - name: backend
-      image: ghcr.io/omattsson/k8s-stack-manager/backend:0.17.0
+      image: ghcr.io/omattsson/k8s-stack-manager/backend:0.18.0
     - name: frontend
-      image: ghcr.io/omattsson/k8s-stack-manager/frontend:0.17.0
+      image: ghcr.io/omattsson/k8s-stack-manager/frontend:0.18.0
     - name: mysql
       image: mysql:8.4.13
   artifacthub.io/screenshots: |
