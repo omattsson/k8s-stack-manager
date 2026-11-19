@@ -16,6 +16,9 @@ How it works: a **stack definition** is a collection of Helm charts with their c
 
 Release notes and upgrade notes: [Releases](https://github.com/omattsson/k8s-stack-manager/releases).
 
+[ksm-demo.webm](https://github.com/user-attachments/assets/0380d3f9-c90f-44d2-8cd5-758e25b12443)
+
+
 ## Getting Started
 
 ### Try it on your machine
