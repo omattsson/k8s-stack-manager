@@ -20,7 +20,7 @@ Release notes and upgrade notes: [Releases](https://github.com/omattsson/k8s-sta
 
 [ksm-demo.webm](https://github.com/user-attachments/assets/0380d3f9-c90f-44d2-8cd5-758e25b12443)
 
-## Getting Started
+## Getting started
 
 ### Try it on your machine
 
@@ -54,11 +54,11 @@ helm install stack-manager k8s-stack-manager/k8s-stack-manager \
 
 Read the [Getting Started guide](docs/getting-started.md) for the next steps. It shows how to configure stackctl, register a cluster, import the [starter definitions](examples/starter-templates/), and deploy your first stack.
 
-Note: If you do not need the web UI, go to the [Headless / API-only deployment](docs/deployment.md#headless--api-only-deployment) section. stackctl drives every workflow.
+If you do not need the web UI, see [Headless / API-only deployment](docs/deployment.md#headless--api-only-deployment). stackctl drives every workflow.
 
 ## Features
 
-### Dashboard: Stack Instance Management
+### Dashboard: stack instance management
 
 Use the dashboard to view, search, and manage all your stack instances. You can:
 
@@ -84,7 +84,7 @@ The stack page shows these commands, ready to copy. It lists exec commands only 
 
 ![Access URLs with port-forward and exec commands](docs/screenshots/access-urls.png)
 
-### Template Gallery
+### Template gallery
 
 Browse reusable stack templates. Filter them by category: Web, API, Data, Infrastructure, or Other. Each template has a description and a version.
 
@@ -93,7 +93,7 @@ Browse reusable stack templates. Filter them by category: Web, API, Data, Infras
 
 ![Template Gallery](docs/screenshots/templates.png)
 
-### Stack Definitions
+### Stack definitions
 
 A stack definition describes a multi-chart application. It has Helm chart configurations, a default branch, and value templates. You can import and export a definition as a JSON bundle.
 
@@ -101,13 +101,13 @@ Users with the `user` role get definitions from templates. Users with the `devop
 
 ![Stack Definitions](docs/screenshots/stack-definitions.png)
 
-### Analytics Dashboard
+### Analytics dashboard
 
 The analytics page shows the number of templates, definitions, instances, running instances, deployments, and users. A table shows the deployments and the success rate of each template. Users with the `devops` or `admin` role can open the page. Only the `admin` role gets the per-user statistics.
 
 ![Analytics](docs/screenshots/analytics.png)
 
-### Audit Log
+### Audit log
 
 The audit log records every change that a user makes through the API: creates, updates, deletes, and operations such as deploy, stop, or role change. Filter the log by user ID, entity type, entity ID, action, and date range.
 
@@ -115,17 +115,17 @@ Only `devops` and `admin` users can read the audit log. Only `admin` users can e
 
 ![Audit Log](docs/screenshots/audit-log.png)
 
-### User Profile and API Keys
+### User profile and API keys
 
 On the profile page, you manage your account, create API keys for CI/CD automation, and set notification preferences for each event type.
 
 ![Profile](docs/screenshots/profile.png)
 
-### Additional Features
+### Additional features
 
 - **Multi-cluster support.** Register more than one Kubernetes cluster. Kubeconfig data is encrypted at rest with AES-GCM (Advanced Encryption Standard, Galois/Counter Mode). A cluster can also use the service account of the backend (`use_in_cluster`). The application monitors the health and the resource use of each cluster.
 - **Git provider integration.** The application lists branches from Azure DevOps, GitHub, and GitLab repositories (`gitlab.com`, or the origin of `GITLAB_BASE_URL`). You can set a branch for each chart.
-- **Helm values deep merge.** Chart defaults merge with instance overrides. The application replaces template variables (`{{.Branch}}`, `{{.Namespace}}`, `{{.InstanceName}}`, `{{.StackName}}`, `{{.Owner}}`) in the values.
+- **Helm values deep merge.** Chart defaults merge with instance overrides. The application replaces template variables (`{{.Branch}}`, `{{.ImageTag}}`, `{{.Namespace}}`, `{{.InstanceName}}`, `{{.StackName}}`, `{{.Owner}}`) in the values.
 - **Deploy preview and rollback.** See the merged values before you deploy. Roll back one revision, or roll back to the values of an earlier successful deploy.
 - **Resource quotas.** Set a ResourceQuota and a LimitRange for the stack namespaces of a cluster. You can set an override for one instance.
 - **Cleanup policies.** Run cron-based actions (stop, clean, delete) on instances that match a condition.
@@ -146,9 +146,8 @@ There are two mechanisms:
 
 - **Event hooks.** The application sends HTTP POST requests to subscribers on lifecycle events (`pre-deploy`, `post-instance-create`, and others). A subscriber with `failure_policy: fail` can stop an operation, for example to enforce a policy.
 - **Actions.** `POST /api/v1/stack-instances/:id/actions/:name` sends a request to a subscriber that you register. The application returns the answer of the subscriber to the caller. stackctl can show actions as subcommands through [plugin discovery](https://github.com/omattsson/stackctl/blob/main/EXTENDING.md).
-- **Per-team extensions.** `applies_to` limits an action or an event hook to some templates, template categories, definitions or clusters, so each team's stacks get their own extensions (see [EXTENDING.md](EXTENDING.md#per-team-hooks-and-actions)).
 
-Both mechanisms use plain HTTP with HMAC (hash-based message authentication code) signing. See the examples in Python ([backend/examples/webhook-handler-python/](backend/examples/webhook-handler-python/)) and in Go ([backend/examples/webhook-handler/](backend/examples/webhook-handler/)).
+Both mechanisms use plain HTTP with HMAC (hash-based message authentication code) signing. `applies_to` limits an action or an event hook to some templates, template categories, definitions or clusters, so each team's stacks get their own extensions (see [EXTENDING.md](EXTENDING.md#per-team-hooks-and-actions)). See the examples in Python ([backend/examples/webhook-handler-python/](backend/examples/webhook-handler-python/)) and in Go ([backend/examples/webhook-handler/](backend/examples/webhook-handler/)).
 
 Read [EXTENDING.md](EXTENDING.md) for the tutorial, the event reference, the action contract, and the security notes.
 

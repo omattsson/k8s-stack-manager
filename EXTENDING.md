@@ -161,7 +161,7 @@ A template function needs a code change. The default build registers none. Regis
 | Event | Fires when | Semantics |
 |---|---|---|
 | `pre-deploy` | Just before a deployment starts, after the cluster is resolved | Synchronous. `failure_policy: fail` aborts. A stop during the call closes the request and cancels the deploy. |
-| `post-deploy` | After a deployment completes **successfully** | Fire-and-forget. With `blocking: true`, the deploy waits for the subscriber (see [Blocking post-deploy hooks](#blocking-post-deploy-hooks)). |
+| `post-deploy` | After a deployment completes **successfully**, or partly (some charts deployed) | Fire-and-forget. With `blocking: true`, the deploy waits for the subscriber (see [Blocking post-deploy hooks](#blocking-post-deploy-hooks)). |
 | `deploy-finalized` | After a deployment ends, successfully **or not** (after the blocking post-deploy hooks) | Fire-and-forget. |
 | `deploy-timeout` | After a deployment failed on a Helm or deploy budget timeout | Fire-and-forget. |
 | `stop-completed` | After a stop ends (`instance.status` is `stopped` or `error`) | Fire-and-forget. |
@@ -615,7 +615,7 @@ Every dispatch and every action invocation increments counters and histograms in
 | `hook.action_invocations_total` | Counter | `hook.action`, `hook.outcome` | One for each `/actions/{name}` call |
 | `hook.action_invocation_duration` | Histogram (seconds) | `hook.action` | Wall-clock time for the action POST |
 
-`hook.outcome` is a small, stable set, so a dashboard can list it: `success`, `denied`, `http_error`, `transport_error`, `timeout`, `unknown_action`, `marshal_error`.
+`hook.outcome` is a small, stable set, so a dashboard can list it: `success`, `denied`, `http_error`, `transport_error`, `timeout`, `unknown_action`, `scope_unknown`, `marshal_error`. An action invoked for an instance outside its `applies_to` counts as `unknown_action`. `scope_unknown` counts invokes whose scope could not be checked.
 
 **Prometheus queries that you probably want:**
 
@@ -666,7 +666,7 @@ Use `request_id` to correlate across systems. It is in the metric and span attri
 
 ---
 
-## Real-world examples
+## Example extensions
 
 ### Database refresh
 
@@ -691,7 +691,7 @@ A small `pre-deploy` subscriber returns `{"allowed": false}` between 17:00 and 0
 
 ### Slack notification: surface failures to an ops channel
 
-A `deploy-finalized` subscriber posts to Slack when the deploy failed. It returns at once on the success path. Register it with a short timeout, so a short Slack outage does not affect dispatch. (`post-deploy` fires only after a successful deploy.)
+A `deploy-finalized` subscriber posts to Slack when the deploy failed. It returns at once on the success path. Register it with a short timeout, so a short Slack outage does not affect dispatch. (`post-deploy` fires only after a successful or partial deploy.)
 
 ### CI trigger gate: build images before deploy
 

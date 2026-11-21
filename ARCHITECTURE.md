@@ -4,7 +4,7 @@ K8s Stack Manager is a web application that manages multi-service Helm stacks on
 
 See [WIKI.md](WIKI.md) for the concepts and rules, [EXTENDING.md](EXTENDING.md) for the hooks and actions extension system, and [README.md](README.md) for the setup and screenshots.
 
-## System Overview
+## System overview
 
 ```
 +--------------------------------------------------------------+
@@ -22,7 +22,7 @@ See [WIKI.md](WIKI.md) for the concepts and rules, [EXTENDING.md](EXTENDING.md) 
 
 ADO is Azure DevOps. GH is GitHub. GL is GitLab. PKCE is Proof Key for Code Exchange.
 
-## Package Structure
+## Package structure
 
 ```
 backend/internal/
@@ -31,10 +31,12 @@ backend/internal/
 |   |-- middleware/   # auth, combined auth (JWT + API key), audit, role, security headers,
 |   |                 # HTTP and auth metrics, OTel span enrichment, WebSocket token redaction
 |   `-- routes/       # routes.go: all route registration and the middleware order
+|-- auditlog/         # Audit log writer (optional JSON line on stdout) and change-set helpers
 |-- auth/             # OIDC provider (PKCE); OIDC and CLI state are stored in sessionstore
 |-- cache/            # Generic in-memory TTL cache
 |-- cluster/          # ClusterRegistry, health poller, quota monitor, secret refresher, access reconciler
 |-- config/           # Configuration loading from environment variables
+|-- ctxutil/          # Context helpers shared by the API packages
 |-- database/         # GORM repositories (one for each model), migrations
 |-- deployer/         # Helm deploy, undeploy, rollback manager; expiry stopper; cleanup executor
 |-- gitprovider/      # Azure DevOps, GitHub and GitLab branch listing, URL detection, cache
@@ -45,7 +47,9 @@ backend/internal/
 |-- leader/           # Leader election (Kubernetes Lease) and leader worker group
 |-- models/           # GORM model structs and repository interfaces
 |-- notifier/         # In-app notifications and outbound notification channels
+|-- podstream/        # Port-forward and exec WebSocket sessions: limits, registry, copy pumps, close codes
 |-- replica/          # Process identity and heartbeat (replica_heartbeats)
+|-- retention/        # Log retention worker: deletes old rows of the log tables
 |-- scheduler/        # Cleanup policy scheduler (cron)
 |-- sessionstore/     # Token blocklist and OIDC state (MySQL or memory)
 |-- telemetry/        # OpenTelemetry setup, database pool metrics, business metrics
@@ -53,7 +57,7 @@ backend/internal/
 `-- websocket/        # Hub, clients, message types, fan-out between replicas
 ```
 
-## Data Model
+## Data model
 
 The core entity relationships:
 
@@ -72,9 +76,9 @@ StackInstance --1:N--> ValueOverride (per chart)
       `--> Cluster (deployment target)
 ```
 
-The supporting models are: `User`, `AuditLog`, `DeploymentLog`, `ReplicaHeartbeat`, `WSEvent`, `UserFavorite`, `InstanceFollower`, `Notification`, `NotificationPreference`, `NotificationChannel` (with `NotificationChannelSubscription` and `NotificationDeliveryLog`), `RefreshToken`, `APIKey`, `CleanupPolicy`, `ResourceQuotaConfig`, `InstanceQuotaOverride`, `SharedValues`, `TemplateVersion`, and `TemplateSnapshot`.
+The supporting models are: `User`, `AuditLog`, `DeploymentLog`, `ReplicaHeartbeat`, `WSEvent`, `ActionRun`, `UserFavorite`, `InstanceFollower`, `Notification`, `NotificationPreference`, `NotificationChannel` (with `NotificationChannelSubscription` and `NotificationDeliveryLog`), `RefreshToken`, `APIKey`, `CleanupPolicy`, `ResourceQuotaConfig`, `InstanceQuotaOverride`, `SharedValues`, `TemplateVersion`, and `TemplateSnapshot`.
 
-## Values Merge Precedence
+## Values merge precedence
 
 The order from lowest to highest priority (`internal/helm/values_generator.go`):
 
@@ -83,9 +87,9 @@ The order from lowest to highest priority (`internal/helm/values_generator.go`):
 3. Instance value overrides (per chart).
 4. **Template locked values.** The application applies them last. Nothing can override them.
 
-`ValuesGenerator` substitutes the template variables (`{{.Branch}}`, `{{.Namespace}}`, `{{.InstanceName}}`, `{{.StackName}}`, `{{.Owner}}`) each time it produces merged values: deploy, preview, and export.
+`ValuesGenerator` substitutes the template variables (`{{.Branch}}`, `{{.ImageTag}}`, `{{.Namespace}}`, `{{.InstanceName}}`, `{{.StackName}}`, `{{.Owner}}`) each time it produces merged values: deploy, preview, and export.
 
-## Multi-Cluster
+## Multi-cluster
 
 `ClusterRegistry` in `internal/cluster/` manages the Kubernetes and Helm clients of each cluster. It creates a client on first use. These background services run for the clusters:
 
@@ -96,7 +100,7 @@ The order from lowest to highest priority (`internal/helm/values_generator.go`):
 
 The application encrypts kubeconfig data at rest with AES-256-GCM. The key comes from `KUBECONFIG_ENCRYPTION_KEY`. Without this key, the backend rejects kubeconfig data. The key also encrypts registry passwords, notification channel secrets and notification channel webhook URLs. Without the key, the backend refuses a channel secret and stores webhook URLs in plaintext.
 
-## Deployment Pipeline
+## Deployment pipeline
 
 1. The user triggers a deploy: `POST /api/v1/stack-instances/:id/deploy`. The API checks that the caller is the owner, `devops`, or `admin`.
 2. The `pre-deploy` hook fires. A subscriber can stop the deploy with `failure_policy: fail`.
@@ -142,7 +146,7 @@ Helm runs with the identity of the backend. With `backend.rbac.scope: namespace`
 
 `ALLOWED_CHART_REPOS` limits the chart sources. The backend checks it when a chart config is saved, at deploy time, and at rollback time. See [WIKI.md](WIKI.md#chart-sources) and [WIKI.md](WIKI.md#backend-rights-on-the-cluster).
 
-## Replica Model
+## Replica model
 
 The backend can run with more than one replica. Every replica serves the HTTP API, the WebSocket hub, and the WebSocket revalidation. Every replica also runs the deploy, stop, clean, and rollback goroutines of the requests that it handles. Only one replica, the leader, runs the background workers:
 
@@ -158,6 +162,7 @@ The backend can run with more than one replica. Every replica serves the HTTP AP
 | WebSocket event cleanup (`ws_events`) | leader |
 | Stack access reconcile | leader |
 | Interrupted operation recovery, heartbeat cleanup | leader |
+| Log retention (`log-retention`, only when a `*_RETENTION_DAYS` is above 0) | leader |
 | HTTP API, WebSocket hub, revalidation, and fan-out poller | every replica |
 | Replica heartbeat (`replica_heartbeats`) | every replica |
 
@@ -244,7 +249,6 @@ A replica can stop without a clean shutdown (SIGKILL, OOM kill, node loss). It t
 `telemetry.Init` sets up OTLP (OpenTelemetry Protocol) traces, metrics and logs (`OTEL_*`, `METRICS_ENABLED`).
 
 - With `OTEL_ENABLED`, the backend sends its `slog` records to the collector as OTel logs, with the trace and span ID of the request when one is known. The local output then uses the slog text format (`time=... level=... msg=...`) on stderr. `LOG_LEVEL` applies to both.
-
 - The HTTP metrics middleware is active when `OTEL_ENABLED` or `METRICS_ENABLED` is true. The tracing middleware and the span enrichment are active only when `OTEL_ENABLED` is true.
 - HTTP metrics and auth outcome counters come from the middleware. Database pool metrics and business KPIs come from `telemetry`.
 - `RedactWSToken` removes the WebSocket `?token=` query parameter before logging and tracing.
@@ -253,11 +257,11 @@ A replica can stop without a clean shutdown (SIGKILL, OOM kill, node loss). It t
 - A Grafana dashboard for the backend metrics is in `helm/k8s-stack-manager/dashboards/k8s-stack-manager.json`. Import it in Grafana, or set `metrics.grafanaDashboard.enabled` so that a Grafana dashboard sidecar loads it from a ConfigMap. It has a data source variable and a job variable. It needs the Prometheus scrape of `/metrics` (`metrics.enabled` and a ServiceMonitor or scrape job). `make dev-otel` sets `METRICS_ENABLED` and scrapes the backend, and its Grafana loads the dashboard.
 - Local development: `make dev-otel` starts a collector, Tempo, Prometheus (`:9090`), and Grafana (`:3001`).
 
-## Outbound Notifications
+## Outbound notifications
 
 `devops` and `admin` users register webhook notification channels (`/api/v1/admin/notification-channels`, guarded by `RequireDevOps`) with per-event subscriptions. `notifier` dispatches lifecycle events to them and records `NotificationDeliveryLog` rows. A test-send endpoint checks a channel. In-app notifications stay for each user.
 
-## Design Decisions
+## Design decisions
 
 | # | Decision | Reason |
 |---|----------|-----------|

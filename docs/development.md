@@ -88,10 +88,12 @@ backend/                        Go API server
   api/                          Entry point (main.go) and bootstrap
   internal/
     api/                        Handlers, middleware, routes
+    auditlog/                   Audit entry fields and change diffs
     auth/                       OIDC provider (PKCE)
     cache/                      In-memory TTL cache
     cluster/                    Multi-cluster registry, health poller, quota and secret monitors
     config/                     Environment-based configuration
+    ctxutil/                    Detached contexts for writes that outlive a request
     database/                   Repositories and migrations
     deployer/                   Helm CLI wrapper for deploy, stop, clean, rollback
     gitprovider/                Azure DevOps, GitHub and GitLab integration
@@ -102,7 +104,9 @@ backend/                        Go API server
     leader/                     Leader election (Kubernetes Lease)
     models/                     Domain models and interfaces
     notifier/                   In-app notifications and notification channels
+    podstream/                  Port-forward and exec sessions
     replica/                    Replica identity and heartbeat
+    retention/                  Log retention worker
     scheduler/                  Cron-based cleanup policy execution
     sessionstore/               Token blocklist and OIDC state
     telemetry/                  OpenTelemetry setup and metrics
