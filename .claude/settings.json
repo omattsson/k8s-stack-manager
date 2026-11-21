@@ -43,5 +43,31 @@
       "Bash(make helm-upgrade:*)",
       "Bash(make helm-uninstall:*)"
     ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=$(jq -r '.tool_input.file_path // empty'); case \"$f\" in */backend/docs/swagger.json|*/backend/docs/swagger.yaml|*/backend/docs/docs.go) echo 'Generated file: edit the swag annotations and run make docs.' >&2; exit 2;; */helm/*/values.schema.json) echo 'Generated file: edit values.yaml and run make helm-schema.' >&2; exit 2;; esac",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=$(jq -r '.tool_input.file_path // empty'); case \"$f\" in *.go) gofmt -w \"$f\";; */frontend/src/*.ts|*/frontend/src/*.tsx) (cd \"$CLAUDE_PROJECT_DIR/frontend\" && npx --no-install eslint --fix \"$f\" >/dev/null 2>&1) || true;; esac",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
   }
 }
