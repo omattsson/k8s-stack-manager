@@ -13,7 +13,7 @@ Terms in this document:
 
 ## Concepts
 
-### Stack Template
+### Stack template
 
 A template is a reusable blueprint. A user with the `devops` role creates it. A template has a set of Helm chart configurations with default values. A user can **publish** a template for other users. A template author can **lock** the value of a chart, so that nobody can change it.
 
@@ -23,7 +23,7 @@ A template is a reusable blueprint. A user with the `devops` role creates it. A 
 - Without a name, the clone is called `<source name> (Copy)`.
 - Template names do not have to be unique.
 
-### Template Life Cycle (Draft and Release)
+### Template life cycle (draft and release)
 
 A template has a **working copy** and a **version history**.
 
@@ -54,7 +54,7 @@ A template has a **working copy** and a **version history**.
   - Duplicate versions from older releases stay in the history.
 - **Value comparison.** Publish, `has_unpublished_changes`, and the diffs ignore trailing spaces and line breaks in values.
 
-### Stack Definition
+### Stack definition
 
 A definition is a concrete collection of Helm chart configurations. You create it by instantiating a template, or from scratch. It owns the chart configs (chart name, repository, version, default values).
 
@@ -117,7 +117,7 @@ Without the policy, the cluster-wide RoleBinding right could give the backend ac
 
 `backend.rbac.scope: cluster` keeps the rules of chart 0.6 and earlier. The backend has rights on namespaced objects in all namespaces. Use it only when stack charts need cluster-scoped objects.
 
-### Stack Instance
+### Stack instance
 
 An instance is a developer's working copy of a definition. Each instance has:
 
@@ -152,7 +152,7 @@ Both list endpoints are paged (`page` and `pageSize`; default 25, maximum 100). 
 
 **Access URLs.** The instance status (`GET /stack-instances/:id/status`) lists the URLs of all Ingresses in the namespace. A chart marks the main entry point of the stack (for example the web application, not a database or mail tool) with the Ingress annotation `k8s-stack-manager.io/primary-url: "true"`. Primary Ingresses come first in `ingresses` (field `primary: true`), and the stack list shows the first URL. Without the annotation, the order is the Ingress name order. The web UI also lists a `kubectl port-forward` command for each ClusterIP service, only for the roles `devops` and `admin`. With `?exec_hints=true` the status and `/pods` also list, for a caller who may exec, the containers that `stackctl stack exec` accepts for each chart and the pod it picks for each one (`exec_containers`, `exec_default_container`, `exec_pods`; `exec_hints: true` marks that the server checked).
 
-### Stack Instance Lifecycle
+### Stack instance lifecycle
 
 **Names.** An instance name must be a DNS label (RFC 1123). It has lowercase letters `a-z`, digits `0-9`, and `-`. It must start and end with a letter or a digit. The maximum length is 50 characters.
 
@@ -353,7 +353,7 @@ Use `stopped_days:N` for "stopped for N days", and `cleaned_days:N` for "cleaned
 
 **Cleanup policy update.** `PUT /admin/cleanup-policies/:id` is a partial update. Only the fields in the body change, for example `{"enabled": false}` or `{"dry_run": true}`. The API validates the merged policy, and the scheduler reloads. The Enabled and Dry Run switches in the policy table use this call.
 
-### Custom Actions
+### Custom actions
 
 An operator can register custom actions on the server, for example "refresh-db" or "load seed data" (see [EXTENDING.md](EXTENDING.md)). A custom action runs on one stack instance.
 
@@ -424,13 +424,13 @@ Exec runs one command in a container of a stack, through the backend, and stream
 - The backend refuses a namespace without the label `managed-by=k8s-stack-manager` and the namespace of the backend.
 - The audit entries `exec` (start) and `exec_end` (end) hold the chart, container, pod and, at the start, the command (shell-quoted, cut at 1000 characters). The command arguments are not redacted: do not put a secret in an argument. The entries never hold the output or the environment. The start entry is written before the command runs; if it fails, the command does not run.
 
-### Value Override
+### Value override
 
-A value override is a per-chart configuration override on a stack instance. The application deep-merges it with the chart defaults when it exports the Helm values. It substitutes the template variables (`{{.Branch}}`, `{{.Namespace}}`, `{{.InstanceName}}`, `{{.StackName}}`, `{{.Owner}}`) at export time.
+A value override is a per-chart configuration override on a stack instance. The application deep-merges it with the chart defaults when it exports the Helm values. It substitutes the template variables (`{{.Branch}}`, `{{.ImageTag}}`, `{{.Namespace}}`, `{{.InstanceName}}`, `{{.StackName}}`, `{{.Owner}}`) at export time.
 
 The value must be a YAML map that the deploy can parse. The API returns 400 otherwise, and the stack page does not save it. Put a template variable at the start of a value in quotes: write `tag: "{{.Branch}}"`, not `tag: {{.Branch}}`. `image: repo:{{.Branch}}` needs no quotes. A value that was stored before this check still loads, so you can fix it.
 
-### Audit Log
+### Audit log
 
 The application records every mutating API call (POST, PUT, DELETE) with the user, action, entity type, entity ID, and time.
 
@@ -565,7 +565,7 @@ A cluster can store **container registry credentials** (`registry_url`, `registr
 - A background service refreshes the secret every 4 hours, for short-lived tokens (for example registry tokens).
 - The backend encrypts the registry password at rest with the same AES-GCM scheme as the kubeconfig data. This needs `KUBECONFIG_ENCRYPTION_KEY`. Without the key, the backend rejects a registry password (400). Use the key, or leave the password empty. If you set the key later, set the registry password of existing clusters again. The backend ignores a stored password that it cannot decrypt. To fix such a cluster, set the password again. Without a key, remove the registry (empty registry URL and username) instead.
 
-### Orphaned Namespaces
+### Orphaned namespaces
 
 `/admin/orphaned-namespaces` (`admin`) lists `stack-*` namespaces without an instance. It shows pod, deployment, and service counts and Helm releases with `?details=true`.
 
@@ -629,12 +629,12 @@ Edit role (local users only) opens a dialog with a role select (`user`, `devops`
 - An `admin` cannot change the own role (403). The button on the own row is disabled.
 - The last enabled `admin` cannot lose the `admin` role, and the caller must still be an enabled `admin` (403). See the rules above.
 - An unchanged role is a no-op: 200 with `"changed": false`. The sessions of the user stay valid, and no `change_role` audit entry is written.
-- A change signs the user out (see [Revoking a User](#revoking-a-user)): it revokes the access tokens and refresh tokens of the user and closes the open WebSockets (1008). The next request needs a new login, which gives a token with the new role. API keys stay valid and use the new role at once, because the API-key auth reads the role from the database on each request.
+- A change signs the user out (see [Revoking a user](#revoking-a-user)): it revokes the access tokens and refresh tokens of the user and closes the open WebSockets (1008). The next request needs a new login, which gives a token with the new role. API keys stay valid and use the new role at once, because the API-key auth reads the role from the database on each request.
 - The change writes an audit entry `change_role | user | <user id>` with `old_role` and `new_role` in the details.
 
 ## Architecture
 
-### Data Flow
+### Data flow
 
 ```
 Template -> (instantiate) -> Definition + ChartConfigs -> (create instance) -> Instance + ValueOverrides
@@ -672,7 +672,7 @@ Template -> (instantiate) -> Definition + ChartConfigs -> (create instance) -> I
 | `OIDC_LOCAL_AUTH` | `false` (Helm chart and Docker Compose: `true`) | Allow password login for all users. With `false`, only service accounts can use a password. The initial admin user is a service account. |
 | `OIDC_STATE_TTL` | `5m` | Time that a started SSO login stays valid. |
 
-### Stack Instance Permissions
+### Stack instance permissions
 
 | Operation | Owner | `admin` | `devops` | Other `user` |
 |---|---|---|---|---|
@@ -733,7 +733,7 @@ Exceptions to the session limits:
 - **WebSocket** traffic (`/ws`) does not count as activity for the idle limit. A tab that only receives live updates idles out after `SESSION_IDLE_TIMEOUT`. The server closes a socket when its access token expires. The web UI reconnects with the current token.
 - **Lost refresh response.** If the server rotates the refresh token but the browser never gets the response (network drop, client timeout), the browser keeps the used cookie. A retry within `REFRESH_REUSE_GRACE` still works, but sets no new cookie. The next refresh after the grace window counts as a replay and ends the session. The user must log in again. This fails safe by design.
 
-### Revoking a User
+### Revoking a user
 
 | Action | Access tokens issued before | Refresh tokens | API keys | Open WebSocket connections |
 |---|---|---|---|---|
@@ -770,7 +770,7 @@ WebSocket connections (`/ws`):
 - After `/auth/logout-all`, the other sessions of the user keep a valid access token until it expires. Their sockets can reconnect until then.
 - With more than one backend replica and WebSocket fan-out on (`WS_FANOUT_ENABLED=true`, the Helm default), a revoke closes the sockets on all replicas within about half a second. The replica that handles the revoke request closes its own sockets at once. Without fan-out, the other replicas close them at the next check, within about one minute, or at token expiry if that is earlier. The check stays on as a fallback in both cases. It also covers long-lived tokens (`JWT_EXPIRATION`, for example the CLI token and the mode without refresh tokens).
 
-### Multi-Cluster
+### Multi-cluster
 
 - You register clusters through the API with a kubeconfig path or kubeconfig data (encrypted at rest with AES-GCM), or with the in-cluster configuration.
 - `ClusterRegistry` manages the Kubernetes and Helm clients of each cluster.
@@ -779,7 +779,7 @@ WebSocket connections (`/ws`):
 - The `deployer` package routes deploy, undeploy, and status operations through the registry to the correct cluster.
 - Per-cluster container registry credentials enable automatic image pull secret provisioning. A `SecretRefresher` runs every 4 hours to keep tokens current.
 
-### Backend Replicas
+### Backend replicas
 
 - Every backend replica serves the API and the WebSocket clients.
 - Only one replica, the leader, runs the background jobs: TTL reaper, expiry warning, cleanup policies, quota and secret warnings, pull secret refresh, cluster health checks, the k8s status watcher, and the stack-access reconcile. So each job runs once, also with 2 or more replicas.
@@ -795,7 +795,7 @@ WebSocket connections (`/ws`):
 - An in-app notification goes only to the sockets of the notified user.
 - Port-forward and exec limits are per replica, and each replica closes its own tunnels and exec sessions on shutdown (1001).
 
-### Git Integration
+### Git integration
 
 - The application detects the provider from the exact host of the repository URL. `dev.azure.com` or `*.visualstudio.com` gives Azure DevOps. `github.com` gives GitHub. `gitlab.com`, or the origin of `GITLAB_BASE_URL`, gives GitLab. With a custom origin, `gitlab.com` URLs are not supported. Any other URL is not supported.
 - Branch listing uses an in-memory cache (5-minute TTL).
@@ -806,10 +806,10 @@ WebSocket connections (`/ws`):
 - `GITLAB_BASE_URL` sets a custom GitLab origin: an absolute HTTP(S) origin with a host name and an optional port. Credentials, query strings, fragments, and paths (for example `/api/v4`) are not accepted. The provider adds `/api/v4`.
 - A known provider without credentials gives HTTP 503. A URL that is not valid gives HTTP 400.
 
-### Helm Values
+### Helm values
 
 - The deep merge order, lowest first: cluster shared values (by priority, then name in byte order, then ID), chart defaults, instance overrides, template locked values. A locked value always wins.
-- Template variable substitution: `{{.Branch}}`, `{{.Namespace}}`, `{{.InstanceName}}`, `{{.StackName}}`, `{{.Owner}}`.
+- Template variable substitution: `{{.Branch}}`, `{{.ImageTag}}`, `{{.Namespace}}`, `{{.InstanceName}}`, `{{.StackName}}`, `{{.Owner}}`.
 - The same merge feeds deploy, deploy preview, bulk deploy, quick deploy, export, and compare.
 - Export: `GET /stack-instances/:id/values` (ZIP, one `values.yaml` for each chart) or `GET /stack-instances/:id/values/:chartId` (YAML).
 
@@ -861,7 +861,7 @@ make test-backend-all # Backend unit and integration tests (starts MySQL)
 make test-e2e         # End-to-end tests with Playwright
 ```
 
-### Adding a New API Resource
+### Adding a new API resource
 
 See `.github/instructions/api-extension.instructions.md` for the step-by-step guide.
 
@@ -872,4 +872,4 @@ See `.github/instructions/api-extension.instructions.md` for the step-by-step gu
 - **Git provider errors.** Check that `AZURE_DEVOPS_PAT` (or `AZURE_DEVOPS_AUTH=workload-identity` with the `AZURE_*` variables), `GITHUB_TOKEN`, or `GITLAB_TOKEN` is correct. An empty token is valid. The provider is then not available (HTTP 503), except GitHub: public GitHub repositories work without a token. With a GitHub token, the repository must be in `GITHUB_ALLOWED_REPOSITORIES`, or the request gives HTTP 403. For a self-hosted GitLab, set `GITLAB_BASE_URL` in `backend.env`, not in a Secret.
 - **Cluster connection errors.** Check that the kubeconfig path or data is valid. Use the "Test Connection" button on the Clusters admin page. If `KUBECONFIG_ENCRYPTION_KEY` is set, the backend encrypts all kubeconfig data, registry passwords, channel secrets and channel webhook URLs at rest. A different key makes existing encrypted data unreadable.
 - **A chart is rejected with "chart source not allowed".** The chart is not in a repository of `ALLOWED_CHART_REPOS`. Add the repository to the list, or change the chart config.
-- **The UI cannot reach the API behind a port-forward.** The frontend pod does not proxy the API. Open the UI through the ingress.
+- **The UI cannot reach the API behind a port-forward.** By default the frontend pod does not proxy the API. Open the UI through the ingress, or set `frontend.apiProxy.enabled=true` (see [Without an ingress](helm/k8s-stack-manager/README.md#without-an-ingress)).

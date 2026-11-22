@@ -1,7 +1,7 @@
 # Extensibility reference: Webhooks and Actions
 
 > **Note:** To get started, read [EXTENDING.md](../../EXTENDING.md) in the
-> repository root. It has a 10-minute tutorial, real-world recipes and
+> repository root. It has a 10-minute tutorial, example extensions and
 > troubleshooting. This file is the authoritative reference for schemas and
 > fields. Use it when you implement a subscriber and need exact values.
 
@@ -19,8 +19,9 @@ k8s-stack-manager has two integration points for third-party behavior:
 Neither mechanism needs a recompile or a fork. Both use plain HTTP, so you can
 write a handler in any language.
 
-The example [../examples/webhook-handler](../examples/webhook-handler/) is a
-minimal Go starting point.
+The examples [../examples/webhook-handler](../examples/webhook-handler/) (Go) and
+[../examples/webhook-handler-python](../examples/webhook-handler-python/) (Python)
+are minimal starting points.
 
 ---
 

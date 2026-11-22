@@ -70,9 +70,9 @@ Example: a backend on port 18081 with a MySQL server on port 3307:
 DB_PORT=3307 make loadtest-backend LOADTEST_MYSQL=external LOADTEST_PORT=18081
 ```
 
-## Backend Load Tests (k6)
+## Backend load tests (k6)
 
-### API Load Test
+### API load test
 
 The test calls the main API routes: authentication, CRUD workflows, dashboard simulation, batch requests, analytics, nested resources, and the requests of the stack page. `setup()` signs in once as admin and creates an API key. All scenarios use that key. So the test does not load bcrypt on each iteration.
 
@@ -127,7 +127,7 @@ Notes:
 - `stack_page_duration` (each request of the stack page) p(95) < 400ms
 - `stack_page_load` (all three steps of one page load) p(95) < 1000ms
 
-### WebSocket Load Test
+### WebSocket load test
 
 The test opens many concurrent WebSocket connections. `setup()` signs in once. All VUs use the same JWT for the WebSocket upgrade.
 
@@ -142,7 +142,7 @@ The load ramps from 0 to 25 VUs (15s), 50 VUs (1m), and 100 VUs (30s), holds 100
 - `ws_errors` rate < 10%
 - `ws_connect_duration` p(95) < 1000ms
 
-### Stress and Optimization Tests
+### Stress and optimization tests
 
 These scenarios target specific backend bottlenecks.
 
@@ -211,7 +211,7 @@ The Makefile starts the backend with `RATE_LIMIT=1000000`. So the `rate-limit` s
 - `concurrent_users`: gauge of the active VUs (use it to compare with the response time)
 - `otel_overhead_duration`: latency trend for the OpenTelemetry comparison
 
-### Environment Variables (k6)
+### Environment variables (k6)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -225,7 +225,7 @@ The Makefile starts the backend with `RATE_LIMIT=1000000`. So the `rate-limit` s
 
 The `make` targets start the backend with `ADMIN_USERNAME=admin` and `ADMIN_PASSWORD=admin` (unless your shell sets them).
 
-## Many Users with API Keys (k6-users.js)
+## Many users with API keys (k6-users.js)
 
 `loadtest/backend/k6-users.js` simulates many users. `setup()` creates the users and gives each user an API key. The virtual users then call the API with `X-API-Key`. Each scenario has its own users, so the scenarios do not share a user.
 
@@ -393,7 +393,7 @@ In the commands below, `P` is `loadtest/results/<run>/profiles/<cap>`.
 6. **MySQL** (`mysql-digests.md`). A statement with a high total time and a high count is the first to tune. Statements with `no index` above 0 need an index. A high `rows examined` to `rows sent` ratio shows a scan. In `mysql-status.tsv`, a high change of `Innodb_row_lock_waits` or `Innodb_row_lock_time` shows lock contention. A high `Created_tmp_disk_tables` shows sorts or groups that do not fit in memory.
 7. **Fan-out**: compare the latency of events between the backends in the `fanout` scenario with the poll interval (`WS_FANOUT_POLL_INTERVAL`, 500 ms). A latency far above it shows a slow `ws_events` poll query (see the digest report).
 
-## Frontend Load Tests (Playwright)
+## Frontend load tests (Playwright)
 
 The tests simulate users in a real browser. Parallel Playwright workers create concurrent sessions. Each test signs in through the login page.
 
@@ -425,7 +425,7 @@ LOAD_WORKERS=10 make loadtest-frontend  # 10 workers
 7. **Audit Log Pagination.** Open the audit log and page through it.
 8. **Profile.** Open the profile page.
 
-### Environment Variables (Playwright)
+### Environment variables (Playwright)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -434,7 +434,7 @@ LOAD_WORKERS=10 make loadtest-frontend  # 10 workers
 | `ADMIN_PASSWORD` | `admin` | Login password |
 | `LOAD_WORKERS` | `5` | Parallel browser workers |
 
-## Makefile Targets
+## Makefile targets
 
 These targets start MySQL and the backend in release mode, and stop the backend when the tests end:
 
@@ -471,7 +471,7 @@ The targets do not stop MySQL. Stop it with `make mysql-stop`.
 
 For a run with MySQL, OpenTelemetry, and a MySQL exporter, use `make loadtest-mysql-backend` or `make loadtest-mysql-stress`. These targets start MySQL, the collector, Tempo, Prometheus, Grafana, and `mysqld-exporter` in Docker. They start the backend with `OTEL_ENABLED=true`, `OTEL_TRACE_SAMPLE_RATE=0.05`, 200 database connections, and the high rate limits. They stop everything when the tests end (`make loadtest-mysql-stop`). The default sample rate keeps the trace export cost low, so the memory and CPU values stay close to a run without traces. To trace each request, set `OTEL_TRACE_SAMPLE_RATE=1.0`.
 
-## Measure Memory and CPU
+## Measure memory and CPU
 
 Use a backend without OpenTelemetry for clean values: `make loadtest-backend`, `make loadtest-stress` or `make loadtest-start-backend` (OpenTelemetry is off unless your shell sets `OTEL_ENABLED=true`). With OpenTelemetry on, keep a low sample rate (`OTEL_TRACE_SAMPLE_RATE=0.05`, the default of the load test targets). With the sample rate `1.0`, the backend exports a span for each request, and this adds memory and CPU use.
 
@@ -581,7 +581,7 @@ Notes:
 
 The exact names depend on the collector version. The panels of the dashboard "Go Runtime & Application" that use `go_memstats_*` or `go_goroutines` read the Prometheus endpoint of the Docker backend (`backend:9090`). They show no data for the local load test backend. The values of the capture script and the profiles are more exact than the metrics. The metrics show the trend over the full test.
 
-## OpenTelemetry Trace Correlation
+## OpenTelemetry trace correlation
 
 When the backend runs with `OTEL_ENABLED=true`, all k6 requests include W3C `traceparent` headers. Each sampled k6 iteration is then linked to a backend trace. Use this to look at single requests in the observability stack. The backend samples by trace ID (`OTEL_TRACE_SAMPLE_RATE`); the sampled flag of the header does not change this.
 
@@ -620,9 +620,9 @@ make loadtest-stop-backend
 
 Compare the p50, p95, and p99 values of `otel_overhead_duration` between the two runs. Note: With `OTEL_ENABLED=true`, the backend sends traces to `localhost:4317` (the default of `OTEL_EXPORTER_OTLP_ENDPOINT`). Start the collector with `make otel-start` to receive them.
 
-## Interpret the Results
+## Interpret the results
 
-### k6 Output
+### k6 output
 
 k6 prints a summary table with these values:
 
@@ -637,7 +637,7 @@ Look for these results:
 - An error rate below the threshold
 - Stable response times during the hold phases (no slowdown)
 
-### Playwright Output
+### Playwright output
 
 Each test writes `[METRIC]` lines with timing data:
 

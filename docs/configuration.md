@@ -8,12 +8,13 @@ The table shows the key environment variables. The full list is in `backend/inte
 |---|---|---|
 | `JWT_SECRET` | Yes | JWT signing secret (minimum 16 characters) |
 | `ADMIN_USERNAME` | No | Username of the initial admin user (default: `admin`) |
-| `ADMIN_PASSWORD` | Yes | Password of the initial admin user. The backend creates the user at startup when it does not exist. |
+| `ADMIN_PASSWORD` | For local login | Password of the initial admin user. The backend creates the user at startup when it does not exist. The start does not fail without it, but then the backend creates no admin user. |
 | `SELF_REGISTRATION` | No | Let any signed-in user register new `user` accounts (default: `false`, also in the Helm chart; Docker Compose sets `true` for development). With `false`, only `admin` users register users. |
 | `OIDC_ENABLED` and `OIDC_*` | No | OpenID Connect single sign-on. See [OIDC single sign-on](../WIKI.md#authentication). |
 | `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` | No | MySQL connection. Set them for your database (defaults: `localhost`, `3306`, `root`, empty, `app`). The Helm chart sets them for the bundled MySQL. |
 | `AZURE_DEVOPS_PAT` | No | Azure DevOps personal access token (PAT) |
 | `AZURE_DEVOPS_AUTH` | No | `pat` (default) or `workload-identity`. With `workload-identity`, the backend lists Azure DevOps branches with an Entra ID token from `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and `AZURE_FEDERATED_TOKEN_FILE`, not with a PAT. |
+| `AZURE_DEVOPS_DEFAULT_ORG` | No | Azure DevOps organization that the provider health check uses (default: empty) |
 | `GITHUB_TOKEN` | No | GitHub fine-grained personal access token. It requires `GITHUB_ALLOWED_REPOSITORIES`. See [GitHub authentication](#github-authentication). |
 | `GITHUB_ALLOWED_REPOSITORIES` | With `GITHUB_TOKEN` | Comma-separated `owner/repository` entries that may use the token (exact match) |
 | `GITLAB_TOKEN` | No | GitLab access token |
@@ -57,6 +58,8 @@ The table shows the key environment variables. The full list is in `backend/inte
 | `APP_TITLE` | No | Product name in the browser tab, sidebar, app bar, login page, and setup wizard (default: `K8s Stack Manager`, maximum 100 characters) |
 | `APP_LOGO_URL` | No | Logo image: a same-origin path (`/branding/logo.svg`) or an `https://` URL (default: empty, which means the built-in logo) |
 | `APP_FAVICON_URL` | No | Browser tab icon. The same URL rule applies (default: `/favicon.svg`). Other schemes (`http:`, `javascript:`, `data:`) stop the startup with an error. |
+| `LOG_LEVEL` | No | `debug`, `info` (default), `warn` or `error`. An invalid value stops the startup. |
+| `AUDIT_LOG_STDOUT` | No | `true`: also write each audit entry as one JSON line (`"log_type":"audit"`) to stdout, for a log pipeline or a SIEM. The database keeps the entries in both cases. Default: `false`; Helm value `backend.audit.stdout`. |
 
 See [Sessions](../WIKI.md#sessions) for the way the session limits work together. See [Branding](../WIKI.md#branding) for the branding settings (Helm values `branding.*`).
 

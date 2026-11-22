@@ -2,7 +2,7 @@
 
 This is the Go backend of K8s Stack Manager. It uses the Gin framework. It provides a REST API for stack definitions, stack instances, templates, and value overrides. It supports JWT authentication, audit logging, Git provider integration (Azure DevOps, GitHub and GitLab), Helm values generation, and multi-cluster management with encrypted kubeconfig storage.
 
-## Project Structure
+## Project structure
 
 ```
 backend/
@@ -44,7 +44,7 @@ backend/
 `-- examples/                           # Webhook handler examples (Go and Python)
 ```
 
-## API Routes
+## API routes
 
 All routes are under `/api/v1` except `/health/*` and `/ws`. Swagger documents the details. The "Access" column shows the rule that the router enforces. Some handlers add checks, for example the owner of an instance.
 
@@ -80,7 +80,7 @@ All routes are under `/api/v1` except `/health/*` and `/ws`. Swagger documents t
 - Go 1.27.4 or later
 - MySQL 8.0 or later (the Docker Compose stack uses 8.4)
 
-## Quick Start
+## Quick start
 
 ```bash
 # From the project root: start with Docker Compose (recommended)
@@ -235,7 +235,7 @@ A `teams` channel gets an Adaptive Card: for an instance event the title `<mark>
 
 See [Sessions](../WIKI.md#sessions) for the way the session limits work together.
 
-## Data Storage
+## Data storage
 
 MySQL (GORM) stores all domain entities. These are users, templates, definitions, instances, overrides, chart configs, API keys, audit logs, clusters, shared values, cleanup policies, favorites, branch overrides, quota overrides, notifications, notification channels, deployment logs, followers, refresh tokens, session entries (token blocklist and OIDC state), `ws_events`, and `replica_heartbeats`. The migrations in `internal/database/migrations.go` run at startup.
 

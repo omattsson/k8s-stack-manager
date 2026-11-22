@@ -1,8 +1,8 @@
 # K8s Stack Manager: Frontend
 
-This is the React single-page application (SPA) of K8s Stack Manager. It uses TypeScript, Vite, and Material UI.
+This is the React single-page application (SPA) of K8s Stack Manager.
 
-## Tech Stack
+## Tech stack
 
 - React 19 and TypeScript (strict mode)
 - Vite 8 with `@vitejs/plugin-react` (JSX through Oxc)
@@ -13,7 +13,7 @@ This is the React single-page application (SPA) of K8s Stack Manager. It uses Ty
 - Vitest 5 and Testing Library (unit tests)
 - Playwright (end-to-end tests)
 
-## Project Structure
+## Project structure
 
 ```
 frontend/
@@ -38,7 +38,7 @@ frontend/
     `-- main.tsx         # Entry point
 ```
 
-## Pages and Routes
+## Pages and routes
 
 `ProtectedRoute` redirects a visitor without a session to `/login`. A route with a role needs that role or a higher role. The role order is `user`, `devops`, `admin`.
 
@@ -70,7 +70,7 @@ frontend/
 | `/admin/cleanup-policies` | Cleanup policy editor | `admin` |
 | `/admin/orphaned-namespaces` | Namespace cleanup | `admin` |
 
-## API Services
+## API services
 
 All services are in `src/api/client.ts`. Each service and method has a TSDoc comment with `@param`, `@returns`, and `@see` (HTTP method and route).
 
