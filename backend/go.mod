@@ -9,6 +9,7 @@ require (
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-sql-driver/mysql v1.10.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
+	github.com/google/go-containerregistry v0.22.1
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/joho/godotenv v1.5.1
@@ -58,6 +59,8 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cloudwego/base64x v0.1.7 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
+	github.com/docker/cli v29.7.2+incompatible // indirect
+	github.com/docker/docker-credential-helpers v0.9.3 // indirect
 	github.com/emicklei/go-restful/v3 v3.13.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.1 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.16 // indirect
@@ -90,6 +93,7 @@ require (
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
+	github.com/klauspost/compress v1.20.1 // indirect
 	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/leodido/go-urn v1.5.0 // indirect
@@ -99,6 +103,8 @@ require (
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
+	github.com/opencontainers/go-digest v1.0.0 // indirect
+	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/pelletier/go-toml/v2 v2.4.3 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
@@ -108,6 +114,7 @@ require (
 	github.com/prometheus/procfs v0.22.0 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/quic-go/quic-go v0.63.0 // indirect
+	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/stretchr/objx v0.5.3 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
@@ -135,6 +142,7 @@ require (
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/evanphx/json-patch.v4 v4.13.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
+	gotest.tools/v3 v3.5.2 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect
 	k8s.io/kube-openapi v0.0.0-20260721132016-d427ff9ee9ad // indirect
 	k8s.io/streaming v0.37.2 // indirect

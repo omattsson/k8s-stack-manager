@@ -14,6 +14,7 @@ import (
 	"backend/internal/database"
 	"backend/internal/deployer"
 	"backend/internal/helm"
+	"backend/internal/imagedigest"
 	"backend/internal/models"
 	"backend/pkg/dberrors"
 
@@ -36,6 +37,8 @@ type lifecycleEnv struct {
 	// clusterQuota is optional; when set the handler checks clone quota
 	// copies against it.
 	clusterQuota *MockResourceQuotaRepository
+	// imageDigests is optional; when set the handler resolves imageDigest.
+	imageDigests *imagedigest.Service
 }
 
 func newLifecycleEnv() *lifecycleEnv {
@@ -79,6 +82,9 @@ func (e *lifecycleEnv) router(t *testing.T, mgr *deployer.Manager, callerID, use
 	require.NoError(t, err)
 	if e.clusterQuota != nil {
 		h.WithClusterQuotas(e.clusterQuota)
+	}
+	if e.imageDigests != nil {
+		h.WithImageDigests(e.imageDigests)
 	}
 	g := r.Group("/api/v1/stack-instances")
 	g.POST("", h.CreateInstance)

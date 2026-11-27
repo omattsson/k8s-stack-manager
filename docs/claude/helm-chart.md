@@ -86,6 +86,7 @@ Key values in `values.yaml`:
 - `backend.secrets.*`: secret environment variables, for example `JWT_SECRET` (required), `ADMIN_PASSWORD`, `KUBECONFIG_ENCRYPTION_KEY`, `DB_PASSWORD` (Secret or ExternalSecret)
 - `backend.replicas`, `frontend.replicas`, `*.autoscaling`, `*.pdb`: independent scaling
 - `backend.allowedChartRepos`: chart repository URL prefixes (`ALLOWED_CHART_REPOS`). Empty means all sources.
+- `backend.imageDigestRegistries`: registry hosts (`host[:port]`) that the `imageDigest` value template function may query besides the cluster registry (`IMAGE_DIGEST_REGISTRIES`). Empty means only the cluster registry.
 - `backend.uniqueInstanceNames`: unique instance names for each cluster (`UNIQUE_INSTANCE_NAMES`, default `false`)
 - `backend.maxInstanceTtlDays`: maximum TTL and stop-time distance in days (`MAX_INSTANCE_TTL_DAYS`, default `30`, 1 to 365; another value fails the render)
 - `backend.helmHistoryMax`: Helm revisions kept for each release (`HELM_HISTORY_MAX`, `--history-max`). Default `null`: not rendered, so Helm's own default applies (`HELM_MAX_HISTORY`, else 10). A value below 2 or not a whole number fails the render; a whole float (values file, `--set-json`) is converted to an integer first. An explicit `backend.env.HELM_HISTORY_MAX` wins.

@@ -15,6 +15,7 @@ import (
 	"backend/internal/database"
 	"backend/internal/deployer"
 	"backend/internal/helm"
+	"backend/internal/imagedigest"
 	"backend/internal/k8s"
 	"backend/internal/models"
 	"backend/internal/websocket"
@@ -49,7 +50,18 @@ type QuickDeployHandler struct {
 	versionRepo        models.TemplateVersionRepository
 	notifier           deployer.LifecycleNotifier
 	clusterRepo        models.ClusterRepository
-	uniqueNames        bool
+	// imageDigests resolves the imageDigest values template function (nil:
+	// it renders "").
+	imageDigests *imagedigest.Service
+	uniqueNames  bool
+}
+
+// WithImageDigests attaches the image digest service: quick deploy resolves
+// {{ imageDigest "<repo>" .ImageTag }} against the registry of the target
+// cluster. Without it imageDigest renders "". Returns h for chaining.
+func (h *QuickDeployHandler) WithImageDigests(svc *imagedigest.Service) *QuickDeployHandler {
+	h.imageDigests = svc
+	return h
 }
 
 // WithClusterRepo attaches the cluster repository: quick deploy then applies
@@ -508,7 +520,12 @@ func (h *QuickDeployHandler) triggerDeploy(
 		return "", fmt.Errorf("no charts configured for this stack definition")
 	}
 
-	valuesMap, branchMap, err := h.values().build(ctx, inst, def, chartConfigs, ownerName)
+	// The build (with its image digest lookups, bounded by
+	// imagedigest.BuildBudget) runs on its own budget, so slow lookups cannot
+	// use up the write budget that Deploy needs below.
+	buildCtx, cancelBuild := ctxutil.Detach(ctx, imagedigest.BuildBudget+ctxutil.WriteTimeout)
+	valuesMap, branchMap, err := h.values().withDigests(h.imageDigests, h.clusterRepo, inst).build(buildCtx, inst, def, chartConfigs, ownerName)
+	cancelBuild()
 	if err != nil {
 		return "", fmt.Errorf("build chart values: %w", err)
 	}
@@ -537,7 +554,10 @@ func (h *QuickDeployHandler) triggerDeploy(
 		UserID:             middleware.GetUserIDFromContext(c),
 	}
 
-	return h.deployManager.Deploy(ctx, req)
+	// A fresh write budget: the values build may have taken most of ctx's.
+	deployCtx, cancelDeploy := ctxutil.Detach(ctx, ctxutil.WriteTimeout)
+	defer cancelDeploy()
+	return h.deployManager.Deploy(deployCtx, req)
 }
 
 // values returns the values pipeline over the handler's repositories.

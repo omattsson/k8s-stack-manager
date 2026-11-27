@@ -2,10 +2,16 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
+	"sync"
 
+	"backend/internal/cluster"
 	"backend/internal/helm"
+	"backend/internal/imagedigest"
 	"backend/internal/models"
+	"backend/pkg/dberrors"
 )
 
 // valuesBuilder is the single Helm values pipeline. Every values generation
@@ -17,6 +23,11 @@ import (
 //
 // Any lookup error is returned: callers fail closed, because values rendered
 // with a missing layer would be wrong.
+//
+// The imageDigest template function resolves only when digests is set
+// (withDigests): deploy, bulk deploy, quick deploy, redeploy and deploy
+// preview. Export and compare render it as ""; the values drift checks render
+// helm.ImageDigestDriftMask (withDriftMask). Neither makes a registry request.
 type valuesBuilder struct {
 	overrideRepo       models.ValueOverrideRepository
 	branchOverrideRepo models.ChartBranchOverrideRepository
@@ -27,6 +38,80 @@ type valuesBuilder struct {
 	sharedValuesRepo   models.SharedValuesRepository
 	resolver           clusterIDResolver
 	clusterRepo        models.ClusterRepository
+	// digests resolves imageDigest; nil renders "" (see withDigests).
+	digests helm.DigestResolver
+}
+
+// withDigests makes the build resolve imageDigest through svc, with the
+// registry of the cluster of the instance: its host is always allowed and
+// gets the cluster credentials. clusterRepo reads the cluster (with the
+// decrypted registry password); resolver finds the default cluster of an
+// instance without one. The cluster is read at the first imageDigest call
+// only, and one resolver serves the whole build, so each reference is looked
+// up once. A nil svc keeps imageDigest at "". Returns b for chaining.
+func (b *valuesBuilder) withDigests(svc *imagedigest.Service, clusterRepo models.ClusterRepository, inst *models.StackInstance) *valuesBuilder {
+	if svc == nil {
+		return b
+	}
+	resolver := b.resolver
+	b.digests = &lazyDigests{build: func(ctx context.Context) *imagedigest.Resolver {
+		return svc.ForRegistry(instanceRegistry(ctx, resolver, clusterRepo, inst))
+	}}
+	return b
+}
+
+// withDriftMask makes imageDigest render helm.ImageDigestDriftMask, with no
+// registry request, for the values drift checks (driftValuesEqual). Returns b
+// for chaining.
+func (b *valuesBuilder) withDriftMask() *valuesBuilder {
+	b.digests = helm.DriftMaskDigests{}
+	return b
+}
+
+// lazyDigests builds the digest resolver at the first imageDigest call, so a
+// build without imageDigest reads no cluster.
+type lazyDigests struct {
+	build    func(ctx context.Context) *imagedigest.Resolver
+	resolver *imagedigest.Resolver
+	once     sync.Once
+}
+
+func (l *lazyDigests) Digest(ctx context.Context, repository, tag string) string {
+	l.once.Do(func() { l.resolver = l.build(ctx) })
+	return l.resolver.Digest(ctx, repository, tag)
+}
+
+// instanceRegistry returns the registry settings of the cluster of inst (the
+// default cluster when inst has none). A failed lookup is logged and gives no
+// cluster registry: only IMAGE_DIGEST_REGISTRIES hosts stay allowed,
+// anonymously.
+func instanceRegistry(ctx context.Context, resolver clusterIDResolver, clusterRepo models.ClusterRepository, inst *models.StackInstance) imagedigest.Registry {
+	if clusterRepo == nil || inst == nil {
+		return imagedigest.Registry{}
+	}
+	var (
+		cl  *models.Cluster
+		err error
+	)
+	switch {
+	case inst.ClusterID != "":
+		cl, err = clusterRepo.FindByID(ctx, inst.ClusterID)
+	case resolver != nil:
+		var id string
+		id, err = resolver.ResolveClusterID("")
+		if err == nil {
+			cl, err = clusterRepo.FindByID(ctx, id)
+		}
+	default:
+		cl, err = clusterRepo.FindDefault(ctx)
+	}
+	if err != nil {
+		if !errors.Is(err, cluster.ErrNoDefaultCluster) && !errors.Is(err, dberrors.ErrNotFound) {
+			slog.Warn("imageDigest: cluster lookup failed, the cluster registry is not used", logKeyInstanceID, inst.ID, "error", err)
+		}
+		return imagedigest.Registry{}
+	}
+	return imagedigest.Registry{URL: cl.RegistryURL, Username: cl.RegistryUsername, Password: cl.RegistryPassword}
 }
 
 // build renders the merged values of each chart. It returns chart name ->
@@ -48,11 +133,19 @@ func (b *valuesBuilder) build(ctx context.Context, inst *models.StackInstance, d
 			SharedValues:   cv.SharedValues,
 			ChartBranch:    cv.ChartBranch,
 			TemplateVars:   templateVars,
+			Digests:        b.digests,
 		})
 		if err != nil {
 			return nil, nil, fmt.Errorf("generate values for chart %s: %w", cv.ChartName, err)
 		}
 		result[cv.ChartName] = string(yamlData)
+	}
+	// A cancelled build renders "" for imageDigest; deploying that would
+	// restart every pod. Fail closed instead (#656, #811).
+	if b.digests != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, fmt.Errorf("resolve image digests: %w", err)
+		}
 	}
 	return result, branchMap, nil
 }

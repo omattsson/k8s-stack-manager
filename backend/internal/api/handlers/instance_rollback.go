@@ -6,9 +6,11 @@ import (
 	"log/slog"
 	"net/http"
 	"reflect"
+	"regexp"
 	"strings"
 
 	"backend/internal/deployer"
+	"backend/internal/helm"
 	"backend/internal/models"
 
 	"gopkg.in/yaml.v3"
@@ -98,6 +100,70 @@ func valuesEqual(a, b string) bool {
 	return reflect.DeepEqual(normalizeEmpty(pa), normalizeEmpty(pb))
 }
 
+// driftValuesEqual is valuesEqual for the values drift checks. current is
+// rendered with imageDigest masked (buildDriftValues). A string of current
+// that holds helm.ImageDigestDriftMask equals the deployed string at the same
+// path when the deployed string is current with each mask replaced by "" or
+// by a digest sha256:<64 hex>. So a new image behind a tag is no drift; every
+// other difference is.
+func driftValuesEqual(current, deployed string) bool {
+	if !strings.Contains(current, helm.ImageDigestDriftMask) {
+		return valuesEqual(current, deployed)
+	}
+	var pc, pd any
+	if yaml.Unmarshal([]byte(current), &pc) != nil || yaml.Unmarshal([]byte(deployed), &pd) != nil {
+		return false
+	}
+	return maskedEqual(normalizeEmpty(pc), normalizeEmpty(pd))
+}
+
+// maskedEqual compares two parsed YAML values; see driftValuesEqual.
+func maskedEqual(current, deployed any) bool {
+	switch c := current.(type) {
+	case string:
+		if !strings.Contains(c, helm.ImageDigestDriftMask) {
+			return reflect.DeepEqual(current, deployed)
+		}
+		d, ok := deployed.(string)
+		return ok && maskPattern(c).MatchString(d)
+	case map[string]any:
+		d, ok := deployed.(map[string]any)
+		if !ok || len(c) != len(d) {
+			return false
+		}
+		for k, cv := range c {
+			dv, ok := d[k]
+			if !ok || !maskedEqual(cv, dv) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		d, ok := deployed.([]any)
+		if !ok || len(c) != len(d) {
+			return false
+		}
+		for i := range c {
+			if !maskedEqual(c[i], d[i]) {
+				return false
+			}
+		}
+		return true
+	default:
+		return reflect.DeepEqual(current, deployed)
+	}
+}
+
+// maskPattern turns a string with masks into an anchored pattern: the text
+// around the masks is literal, each mask matches "" or sha256:<64 hex>.
+func maskPattern(s string) *regexp.Regexp {
+	parts := strings.Split(s, helm.ImageDigestDriftMask)
+	for i, p := range parts {
+		parts[i] = regexp.QuoteMeta(p)
+	}
+	return regexp.MustCompile(`\A` + strings.Join(parts, `(?:|sha256:[0-9a-f]{64})`) + `\z`)
+}
+
 // normalizeEmpty maps a nil document to an empty map.
 func normalizeEmpty(v any) any {
 	if v == nil {
@@ -131,7 +197,7 @@ func targetValuesDrift(pending map[string]string, target map[string]string) bool
 		if !ok {
 			continue
 		}
-		if !valuesEqual(current, values) {
+		if !driftValuesEqual(current, values) {
 			return true
 		}
 	}
@@ -163,7 +229,7 @@ func (h *InstanceHandler) instanceValuesDrift(ctx context.Context, inst *models.
 		logLookupError(ctx, "values drift: chart lookup failed", err, logKeyInstanceID, inst.ID)
 		return false
 	}
-	pending, err := h.buildChartValues(ctx, inst, def, charts)
+	pending, err := h.buildDriftValues(ctx, inst, def, charts)
 	if err != nil {
 		logRollbackDriftError(inst.ID, err)
 		return false
@@ -173,7 +239,7 @@ func (h *InstanceHandler) instanceValuesDrift(ctx context.Context, inst *models.
 		return false
 	}
 	for _, ch := range charts {
-		if !valuesEqual(pending[ch.ChartName], running[ch.ChartName]) {
+		if !driftValuesEqual(pending[ch.ChartName], running[ch.ChartName]) {
 			return true
 		}
 	}

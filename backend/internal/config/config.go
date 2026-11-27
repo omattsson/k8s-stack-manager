@@ -197,6 +197,12 @@ type DeploymentConfig struct {
 	// nil = every chart source is allowed.
 	AllowedChartRepos []string
 
+	// ImageDigestRegistries are the registry hosts (host[:port]) that the
+	// imageDigest values template function may contact besides the registry
+	// of the target cluster (IMAGE_DIGEST_REGISTRIES, see
+	// ParseImageDigestRegistries); nil = the cluster registry only.
+	ImageDigestRegistries []string
+
 	// StackAccess is the namespace-scoped access of the backend
 	// (STACK_ACCESS_CLUSTER_ROLE, STACK_ACCESS_SERVICE_ACCOUNT, see
 	// ParseStackAccess); empty = off.
@@ -829,6 +835,12 @@ func LoadConfig() (*Config, error) {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 	cfg.Deployment.AllowedChartRepos = chartRepos
+
+	digestRegistries, err := ParseImageDigestRegistries(getEnv("IMAGE_DIGEST_REGISTRIES", ""))
+	if err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+	cfg.Deployment.ImageDigestRegistries = digestRegistries
 
 	helmHistoryMax, err := ParseHelmHistoryMax(getEnv("HELM_HISTORY_MAX", ""))
 	if err != nil {

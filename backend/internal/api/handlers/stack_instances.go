@@ -24,6 +24,7 @@ import (
 	"backend/internal/deployer"
 	"backend/internal/helm"
 	"backend/internal/hooks"
+	"backend/internal/imagedigest"
 	"backend/internal/k8s"
 	"backend/internal/models"
 	"backend/internal/notifier"
@@ -190,6 +191,17 @@ type InstanceHandler struct {
 	uniqueNames  bool
 	// execHints computes the exec hints of /status and /pods (nil: never).
 	execHints ExecHintProvider
+	// imageDigests resolves the imageDigest values template function in
+	// deploy, bulk deploy and deploy preview (nil: it renders "").
+	imageDigests *imagedigest.Service
+}
+
+// WithImageDigests attaches the image digest service: deploy, redeploy, bulk
+// deploy and deploy preview resolve {{ imageDigest "<repo>" .ImageTag }}.
+// Without it imageDigest renders "". Returns h for chaining.
+func (h *InstanceHandler) WithImageDigests(svc *imagedigest.Service) *InstanceHandler {
+	h.imageDigests = svc
+	return h
 }
 
 // WithExecHints turns on exec_hints=true on GET /:id/status and /:id/pods.
@@ -1825,7 +1837,7 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 
 	// The build runs before the first write, so a client that left gets 499
 	// and nothing changes (#656).
-	valuesMap, branchMap, err := h.buildChartValuesAndBranches(c.Request.Context(), inst, def, charts)
+	valuesMap, branchMap, err := h.buildDeployValues(c.Request.Context(), inst, def, charts)
 	if err != nil {
 		if respondCancelled(c, err) {
 			return
@@ -1938,8 +1950,8 @@ func (h *InstanceHandler) DeployPreview(c *gin.Context) {
 		return
 	}
 
-	// Build merged values for each chart.
-	valuesMap, err := h.buildChartValues(c.Request.Context(), inst, def, charts)
+	// Build merged values for each chart, with image digests as a deploy.
+	valuesMap, _, err := h.buildDeployValues(c.Request.Context(), inst, def, charts)
 	if err != nil {
 		if respondCancelled(c, err) {
 			return
@@ -2949,6 +2961,23 @@ func (h *InstanceHandler) buildChartValuesAndBranches(ctx context.Context, inst 
 	return h.values().build(ctx, inst, def, charts, "")
 }
 
+// buildDeployValues is buildChartValuesAndBranches for a deploy (deploy,
+// redeploy, bulk deploy) or the deploy preview: it also resolves the
+// imageDigest template function against the registry. Export, compare and the
+// values drift checks do not resolve it (buildChartValues,
+// buildChartValuesAndBranches, buildDriftValues): no registry request.
+func (h *InstanceHandler) buildDeployValues(ctx context.Context, inst *models.StackInstance, def *models.StackDefinition, charts []models.ChartConfig) (map[string]string, map[string]string, error) {
+	return h.values().withDigests(h.imageDigests, h.clusterRepo, inst).build(ctx, inst, def, charts, "")
+}
+
+// buildDriftValues is buildChartValues for the values drift checks: imageDigest
+// renders helm.ImageDigestDriftMask without a registry request, so
+// driftValuesEqual ignores the digests of the deployed values.
+func (h *InstanceHandler) buildDriftValues(ctx context.Context, inst *models.StackInstance, def *models.StackDefinition, charts []models.ChartConfig) (map[string]string, error) {
+	values, _, err := h.values().withDriftMask().build(ctx, inst, def, charts, "")
+	return values, err
+}
+
 // chartValueLayers returns the values layers of each chart (see
 // valuesBuilder.layers).
 func (h *InstanceHandler) chartValueLayers(ctx context.Context, inst *models.StackInstance, def *models.StackDefinition, charts []models.ChartConfig) ([]helm.ChartValues, helm.TemplateVars, map[string]string, error) {
@@ -3081,7 +3110,7 @@ func (h *InstanceHandler) RollbackInstance(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 			return
 		}
-		pending, buildErr := h.buildChartValues(c.Request.Context(), inst, def, charts)
+		pending, buildErr := h.buildDriftValues(c.Request.Context(), inst, def, charts)
 		// A client that left before the first write gets 499 and no rollback (#656).
 		if buildErr != nil && respondCancelled(c, buildErr) {
 			return

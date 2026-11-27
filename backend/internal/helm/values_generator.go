@@ -65,6 +65,37 @@ type GenerateParams struct {
 	SharedValues   []string // YAML strings, already sorted by priority (low→high)
 	ChartBranch    string   // Per-chart branch override; if non-empty, overrides TemplateVars.Branch.
 	TemplateVars   TemplateVars
+	// Digests resolves the imageDigest template function. Only deploy paths
+	// and the deploy preview set it; nil renders imageDigest as "" without a
+	// registry request (export, compare).
+	Digests DigestResolver
+}
+
+// ImageDigestFunc is the name of the built-in template function
+// `{{ imageDigest "<repository>" .ImageTag }}`. It returns the manifest
+// digest (sha256:...) that the tag points to in the registry, or "" when the
+// digest cannot be resolved or GenerateParams.Digests is nil. It never fails
+// the render.
+const ImageDigestFunc = "imageDigest"
+
+// ImageDigestDriftMask is what imageDigest renders in a values drift check
+// (DriftMaskDigests). It cannot be a digest, so the drift comparison can find
+// the places where the deployed values hold a digest (or "") and ignore them.
+const ImageDigestDriftMask = "__ksm_image_digest_drift_mask__"
+
+// DriftMaskDigests is a DigestResolver that renders ImageDigestDriftMask
+// without a registry request. The values drift checks use it.
+type DriftMaskDigests struct{}
+
+// Digest returns ImageDigestDriftMask.
+func (DriftMaskDigests) Digest(context.Context, string, string) string {
+	return ImageDigestDriftMask
+}
+
+// DigestResolver resolves the manifest digest of repository:tag. It returns
+// "" on any failure and never blocks longer than its own timeout.
+type DigestResolver interface {
+	Digest(ctx context.Context, repository, tag string) string
 }
 
 // ChartValues holds the value layers for a single chart.
@@ -105,8 +136,9 @@ func NewValuesGenerator() *ValuesGenerator {
 // text/template docs) — otherwise Execute will fail at render time.
 //
 // Built-in variables on TemplateVars (.Branch, .ImageTag, .Namespace,
-// .InstanceName, .StackName, .Owner) are always available; registered funcs
-// supplement them.
+// .InstanceName, .StackName, .Owner) and the built-in function imageDigest
+// (see ImageDigestFunc) are always available; registered funcs supplement
+// them. A registered func named imageDigest is ignored.
 func (g *ValuesGenerator) RegisterFunc(name string, fn any) *ValuesGenerator {
 	if g.funcMap == nil {
 		g.funcMap = template.FuncMap{}
@@ -118,7 +150,7 @@ func (g *ValuesGenerator) RegisterFunc(name string, fn any) *ValuesGenerator {
 // GenerateValues produces a merged values.yaml for a single chart.
 // Merge order: shared values ← defaults ← overrides ← locked (locked always wins).
 // Template variables are substituted after merging.
-func (g *ValuesGenerator) GenerateValues(_ context.Context, params GenerateParams) ([]byte, error) {
+func (g *ValuesGenerator) GenerateValues(ctx context.Context, params GenerateParams) ([]byte, error) {
 	// Start with shared values (lowest priority, applied first).
 	merged := make(map[string]interface{})
 	for _, sv := range params.SharedValues {
@@ -158,7 +190,7 @@ func (g *ValuesGenerator) GenerateValues(_ context.Context, params GenerateParam
 	}
 
 	// Substitute template variables in all string values
-	merged, err = substituteVars(merged, vars, g.funcMap)
+	merged, err = substituteVars(merged, vars, g.renderFuncs(ctx, params.Digests))
 	if err != nil {
 		return nil, fmt.Errorf("substituting template variables: %w", err)
 	}
@@ -166,7 +198,25 @@ func (g *ValuesGenerator) GenerateValues(_ context.Context, params GenerateParam
 	return marshalYAML(merged)
 }
 
+// renderFuncs returns the functions of one render: the registered funcs plus
+// imageDigest bound to digests (nil renders ""). It copies the map, so the
+// shared funcMap is never written while generating.
+func (g *ValuesGenerator) renderFuncs(ctx context.Context, digests DigestResolver) template.FuncMap {
+	funcs := make(template.FuncMap, len(g.funcMap)+1)
+	for name, fn := range g.funcMap {
+		funcs[name] = fn
+	}
+	funcs[ImageDigestFunc] = func(repository, tag string) string {
+		if digests == nil {
+			return ""
+		}
+		return digests.Digest(ctx, repository, tag)
+	}
+	return funcs
+}
+
 // GenerateAllValues produces merged values for every chart, returning chartName → YAML bytes.
+// It never resolves image digests: imageDigest renders "" (export).
 func (g *ValuesGenerator) GenerateAllValues(ctx context.Context, params GenerateAllParams) (map[string][]byte, error) {
 	result := make(map[string][]byte, len(params.Charts))
 

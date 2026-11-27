@@ -125,7 +125,7 @@ On the profile page, you manage your account, create API keys for CI/CD automati
 
 - **Multi-cluster support.** Register more than one Kubernetes cluster. Kubeconfig data is encrypted at rest with AES-GCM (Advanced Encryption Standard, Galois/Counter Mode). A cluster can also use the service account of the backend (`use_in_cluster`). The application monitors the health and the resource use of each cluster.
 - **Git provider integration.** The application lists branches from Azure DevOps, GitHub, and GitLab repositories (`gitlab.com`, or the origin of `GITLAB_BASE_URL`). You can set a branch for each chart.
-- **Helm values deep merge.** Chart defaults merge with instance overrides. The application replaces template variables (`{{.Branch}}`, `{{.ImageTag}}`, `{{.Namespace}}`, `{{.InstanceName}}`, `{{.StackName}}`, `{{.Owner}}`) in the values.
+- **Helm values deep merge.** Chart defaults merge with instance overrides. The application replaces template variables (`{{.Branch}}`, `{{.ImageTag}}`, `{{.Namespace}}`, `{{.InstanceName}}`, `{{.StackName}}`, `{{.Owner}}`) in the values. `{{ imageDigest "<repository>" .ImageTag }}` gives the registry digest of the image at deploy time.
 - **Deploy preview and rollback.** See the merged values before you deploy. Roll back one revision, or roll back to the values of an earlier successful deploy.
 - **Resource quotas.** Set a ResourceQuota and a LimitRange for the stack namespaces of a cluster. You can set an override for one instance.
 - **Cleanup policies.** Run cron-based actions (stop, clean, delete) on instances that match a condition.

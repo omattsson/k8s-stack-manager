@@ -177,6 +177,7 @@ Public GitHub repositories work without a token, at the lower rate limit of GitH
 | `CLUSTER_HEALTH_POLL_INTERVAL` | `60s` | Time between cluster health checks |
 | `K8S_CLIENT_QPS`, `K8S_CLIENT_BURST` | `50`, `100` | Client-side request limit of each cluster client (requests per second, burst). `0` uses the default. The limit applies to each replica and each cluster: N replicas send up to N times the limit. The client-go default (5, 10) throttled the stack page and the deploy readiness polls under load. |
 | `ALLOWED_CHART_REPOS` | empty | Comma-separated chart repository URL prefixes (`oci://`, `https://`, `http://`). Empty allows every chart source. See [Chart sources](../WIKI.md#chart-sources). |
+| `IMAGE_DIGEST_REGISTRIES` | empty | Comma-separated registry hosts (`host` or `host:port`, no scheme or path) that the `imageDigest` values template function may contact, besides the registry of the target cluster (always allowed, the only host that gets the cluster registry credentials). Empty: the cluster registry only. See [Helm values](../WIKI.md#helm-values). |
 | `NAMESPACE_LABELS` | empty | Extra labels on stack namespaces (`key=value,key=value`) |
 | `STACK_ACCESS_CLUSTER_ROLE`, `STACK_ACCESS_SERVICE_ACCOUNT` | empty | Namespace-scoped access of the backend. The Helm chart sets both. See [Backend rights on the cluster](../WIKI.md#backend-rights-on-the-cluster). |
 | `NAMESPACE_ROLE_BINDINGS_JSON` | empty | RoleBindings that the deployer adds to each stack namespace (Helm: `backend.namespaceRoleBindings`) |

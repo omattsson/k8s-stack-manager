@@ -387,6 +387,7 @@ func rules(root *Schema) {
 	)}
 	get(root, "backend.namespaceLabels").AdditionalProperties = &Schema{Type: envScalar}
 	get(root, "backend.allowedChartRepos").Items = &Schema{Type: "string"}
+	get(root, "backend.imageDigestRegistries").Items = &Schema{Type: "string"}
 	// The templates check these values with clearer messages (and the
 	// Makefile tests those messages): the schema only sets the types.
 	get(root, "backend.exec.allowedContainers").Items = &Schema{Type: "string"}

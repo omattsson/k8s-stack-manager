@@ -14,6 +14,7 @@ import (
 	"backend/internal/health"
 	"backend/internal/helm"
 	"backend/internal/hooks"
+	"backend/internal/imagedigest"
 	"backend/internal/k8s"
 	"backend/internal/leader"
 	"backend/internal/models"
@@ -63,6 +64,9 @@ type domainServices struct {
 	CleanupExecutor   *deployer.CleanupExecutor
 	CleanupScheduler  *scheduler.Scheduler
 	ValuesGen         *helm.ValuesGenerator
+	// ImageDigests resolves the imageDigest values template function in
+	// deploys and the deploy preview (IMAGE_DIGEST_REGISTRIES).
+	ImageDigests *imagedigest.Service
 	// ReplicaID is the process identity of this process (replica.ProcessID):
 	// stored on each deploy log and written by Heartbeat.
 	ReplicaID string
@@ -229,6 +233,9 @@ func buildDomainServices(
 	}
 
 	valuesGen := helm.NewValuesGenerator()
+	if len(cfg.Deployment.ImageDigestRegistries) > 0 {
+		slog.Info("imageDigest registry allowlist", "hosts", cfg.Deployment.ImageDigestRegistries)
+	}
 
 	// Auto-create default cluster from KUBECONFIG_PATH for single-cluster migration.
 	ensureDefaultCluster(repos.Cluster, repos.StackInstance, cfg)
@@ -441,6 +448,7 @@ func buildDomainServices(
 		CleanupExecutor:   cleanupExecutor,
 		CleanupScheduler:  cleanupScheduler,
 		ValuesGen:         valuesGen,
+		ImageDigests:      imagedigest.NewService(cfg.Deployment.ImageDigestRegistries),
 		ReplicaID:         replicaID,
 		Heartbeat:         heartbeat,
 		InterruptRecovery: interruptRecovery,
@@ -602,7 +610,8 @@ func buildHandlers(
 	instanceHandler.WithHooks(svc.HookDispatcher).WithActions(svc.ActionRegistry).WithNotifier(svc.LifecycleNotifier).WithSharedValues(repos.SharedValues).
 		WithTemplateVersions(repos.TemplateVersion).WithClusterQuotas(repos.ResourceQuota).
 		WithFollowers(repos.InstanceFollower).WithUniqueInstanceNames(cfg.App.UniqueInstanceNames).
-		WithMaxTTLDays(cfg.App.MaxInstanceTTLDays).WithActionRuns(repos.ActionRun)
+		WithMaxTTLDays(cfg.App.MaxInstanceTTLDays).WithActionRuns(repos.ActionRun).
+		WithImageDigests(svc.ImageDigests)
 	if hub != nil {
 		// Delete, stop and clean close the open tunnels of the instance.
 		instanceHandler.WithStreamRevoker(hub)
@@ -703,7 +712,7 @@ func buildHandlers(
 	}
 	quickDeployHandler.WithSharedValues(repos.SharedValues).WithTemplateVersions(repos.TemplateVersion).
 		WithUniqueInstanceNames(cfg.App.UniqueInstanceNames).WithMaxTTLDays(cfg.App.MaxInstanceTTLDays).
-		WithNotifier(svc.LifecycleNotifier).WithClusterRepo(repos.Cluster)
+		WithNotifier(svc.LifecycleNotifier).WithClusterRepo(repos.Cluster).WithImageDigests(svc.ImageDigests)
 
 	// Cluster shared values are the lowest values layer of every deploy.
 	// Warn loudly if they are not wired: deploys would silently skip them.

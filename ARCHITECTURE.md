@@ -87,7 +87,7 @@ The order from lowest to highest priority (`internal/helm/values_generator.go`):
 3. Instance value overrides (per chart).
 4. **Template locked values.** The application applies them last. Nothing can override them.
 
-`ValuesGenerator` substitutes the template variables (`{{.Branch}}`, `{{.ImageTag}}`, `{{.Namespace}}`, `{{.InstanceName}}`, `{{.StackName}}`, `{{.Owner}}`) each time it produces merged values: deploy, preview, and export.
+`ValuesGenerator` substitutes the template variables (`{{.Branch}}`, `{{.ImageTag}}`, `{{.Namespace}}`, `{{.InstanceName}}`, `{{.StackName}}`, `{{.Owner}}`) each time it produces merged values: deploy, preview, and export. The template function `{{ imageDigest "<repository>" .ImageTag }}` returns the registry digest of the image tag in deploys and the deploy preview, and `""` in export and compare (`internal/imagedigest`; allowed hosts: the cluster registry and `IMAGE_DIGEST_REGISTRIES`).
 
 ## Multi-cluster
 

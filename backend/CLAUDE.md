@@ -10,6 +10,7 @@ Domain packages in `internal/`:
 - `deployer`: Helm CLI wrapper, cleanup executor, expiry stopper, interrupted operation recovery.
 - `gitprovider`: Azure DevOps, GitHub and GitLab.
 - `helm`: values deep-merge and template variables.
+- `imagedigest`: registry manifest digest lookups of the `imageDigest` values template function (host allowlist, cluster credentials bound to the cluster registry, per-build cache, `tracing.go`).
 - `hooks`: outbound lifecycle webhooks with HMAC signing and custom actions. See `docs/hooks.md` and `EXTENDING.md` in the repository root.
 - `k8s`: cluster client, watcher, quotas, pod exec, scaling, `AccessBinding`, port-forward (`port_forward.go`, `pod_select.go`), exec (`pod_exec_stream.go`).
 - `leader`: Kubernetes Lease leader election and the leader worker group. Only the leader replica runs the background workers.
@@ -83,6 +84,7 @@ All configuration uses environment variables with a `.env` fallback (godotenv). 
 - `AZURE_DEVOPS_PAT`, `AZURE_DEVOPS_AUTH` (`pat` or `workload-identity`), `AZURE_DEVOPS_DEFAULT_ORG` (the organization of the provider health check), `GITHUB_TOKEN`, `GITHUB_ALLOWED_REPOSITORIES` (required with `GITHUB_TOKEN`), `GITLAB_TOKEN`, `GITLAB_BASE_URL` (an origin without a path).
 - `NAMESPACE_LABELS`: extra stack namespace labels, `k=v,k=v`.
 - `ALLOWED_CHART_REPOS`: chart repository URL prefixes (`config.ParseAllowedChartRepos`). `models.SetAllowedChartSources` sets them at startup.
+- `IMAGE_DIGEST_REGISTRIES`: registry hosts (`host[:port]`, `config.ParseImageDigestRegistries`) that the `imageDigest` values template function may contact besides the cluster registry (`imagedigest.Service`, wired with `WithImageDigests` on the instance and quick deploy handlers). An invalid entry stops the start.
 - `UNIQUE_INSTANCE_NAMES` (default false): an instance name is unique on its cluster (`handlers/instance_names.go`).
 - `DEFAULT_INSTANCE_TTL_MINUTES` (default 0): TTL of a create request without `ttl_minutes`. `MAX_INSTANCE_TTL_DAYS` (default 30, 1 to 365; another value stops the start): maximum TTL and stop-time distance (`config/instance_ttl.go`, `handlers/instance_ttl.go`).
 - `STACK_ACCESS_CLUSTER_ROLE`, `STACK_ACCESS_SERVICE_ACCOUNT` (`<namespace>/<name>`): namespace-scoped access (`k8s.AccessBinding`, in-cluster clusters only). Set both or neither. The leader worker `stack-access-reconcile` applies it to existing namespaces.

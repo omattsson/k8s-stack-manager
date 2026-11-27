@@ -283,7 +283,7 @@ Both list endpoints are paged (`page` and `pageSize`; default 25, maximum 100). 
 - A one-revision rollback that fails on a chart records the values of the charts that it already rolled back, so the deploy preview stays correct.
 - The target must be a successful deploy of the same instance. Another log returns 400. An unknown log or a log of another instance returns 404.
 - The rollback does not change the stored value overrides or branch overrides. After a rollback, the deploy preview compares against the values that now run (a failed rollback records the charts that it already upgraded).
-- `values_drift: true` (in the rollback response for a target, in the deploy preview, and in `GET /stack-instances/:id`) means that the next deploy applies the stored overrides again and undoes the rollback.
+- `values_drift: true` (in the rollback response for a target, in the deploy preview, and in `GET /stack-instances/:id`) means that the next deploy applies the stored overrides again and undoes the rollback. In the rollback response and in `GET /stack-instances/:id`, a value that comes from `imageDigest` does not count as drift: the check does not contact the registry and accepts any digest (or an empty value) there. The check expects the digest as it is in the value. A template that changes the digest (cuts it, or picks a value with `if` or `with` on it) can show drift that is not there. The deploy preview compares the current digest.
 - Each deploy log and rollback log records the branch (`branch`). A rollback to a target records the branch of the target deploy.
 
 **Interrupted operation.** The replica that runs a deploy, rollback, stop, or clean can stop suddenly (for example an out-of-memory kill or a node failure). The instance then stays `deploying`, `stabilizing`, `stopping`, or `cleaning` for some time.
@@ -426,7 +426,7 @@ Exec runs one command in a container of a stack, through the backend, and stream
 
 ### Value override
 
-A value override is a per-chart configuration override on a stack instance. The application deep-merges it with the chart defaults when it exports the Helm values. It substitutes the template variables (`{{.Branch}}`, `{{.ImageTag}}`, `{{.Namespace}}`, `{{.InstanceName}}`, `{{.StackName}}`, `{{.Owner}}`) at export time.
+A value override is a per-chart configuration override on a stack instance. The application deep-merges it with the chart defaults when it exports the Helm values. It substitutes the template variables (`{{.Branch}}`, `{{.ImageTag}}`, `{{.Namespace}}`, `{{.InstanceName}}`, `{{.StackName}}`, `{{.Owner}}`) at export time. The function `{{ imageDigest "<repository>" .ImageTag }}` gives the image digest at deploy time, and `""` in an export. See [Helm values](#helm-values).
 
 The value must be a YAML map that the deploy can parse. The API returns 400 otherwise, and the stack page does not save it. Put a template variable at the start of a value in quotes: write `tag: "{{.Branch}}"`, not `tag: {{.Branch}}`. `image: repo:{{.Branch}}` needs no quotes. A value that was stored before this check still loads, so you can fix it.
 
@@ -810,6 +810,20 @@ WebSocket connections (`/ws`):
 
 - The deep merge order, lowest first: cluster shared values (by priority, then name in byte order, then ID), chart defaults, instance overrides, template locked values. A locked value always wins.
 - Template variable substitution: `{{.Branch}}`, `{{.ImageTag}}`, `{{.Namespace}}`, `{{.InstanceName}}`, `{{.StackName}}`, `{{.Owner}}`.
+- The template function `imageDigest` returns the manifest digest (`sha256:...`) that an image tag points to at deploy time. Put it in a pod annotation, and the pods restart only when the image behind the tag changed:
+
+  ```yaml
+  podAnnotations:
+    deploy/image-digest: '{{ imageDigest "myregistry.azurecr.io/dev/app" .ImageTag }}'
+  ```
+
+  - It resolves during deploy, redeploy, bulk deploy, quick deploy, and deploy preview. Export and compare render `""` and do not contact the registry.
+  - Allowed registries: the host of the registry URL of the target cluster, and the hosts in `IMAGE_DIGEST_REGISTRIES` (Helm value `backend.imageDigestRegistries`). Only the cluster registry gets the registry user name and password of the cluster. The other hosts get anonymous requests.
+  - When the digest cannot be resolved (host not allowed, invalid reference, tag not found, registry error, 10 second timeout), it renders `""`, the backend logs a warning, and the deploy continues. An empty digest changes the annotation too, so the pods restart, and the next deploy that resolves the digest restarts them again.
+  - When you cancel the request (close the page) during a lookup, nothing is deployed (status 499), so the pods are not restarted with an empty digest.
+  - Limits for each deploy or preview: each reference is looked up once, at most 32 different references are looked up, and all lookups together stop after 30 seconds. A registry host that timed out is not asked again in the same deploy. After 256 different references (also invalid ones or hosts that are not allowed), the rest render `""`. The backend logs one warning per deploy for invalid references and one for hosts that are not allowed. After a limit, `imageDigest` renders `""` without a request. Quick deploy runs the lookups on their own time budget, so slow lookups do not make the deploy fail.
+  - Every deploy and every deploy preview looks up again: a preview followed by a deploy makes two lookups. A bulk deploy looks up once for each instance.
+  - The registry requests use https only. A cluster registry that only answers on plain http renders `""`.
 - The same merge feeds deploy, deploy preview, bulk deploy, quick deploy, export, and compare.
 - Export: `GET /stack-instances/:id/values` (ZIP, one `values.yaml` for each chart) or `GET /stack-instances/:id/values/:chartId` (YAML).
 
