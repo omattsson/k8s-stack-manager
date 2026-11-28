@@ -204,6 +204,10 @@ type DeployRequest struct {
 	Definition         *models.StackDefinition
 	Charts             []ChartDeployInfo
 	LastDeployedValues string // JSON-serialized merged values for deploy preview
+	// ImageDigests holds the digests that the imageDigest values template
+	// function rendered ("repository:tag" -> digest); stored on the deploy
+	// log, the fallback of a later failed lookup (#811). nil: none.
+	ImageDigests map[string]string
 	// UserID is the user who started the deploy; stored on the deploy log.
 	UserID string
 }
@@ -514,6 +518,7 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 		DeadlineAt:      m.operationDeadline(now, models.DeployActionDeploy, helmExec, len(req.Charts)),
 		StartedAt:       now,
 		ChartVersions:   chartVersionsJSON(req.Charts),
+		ImageDigests:    models.EncodeImageDigests(req.ImageDigests),
 		Branch:          req.Instance.Branch,
 		UserID:          req.UserID,
 	}
@@ -2185,6 +2190,10 @@ type RollbackRequest struct {
 	// TargetBranch is the branch of the target deploy. It is stored on the
 	// rollback log. Empty: the instance branch is stored.
 	TargetBranch string
+	// TargetImageDigests is the image_digests column of the target deploy
+	// log. It is stored on the rollback log, so a failed imageDigest lookup
+	// after the rollback renders the digests that run now (#811).
+	TargetImageDigests string
 }
 
 // Rollback starts an async rollback of a stack instance and returns the
@@ -2243,9 +2252,11 @@ func (m *Manager) Rollback(ctx context.Context, req RollbackRequest) (string, er
 	// branch, image_tag), so a gate (for example a CI image gate) can check
 	// the images that the rollback uses. Build it before the rollback log
 	// exists, so the previous revision lookup does not see that log.
-	var previousBranch string
+	var previousBranch, imageDigests string
 	if target == nil {
-		previousBranch = m.previousRevisionBranch(ctx, req.Instance.ID)
+		previousBranch, imageDigests = m.previousRevision(ctx, req.Instance.ID)
+	} else {
+		imageDigests = req.TargetImageDigests
 	}
 	preRollbackOpts := rollbackHookOpts(req, regCfg, previousBranch)
 
@@ -2262,6 +2273,7 @@ func (m *Manager) Rollback(ctx context.Context, req RollbackRequest) (string, er
 		StartedAt:       now,
 		TargetLogID:     req.TargetLogID,
 		Branch:          req.Instance.Branch,
+		ImageDigests:    imageDigests,
 	}
 	m.logActions.Store(logID, deployLog.Action)
 	if req.TargetBranch != "" {

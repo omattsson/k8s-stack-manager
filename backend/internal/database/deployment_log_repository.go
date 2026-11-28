@@ -18,10 +18,11 @@ import (
 
 // Compile-time interface checks.
 var (
-	_ models.DeploymentLogRepository       = (*GORMDeploymentLogRepository)(nil)
-	_ models.DeploymentLogDeadlineExtender = (*GORMDeploymentLogRepository)(nil)
-	_ models.DeploymentLogOutputWriter     = (*GORMDeploymentLogRepository)(nil)
-	_ models.DeploymentLogHighlightReader  = (*GORMDeploymentLogRepository)(nil)
+	_ models.DeploymentLogRepository        = (*GORMDeploymentLogRepository)(nil)
+	_ models.DeploymentLogDeadlineExtender  = (*GORMDeploymentLogRepository)(nil)
+	_ models.DeploymentLogOutputWriter      = (*GORMDeploymentLogRepository)(nil)
+	_ models.DeploymentLogHighlightReader   = (*GORMDeploymentLogRepository)(nil)
+	_ models.DeploymentLogImageDigestReader = (*GORMDeploymentLogRepository)(nil)
 )
 
 // GORMDeploymentLogRepository implements models.DeploymentLogRepository using GORM.
@@ -351,6 +352,54 @@ func (r *GORMDeploymentLogRepository) GetLatestByInstance(ctx context.Context, i
 		return nil, dberrors.NewDatabaseError("get_latest", err)
 	}
 	return &log, nil
+}
+
+// LatestImageDigests returns the merged image digests of the newest
+// successful deploy and rollback logs of the instance (see
+// models.DeploymentLogImageDigestReader). It reads the newest
+// MaxImageDigestScan successful deploy and rollback logs through the index
+// idx_deployment_logs_instance_action_started and keeps the first
+// MaxImageDigestLogs that have digests, so an instance with many logs
+// without digests costs a bounded read.
+func (r *GORMDeploymentLogRepository) LatestImageDigests(ctx context.Context, instanceID string) (map[string]string, error) {
+	var rows []struct {
+		ImageDigests sql.NullString
+	}
+	if err := r.db.WithContext(ctx).Model(&models.DeploymentLog{}).
+		Select("id, started_at, image_digests").
+		Where("stack_instance_id = ? AND action IN ? AND status = ?",
+			instanceID, []string{models.DeployActionDeploy, models.DeployActionRollback}, models.DeployLogSuccess).
+		Order("started_at DESC").
+		Limit(models.MaxImageDigestScan).
+		Scan(&rows).Error; err != nil {
+		return nil, dberrors.NewDatabaseError("latest_image_digests", err)
+	}
+	columns := make([]string, 0, models.MaxImageDigestLogs)
+	for _, row := range rows {
+		if !row.ImageDigests.Valid || row.ImageDigests.String == "" {
+			continue
+		}
+		columns = append(columns, row.ImageDigests.String)
+		if len(columns) == models.MaxImageDigestLogs {
+			break
+		}
+	}
+	return models.MergeImageDigests(columns), nil
+}
+
+// ImageDigestsOf returns the image_digests column of the log id ("" when it
+// is NULL; ErrNotFound when there is no such log). It reads that one column.
+func (r *GORMDeploymentLogRepository) ImageDigestsOf(ctx context.Context, id string) (string, error) {
+	var rows []struct{ ImageDigests sql.NullString }
+	if err := r.db.WithContext(ctx).Model(&models.DeploymentLog{}).
+		Select("image_digests").Where("id = ?", id).Limit(1).
+		Scan(&rows).Error; err != nil {
+		return "", dberrors.NewDatabaseError("image_digests_of", err)
+	}
+	if len(rows) == 0 {
+		return "", dberrors.NewDatabaseError("image_digests_of", dberrors.ErrNotFound)
+	}
+	return rows[0].ImageDigests.String, nil
 }
 
 // ListLatestByActions returns up to limit logs of the instance whose action

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sync"
 
 	"backend/internal/cluster"
 	"backend/internal/helm"
@@ -40,6 +39,9 @@ type valuesBuilder struct {
 	clusterRepo        models.ClusterRepository
 	// digests resolves imageDigest; nil renders "" (see withDigests).
 	digests helm.DigestResolver
+	// digestBuild is digests when it resolves against the registry; it
+	// records the rendered digests (renderedDigests).
+	digestBuild *imagedigest.Build
 }
 
 // withDigests makes the build resolve imageDigest through svc, with the
@@ -48,16 +50,35 @@ type valuesBuilder struct {
 // decrypted registry password); resolver finds the default cluster of an
 // instance without one. The cluster is read at the first imageDigest call
 // only, and one resolver serves the whole build, so each reference is looked
-// up once. A nil svc keeps imageDigest at "". Returns b for chaining.
-func (b *valuesBuilder) withDigests(svc *imagedigest.Service, clusterRepo models.ClusterRepository, inst *models.StackInstance) *valuesBuilder {
-	if svc == nil {
+// up once. A failed lookup renders the digest of the last successful deploy
+// of the instance (logs, see previousDigests). A nil svc keeps imageDigest at
+// "". Returns b for chaining.
+func (b *valuesBuilder) withDigests(svc *imagedigest.Service, clusterRepo models.ClusterRepository, logs models.DeploymentLogRepository, inst *models.StackInstance) *valuesBuilder {
+	return b.withDigestSession(svc.NewSession(), clusterRepo, logs, inst)
+}
+
+// withDigestSession is withDigests with a session that other builds may
+// share: a bulk deploy passes one session for the whole request, so its
+// instances share one resolver per cluster registry (cache, dead hosts,
+// lookup caps) and one time budget. The fallback to the last deployed
+// digests stays per instance. A nil session keeps imageDigest at "".
+// Returns b for chaining.
+func (b *valuesBuilder) withDigestSession(sess *imagedigest.Session, clusterRepo models.ClusterRepository, logs models.DeploymentLogRepository, inst *models.StackInstance) *valuesBuilder {
+	if sess == nil {
 		return b
 	}
 	resolver := b.resolver
-	b.digests = &lazyDigests{build: func(ctx context.Context) *imagedigest.Resolver {
-		return svc.ForRegistry(instanceRegistry(ctx, resolver, clusterRepo, inst))
-	}}
+	b.digestBuild = sess.NewBuild(func(ctx context.Context) imagedigest.Registry {
+		return instanceRegistry(ctx, resolver, clusterRepo, inst)
+	}, previousDigests(logs, inst))
+	b.digests = b.digestBuild
 	return b
+}
+
+// renderedDigests returns the digests that the last build rendered
+// (imagedigest.Build.Rendered), for the deploy log; nil without digests.
+func (b *valuesBuilder) renderedDigests() map[string]string {
+	return b.digestBuild.Rendered()
 }
 
 // withDriftMask makes imageDigest render helm.ImageDigestDriftMask, with no
@@ -68,17 +89,19 @@ func (b *valuesBuilder) withDriftMask() *valuesBuilder {
 	return b
 }
 
-// lazyDigests builds the digest resolver at the first imageDigest call, so a
-// build without imageDigest reads no cluster.
-type lazyDigests struct {
-	build    func(ctx context.Context) *imagedigest.Resolver
-	resolver *imagedigest.Resolver
-	once     sync.Once
-}
-
-func (l *lazyDigests) Digest(ctx context.Context, repository, tag string) string {
-	l.once.Do(func() { l.resolver = l.build(ctx) })
-	return l.resolver.Digest(ctx, repository, tag)
+// previousDigests returns the fallback source of a failed imageDigest
+// lookup: the digests of the newest successful deploy logs of inst
+// (models.DeploymentLogImageDigestReader). nil when the repository does not
+// implement it or inst is not stored yet.
+func previousDigests(logs models.DeploymentLogRepository, inst *models.StackInstance) imagedigest.PreviousDigests {
+	reader, ok := logs.(models.DeploymentLogImageDigestReader)
+	if !ok || inst == nil || inst.ID == "" {
+		return nil
+	}
+	id := inst.ID
+	return func(ctx context.Context) (map[string]string, error) {
+		return reader.LatestImageDigests(ctx, id)
+	}
 }
 
 // instanceRegistry returns the registry settings of the cluster of inst (the

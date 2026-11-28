@@ -288,7 +288,13 @@ func walk(s *Schema, path string, fn func(string, *Schema)) {
 var (
 	k8sQuantity = []string{"string", "number"}
 	digits      = `^[0-9]+$`
-	envScalar   = []string{"string", "number", "boolean"}
+	// registryHost is a registry host with an optional port (host[:port]):
+	// DNS labels or an IPv4 address, or an IPv6 address in brackets. No
+	// scheme, path or user info. It is a strict subset of what
+	// imagedigest.ParseHost accepts, so the chart refuses typos such as
+	// "https://ghcr.io" before the backend refuses to start.
+	registryHost = `^([A-Za-z0-9]([A-Za-z0-9_-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9_-]*[A-Za-z0-9])?)*|\[[0-9A-Fa-f:.]+\])(:[0-9]{1,5})?$`
+	envScalar    = []string{"string", "number", "boolean"}
 )
 
 // keyRule applies the rules that depend on the last path segment.
@@ -387,7 +393,7 @@ func rules(root *Schema) {
 	)}
 	get(root, "backend.namespaceLabels").AdditionalProperties = &Schema{Type: envScalar}
 	get(root, "backend.allowedChartRepos").Items = &Schema{Type: "string"}
-	get(root, "backend.imageDigestRegistries").Items = &Schema{Type: "string"}
+	get(root, "backend.imageDigestRegistries").Items = &Schema{Type: "string", Pattern: registryHost}
 	// The templates check these values with clearer messages (and the
 	// Makefile tests those messages): the schema only sets the types.
 	get(root, "backend.exec.allowedContainers").Items = &Schema{Type: "string"}

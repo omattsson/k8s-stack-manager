@@ -85,7 +85,8 @@ func TestImageDigest_CancelDuringLookupFailsClosed(t *testing.T) {
 			svRouter(tt.method, tt.route, tt.call(h)).ServeHTTP(w, httptest.NewRequest(tt.method, tt.url, nil).WithContext(ctx))
 			assert.Equal(t, 499, w.Code, w.Body.String())
 
-			time.Sleep(100 * time.Millisecond)
+			// Deploy sets the instance to deploying before it returns, so a Draft
+			// instance shows that no deploy started; no wait is needed.
 			_, installed := rec.get("app")
 			assert.False(t, installed, "nothing may be deployed")
 			inst, err := f.instRepo.FindByID(context.Background(), "inst-1")

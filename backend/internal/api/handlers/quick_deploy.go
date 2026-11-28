@@ -524,7 +524,8 @@ func (h *QuickDeployHandler) triggerDeploy(
 	// imagedigest.BuildBudget) runs on its own budget, so slow lookups cannot
 	// use up the write budget that Deploy needs below.
 	buildCtx, cancelBuild := ctxutil.Detach(ctx, imagedigest.BuildBudget+ctxutil.WriteTimeout)
-	valuesMap, branchMap, err := h.values().withDigests(h.imageDigests, h.clusterRepo, inst).build(buildCtx, inst, def, chartConfigs, ownerName)
+	vb := h.values().withDigests(h.imageDigests, h.clusterRepo, h.deployLogRepo, inst)
+	valuesMap, branchMap, err := vb.build(buildCtx, inst, def, chartConfigs, ownerName)
 	cancelBuild()
 	if err != nil {
 		return "", fmt.Errorf("build chart values: %w", err)
@@ -551,6 +552,7 @@ func (h *QuickDeployHandler) triggerDeploy(
 		Definition:         def,
 		Charts:             chartInfos,
 		LastDeployedValues: lastDeployedValues,
+		ImageDigests:       vb.renderedDigests(),
 		UserID:             middleware.GetUserIDFromContext(c),
 	}
 

@@ -1220,6 +1220,25 @@ helm-test: ## Verify Deployment, Argo Rollout, and External Secrets Helm renders
 		--set backend.rbac.scope=namespace --show-only templates/backend/clusterrole.yaml > "$$template_file"; \
 	if grep -q 'resources: \["pods/exec"\]' "$$template_file"; then echo "namespace scope must not add a pods/exec rule" >&2; exit 1; fi; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
+		--show-only templates/backend/configmap.yaml > "$$template_file"; \
+	if grep -q 'IMAGE_DIGEST_REGISTRIES' "$$template_file"; then echo "default backend.imageDigestRegistries must render no IMAGE_DIGEST_REGISTRIES" >&2; exit 1; fi; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
+		--set 'backend.imageDigestRegistries={ghcr.io,registry.example.com:5000,10.0.0.5:5000}' \
+		--show-only templates/backend/configmap.yaml > "$$template_file"; \
+	grep -q 'IMAGE_DIGEST_REGISTRIES: "ghcr.io,registry.example.com:5000,10.0.0.5:5000"' "$$template_file" \
+		|| { echo "backend.imageDigestRegistries must render IMAGE_DIGEST_REGISTRIES" >&2; exit 1; }; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
+		--set 'backend.imageDigestRegistries={ghcr.io}' --set-string backend.env.IMAGE_DIGEST_REGISTRIES=quay.io \
+		--show-only templates/backend/configmap.yaml > "$$template_file"; \
+	test "$$(grep -c 'IMAGE_DIGEST_REGISTRIES:' "$$template_file")" = 1 && grep -q 'IMAGE_DIGEST_REGISTRIES: "quay.io"' "$$template_file" \
+		|| { echo "backend.env.IMAGE_DIGEST_REGISTRIES must win over backend.imageDigestRegistries" >&2; exit 1; }; \
+	for bad in 'https://ghcr.io' 'ghcr.io/path' 'ghcr.io:abc'; do \
+		if helm template $(HELM_RELEASE) $(HELM_CHART) --set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
+			--set "backend.imageDigestRegistries[0]=$$bad" > "$$template_file" 2>&1; then \
+			echo "backend.imageDigestRegistries entry $$bad must fail" >&2; exit 1; fi; \
+		grep -q 'imageDigestRegistries' "$$template_file" || { echo "missing imageDigestRegistries schema error for $$bad" >&2; cat "$$template_file" >&2; exit 1; }; \
+	done; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
 		--set metrics.enabled=true --set metrics.grafanaDashboard.enabled=true \
 		--show-only templates/grafana-dashboard.yaml > "$$template_file"; \
 	grep -q 'grafana_dashboard: "1"' "$$template_file" || { echo "missing grafana_dashboard label" >&2; exit 1; }; \

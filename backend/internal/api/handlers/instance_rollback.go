@@ -49,6 +49,9 @@ type rollbackTargetData struct {
 	values   map[string]string // chart name -> merged values YAML
 	versions map[string]string // chart name -> chart version
 	branch   string
+	// imageDigests is the image_digests column of the target log; the
+	// rollback log stores it (#811).
+	imageDigests string
 }
 
 // loadRollbackTarget returns the values snapshot (chart name -> values YAML),
@@ -79,9 +82,10 @@ func (h *InstanceHandler) loadRollbackTarget(ctx context.Context, instanceID, ta
 		return nil, &rollbackTargetError{status: http.StatusBadRequest, message: "Rollback target has no values snapshot"}
 	}
 	return &rollbackTargetData{
-		values:   values,
-		versions: deployer.ParseChartVersions(logEntry.ChartVersions),
-		branch:   logEntry.Branch,
+		values:       values,
+		versions:     deployer.ParseChartVersions(logEntry.ChartVersions),
+		branch:       logEntry.Branch,
+		imageDigests: logEntry.ImageDigests,
 	}, nil
 }
 

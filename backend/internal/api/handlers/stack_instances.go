@@ -185,15 +185,15 @@ type InstanceHandler struct {
 	// streamRevoker closes the open port-forward sessions of an instance when
 	// it is deleted, stopped or cleaned (nil: no sessions).
 	streamRevoker InstanceSessionRevoker
-	// statusFlight lets concurrent status reads of one namespace share one
-	// set of Kubernetes calls (namespaceStatus).
-	statusFlight singleflight.Group
-	uniqueNames  bool
 	// execHints computes the exec hints of /status and /pods (nil: never).
 	execHints ExecHintProvider
 	// imageDigests resolves the imageDigest values template function in
 	// deploy, bulk deploy and deploy preview (nil: it renders "").
 	imageDigests *imagedigest.Service
+	// statusFlight lets concurrent status reads of one namespace share one
+	// set of Kubernetes calls (namespaceStatus).
+	statusFlight singleflight.Group
+	uniqueNames  bool
 }
 
 // WithImageDigests attaches the image digest service: deploy, redeploy, bulk
@@ -1837,7 +1837,7 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 
 	// The build runs before the first write, so a client that left gets 499
 	// and nothing changes (#656).
-	valuesMap, branchMap, err := h.buildDeployValues(c.Request.Context(), inst, def, charts)
+	valuesMap, branchMap, imageDigests, err := h.buildDeployValuesIn(c.Request.Context(), h.imageDigests.NewSession(), inst, def, charts)
 	if err != nil {
 		if respondCancelled(c, err) {
 			return
@@ -1878,6 +1878,7 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 		Definition:         def,
 		Charts:             chartInfos,
 		LastDeployedValues: lastDeployedValuesJSON,
+		ImageDigests:       imageDigests,
 		UserID:             middleware.GetUserIDFromContext(c),
 	}
 
@@ -2967,7 +2968,22 @@ func (h *InstanceHandler) buildChartValuesAndBranches(ctx context.Context, inst 
 // values drift checks do not resolve it (buildChartValues,
 // buildChartValuesAndBranches, buildDriftValues): no registry request.
 func (h *InstanceHandler) buildDeployValues(ctx context.Context, inst *models.StackInstance, def *models.StackDefinition, charts []models.ChartConfig) (map[string]string, map[string]string, error) {
-	return h.values().withDigests(h.imageDigests, h.clusterRepo, inst).build(ctx, inst, def, charts, "")
+	values, branches, _, err := h.buildDeployValuesIn(ctx, h.imageDigests.NewSession(), inst, def, charts)
+	return values, branches, err
+}
+
+// buildDeployValuesIn is buildDeployValues with a digest session that other
+// builds share (bulk deploy: one session per request). It also returns the
+// digests that the build rendered, for the deploy log
+// (deployer.DeployRequest.ImageDigests). A nil session renders imageDigest
+// as "".
+func (h *InstanceHandler) buildDeployValuesIn(ctx context.Context, sess *imagedigest.Session, inst *models.StackInstance, def *models.StackDefinition, charts []models.ChartConfig) (map[string]string, map[string]string, map[string]string, error) {
+	b := h.values().withDigestSession(sess, h.clusterRepo, h.deployLogRepo, inst)
+	values, branches, err := b.build(ctx, inst, def, charts, "")
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return values, branches, b.renderedDigests(), nil
 }
 
 // buildDriftValues is buildChartValues for the values drift checks: imageDigest
@@ -3140,6 +3156,7 @@ func (h *InstanceHandler) RollbackInstance(c *gin.Context) {
 		TargetValues:        target.values,
 		TargetChartVersions: target.versions,
 		TargetBranch:        target.branch,
+		TargetImageDigests:  target.imageDigests,
 	})
 	if err != nil {
 		slog.Error("Failed to start rollback",

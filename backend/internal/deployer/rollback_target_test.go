@@ -689,7 +689,8 @@ func TestPreviousRevisionBranch(t *testing.T) {
 				}))
 			}
 			mgr := newRollbackTestManager(newMockInstanceRepo(), logRepo, &mockHelmExecutor{})
-			assert.Equal(t, tt.want, mgr.previousRevisionBranch(context.Background(), "i1"))
+			branch, _ := mgr.previousRevision(context.Background(), "i1")
+			assert.Equal(t, tt.want, branch)
 		})
 	}
 }

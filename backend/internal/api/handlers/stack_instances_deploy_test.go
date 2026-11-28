@@ -17,6 +17,7 @@ import (
 	"backend/internal/helm"
 	"backend/internal/k8s"
 	"backend/internal/models"
+	"backend/pkg/dberrors"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -38,6 +39,50 @@ type MockDeploymentLogRepository struct {
 	highlightCalls int
 	// lastFilters holds the filters of the last ListByInstancePaginated call.
 	lastFilters models.DeploymentLogFilters
+	// digestsErr is the error of LatestImageDigests; digestCalls counts it.
+	digestsErr  error
+	digestCalls int
+}
+
+// ImageDigestsOf implements models.DeploymentLogImageDigestReader.
+func (m *MockDeploymentLogRepository) ImageDigestsOf(_ context.Context, id string) (string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if l, ok := m.items[id]; ok {
+		return l.ImageDigests, nil
+	}
+	return "", dberrors.NewDatabaseError("image_digests_of", dberrors.ErrNotFound)
+}
+
+// LatestImageDigests implements models.DeploymentLogImageDigestReader like
+// the GORM repository: of the newest MaxImageDigestScan successful deploy
+// and rollback logs, the first MaxImageDigestLogs with digests, merged newest
+// first.
+func (m *MockDeploymentLogRepository) LatestImageDigests(_ context.Context, instanceID string) (map[string]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.digestCalls++
+	if m.digestsErr != nil {
+		return nil, m.digestsErr
+	}
+	var logs []*models.DeploymentLog
+	for _, l := range m.items {
+		if l.StackInstanceID == instanceID && l.Status == models.DeployLogSuccess &&
+			(l.Action == models.DeployActionDeploy || l.Action == models.DeployActionRollback) {
+			logs = append(logs, l)
+		}
+	}
+	sort.Slice(logs, func(i, j int) bool { return logs[i].StartedAt.After(logs[j].StartedAt) })
+	if len(logs) > models.MaxImageDigestScan {
+		logs = logs[:models.MaxImageDigestScan]
+	}
+	cols := make([]string, 0, models.MaxImageDigestLogs)
+	for _, l := range logs {
+		if l.ImageDigests != "" && len(cols) < models.MaxImageDigestLogs {
+			cols = append(cols, l.ImageDigests)
+		}
+	}
+	return models.MergeImageDigests(cols), nil
 }
 
 func NewMockDeploymentLogRepository() *MockDeploymentLogRepository {

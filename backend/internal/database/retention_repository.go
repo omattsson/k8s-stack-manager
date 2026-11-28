@@ -54,7 +54,7 @@ func (r *GORMRetentionRepository) WithPause(pause time.Duration) *GORMRetentionR
 //   - the two newest successful deploy or rollback logs: the values drift
 //     check reads the newest one (lastOperationWasRollback), and a rollback
 //     without a target reads the branch of the second newest
-//     (previousRevisionBranch).
+//     (previousRevision).
 //
 // A batch size <= 0 uses DefaultDeployLogRetentionBatchSize: a row holds the
 // log output and a values snapshot, so a large batch is a large transaction.

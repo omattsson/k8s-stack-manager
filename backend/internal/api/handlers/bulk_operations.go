@@ -175,6 +175,12 @@ func (h *InstanceHandler) executeBulkOperation(c *gin.Context, opName string, op
 // @Failure     403     {object} map[string]string
 // @Router      /api/v1/stack-instances/bulk/deploy [post]
 func (h *InstanceHandler) BulkDeploy(c *gin.Context) {
+	// One digest session for the whole request: the instances share one
+	// resolver per cluster registry (each reference looked up once, a host
+	// that timed out is skipped) and one lookup time budget
+	// (imagedigest.BuildBudget from the first request), so N instances on a
+	// slow registry cost about one timeout, not N.
+	digests := h.imageDigests.NewSession()
 	h.executeBulkOperation(c, "deploy", func(c *gin.Context, inst *models.StackInstance) (string, error) {
 		if h.deployManager == nil {
 			return "", fmt.Errorf("deployment service not configured")
@@ -214,7 +220,7 @@ func (h *InstanceHandler) BulkDeploy(c *gin.Context) {
 		// Same values pipeline as DeployInstance: shared values, defaults,
 		// overrides, locked values and branch overrides. Fail closed. The
 		// build runs before the first write, so a cancel changes nothing (#656).
-		valuesMap, branchMap, err := h.buildDeployValues(c.Request.Context(), inst, def, charts)
+		valuesMap, branchMap, imageDigests, err := h.buildDeployValuesIn(c.Request.Context(), digests, inst, def, charts)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				slog.Debug("bulk deploy: request cancelled during the values build", logKeyInstanceID, inst.ID, "error", err)
@@ -255,6 +261,7 @@ func (h *InstanceHandler) BulkDeploy(c *gin.Context) {
 			Definition:         def,
 			Charts:             chartInfos,
 			LastDeployedValues: lastDeployedValues,
+			ImageDigests:       imageDigests,
 			UserID:             middleware.GetUserIDFromContext(c),
 		}
 

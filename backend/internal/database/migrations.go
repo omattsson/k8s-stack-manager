@@ -1139,6 +1139,10 @@ func (d *Database) AutoMigrate() error {
 	migrator.AddMigration(clusterAllowExecMigration())
 	migrator.AddMigration(auditLogContextMigration())
 
+	// Migration 69: deployment_logs.image_digests, the digests that the
+	// imageDigest template function rendered in a deploy (#811).
+	migrator.AddMigration(deployLogImageDigestsMigration())
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err
@@ -2182,6 +2186,33 @@ func auditLogContextMigration() schema.Migration {
 						return err
 					}
 				}
+			}
+			return nil
+		},
+	}
+}
+
+// deployLogImageDigestsMigration is migration 69. It adds the nullable TEXT
+// column deployment_logs.image_digests (models.DeploymentLog.ImageDigests):
+// the digests that the imageDigest values template function rendered in a
+// deploy, the fallback of a later failed lookup (#811). Up and Down are
+// idempotent.
+func deployLogImageDigestsMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261128000069",
+		Name:        "add_deployment_log_image_digests",
+		Description: "Add image_digests to deployment_logs (imageDigest fallback of a failed lookup)",
+		Up: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if !m.HasTable(&models.DeploymentLog{}) || m.HasColumn(&models.DeploymentLog{}, "ImageDigests") {
+				return nil
+			}
+			return m.AddColumn(&models.DeploymentLog{}, "ImageDigests")
+		},
+		Down: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if m.HasTable(&models.DeploymentLog{}) && m.HasColumn(&models.DeploymentLog{}, "ImageDigests") {
+				return m.DropColumn(&models.DeploymentLog{}, "ImageDigests")
 			}
 			return nil
 		},

@@ -11,20 +11,15 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// digestTracer and digestMeter are the OpenTelemetry scopes of the registry
-// lookups. Without OpenTelemetry they are no-ops.
-var (
-	digestTracer = otel.Tracer("imagedigest")
-	digestMeter  = otel.Meter("imagedigest")
-)
-
 // Lookup outcomes: a small fixed set for the metric label and span attribute.
 const (
 	outcomeSuccess    = "success"
 	outcomeError      = "error"       // registry error, timeout, not found
+	outcomeCancelled  = "cancelled"   // the build was cancelled during the request
 	outcomeNotAllowed = "not_allowed" // host not in the allowlist, no request
 	outcomeInvalid    = "invalid"     // invalid repository or tag, no request
 	outcomeSkipped    = "skipped"     // lookup cap, build budget or dead host, no request
+	outcomeFallback   = "fallback"    // a failed lookup rendered the last deployed digest
 )
 
 const (
@@ -32,14 +27,23 @@ const (
 	attrOutcome  = "imagedigest.outcome"
 )
 
-var digestMetrics struct {
+// telemetry holds the OpenTelemetry instruments of the registry lookups.
+// Without OpenTelemetry they are no-ops.
+type telemetry struct {
+	tracer      trace.Tracer
 	lookupTotal metric.Int64Counter
 	lookupDur   metric.Float64Histogram
 }
 
-func init() {
+// defaultTelemetry uses the global providers (set by the telemetry bootstrap;
+// the global delegates pick up a provider set after this init).
+var defaultTelemetry = newTelemetry(otel.GetTracerProvider(), otel.GetMeterProvider())
+
+func newTelemetry(tp trace.TracerProvider, mp metric.MeterProvider) *telemetry {
+	meter := mp.Meter("imagedigest")
+	t := &telemetry{tracer: tp.Tracer("imagedigest")}
 	var err error
-	digestMetrics.lookupTotal, err = digestMeter.Int64Counter(
+	t.lookupTotal, err = meter.Int64Counter(
 		"imagedigest.lookups_total",
 		metric.WithDescription("Image digest lookups of the imageDigest template function, by outcome."),
 		metric.WithUnit("{lookup}"),
@@ -47,7 +51,7 @@ func init() {
 	if err != nil {
 		otel.Handle(err)
 	}
-	digestMetrics.lookupDur, err = digestMeter.Float64Histogram(
+	t.lookupDur, err = meter.Float64Histogram(
 		"imagedigest.lookup_duration",
 		metric.WithDescription("Duration of a registry manifest HEAD request of the imageDigest template function."),
 		metric.WithUnit("s"),
@@ -57,32 +61,34 @@ func init() {
 	if err != nil {
 		otel.Handle(err)
 	}
+	return t
 }
 
 // recordOutcome counts a lookup that made no registry request.
-func recordOutcome(ctx context.Context, outcome string) {
-	digestMetrics.lookupTotal.Add(ctx, 1, metric.WithAttributes(attribute.String(attrOutcome, outcome)))
+func (t *telemetry) recordOutcome(ctx context.Context, outcome string) {
+	t.lookupTotal.Add(ctx, 1, metric.WithAttributes(attribute.String(attrOutcome, outcome)))
 }
 
 // startLookupSpan opens a client span around one registry request. The
-// caller calls finish exactly once.
-func startLookupSpan(ctx context.Context, registry string) (context.Context, func(outcome string, err error)) {
-	ctx, span := digestTracer.Start(ctx, "imagedigest.head",
+// caller calls finish exactly once, with an error that is already redacted
+// (Resolver.redactErr): the span records it as is.
+func (t *telemetry) startLookupSpan(ctx context.Context, registry string) (context.Context, func(outcome string, redacted error)) {
+	ctx, span := t.tracer.Start(ctx, "imagedigest.head",
 		trace.WithSpanKind(trace.SpanKindClient),
 		trace.WithAttributes(attribute.String(attrRegistry, registry)),
 	)
 	start := time.Now()
-	return ctx, func(outcome string, err error) {
+	return ctx, func(outcome string, redacted error) {
 		span.SetAttributes(attribute.String(attrOutcome, outcome))
-		if err != nil {
-			span.RecordError(err)
+		if redacted != nil {
+			span.RecordError(redacted)
 			span.SetStatus(codes.Error, outcome)
 		} else {
 			span.SetStatus(codes.Ok, "")
 		}
 		span.End()
 		attrs := metric.WithAttributes(attribute.String(attrOutcome, outcome))
-		digestMetrics.lookupTotal.Add(ctx, 1, attrs)
-		digestMetrics.lookupDur.Record(ctx, time.Since(start).Seconds(), attrs)
+		t.lookupTotal.Add(ctx, 1, attrs)
+		t.lookupDur.Record(ctx, time.Since(start).Seconds(), attrs)
 	}
 }

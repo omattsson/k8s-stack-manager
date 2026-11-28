@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"regexp"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -57,6 +58,15 @@ func TestSchemaRules(t *testing.T) {
 	assert.NotContains(t, at("backend", "helmHistoryMax"), "minimum")
 	assert.NotContains(t, at("backend", "maxInstanceTtlDays"), "pattern")
 	assert.Equal(t, map[string]any{"type": "string"}, at("backend", "exec", "allowedContainers")["items"])
+
+	// Image digest registries: host[:port] only, no scheme or path.
+	pattern := regexp.MustCompile(at("backend", "imageDigestRegistries")["items"].(map[string]any)["pattern"].(string))
+	for _, ok := range []string{"ghcr.io", "GHCR.io", "registry.example.com:5000", "10.0.0.5:5000", "localhost", "localhost:5000", "my_registry:5000", "[::1]:5000", "[fe80::1]"} {
+		assert.True(t, pattern.MatchString(ok), ok)
+	}
+	for _, bad := range []string{"https://ghcr.io", "ghcr.io/path", "ghcr.io:abc", "ghcr.io:", "user@ghcr.io", "ghcr.io:123456", "-ghcr.io", "ghcr..io", "::1", " ghcr.io", ""} {
+		assert.False(t, pattern.MatchString(bad), bad)
+	}
 
 	// Environment variables are written as text: any scalar, also new keys.
 	env := at("backend", "env")

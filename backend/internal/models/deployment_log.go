@@ -2,6 +2,7 @@ package models
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 )
@@ -26,6 +27,15 @@ type DeploymentLog struct {
 	// deploy used. A rollback to this deploy installs the same versions.
 	// Empty for logs written before the column existed.
 	ChartVersions string `json:"chart_versions,omitempty" gorm:"type:text"`
+	// ImageDigests is a JSON object "repository:tag" -> digest that the
+	// imageDigest values template function rendered in a deploy (the
+	// resolved digest, or the last deployed digest after a failed lookup).
+	// A rollback log holds the digests of the deploy it returns to (the
+	// target log, or the revision of a one-revision rollback). A later
+	// deploy renders it when its lookup fails (#811). Empty for stop and
+	// clean, for deploys without imageDigest and for logs written before
+	// migration 69. Not in the API.
+	ImageDigests string `json:"-" gorm:"type:text"`
 	// UserID is the user who started a deploy. Per-user analytics count
 	// deploys by this field, so the history stays after the instance is
 	// deleted. Empty for system deploys and for other actions. Migration 49
@@ -63,6 +73,66 @@ var ErrDeployLogNotRunning = errors.New("deployment log is no longer running")
 // ErrDeployLogNotRunning when the log is no longer running.
 type DeploymentLogDeadlineExtender interface {
 	ExtendDeadline(ctx context.Context, id string, deadline time.Time) error
+}
+
+// MaxImageDigestLogs is the number of newest successful deploy and rollback
+// logs with image digests whose digests LatestImageDigests merges.
+const MaxImageDigestLogs = 5
+
+// MaxImageDigestScan bounds the newest successful deploy and rollback logs
+// that LatestImageDigests reads. A log with digests older than that is not
+// read (an instance whose newer deploys did not use imageDigest): the
+// trade-off keeps the read at a fixed size on the index.
+const MaxImageDigestScan = 20
+
+// DeploymentLogImageDigestReader is implemented by the GORM deployment log
+// repository. LatestImageDigests returns the image digests
+// (DeploymentLog.ImageDigests) of the newest MaxImageDigestLogs successful
+// deploy and rollback logs of the instance that have them, among the newest
+// MaxImageDigestScan successful deploy and rollback logs, merged: for each reference the
+// digest of the newest log. An empty map when there is none; a log whose
+// column does not parse is skipped.
+type DeploymentLogImageDigestReader interface {
+	LatestImageDigests(ctx context.Context, instanceID string) (map[string]string, error)
+	// ImageDigestsOf returns the image_digests column of the log id ("" when
+	// it has none). A one-revision rollback copies it from the log of the
+	// revision it returns to.
+	ImageDigestsOf(ctx context.Context, id string) (string, error)
+}
+
+// EncodeImageDigests returns the DeploymentLog.ImageDigests column of a
+// map "repository:tag" -> digest; "" for an empty map.
+func EncodeImageDigests(digests map[string]string) string {
+	if len(digests) == 0 {
+		return ""
+	}
+	data, err := json.Marshal(digests)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+// MergeImageDigests merges DeploymentLog.ImageDigests columns, newest first:
+// the first column that has a reference wins. A column that does not parse
+// is skipped. Never nil.
+func MergeImageDigests(columns []string) map[string]string {
+	out := make(map[string]string)
+	for _, col := range columns {
+		if col == "" {
+			continue
+		}
+		var m map[string]string
+		if err := json.Unmarshal([]byte(col), &m); err != nil {
+			continue
+		}
+		for k, v := range m {
+			if _, ok := out[k]; !ok && v != "" {
+				out[k] = v
+			}
+		}
+	}
+	return out
 }
 
 // DeploymentLogOutputWriter is implemented by the GORM deployment log
@@ -202,7 +272,8 @@ type DeploymentLogRepository interface {
 	GetLatestByInstance(ctx context.Context, instanceID string) (*DeploymentLog, error)
 	// ListLatestByActions returns up to limit logs of the instance whose
 	// action is one of actions, newest first (by started_at). Only the small
-	// columns are loaded (no output, values snapshot or chart versions).
+	// columns are loaded (no output, values snapshot, chart versions or
+	// image digests).
 	ListLatestByActions(ctx context.Context, instanceID string, actions []string, limit int) ([]DeploymentLog, error)
 	SummarizeByInstance(ctx context.Context, instanceID string) (*DeployLogSummary, error)
 	SummarizeBatch(ctx context.Context, instanceIDs []string) (map[string]*DeployLogSummary, error)

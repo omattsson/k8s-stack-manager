@@ -326,28 +326,31 @@ type rollbackJob struct {
 	prevError  string            // instance error message before the rollback
 }
 
-// previousRevisionBranch returns the branch of the revision that a
-// one-revision helm rollback goes to, from the deploy and rollback logs
+// previousRevision returns the branch and the image_digests column of the
+// revision that a one-revision helm rollback goes to, from the deploy and
+// rollback logs
 // (newest first):
 //   - newest log failed (a failed deploy still created a Helm revision): the
 //     target is the newest successful revision, so the newest successful log;
 //   - newest log succeeded: the target is the revision before it, so the
 //     second newest successful log.
 //
-// Returns "" when it is not known (no such log, older logs without branch,
-// or a lookup error).
-func (m *Manager) previousRevisionBranch(ctx context.Context, instanceID string) string {
+// Returns "" when it is not known (no such log, older logs without branch
+// or digests, or a lookup error). The rollback log stores the digests, so a
+// failed imageDigest lookup after the rollback renders the digests that run
+// now (#811).
+func (m *Manager) previousRevision(ctx context.Context, instanceID string) (branch, imageDigests string) {
 	if m.logRepo == nil {
-		return ""
+		return "", ""
 	}
 	logs, err := m.logRepo.ListLatestByActions(ctx, instanceID,
 		[]string{models.DeployActionDeploy, models.DeployActionRollback}, 20)
 	if err != nil {
 		slog.Warn("rollback: failed to look up the previous deploy", "instance_id", instanceID, "error", err)
-		return ""
+		return "", ""
 	}
 	if len(logs) == 0 {
-		return ""
+		return "", ""
 	}
 	want := 2
 	if logs[0].Status != models.DeployLogSuccess {
@@ -360,10 +363,27 @@ func (m *Manager) previousRevisionBranch(ctx context.Context, instanceID string)
 		}
 		successful++
 		if successful == want {
-			return l.Branch
+			return l.Branch, m.imageDigestsOf(ctx, l.ID)
 		}
 	}
-	return ""
+	return "", ""
+}
+
+// imageDigestsOf returns the image_digests column of the log id through the
+// optional models.DeploymentLogImageDigestReader; "" when the repository
+// does not implement it or the read fails (logged): the rollback log then
+// has no digests.
+func (m *Manager) imageDigestsOf(ctx context.Context, id string) string {
+	reader, ok := m.logRepo.(models.DeploymentLogImageDigestReader)
+	if !ok {
+		return ""
+	}
+	digests, err := reader.ImageDigestsOf(ctx, id)
+	if err != nil {
+		slog.Warn("rollback: failed to read the image digests of the previous deploy", "log_id", id, "error", err)
+		return ""
+	}
+	return digests
 }
 
 // allLogActions are the actions of every deployment log.
